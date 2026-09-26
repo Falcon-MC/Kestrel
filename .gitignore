@@ -1,0 +1,7 @@
+build/
+build.txt
+out/
+.vs/
+.idea/
+*.user
+.DS_Store
