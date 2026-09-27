@@ -53,10 +53,8 @@ bool isShelfName(const std::string& name)
 
 bool isDeferredName(const std::string& name)
 {
-    return name == "chest" || name == "trapped_chest" || name == "ender_chest" || name == "bed" || endsWith(name, "_bed")
-        || name == "standing_banner" || name == "wall_banner" || name == "brewing_stand" || name == "campfire"
-        || name == "soul_campfire" || contains(name, "copper_golem_statue") || name == "decorated_pot"
-        || name == "enchanting_table" || name == "frame" || name == "glow_frame" || name == "hopper" || name == "lectern"
+    return name == "chest" || name == "trapped_chest" || name == "ender_chest" || endsWith(name, "copper_chest") || name == "bed"
+        || endsWith(name, "_bed") || name == "standing_banner" || name == "wall_banner" || contains(name, "shulker_box")
         || name == "skull" || endsWith(name, "_skull") || endsWith(name, "_head");
 }
 
@@ -71,24 +69,23 @@ Family classify(const std::string& name)
     if (isDeferredName(name)) {
         return Family::Deferred;
     }
-    if (name == "barrier" || name == "structure_void" || startsWith(name, "light_block")) {
+    if (name == "barrier" || name == "structure_void" || startsWith(name, "light_block") || name == "invisible_bedrock" || name == "moving_block"
+        || endsWith(name, "piston_arm_collision") || name == "client_request_placeholder_block") {
         return Family::Invisible;
     }
     if (name == "bone_block" || name == "hay_block" || name == "chiseled_quartz_block" || name == "purpur_block" || name == "quartz_block" || name == "smooth_quartz" || name == "tnt" || endsWith(name, "_glazed_terracotta")) {
         return Family::Cube;
     }
-    if (contains(name, "copper_golem_statue") || name == "dragon_egg" || name == "soul_sand" || name == "mud"
+    if (isShapeName(name) || name == "soul_sand" || name == "mud"
         || contains(name, "trapdoor") || endsWith(name, "_door") || name == "wooden_door" || endsWith(name, "_stairs")
         || contains(name, "slab") || contains(name, "fence_gate") || endsWith(name, "_wall") || name == "cobblestone_wall"
         || endsWith(name, "_fence") || name == "fence" || name == "nether_brick_fence" || contains(name, "glass_pane")
         || endsWith(name, "_pane") || endsWith(name, "_bars") || endsWith(name, "_bed") || name == "bed"
         || contains(name, "chest") || contains(name, "sign") || contains(name, "rail") || isTorchName(name)
-        || name == "lever" || endsWith(name, "_button") || name == "stone_button" || contains(name, "pressure_plate")
-        || endsWith(name, "_carpet") || name == "carpet" || name == "snow_layer" || name == "leaf_litter"
-        || isAquaticName(name) || name == "cocoa" || isCropName(name) || name == "wildflowers" || name == "pink_petals"
-        || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
-        || name == "cake" || name == "farmland" || isShelfName(name) || isCrossName(name) || contains(name, "shulker_box")
-        || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
+        || endsWith(name, "_button") || name == "stone_button" || contains(name, "pressure_plate")
+        || endsWith(name, "_carpet") || name == "carpet" || name == "snow_layer"
+        || isAquaticName(name) || isCropName(name) || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
+        || name == "cake" || name == "farmland" || isCrossName(name) || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
         || name == "amethyst_cluster" || endsWith(name, "_amethyst_bud")) {
         return Family::Model;
     }
@@ -105,6 +102,9 @@ Family classify(const std::string& name)
 
 ModelKind modelKind(const std::string& name)
 {
+    if (isShapeName(name)) {
+        return ModelKind::Shape;
+    }
     if (endsWith(name, "standing_sign") || endsWith(name, "wall_sign") || endsWith(name, "hanging_sign")) {
         return ModelKind::Sign;
     }
@@ -275,11 +275,31 @@ uint8_t facingDirectionRotation(int32_t facing)
 
 bool classifyBlockEntity(const std::string& name, const Tag& states, BlockVisual& visual)
 {
-    static constexpr const char* Skulls[SkullKinds] = { "skeleton_skull", "wither_skeleton_skull", "zombie_head", "creeper_head", "player_head" };
-    if (name == "chest" || name == "trapped_chest" || name == "ender_chest") {
-        visual.blockEntity = name == "chest" ? EntityChest : name == "trapped_chest" ? EntityTrappedChest : EntityEnderChest;
+    static constexpr const char* Skulls[SkullKinds] = { "skeleton_skull", "wither_skeleton_skull", "zombie_head", "creeper_head", "player_head", "piglin_head", "dragon_head" };
+    static constexpr const char* ShulkerColors[DyeColors] = {
+        "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+        "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black",
+    };
+    if (name == "chest" || name == "trapped_chest" || name == "ender_chest" || endsWith(name, "copper_chest")) {
         std::string cardinal = stateString(states, "minecraft:cardinal_direction");
         visual.variant = cardinal.empty() ? facingDirectionRotation(stateInt(states, "facing_direction").value_or(3)) : facingRotation(cardinal);
+        if (endsWith(name, "copper_chest")) {
+            uint32_t oxidation = contains(name, "exposed") ? 1 : contains(name, "weathered") ? 2 : contains(name, "oxidized") ? 3 : 0;
+            visual.blockEntity = EntityCopperChest;
+            visual.variant |= oxidation << 2;
+        } else {
+            visual.blockEntity = name == "chest" ? EntityChest : name == "trapped_chest" ? EntityTrappedChest : EntityEnderChest;
+        }
+        return true;
+    }
+    if (contains(name, "shulker_box")) {
+        visual.blockEntity = EntityShulkerBox;
+        visual.variant = DyeColors;
+        for (uint32_t color = 0; color < DyeColors; ++color) {
+            if (name == std::string(ShulkerColors[color]) + "_shulker_box") {
+                visual.variant = color;
+            }
+        }
         return true;
     }
     if (name == "bed" || endsWith(name, "_bed")) {

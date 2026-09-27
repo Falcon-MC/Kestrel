@@ -54,7 +54,7 @@ std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, c
     const float h = Size * 0.5f;
     const float q = Size * 0.25f;
     const std::array<Face, 3> projected { {
-        { { 0.0f, q }, { h, -q }, { h, q }, 1.0f },
+        { { h, 0.0f }, { h, q }, { -h, q }, 1.0f },
         { { 0.0f, q }, { h, q }, { 0.0f, h }, 0.8f },
         { { h, h }, { h, -q }, { 0.0f, h }, 0.62f },
     } };
@@ -270,11 +270,11 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
             return file->second;
         }
     }
-    auto block = blockByName.find(identifier);
-    if (block == blockByName.end()) {
+    const BlockVisual* found = itemVisual(identifier);
+    if (!found) {
         return {};
     }
-    const BlockVisual& look = visual(block->second, true);
+    const BlockVisual& look = *found;
     const std::vector<uint8_t>& texels = textureArray.mips[0];
     size_t layerBytes = size_t(TextureSize) * TextureSize * 4;
     auto facePixels = [&](size_t side, std::array<uint8_t, 3>& tint) -> const uint8_t* {
@@ -285,7 +285,7 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         }
         const Material& entry = materialTable[material];
         if (entry.tint & TintKindMask) {
-            tint = { 124, 189, 107 };
+            tint = { (ItemTint >> 16) & 0xFF, (ItemTint >> 8) & 0xFF, ItemTint & 0xFF };
         }
         size_t offset = size_t(entry.layer) * layerBytes;
         return offset + layerBytes <= texels.size() ? texels.data() + offset : nullptr;
@@ -313,17 +313,22 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
     return isometricIcon(faces, tints);
 }
 
+const BlockVisual* BlockAssets::itemVisual(const std::string& identifier) const
+{
+    if (auto carried = carriedVisuals.find(identifier); carried != carriedVisuals.end()) {
+        return &carried->second;
+    }
+    auto block = blockByName.find(identifier);
+    return block == blockByName.end() ? nullptr : &visual(block->second, true);
+}
+
 const BlockVisual* BlockAssets::itemCube(const std::string& identifier) const
 {
-    auto block = blockByName.find(identifier);
-    if (block == blockByName.end()) {
+    const BlockVisual* look = itemVisual(identifier);
+    if (!look || !look->emitsCubeGeometry() || (look->flags & FlagDiagnostic)) {
         return nullptr;
     }
-    const BlockVisual& look = visual(block->second, true);
-    if (!look.emitsCubeGeometry() || (look.flags & FlagDiagnostic)) {
-        return nullptr;
-    }
-    return &look;
+    return look;
 }
 
 }

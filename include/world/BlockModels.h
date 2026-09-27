@@ -43,6 +43,18 @@ std::vector<ModelQuad> wallSign(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> hangingWallSign(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> hangingCeilingSign(uint32_t material, uint32_t rotation, bool attached);
 std::vector<ModelQuad> flatPlane(uint32_t material, int16_t height);
+
+struct ShapePart {
+    Point min {};
+    Point max {};
+    Materials materials {};
+};
+
+/**
+ * Boxes plus any extra quads, all turned by quarter turns the way signs turn:
+ * one turn takes a south facing model to west.
+ */
+std::vector<ModelQuad> shape(const std::vector<ShapePart>& parts, std::vector<ModelQuad> extra, uint32_t turns);
 std::vector<ModelQuad> attachedPlanes(uint32_t material, uint32_t sides);
 
 }

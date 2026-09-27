@@ -129,6 +129,13 @@ public:
         return value;
     }
 
+    bool consumeFocusLost() override
+    {
+        bool value = focusLost;
+        focusLost = false;
+        return value;
+    }
+
     InputState& input() override
     {
         return state;
@@ -390,6 +397,13 @@ private:
             state.mousePressed = true;
             SetCapture(hwnd);
             return 0;
+        case WM_RBUTTONDOWN:
+            state.rightMouseDown = true;
+            state.rightMousePressed = true;
+            return 0;
+        case WM_RBUTTONUP:
+            state.rightMouseDown = false;
+            return 0;
         case WM_LBUTTONUP:
             state.mouseX = static_cast<float>(GET_X_LPARAM(lParam));
             state.mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
@@ -401,6 +415,7 @@ private:
             state.wheel += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
             return 0;
         case WM_KILLFOCUS:
+            focusLost = true;
             if (state.mouseDown) {
                 state.mouseDown = false;
                 state.mouseReleased = true;
@@ -483,6 +498,7 @@ private:
     uint32_t clientWidth = 0;
     uint32_t clientHeight = 0;
     bool resized = false;
+    bool focusLost = false;
     bool open = true;
     bool tracking = false;
     bool captured = false;

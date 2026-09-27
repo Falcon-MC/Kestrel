@@ -233,7 +233,7 @@ WorldOut vs_model(ModelIn input)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, input.d.y, corner);
-    output.entity = (words[11] >> 5) & 1;
+    output.entity = (words[11] >> 5) & 3;
     return output;
 }
 
@@ -310,6 +310,9 @@ float4 ps_blend(WorldOut input) : SV_Target
     float4 texel = surfaceTexel(input);
     if (texel.a < 0.004) {
         discard;
+    }
+    if (input.entity != 0) {
+        return float4(texel.rgb * texel.a, (input.entity & 2) != 0 ? 0.0 : texel.a);
     }
     return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light) * texel.a, texel.a);
 }
@@ -890,16 +893,27 @@ public:
             return chunk->counts[0] || chunk->counts[1];
         }));
 
-        if (view.entityQuadCount && entityTextures) {
+        bool entities = view.entityTotal() && entityTextures;
+        if (entities) {
             FrameBuffers& buffers = frameBuffers[frameIndex];
-            size_t bytes = static_cast<size_t>(view.entityQuadCount) * ModelQuadBytes;
+            size_t bytes = static_cast<size_t>(view.entityTotal()) * ModelQuadBytes;
             ensure(buffers.entities, buffers.entityCapacity, buffers.entityMapped, bytes);
             std::memcpy(buffers.entityMapped, view.entityQuads, bytes);
-            commandList->SetPipelineState(modelPipeline.Get());
-            bindOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
-            bindVertices(buffers.entities.Get(), view.entityQuadCount, ModelQuadBytes);
-            commandList->DrawInstanced(6, view.entityQuadCount, 0, 0);
         }
+        auto drawEntities = [&](ID3D12PipelineState* pipeline, uint32_t first, uint32_t count, float maxDepth) {
+            if (!entities || count == 0) {
+                return;
+            }
+            D3D12_VIEWPORT squeezed = viewport;
+            squeezed.MaxDepth = maxDepth;
+            commandList->RSSetViewports(1, &squeezed);
+            commandList->SetPipelineState(pipeline);
+            bindOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            bindVertices(frameBuffers[frameIndex].entities.Get(), view.entityTotal(), ModelQuadBytes);
+            commandList->DrawInstanced(6, count, 0, first);
+            commandList->RSSetViewports(1, &viewport);
+        };
+        drawEntities(modelPipeline.Get(), 0, view.entityQuadCount, 1.0f);
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
         for (const ChunkBuffer* chunk : visible) {
@@ -919,6 +933,8 @@ public:
             commandList->SetPipelineState(blendPipeline.Get());
             drawStream(*chunk, 2);
         }
+        drawEntities(modelBlendPipeline.Get(), view.entityQuadCount, view.entityBlendCount, 1.0f);
+        drawEntities(modelPipeline.Get(), view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
     void drawUi(const ui::DrawList& list) override

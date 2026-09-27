@@ -5,6 +5,7 @@
 #include "world/BlockAssets.h"
 #include "world/BlockRegistry.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -69,6 +70,7 @@ enum class ModelKind {
     SinkingCube,
     Bamboo,
     Cluster,
+    Shape,
 };
 
 struct Flipbook {
@@ -87,11 +89,38 @@ bool isCrossName(const std::string& name);
 bool isShelfName(const std::string& name);
 
 /**
- * Blocks whose look comes from their block entity: chests, beds, banners,
- * brewing stands, campfires, copper golem statues, decorated pots, enchanting
- * tables, item frames, hoppers, lecterns and skulls.
+ * Blocks whose look comes from a block entity model with an entity texture:
+ * chests, beds, banners, shulker boxes and skulls.
  */
 bool isDeferredName(const std::string& name);
+
+/**
+ * One box of a hand built block shape in block pixels (0..16). Its faces take
+ * the block's own face textures, or all of them the one of side, or all of
+ * them the terrain texture named by texture.
+ */
+struct ShapeBox {
+    std::array<int16_t, 3> min {};
+    std::array<int16_t, 3> max {};
+    int side = -1;
+    const char* texture = nullptr;
+};
+
+/**
+ * The game draws some blocks with geometry of its own that no pack carries.
+ * This is their look built from boxes facing south, turned by quarter turns
+ * like signs, with an optional cross of the given side's texture (a campfire's
+ * flames) and an optional flat plane one pixel up (petals).
+ */
+struct BlockShape {
+    std::vector<ShapeBox> boxes;
+    uint32_t turns = 0;
+    int crossSide = -1;
+    int planeSide = -1;
+};
+
+bool isShapeName(const std::string& name);
+BlockShape blockShape(const std::string& name, const Tag& states);
 Family classify(const std::string& name);
 ModelKind modelKind(const std::string& name);
 const char* legacyAlias(const std::string& name);

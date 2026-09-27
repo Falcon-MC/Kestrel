@@ -32,6 +32,13 @@ std::vector<std::vector<uint8_t>> sliceFrames(const std::vector<uint8_t>& rgba, 
 void applyTint(std::vector<uint8_t>& pixels, uint32_t rgb);
 
 /**
+ * Blends an 0xRRGGBB color into every texel by its alpha and makes it opaque,
+ * which is how an overlay_color bakes into a texture that is never tinted
+ * later.
+ */
+void applyOverlay(std::vector<uint8_t>& pixels, uint32_t rgb);
+
+/**
  * The magenta and black checker used for blocks whose texture is missing.
  */
 std::vector<uint8_t> diagnosticTexture();

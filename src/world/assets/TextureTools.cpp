@@ -75,6 +75,19 @@ void applyTint(std::vector<uint8_t>& pixels, uint32_t rgb)
     }
 }
 
+void applyOverlay(std::vector<uint8_t>& pixels, uint32_t rgb)
+{
+    uint32_t tint[3] = { (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF };
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        uint32_t alpha = pixels[i + 3];
+        for (int c = 0; c < 3; ++c) {
+            uint32_t tinted = pixels[i + c] * tint[c] / 255;
+            pixels[i + c] = static_cast<uint8_t>((pixels[i + c] * (255 - alpha) + tinted * alpha) / 255);
+        }
+        pixels[i + 3] = 255;
+    }
+}
+
 std::vector<uint8_t> diagnosticTexture()
 {
     std::vector<uint8_t> out(TextureSize * TextureSize * 4);

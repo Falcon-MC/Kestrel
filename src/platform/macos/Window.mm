@@ -109,6 +109,13 @@ public:
                     state.mouseDown = false;
                     state.mouseReleased = true;
                     break;
+                case NSEventTypeRightMouseDown:
+                    state.rightMouseDown = true;
+                    state.rightMousePressed = true;
+                    break;
+                case NSEventTypeRightMouseUp:
+                    state.rightMouseDown = false;
+                    break;
                 case NSEventTypeMouseMoved:
                 case NSEventTypeLeftMouseDragged:
                     mouse(event);
@@ -143,6 +150,14 @@ public:
     float contentScale() const override
     {
         return static_cast<float>(window.backingScaleFactor);
+    }
+
+    bool consumeFocusLost() override
+    {
+        bool key = window.isKeyWindow;
+        bool lost = wasKey && !key;
+        wasKey = key;
+        return lost;
     }
 
     bool consumeResize() override
@@ -329,6 +344,7 @@ private:
 
     NSWindow* window;
     KestrelWindowDelegate* delegate;
+    bool wasKey = true;
     InputState state;
     WindowChrome chrome;
     Cursor cursor = Cursor::Arrow;

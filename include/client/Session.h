@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <map>
+#include <optional>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -40,6 +41,19 @@ inline constexpr uint32_t NoSkin = 0xFFFFFFFFu;
  * One entity the server has shown the client: its identifier, feet position,
  * body yaw in degrees, and for players the skin slot their skin sits in.
  */
+/**
+ * A block the look ray runs into: its cell, network block value and name, the
+ * face it enters through, the point it hits and how far along the ray.
+ */
+struct BlockHit {
+    std::array<int32_t, 3> cell {};
+    uint32_t value = 0;
+    std::string name;
+    int32_t face = 0;
+    std::array<double, 3> point {};
+    double distance = 0.0;
+};
+
 struct ActorView {
     uint64_t runtimeId = 0;
     std::string identifier;
@@ -52,12 +66,14 @@ struct ActorView {
     float pitch = 0.0f;
     float scale = 1.0f;
     float height = 0.0f;
+    float width = 0.0f;
     bool alwaysShowName = false;
     std::array<uint64_t, 3> flags{};
     int variant = 0;
     int markVariant = 0;
     int color = 0;
     int skinId = 0;
+    int poseIndex = 0;
     uint32_t skinSlot = NoSkin;
     bool slim = false;
     bool onGround = true;
@@ -314,6 +330,12 @@ public:
     void requestRespawn();
     void setMotionInput(const MotionInput& input);
 
+    /**
+     * Queues a click for the network thread: a right click uses the held
+     * item, a left click hits the entity under the crosshair.
+     */
+    void requestInteraction(bool use);
+
 private:
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
     void handleSoundPacket(const std::shared_ptr<Packet>& packet);
@@ -340,6 +362,8 @@ private:
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     std::string traceTarget();
+    std::optional<BlockHit> traceBlock(double reach);
+    void interact(bool use);
     double boomFraction();
     uint8_t mediumAt(const std::array<double, 3>& position);
 
@@ -398,6 +422,8 @@ private:
     std::atomic<int> requestedSlot { -1 };
     std::atomic<bool> respawnRequested { false };
     bool respawnPending = false;
+    std::atomic<bool> useRequested { false };
+    std::atomic<bool> attackRequested { false };
     PlayerMotion motion;
     MotionInput motionInput;
     MotionInput lastMotionInput;

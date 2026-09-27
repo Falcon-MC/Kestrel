@@ -96,6 +96,43 @@ std::vector<EntityBox> skullBoxes(bool wall)
     return { box({ 4.0f, 0.0f, 4.0f }, { 12.0f, 8.0f, 12.0f }, head) };
 }
 
+std::vector<EntityBox> piglinHeadBoxes(bool wall)
+{
+    float lift = wall ? 4.0f : 0.0f;
+    float back = wall ? 0.0f : 4.0f;
+    return {
+        box({ 3.0f, lift, back }, { 13.0f, lift + 8.0f, back + 8.0f }, boxUv(0.0f, 0.0f, 10.0f, 8.0f, 8.0f)),
+        box({ 6.0f, lift, back + 8.0f }, { 10.0f, lift + 4.0f, back + 9.0f }, boxUv(31.0f, 1.0f, 4.0f, 4.0f, 1.0f)),
+    };
+}
+
+/**
+ * The dragon head is the dragon's own head at three quarters scale, so its
+ * snout reaches past the block the way it does in game.
+ */
+std::vector<EntityBox> dragonHeadBoxes(bool wall)
+{
+    float lift = wall ? 4.0f : 0.0f;
+    float back = wall ? 0.0f : 2.0f;
+    return {
+        box({ 2.0f, lift, back }, { 14.0f, lift + 12.0f, back + 12.0f }, boxUv(112.0f, 30.0f, 16.0f, 16.0f, 16.0f)),
+        box({ 3.5f, lift + 3.0f, back + 10.5f }, { 12.5f, lift + 6.75f, back + 22.5f }, boxUv(176.0f, 44.0f, 12.0f, 5.0f, 16.0f)),
+        box({ 3.5f, lift, back + 10.5f }, { 12.5f, lift + 3.0f, back + 22.5f }, boxUv(176.0f, 65.0f, 12.0f, 4.0f, 16.0f)),
+    };
+}
+
+/**
+ * A closed shulker box: the base sits a hair inside the lid so the lid wins
+ * where they overlap.
+ */
+std::vector<EntityBox> shulkerBoxBoxes()
+{
+    return {
+        box({ 0.0f, 4.0f, 0.0f }, { 16.0f, 16.0f, 16.0f }, boxUv(0.0f, 0.0f, 16.0f, 12.0f, 16.0f)),
+        box({ 0.1f, 0.0f, 0.1f }, { 15.9f, 8.0f, 15.9f }, boxUv(0.0f, 28.0f, 16.0f, 8.0f, 16.0f)),
+    };
+}
+
 std::vector<EntityBox> bannerBoxes(bool wall)
 {
     std::array<EntityFace, 6> flag = boxUv(0.0f, 0.0f, 20.0f, 40.0f, 1.0f);

@@ -53,7 +53,7 @@ void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::Pac
 void Client::loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
 {
     font.clearPixelPageGlyphs();
-    for (size_t index = 1; index < ui::Font::PixelPageCount; ++index) {
+    for (size_t index = 0; index < ui::Font::PixelPageCount; ++index) {
         std::string name = ui::Font::pixelPageName(index);
         for (const std::shared_ptr<const world::PackFiles>& pack : packs) {
             const std::string* encoded = pack->find(name + ".png");

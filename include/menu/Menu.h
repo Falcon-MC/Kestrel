@@ -399,6 +399,12 @@ public:
 
     bool worldVisible() const;
     bool capturesMouse() const;
+
+    /**
+     * Opens the pause menu when the player was playing: not in chat, a dialog
+     * or a menu screen, and not paused already.
+     */
+    void pauseIfPlaying();
     float captionHeight() const;
 
     bool takeRespawnRequest()
@@ -608,6 +614,7 @@ private:
     AccountRequest accountRequest = AccountRequest::None;
     SessionInfo session;
     std::string cameraInfo;
+    bool debugShown = false;
     HudView hud;
     std::shared_ptr<const ui::JsonUi> hudUi;
     KeyBindings bindings;

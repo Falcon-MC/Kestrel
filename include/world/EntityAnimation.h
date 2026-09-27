@@ -157,6 +157,11 @@ struct AnimationInput {
     float health = 20.0f;
     float maxHealth = 20.0f;
     bool onGround = true;
+    double cameraX = 0.0;
+    double cameraY = 0.0;
+    double cameraZ = 0.0;
+    float cameraYaw = 0.0f;
+    float cameraPitch = 0.0f;
     std::string identifier;
     std::string name;
     std::string mainHandItem;

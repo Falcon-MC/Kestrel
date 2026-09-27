@@ -62,30 +62,8 @@ void FreeCamera::look(const InputState& input, bool captured)
     if (!captured) {
         return;
     }
-    if (orbiting) {
-        orbitYaw -= (facingSubject ? -input.mouseDeltaX : input.mouseDeltaX) * LookSensitivity;
-        orbitPitch = std::clamp(orbitPitch - input.mouseDeltaY * LookSensitivity, -PitchLimit - pitch, PitchLimit - pitch);
-        return;
-    }
     yaw -= input.mouseDeltaX * LookSensitivity;
     pitch = std::clamp(pitch - input.mouseDeltaY * LookSensitivity, -PitchLimit, PitchLimit);
-}
-
-void FreeCamera::setOrbiting(bool orbit)
-{
-    orbiting = orbit;
-    if (!orbit) {
-        orbitYaw = 0.0f;
-        orbitPitch = 0.0f;
-    }
-}
-
-std::array<float, 3> FreeCamera::viewForward() const
-{
-    float viewYaw = yaw + orbitYaw;
-    float viewPitch = pitch + orbitPitch;
-    float cosPitch = std::cos(viewPitch);
-    return { -std::sin(viewYaw) * cosPitch, std::sin(viewPitch), -std::cos(viewYaw) * cosPitch };
 }
 
 void FreeCamera::setPosition(double x, double y, double z)
@@ -125,8 +103,8 @@ float FreeCamera::halfVerticalTangent(float aspect) const
 
 Mat4 FreeCamera::viewProjection(float aspect) const
 {
-    float viewYaw = yaw + orbitYaw + (facingSubject ? 3.14159265f : 0.0f);
-    float viewPitch = facingSubject ? -orbitPitch : pitch + orbitPitch;
+    float viewYaw = yaw + (facingSubject ? 3.14159265f : 0.0f);
+    float viewPitch = facingSubject ? -pitch : pitch;
     float cosPitch = std::cos(viewPitch);
     float fx = -std::sin(viewYaw) * cosPitch;
     float fy = std::sin(viewPitch);

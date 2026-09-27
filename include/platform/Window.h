@@ -31,6 +31,11 @@ public:
     virtual uint32_t height() const = 0;
     virtual float contentScale() const = 0;
     virtual bool consumeResize() = 0;
+
+    /**
+     * True once after the window lost keyboard focus to another window.
+     */
+    virtual bool consumeFocusLost() = 0;
     virtual InputState& input() = 0;
 
     virtual void setChrome(WindowChrome chrome) = 0;

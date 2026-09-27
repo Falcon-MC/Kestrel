@@ -494,17 +494,28 @@ public:
             return chunk->counts[0] || chunk->counts[1];
         }));
 
-        if (view.entityQuadCount) {
-            FrameBuffers& buffers = frameBuffers[frame];
-            size_t bytes = size_t(view.entityQuadCount) * ModelQuadBytes;
-            ensure(buffers.entities, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-            std::memcpy(buffers.entities.mapped, view.entityQuads, bytes);
-            bind(modelPipeline);
+        auto drawEntities = [&](VkPipeline pipeline, uint32_t first, uint32_t count, float maxDepth) {
+            if (count == 0) {
+                return;
+            }
+            bind(pipeline);
+            if (maxDepth < 1.0f) {
+                VkViewport squeezed = viewport;
+                squeezed.maxDepth = maxDepth;
+                vkCmdSetViewport(command, 0, 1, &squeezed);
+            }
             pushOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
             VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(command, 0, 1, &buffers.entities.buffer, &offset);
-            vkCmdDraw(command, 6, view.entityQuadCount, 0, 0);
+            vkCmdBindVertexBuffers(command, 0, 1, &frameBuffers[frame].entities.buffer, &offset);
+            vkCmdDraw(command, 6, count, 0, first);
+        };
+        if (view.entityTotal()) {
+            FrameBuffers& buffers = frameBuffers[frame];
+            size_t bytes = size_t(view.entityTotal()) * ModelQuadBytes;
+            ensure(buffers.entities, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            std::memcpy(buffers.entities.mapped, view.entityQuads, bytes);
         }
+        drawEntities(modelPipeline, 0, view.entityQuadCount, 1.0f);
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
         for (const ChunkBuffer* chunk : visible) {
@@ -524,6 +535,8 @@ public:
             bind(blendPipeline);
             drawStream(*chunk, 2);
         }
+        drawEntities(modelBlendPipeline, view.entityQuadCount, view.entityBlendCount, 1.0f);
+        drawEntities(modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
     void beginFrame(float r, float g, float b) override
