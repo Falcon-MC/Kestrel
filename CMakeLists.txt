@@ -24,11 +24,9 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/mackron/miniaudio.git
     GIT_TAG 0.11.22
     GIT_SHALLOW TRUE
+    SOURCE_SUBDIR headers-only
 )
-FetchContent_GetProperties(miniaudio)
-if(NOT miniaudio_POPULATED)
-    FetchContent_Populate(miniaudio)
-endif()
+FetchContent_MakeAvailable(miniaudio)
 
 set(KESTREL_FALCON_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Directory containing Falcon-NBT, Falcon-Protocol and Falcon-Network")
 if(EXISTS "${KESTREL_FALCON_ROOT}/Falcon-Network/CMakeLists.txt")
@@ -106,10 +104,11 @@ add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(Kestrel PRIVATE FalconNetwork ZLIB::ZLIB)
+file(GLOB KESTREL_MOTION_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/client/motion/*.cpp)
 if(MSVC)
-    set_source_files_properties(src/client/PlayerMotion.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
+    set_source_files_properties(${KESTREL_MOTION_SOURCES} PROPERTIES COMPILE_OPTIONS "/fp:strict")
 else()
-    set_source_files_properties(src/client/PlayerMotion.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
+    set_source_files_properties(${KESTREL_MOTION_SOURCES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
 endif()
 
 if(WIN32)

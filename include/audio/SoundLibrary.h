@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/AudioDecoders.h"
 #include "world/ServerPack.h"
 
 #include <array>
@@ -31,15 +32,6 @@ enum class SoundCategory : uint8_t {
 };
 
 inline constexpr size_t SoundCategoryCount = static_cast<size_t>(SoundCategory::Count);
-
-/**
- * Decoded audio: interleaved float samples at their own rate.
- */
-struct PcmBuffer {
-    uint32_t channels = 1;
-    uint32_t sampleRate = 44100;
-    std::vector<float> samples;
-};
 
 /**
  * One file a sound definition may pick: its path without extension, how loud
@@ -160,9 +152,5 @@ private:
     std::unordered_map<std::string, std::shared_ptr<const PcmBuffer>> cache;
     std::mt19937 random { std::random_device {}() };
 };
-
-bool decodeFsb(const std::string& data, PcmBuffer& out);
-bool decodeWav(const std::string& data, PcmBuffer& out);
-bool decodeOgg(const std::string& data, PcmBuffer& out);
 
 }

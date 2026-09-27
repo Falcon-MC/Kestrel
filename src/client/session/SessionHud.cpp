@@ -1,0 +1,255 @@
+#include "SessionData.h"
+
+#include "Network/BedrockConnection.h"
+#include "Protocol/Packets/InventoryContentPacket.h"
+#include "Protocol/Packets/InventorySlotPacket.h"
+#include "Protocol/Packets/MobEffectPacket.h"
+#include "Protocol/Packets/MobEquipmentPacket.h"
+#include "Protocol/Packets/PlayerHotbarPacket.h"
+#include "Protocol/Packets/SetHealthPacket.h"
+#include "Protocol/Packets/SetPlayerGameTypePacket.h"
+#include "Protocol/Packets/UpdateAttributesPacket.h"
+#include "client/DebugLog.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace kestrel {
+
+namespace {
+
+constexpr int32_t AirDataId = 7;
+constexpr int32_t MaxAirDataId = 42;
+constexpr int32_t InventoryContainer = 0;
+constexpr int32_t OffhandContainer = 119;
+constexpr int32_t ArmorContainer = 120;
+
+/**
+ * The icon texture an item's registry components name under minecraft:icon,
+ * either directly or as its default texture, searched at any depth.
+ */
+std::string componentIcon(const Tag& tag, int depth = 0)
+{
+    if (tag.getType() != Tag::Type::Compound || depth > 6) {
+        return {};
+    }
+    if (const Tag* icon = tag.get("minecraft:icon")) {
+        if (icon->getType() == Tag::Type::String) {
+            return icon->asString();
+        }
+        if (icon->getType() == Tag::Type::Compound) {
+            if (const Tag* texture = icon->get("texture"); texture && texture->getType() == Tag::Type::String) {
+                return texture->asString();
+            }
+            const Tag* textures = icon->get("textures");
+            if (textures && textures->getType() == Tag::Type::Compound) {
+                if (const Tag* fallback = textures->get("default"); fallback && fallback->getType() == Tag::Type::String) {
+                    return fallback->asString();
+                }
+            }
+        }
+    }
+    for (const std::string& key : { std::string("components"), std::string("item_properties") }) {
+        if (const Tag* child = tag.get(key)) {
+            if (std::string found = componentIcon(*child, depth + 1); !found.empty()) {
+                return found;
+            }
+        }
+    }
+    return {};
+}
+
+/**
+ * The HUD view of a network stack: identifier, count, aux, the Damage tag of
+ * tools and armor and the custom name under display.Name.
+ */
+HudItem hudItemOf(const ItemStack& stack)
+{
+    HudItem item;
+    if (stack.isAir() || stack.mCount <= 0) {
+        return item;
+    }
+    item.identifier = stack.mDefinition->getIdentifier();
+    item.count = stack.mCount;
+    item.aux = stack.mDamage;
+    item.icon = componentIcon(stack.mDefinition->getComponentData());
+    if (stack.mTag.getType() != Tag::Type::Compound) {
+        return item;
+    }
+    if (const Tag* damage = stack.mTag.get("Damage"); damage && damage->getType() == Tag::Type::Int) {
+        item.damage = damage->asInt();
+    }
+    const Tag* display = stack.mTag.get("display");
+    if (display && display->getType() == Tag::Type::Compound) {
+        if (const Tag* name = display->get("Name"); name && name->getType() == Tag::Type::String) {
+            item.customName = name->asString();
+        }
+    }
+    return item;
+}
+
+}
+
+/**
+ * Updates the local player's HUD state from inventory, equipment, attribute,
+ * health, game mode, effect and air packets.
+ */
+void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
+{
+    double now = secondsNow();
+    auto slotOf = [&](int32_t container, int32_t slot) -> HudItem* {
+        HudState& hud = current.hud;
+        if (container == InventoryContainer && slot >= 0 && slot < int32_t(hud.inventory.size())) {
+            return &hud.inventory[size_t(slot)];
+        }
+        if (container == ArmorContainer && slot >= 0 && slot < int32_t(hud.armor.size())) {
+            return &hud.armor[size_t(slot)];
+        }
+        if (container == OffhandContainer && slot == 0) {
+            return &hud.offhand;
+        }
+        return nullptr;
+    };
+    if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
+        debugLog("inventory content container " + std::to_string(content->mContainerId) + ", " + std::to_string(content->mContents.size()) + " slots");
+        std::lock_guard<std::mutex> guard(mutex);
+        for (size_t slot = 0; slot < content->mContents.size(); ++slot) {
+            if (HudItem* target = slotOf(content->mContainerId, int32_t(slot))) {
+                *target = hudItemOf(content->mContents[slot]);
+            }
+            if (content->mContainerId == InventoryContainer && slot < inventoryStacks.size()) {
+                inventoryStacks[slot] = content->mContents[slot];
+            }
+        }
+    } else if (auto single = std::dynamic_pointer_cast<InventorySlotPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (HudItem* target = slotOf(single->mContainerId, single->mSlot)) {
+            *target = hudItemOf(single->mItem);
+        }
+        if (single->mContainerId == InventoryContainer && single->mSlot >= 0 && size_t(single->mSlot) < inventoryStacks.size()) {
+            inventoryStacks[size_t(single->mSlot)] = single->mItem;
+        }
+    } else if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
+        if (static_cast<uint64_t>(equipment->mRuntimeActorId) == localRuntimeId && equipment->mContainerId == InventoryContainer && equipment->mHotbarSlot >= 0 && equipment->mHotbarSlot < 9) {
+            std::lock_guard<std::mutex> guard(mutex);
+            if (current.hud.selectedSlot != equipment->mHotbarSlot) {
+                current.hud.selectedSlot = equipment->mHotbarSlot;
+                current.hud.selectedChanged = now;
+            }
+        }
+    } else if (auto hotbar = std::dynamic_pointer_cast<PlayerHotbarPacket>(packet)) {
+        if (hotbar->mSelectHotbarSlot && hotbar->mSelectedHotbarSlot >= 0 && hotbar->mSelectedHotbarSlot < 9) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.hud.selectedSlot = hotbar->mSelectedHotbarSlot;
+            current.hud.selectedChanged = now;
+        }
+    } else if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
+        if (static_cast<uint64_t>(attributes->mRuntimeActorId) != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        HudState& hud = current.hud;
+        for (const AttributeData& attribute : attributes->mAttributes) {
+            if (!std::isfinite(attribute.mValue)) {
+                continue;
+            }
+            if (attribute.mName == "minecraft:health") {
+                if (hud.statsKnown && attribute.mValue < hud.health) {
+                    hud.lastHealthDrop = now;
+                }
+                hud.health = attribute.mValue;
+                hud.maxHealth = std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f ? attribute.mMaximum : 20.0f;
+                hud.statsKnown = true;
+            } else if (attribute.mName == "minecraft:player.hunger") {
+                hud.hunger = attribute.mValue;
+            } else if (attribute.mName == "minecraft:player.saturation") {
+                hud.saturation = attribute.mValue;
+            } else if (attribute.mName == "minecraft:absorption") {
+                hud.absorption = attribute.mValue;
+            } else if (attribute.mName == "minecraft:player.experience") {
+                hud.experience = std::clamp(attribute.mValue, 0.0f, 1.0f);
+            } else if (attribute.mName == "minecraft:player.level") {
+                hud.level = static_cast<int32_t>(attribute.mValue);
+            }
+        }
+    } else if (auto health = std::dynamic_pointer_cast<SetHealthPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (float(health->mHealth) < current.hud.health) {
+            current.hud.lastHealthDrop = now;
+        }
+        current.hud.health = float(health->mHealth);
+        current.hud.statsKnown = true;
+    } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.gameType = mode->mGamemode;
+    } else if (auto effect = std::dynamic_pointer_cast<MobEffectPacket>(packet)) {
+        if (effect->mRuntimeActorId != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        std::vector<HudEffect>& effects = current.hud.effects;
+        std::erase_if(effects, [&](const HudEffect& entry) {
+            return entry.id == effect->mEffectId;
+        });
+        if (effect->mEvent == MobEffectPacket::Event::Add || effect->mEvent == MobEffectPacket::Event::Modify) {
+            HudEffect entry;
+            entry.id = effect->mEffectId;
+            entry.amplifier = effect->mAmplifier;
+            entry.expires = effect->mDuration < 0 ? -1.0 : now + effect->mDuration / 20.0;
+            entry.ambient = effect->mAmbient;
+            effects.push_back(entry);
+        }
+    } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
+        if (static_cast<uint64_t>(data->mRuntimeActorId) != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        for (const EntityDataEntry& entry : data->mMetadata.mEntries) {
+            if (entry.mId == AirDataId && entry.mFormat == EntityDataFormat::Short) {
+                current.hud.air = entry.mShortValue;
+            } else if (entry.mId == MaxAirDataId && entry.mFormat == EntityDataFormat::Short) {
+                current.hud.maxAir = std::max<int32_t>(entry.mShortValue, 1);
+            }
+        }
+    }
+}
+
+/**
+ * Asks the network thread to hold another hotbar slot; the HUD shows it at
+ * once and the server hears about it with the next loop.
+ */
+void Session::selectHotbarSlot(int slot)
+{
+    if (slot < 0 || slot > 8) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (current.hud.selectedSlot == slot) {
+            return;
+        }
+        current.hud.selectedSlot = slot;
+        current.hud.selectedChanged = secondsNow();
+    }
+    requestedSlot = slot;
+}
+
+/**
+ * Tells the server which hotbar slot the local player now holds, carrying the
+ * stack in that slot.
+ */
+void Session::sendSelectedSlot(int slot)
+{
+    if (!connection || slot < 0 || slot > 8) {
+        return;
+    }
+    MobEquipmentPacket packet;
+    packet.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
+    packet.mItem = inventoryStacks[size_t(slot)];
+    packet.mInventorySlot = slot;
+    packet.mHotbarSlot = slot;
+    packet.mContainerId = InventoryContainer;
+    connection->send(packet);
+}
+
+}
