@@ -362,8 +362,9 @@ void PlayerMotion::setGameType(int32_t value)
     }
 }
 
-void PlayerMotion::setEffects(int32_t jumpBoost, int32_t levitation, bool slow)
+void PlayerMotion::setEffects(int32_t jumpBoost, int32_t levitation, bool slow, bool weave)
 {
+    weaving = weave;
     jumpBoostLevel = jumpBoost;
     levitationLevel = levitation;
     slowFalling = slow;
@@ -925,6 +926,17 @@ void PlayerMotion::runGroundAndAir()
     applyKnockback();
     moveRelative(acceleration);
     applyJump();
+    bool scaffoldDescend = false;
+    bool scaffolding = named(blockView(floorInt(feet.x), floorInt(feet.y), floorInt(feet.z)), "scaffolding")
+        || (hasSupportingBlock && named(blockView(supportingBlock[0], supportingBlock[1], supportingBlock[2]), "scaffolding"));
+    if (scaffolding) {
+        if (pressingSneak) {
+            velocity.y = -0.15f;
+            scaffoldDescend = true;
+        } else if (pressingJump) {
+            velocity.y = 0.15f;
+        }
+    }
     applyPowderSnowTraversal();
     applyClimbable();
 
@@ -932,7 +944,9 @@ void PlayerMotion::runGroundAndAir()
     bool powderSnow = !cobweb && insideBlockNamed("powder_snow");
     bool berryBush = !cobweb && !powderSnow && insideBlockNamed("sweet_berry_bush");
     if (cobweb) {
-        velocity = { velocity.x * 0.25f, velocity.y * 0.05f, velocity.z * 0.25f };
+        float horizontal = weaving ? 0.5f : 0.25f;
+        float vertical = weaving ? 0.25f : 0.05f;
+        velocity = { velocity.x * horizontal, velocity.y * vertical, velocity.z * horizontal };
     } else if (powderSnow) {
         velocity = { velocity.x * 0.9f, velocity.y * 1.5f, velocity.z * 0.9f };
     } else if (berryBush) {
@@ -974,10 +988,10 @@ void PlayerMotion::runGroundAndAir()
     float x = velocity.x;
     float y = velocity.y;
     float z = velocity.z;
-    if (levitationLevel > 0) {
+    if (!scaffoldDescend && levitationLevel > 0) {
         float levitationSpeed = LevitationMultiplier * static_cast<float>(levitationLevel);
         y += (levitationSpeed - y) * 0.2f;
-    } else if (affectedByGravity) {
+    } else if (!scaffoldDescend && affectedByGravity) {
         y -= gravity;
         y *= GravityMultiplier;
     }
