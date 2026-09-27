@@ -18,6 +18,7 @@ class DrawList;
 
 struct WidgetState {
     uint64_t active = 0;
+    uint64_t clicks = 0;
 };
 
 struct Interaction {

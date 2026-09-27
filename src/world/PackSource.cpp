@@ -252,6 +252,27 @@ bool PackSource::readArchived(const std::string& archiveName, const std::string&
     return false;
 }
 
+std::vector<std::string> PackSource::readArchivedLayers(const std::string& archiveName, const std::string& name)
+{
+    std::vector<std::string> result;
+    for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
+        if (const std::string* data = overlay->find(archiveName + "/" + name)) {
+            result.push_back(*data);
+        }
+    }
+    for (const fs::path& layer : stack) {
+        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+        if (!source) {
+            continue;
+        }
+        auto found = source->entries.find(name);
+        if (found != source->entries.end()) {
+            result.emplace_back(source->data, source->dataStart + found->second.first, found->second.second);
+        }
+    }
+    return result;
+}
+
 const PackSource::Archive* PackSource::archive(const fs::path& file)
 {
     auto cached = archives.find(file);

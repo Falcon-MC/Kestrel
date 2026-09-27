@@ -76,6 +76,9 @@ Interaction Context::interact(std::string_view id, const Rect& rect)
         state.active = key;
     }
     result.clicked = result.hovered && in.mouseReleased && state.active == key;
+    if (result.clicked) {
+        ++state.clicks;
+    }
     result.pressed = result.hovered && in.mouseDown && state.active == key;
     return result;
 }
