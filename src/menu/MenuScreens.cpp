@@ -731,13 +731,18 @@ void Menu::socialDrawer(Context& ui, float width, float height)
 {
     ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
     Rect panel { width - 229.33f, 24.0f, 186.67f, height - 48.0f };
+    if (socialArmed && dialog == Dialog::None && ui.input().mousePressed && !panel.contains(ui.mouseX(), ui.mouseY())) {
+        socialOpen = false;
+        socialArmed = false;
+        return;
+    }
+    socialArmed = !ui.input().mouseDown;
     ui.fill(panel, Divider);
     Rect inner = panel.inset(2.0f);
     ui.fill(inner, PanelDark);
 
     Rect search { inner.x + 2.0f, inner.y + 2.0f, inner.w - 29.0f, 22.67f };
     textField(ui, "social:search", "Search for people", {}, search, false);
-    ui.sprite({ search.x + 4.0f, search.y + 7.0f, 8.0f, 8.0f }, "hbui/Search", Muted1);
     Rect close { search.right() + 2.0f, search.y, 23.0f, 22.67f };
     if (ui.pressable("social:close", "pressableElevatedSecondary", close).clicked) {
         socialOpen = false;

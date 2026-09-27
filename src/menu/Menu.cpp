@@ -415,7 +415,7 @@ void Menu::title(Context& ui, float width, float height)
         navigate(Screen::Marketplace);
     }
 
-    if (iconButton(ui, "title:social", "Social (0)", "ui/FriendsIcon", { width - 48.0f - 80.0f, 29.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "title:social", "Social (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
         socialParty = false;
     }
@@ -470,7 +470,7 @@ void Menu::pause(Context& ui, float width, float height)
         disconnectRequested = true;
     }
 
-    if (iconButton(ui, "pause:social", "Social (0)", "ui/FriendsIcon", { width - 48.0f - 80.0f, 29.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "pause:social", "Social (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
     }
     float dressingX = width - 158.0f;
