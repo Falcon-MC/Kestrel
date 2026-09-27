@@ -1,5 +1,6 @@
 #include "menu/Menu.h"
 
+#include "platform/Shell.h"
 #include "ui/Context.h"
 #include "ui/Localization.h"
 #include "ui/Theme.h"
@@ -192,9 +193,68 @@ void Menu::profileCard(Context& ui, const Rect& card)
 
     Rect more { card.x + 174.0f, card.y + 150.0f, 23.0f, 22.0f };
     if (ui.pressableButton("profile:more", "pressableElevatedSecondary", "", more)) {
-        notify("TODO: Profile options");
+        dialog = Dialog::ProfileOptions;
     }
     ui.sprite({ more.x + 5.5f, std::round(more.y + (more.h - 12.0f) * 0.5f) - 1.0f, 12.0f, 12.0f }, "hbui/options@0.5x.icon", InkDark);
+}
+
+/**
+ * The account options window of the profile: share the profile link, sign
+ * out of the Microsoft account, or open the online privacy and safety page.
+ */
+void Menu::profileOptions(Context& ui, float width, float height)
+{
+    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    constexpr float WindowWidth = 235.0f;
+    constexpr float TitleHeight = 24.0f;
+    constexpr float OptionHeight = 24.0f;
+    Rect frame { std::round((width - WindowWidth) * 0.5f), std::round(height * 0.5f - 49.0f), WindowWidth, TitleHeight + 1.0f + (OptionHeight + 1.0f) * 3.0f };
+    ui.fill(frame, Secondary);
+    Rect inner = frame.inset(1.0f);
+    ui.fill({ inner.x, inner.y, inner.w, TitleHeight - 1.0f }, PanelDark);
+    ui.textCentered(tr("hbui.PlayerOptionsModal.optionsTitle", "Account Options"), TextStyle::Ui, { inner.x, inner.y, inner.w, TitleHeight - 1.0f }, White);
+    Rect close { inner.right() - 20.0f, inner.y + 3.0f, 16.0f, 16.0f };
+    Interaction closeState = ui.interact("profile:options:close", close);
+    ui.sprite({ close.x + 4.0f, close.y + 4.0f, 8.0f, 8.0f }, "hbui/Close", closeState.hovered ? White : Muted0);
+    if (closeState.clicked) {
+        dialog = Dialog::None;
+    }
+
+    struct Option {
+        const char* id;
+        std::string label;
+        bool external;
+    };
+    const Option options[] = {
+        { "share", tr("hbui.PlayerOptionsModal.shareMyProfile", "Share My Profile"), false },
+        { "signout", tr("hbui.PlayerOptionsModal.signOut", "Sign Out"), false },
+        { "privacy", tr("hbui.PlayerOptionsModal.privacyAndSafety", "Online Safety and Privacy"), true },
+    };
+    float y = inner.y + TitleHeight;
+    for (const Option& option : options) {
+        Rect row { inner.x, y, inner.w, OptionHeight };
+        Interaction state = ui.interact(std::string("profile:options:") + option.id, row);
+        ui.fill(row, state.hovered ? Color { 0x58, 0x59, 0x5a, 255 } : Panel);
+        float x = row.x + 8.0f;
+        if (option.external) {
+            ui.sprite({ x, std::round(row.y + (row.h - 12.0f) * 0.5f), 12.0f, 12.0f }, "hbui/ExternalLink");
+            x += 16.0f;
+        }
+        ui.text(option.label, TextStyle::Ui, x, std::round(row.y + (row.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White);
+        if (state.clicked) {
+            dialog = Dialog::None;
+            if (std::string_view(option.id) == "share") {
+                platform::copyText("https://www.xbox.com/play/user/" + displayName);
+                notify("Profile link copied");
+            } else if (std::string_view(option.id) == "signout") {
+                accountRequest = AccountRequest::SignOut;
+                navigate(Screen::Title);
+            } else {
+                platform::openUrl("https://www.xbox.com/family-toolbox/online-safety");
+            }
+        }
+        y += OptionHeight + 1.0f;
+    }
 }
 
 void Menu::profileSummary(Context& ui, const Rect& area)

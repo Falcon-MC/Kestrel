@@ -841,11 +841,22 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                     }
                 }
                 uint32_t material = materials[face];
-                if (material == DiagnosticMaterial) {
+                uint32_t second = material;
+                if (name == "seagrass") {
+                    std::string type = stateString(record.states, "sea_grass_type");
+                    if (type == "double_bot") {
+                        material = materials[models::Down];
+                        second = materials[models::South];
+                    } else if (type == "double_top") {
+                        material = materials[models::North];
+                        second = materials[models::West];
+                    }
+                }
+                if (material == DiagnosticMaterial || second == DiagnosticMaterial) {
                     break;
                 }
-                modelTemplate = intern(keyOf("cross", uniform(face), {}), [&] {
-                    pushTemplate(models::cross(material, material), 0);
+                modelTemplate = intern(keyOf("cross", uniform(face), { material, second }), [&] {
+                    pushTemplate(models::cross(material, second), 0);
                 });
                 break;
             }
