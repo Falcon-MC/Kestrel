@@ -95,7 +95,7 @@ std::vector<Menu::ServerRow> Menu::featuredRows(ServerGroup group) const
         if (!creator && status != serverStatus.end() && status->second.online && !status->second.motd.empty()) {
             detail = status->second.motd;
         }
-        rows.push_back({ group, i, entry.name, creator ? ExperiencePrefix + entry.id : entry.address, std::move(detail), entry.icon });
+        rows.push_back({ group, i, entry.name, ExperiencePrefix + entry.id, std::move(detail), entry.icon });
     }
     return rows;
 }
@@ -552,6 +552,32 @@ void Menu::featuredDetail(Context& ui, const Rect& area, const FeaturedEntry& en
         ui.text(tr("hbui.PlayScreen.serverTab.ServerDescription.title", "Description"), TextStyle::UiSmall, x, y, Muted0);
         y += 13.0f;
         y += ui.paragraph(entry.description, TextStyle::Body, x, y, width, White) + 8.0f;
+    }
+    if (!entry.games.empty()) {
+        divider(ui, area.x, y, area.w);
+        y += 8.0f;
+        ui.text(tr("hbui.PlayScreen.serverTab.Activities", "Activities"), TextStyle::UiSmall, x, y, Muted0);
+        y += 13.0f;
+        constexpr float CardImageWidth = 96.0f;
+        constexpr float CardImageHeight = 54.0f;
+        float textX = x + CardImageWidth + 8.0f;
+        float textWidth = width - CardImageWidth - 8.0f;
+        for (const FeaturedGameEntry& game : entry.games) {
+            Rect picture { x, y, CardImageWidth, CardImageHeight };
+            ui.fill(picture, InkDark);
+            if (!game.image.empty()) {
+                ui.sprite(picture, game.image);
+            }
+            float textY = y;
+            ui.text(game.title, TextStyle::Ui, textX, textY, White, textWidth);
+            textY += 12.0f;
+            if (!game.subtitle.empty()) {
+                ui.text(game.subtitle, TextStyle::UiSmall, textX, textY, Muted0, textWidth);
+                textY += 11.0f;
+            }
+            textY += ui.paragraph(game.description, TextStyle::BodySmall, textX, textY + 2.0f, textWidth, Muted1) + 2.0f;
+            y = std::max(picture.bottom(), textY) + 8.0f;
+        }
     }
     if (!entry.newsTitle.empty() || !entry.news.empty()) {
         divider(ui, area.x, y, area.w);

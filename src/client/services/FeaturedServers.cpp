@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <random>
 
 namespace kestrel {
@@ -74,17 +75,18 @@ std::string localized(const json::Value* strings, const std::string& language)
 }
 
 /**
- * Picks the icon and the showcase screenshots out of an item's images. The
- * catalog is loose about types, so icons and banners filed as screenshots
- * are skipped by their tag.
+ * Picks the icon, the showcase screenshots and the game card pictures out of
+ * an item's images. The catalog is loose about types, so icons and banners
+ * filed as screenshots are skipped by their tag.
  */
-void readImages(const json::Value* images, FeaturedServer& server)
+void readImages(const json::Value* images, const json::Value* games, FeaturedServer& server)
 {
     if (!images) {
         return;
     }
     std::string thumbnail;
     std::vector<std::string> activities;
+    std::map<std::string, std::string> byTag;
     for (const std::unique_ptr<json::Value>& image : images->mArray) {
         std::string type = text(image->get("Type"));
         std::string tag = text(image->get("Tag"));
@@ -92,6 +94,7 @@ void readImages(const json::Value* images, FeaturedServer& server)
         if (url.empty()) {
             continue;
         }
+        byTag.emplace(tag, url);
         if (type == "Icon") {
             server.iconUrl = url;
         } else if (type == "Thumbnail") {
@@ -107,6 +110,19 @@ void readImages(const json::Value* images, FeaturedServer& server)
     }
     if (server.showcaseUrls.empty()) {
         server.showcaseUrls = std::move(activities);
+    }
+    if (!games) {
+        return;
+    }
+    for (const std::unique_ptr<json::Value>& game : games->mArray) {
+        FeaturedGame& card = server.games.emplace_back();
+        card.title = text(game->get("title"));
+        card.subtitle = text(game->get("subtitle"));
+        card.description = text(game->get("description"));
+        auto image = byTag.find(text(game->get("imageTag")));
+        if (image != byTag.end()) {
+            card.imageUrl = image->second;
+        }
     }
 }
 
@@ -294,7 +310,7 @@ void FeaturedServers::fetchList(const std::string& language)
             const json::Value* port = path(display, { "port" });
             server.address = host + ":" + std::to_string(port ? static_cast<int>(port->number(19132)) : 19132);
         }
-        readImages(item->get("Images"), server);
+        readImages(item->get("Images"), path(display, { "availableGames" }), server);
         if (!server.id.empty() && !server.name.empty()) {
             servers.push_back(std::move(server));
         }

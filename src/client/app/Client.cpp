@@ -343,6 +343,9 @@ void Client::syncFeatured()
                 for (const std::string& url : server.showcaseUrls) {
                     featured->requestImage(url, true);
                 }
+                for (const FeaturedGame& game : server.games) {
+                    featured->requestImage(game.imageUrl, true);
+                }
             }
         }
     }
@@ -377,6 +380,9 @@ void Client::syncFeatured()
             if (std::string name = sprite(url); !name.empty()) {
                 entry.showcase.push_back(std::move(name));
             }
+        }
+        for (const FeaturedGame& game : server.games) {
+            entry.games.push_back({ game.title, game.subtitle, game.description, sprite(game.imageUrl) });
         }
     }
     menu.setFeatured(std::move(entries), !featuredListed);
