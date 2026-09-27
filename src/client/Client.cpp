@@ -286,6 +286,7 @@ int Client::run()
             Profiler::Section section(profiler, "camera");
             bool captured = menu.capturesMouse();
             window->setMouseCaptured(captured);
+            camera.setBaseFov(static_cast<float>(menu.fov()));
             if (playerView.active) {
                 const InputState& keys = window->input();
                 const KeyBindings& bindings = menu.keyBindings();
@@ -422,7 +423,7 @@ int Client::run()
         if (std::optional<bool> answer = menu.takePackAnswer()) {
             session.answerResourcePacks(*answer);
         }
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov) {
             saveSettings();
         }
         if (menu.quitRequested()) {
@@ -1237,6 +1238,8 @@ void Client::loadSettings()
         } else if (key == "maxFps") {
             int parsed = std::atoi(value.c_str());
             menu.setMaxFps(parsed == menu::UnlimitedFps ? parsed : std::clamp(parsed, menu::MinMaxFps, menu::MaxMaxFps));
+        } else if (key == "fov") {
+            menu.setFov(std::clamp(std::atoi(value.c_str()), menu::MinFov, menu::MaxFov));
         }
         for (size_t i = 0; i < KeyBindings::Count; ++i) {
             if (key == std::string("key.") + KeyBindings::id(i)) {
@@ -1252,6 +1255,7 @@ void Client::loadSettings()
     savedBindings = bindings;
     savedRenderDistance = menu.renderDistance();
     savedMaxFps = menu.maxFps();
+    savedFov = menu.fov();
 }
 
 void Client::saveSettings()
@@ -1260,6 +1264,7 @@ void Client::saveSettings()
     file << "interfaceScale=" << menu.interfaceScale() << '\n';
     file << "renderDistance=" << menu.renderDistance() << '\n';
     file << "maxFps=" << menu.maxFps() << '\n';
+    file << "fov=" << menu.fov() << '\n';
     const KeyBindings& current = menu.keyBindings();
     for (size_t i = 0; i < KeyBindings::Count; ++i) {
         file << "key." << KeyBindings::id(i) << '=' << keyName(current.keys[i]) << '\n';
@@ -1268,6 +1273,7 @@ void Client::saveSettings()
     savedBindings = current;
     savedRenderDistance = menu.renderDistance();
     savedMaxFps = menu.maxFps();
+    savedFov = menu.fov();
 }
 
 }

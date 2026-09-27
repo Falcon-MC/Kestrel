@@ -683,6 +683,15 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
+        settingsRow(ui, x, y, w, "Field of view", "How wide the view is, in degrees", 44.0f);
+        std::string degrees = std::to_string(fieldOfView);
+        ui.text(degrees, TextStyle::Ui, x + w - 12.0f - ui.measure(degrees, TextStyle::Ui), rowY + 7.0f, White);
+        float fovFraction = float(fieldOfView - MinFov) / float(MaxFov - MinFov);
+        if (slider(ui, "video:fov", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fovFraction)) {
+            fieldOfView = MinFov + int(std::lround(fovFraction * float(MaxFov - MinFov)));
+        }
+
+        rowY = y;
         settingsRow(ui, x, y, w, "Max framerate", "Caps how many frames are drawn each second", 44.0f);
         int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
         int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;

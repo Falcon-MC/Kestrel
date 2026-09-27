@@ -28,6 +28,9 @@ inline constexpr int MaxMaxFps = 240;
 inline constexpr int MaxFpsStep = 10;
 inline constexpr int UnlimitedFps = 0;
 inline constexpr int DefaultMaxFps = 120;
+inline constexpr int MinFov = 30;
+inline constexpr int MaxFov = 110;
+inline constexpr int DefaultFov = 90;
 
 enum class Screen {
     Title,
@@ -220,6 +223,16 @@ public:
     int maxFps() const
     {
         return fpsLimit;
+    }
+
+    int fov() const
+    {
+        return fieldOfView;
+    }
+
+    void setFov(int degrees)
+    {
+        fieldOfView = degrees;
     }
 
     const std::string& playerName() const
@@ -431,6 +444,7 @@ private:
     float scale = 1.0f;
     int chunkDistance = DefaultRenderDistance;
     int fpsLimit = DefaultMaxFps;
+    int fieldOfView = DefaultFov;
     bool quit = false;
 };
 
