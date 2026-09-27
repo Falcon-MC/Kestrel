@@ -555,8 +555,13 @@ void Menu::title(Context& ui, float width, float height)
         notify("TODO: Inbox");
     }
     const Sprite& avatar = ui.skin().sprite("dynamic/avatar");
-    if (iconButton(ui, "title:profile", tr("menu.profile", "Profile"), avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { cornerLeft + 31.0f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
-        navigate(Screen::Profile);
+    std::string profileLabel = signedIn() ? tr("menu.profile", "Profile") : tr("menu.account.signIn.buttonLabel", "Sign In");
+    if (iconButton(ui, "title:profile", profileLabel, avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { cornerLeft + 31.0f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
+        if (signedIn()) {
+            navigate(Screen::Profile);
+        } else {
+            beginSignIn();
+        }
     }
 
     float dressingX = width - 158.0f;
