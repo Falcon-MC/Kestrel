@@ -334,11 +334,12 @@ void WorldStream::handle(const UpdateSubChunkBlocksPacket& packet)
 /**
  * Every column the server has announced around its publisher center has
  * arrived. The edge ring is left out because servers round the circle
- * differently.
+ * differently. Some servers announce a publisher radius wider than the chunk
+ * radius they agreed to and never send the difference, so the smaller wins.
  */
 bool WorldStream::cohortLoaded() const
 {
-    int32_t radius = publisherRadius > 0 ? publisherRadius : chunkRadius;
+    int32_t radius = publisherRadius > 0 && chunkRadius > 0 ? std::min(publisherRadius, chunkRadius) : std::max(publisherRadius, chunkRadius);
     if (radius <= 0) {
         return false;
     }
