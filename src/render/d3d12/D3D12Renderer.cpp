@@ -98,7 +98,8 @@ SamplerState blockSampler : register(s0);
 
 struct WorldIn
 {
-    uint3 quad : QUAD;
+    uint4 quad : QUAD0;
+    uint ao : QUAD1;
     uint vertexId : SV_VertexID;
 };
 
@@ -110,7 +111,21 @@ struct WorldOut
     float shade : TEXCOORD2;
     float3 relative : TEXCOORD3;
     nointerpolation uint tint : TEXCOORD4;
+    float3 light : TEXCOORD5;
 };
+
+static const float lightCurve[16] = {
+    0.0, 0.01754386, 0.037037037, 0.05882353,
+    0.083333336, 0.11111111, 0.14285715, 0.17948718,
+    0.22222222, 0.27272728, 0.33333334, 0.4074074,
+    0.5, 0.61904764, 0.7777778, 1.0 };
+
+float3 cornerLight(uint light, uint ao, uint corner)
+{
+    uint levels = (light >> (corner * 8)) & 0xff;
+    float occlusion = 1.0 - float((ao >> (corner * 2)) & 3) * 0.12;
+    return float3(lightCurve[levels & 0xf], lightCurve[levels >> 4], occlusion);
+}
 
 float3 quadCorner(uint face, uint corner, float3 o, float w, float h)
 {
@@ -173,6 +188,7 @@ WorldOut vs_world(WorldIn input)
     output.shade = faceShade[face];
     output.relative = position;
     output.tint = input.quad.z;
+    output.light = cornerLight(input.quad.w, input.ao, corner);
     return output;
 }
 
@@ -181,6 +197,7 @@ struct ModelIn
     uint4 a : MODEL0;
     uint4 b : MODEL1;
     uint4 c : MODEL2;
+    uint4 d : MODEL3;
     uint vertexId : SV_VertexID;
 };
 
@@ -203,11 +220,15 @@ WorldOut vs_model(ModelIn input)
     float3 position = origin.xyz + local;
     output.position = mul(viewProjection, float4(position, 1.0));
     output.uv = float2(uvWord & 0xffff, uvWord >> 16) / 4096.0;
+    if ((words[11] & 0x10) != 0) {
+        output.uv.y -= frac(origin.w / 32.0);
+    }
     output.material = words[10];
-    output.shade = faceShade[min(words[11] & 0xff, 6u)];
+    output.shade = faceShade[min(words[11] & 0xf, 6u)];
     output.relative = position;
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
+    output.light = cornerLight(input.d.x, input.d.y, corner);
     return output;
 }
 
@@ -226,9 +247,11 @@ float4 sampleMaterial(uint material, float2 uv)
     return texel;
 }
 
-float3 shadeWorld(float3 rgb, float shade, float3 relative)
+float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
 {
-    float light = lerp(0.04, 1.0, max(saturate(params.y), 0.2));
+    float daylight = max(saturate(params.y), 0.2);
+    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(fog.w, params.x, length(relative));
     return lerp(color, fog.rgb, amount);
@@ -252,7 +275,7 @@ float4 ps_world(WorldOut input) : SV_Target
     if (texel.a < 0.5) {
         discard;
     }
-    return float4(shadeWorld(texel.rgb, input.shade, input.relative), 1.0);
+    return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light), 1.0);
 }
 
 float4 ps_blend(WorldOut input) : SV_Target
@@ -261,7 +284,7 @@ float4 ps_blend(WorldOut input) : SV_Target
     if (texel.a < 0.004) {
         discard;
     }
-    return float4(shadeWorld(texel.rgb, input.shade, input.relative) * texel.a, texel.a);
+    return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light) * texel.a, texel.a);
 }
 
 struct SkyIn
@@ -1010,7 +1033,8 @@ private:
         ComPtr<ID3DBlob> pixelShader = compile(WorldShader, sizeof(WorldShader) - 1, "ps_world", "ps_5_0");
 
         D3D12_INPUT_ELEMENT_DESC layout[] = {
-            { "QUAD", 0, DXGI_FORMAT_R32G32B32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+            { "QUAD", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+            { "QUAD", 1, DXGI_FORMAT_R32_UINT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         };
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineDesc {};
@@ -1039,6 +1063,7 @@ private:
             { "MODEL", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
             { "MODEL", 1, DXGI_FORMAT_R32G32B32A32_UINT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
             { "MODEL", 2, DXGI_FORMAT_R32G32B32A32_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+            { "MODEL", 3, DXGI_FORMAT_R32G32B32A32_UINT, 0, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         };
         pipelineDesc.VS = { modelShader->GetBufferPointer(), modelShader->GetBufferSize() };
         pipelineDesc.InputLayout = { modelLayout, static_cast<UINT>(std::size(modelLayout)) };

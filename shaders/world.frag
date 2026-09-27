@@ -15,6 +15,7 @@ layout(location = 1) flat in uint inMaterial;
 layout(location = 2) in float inShade;
 layout(location = 3) in vec3 inRelative;
 layout(location = 4) flat in uint inTint;
+layout(location = 5) in vec3 inLight;
 
 layout(location = 0) out vec4 outColor;
 
@@ -35,7 +36,9 @@ vec4 sampleMaterial(uint material, vec2 uv)
 
 vec3 shadeWorld(vec3 rgb)
 {
-    float light = mix(0.04, 1.0, max(clamp(draw.params.y, 0.0, 1.0), 0.2));
+    float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
+    float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
+    float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
     vec3 color = rgb * inShade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(inRelative));
     return mix(color, draw.fog.rgb, amount);

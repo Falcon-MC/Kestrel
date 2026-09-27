@@ -69,6 +69,10 @@ struct BlockVisual {
     std::array<uint32_t, 6> faces {};
     uint32_t modelTemplate = NoModelTemplate;
     uint32_t variant = 0;
+    uint8_t liquid = 0;
+    uint8_t liquidLevel = 0;
+    uint8_t lightEmission = 0;
+    uint8_t lightFilter = 0;
 
     bool emitsCubeGeometry() const
     {

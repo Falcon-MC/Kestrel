@@ -356,6 +356,10 @@ void Session::scheduleMeshes()
             continue;
         }
 
+        world::DimensionRange range;
+        if (!world::vanillaDimensionRange(key.dimension, range)) {
+            range = { key.y, 32 };
+        }
         world::MeshInput input;
         input.center = std::move(center);
         for (size_t face = 0; face < 6; ++face) {
@@ -364,8 +368,17 @@ void Session::scheduleMeshes()
         for (int32_t dz = -1; dz <= 1; ++dz) {
             for (int32_t dx = -1; dx <= 1; ++dx) {
                 input.biomes[size_t((dz + 1) * 3 + (dx + 1))] = world.store().biomes({ key.dimension, key.x + dx, key.y, key.z + dz });
+                for (int32_t dy = -1; dy <= 1; ++dy) {
+                    input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + (dz + 1))] = world.store().subChunk({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+                }
+                for (int32_t y = key.y + 2; y < range.baseSubChunkY + range.subChunkCount; ++y) {
+                    if (std::shared_ptr<const world::SubChunk> above = world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz })) {
+                        input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(std::move(above));
+                    }
+                }
             }
         }
+        input.skyLight = key.dimension == 0;
         mesher->submit(key, generation, std::move(input), assets, ids);
     }
 }

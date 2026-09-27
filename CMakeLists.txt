@@ -39,6 +39,8 @@ falcon_bedrock_data_embed_binary(FILE block_palette.nbt NAMESPACE KestrelBlockPa
         SYMBOL kBlockPaletteNbt OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockPaletteNbt.h")
 falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlockDefinitionData
         SYMBOL kBlockDefinitionsNbt OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockDefinitionsNbt.h")
+falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLightData
+        SYMBOL kBlockLightJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockLightJson.h")
 
 find_package(ZLIB REQUIRED)
 

@@ -11,12 +11,27 @@ layout(push_constant) uniform Draw {
 layout(location = 0) in uvec4 inA;
 layout(location = 1) in uvec4 inB;
 layout(location = 2) in uvec4 inC;
+layout(location = 3) in uvec4 inD;
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
 layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
+layout(location = 5) out vec3 outLight;
+
+const float lightCurve[16] = float[16](
+    0.0, 0.01754386, 0.037037037, 0.05882353,
+    0.083333336, 0.11111111, 0.14285715, 0.17948718,
+    0.22222222, 0.27272728, 0.33333334, 0.4074074,
+    0.5, 0.61904764, 0.7777778, 1.0);
+
+vec3 cornerLight(uint light, uint ao, uint corner)
+{
+    uint levels = (light >> (corner * 8u)) & 0xffu;
+    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
+    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+}
 
 void main()
 {
@@ -37,9 +52,13 @@ void main()
     gl_Position = draw.viewProjection * vec4(position, 1.0);
     gl_Position.y = -gl_Position.y;
     outUv = vec2(float(uvWord & 0xffffu), float(uvWord >> 16)) / 4096.0;
+    if ((words[11] & 0x10u) != 0u) {
+        outUv.y -= fract(draw.origin.w / 32.0);
+    }
     outMaterial = words[10];
-    outShade = faceShade[min(words[11] & 0xffu, 6u)];
+    outShade = faceShade[min(words[11] & 0xfu, 6u)];
     outRelative = position;
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
+    outLight = cornerLight(inD.x, inD.y, corner);
 }

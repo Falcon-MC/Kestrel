@@ -70,7 +70,8 @@ constexpr char WorldShader[] = R"(
 using namespace metal;
 
 struct WorldIn {
-    uint3 quad [[attribute(0)]];
+    uint4 quad [[attribute(0)]];
+    uint ao [[attribute(1)]];
 };
 
 struct DrawData {
@@ -88,7 +89,21 @@ struct WorldOut {
     float shade;
     float3 relative;
     uint tint [[flat]];
+    float3 light;
 };
+
+constant float lightCurve[16] = {
+    0.0, 0.01754386, 0.037037037, 0.05882353,
+    0.083333336, 0.11111111, 0.14285715, 0.17948718,
+    0.22222222, 0.27272728, 0.33333334, 0.4074074,
+    0.5, 0.61904764, 0.7777778, 1.0 };
+
+float3 cornerLight(uint light, uint ao, uint corner)
+{
+    uint levels = (light >> (corner * 8)) & 0xff;
+    float occlusion = 1.0 - float((ao >> (corner * 2)) & 3) * 0.12;
+    return float3(lightCurve[levels & 0xf], lightCurve[levels >> 4], occlusion);
+}
 
 float4 applyTint(float4 texel, uint tint)
 {
@@ -163,6 +178,7 @@ vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]
     out.shade = faceShade[face];
     out.relative = position;
     out.tint = in.quad.z;
+    out.light = cornerLight(in.quad.w, in.ao, corner);
     return out;
 }
 
@@ -170,6 +186,7 @@ struct ModelIn {
     uint4 a [[attribute(0)]];
     uint4 b [[attribute(1)]];
     uint4 c [[attribute(2)]];
+    uint4 d [[attribute(3)]];
 };
 
 vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
@@ -191,11 +208,15 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     float3 position = draw.origin.xyz + local;
     out.position = draw.viewProjection * float4(position, 1.0);
     out.uv = float2(float(uvWord & 0xffff), float(uvWord >> 16)) / 4096.0;
+    if ((words[11] & 0x10u) != 0) {
+        out.uv.y -= fract(draw.origin.w / 32.0);
+    }
     out.material = words[10];
-    out.shade = faceShade[min(words[11] & 0xffu, 6u)];
+    out.shade = faceShade[min(words[11] & 0xfu, 6u)];
     out.relative = position;
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
+    out.light = cornerLight(in.d.x, in.d.y, corner);
     return out;
 }
 
@@ -214,9 +235,11 @@ float4 sampleMaterial(texture2d_array<float> blocks, sampler blockSampler, const
     return texel;
 }
 
-float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative)
+float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative, float3 cornerLevels)
 {
-    float light = mix(0.04, 1.0, max(saturate(draw.params.y), 0.2));
+    float daylight = max(saturate(draw.params.y), 0.2);
+    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(relative));
     return mix(color, draw.fog.rgb, amount);
@@ -228,7 +251,7 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     if (texel.a < 0.004) {
         discard_fragment();
     }
-    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative) * texel.a, texel.a);
+    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light) * texel.a, texel.a);
 }
 
 struct SkyIn {
@@ -296,7 +319,7 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     if (texel.a < 0.5) {
         discard_fragment();
     }
-    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative), 1.0);
+    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
 }
 )";
 
@@ -546,9 +569,12 @@ private:
         }
 
         MTLVertexDescriptor* vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
-        vertexDescriptor.attributes[0].format = MTLVertexFormatUInt3;
+        vertexDescriptor.attributes[0].format = MTLVertexFormatUInt4;
         vertexDescriptor.attributes[0].offset = 0;
         vertexDescriptor.attributes[0].bufferIndex = 0;
+        vertexDescriptor.attributes[1].format = MTLVertexFormatUInt;
+        vertexDescriptor.attributes[1].offset = 16;
+        vertexDescriptor.attributes[1].bufferIndex = 0;
         vertexDescriptor.layouts[0].stride = CubeQuadBytes;
         vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerInstance;
         vertexDescriptor.layouts[0].stepRate = 1;
@@ -565,7 +591,7 @@ private:
         }
 
         MTLVertexDescriptor* modelDescriptor = [MTLVertexDescriptor vertexDescriptor];
-        for (NSUInteger attribute = 0; attribute < 3; ++attribute) {
+        for (NSUInteger attribute = 0; attribute < 4; ++attribute) {
             modelDescriptor.attributes[attribute].format = MTLVertexFormatUInt4;
             modelDescriptor.attributes[attribute].offset = attribute * 16;
             modelDescriptor.attributes[attribute].bufferIndex = 0;

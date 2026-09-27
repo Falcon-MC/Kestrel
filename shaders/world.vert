@@ -8,13 +8,28 @@ layout(push_constant) uniform Draw {
     vec4 sun;
 } draw;
 
-layout(location = 0) in uvec3 inQuad;
+layout(location = 0) in uvec4 inQuad;
+layout(location = 1) in uint inAo;
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
 layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
+layout(location = 5) out vec3 outLight;
+
+const float lightCurve[16] = float[16](
+    0.0, 0.01754386, 0.037037037, 0.05882353,
+    0.083333336, 0.11111111, 0.14285715, 0.17948718,
+    0.22222222, 0.27272728, 0.33333334, 0.4074074,
+    0.5, 0.61904764, 0.7777778, 1.0);
+
+vec3 cornerLight(uint light, uint ao, uint corner)
+{
+    uint levels = (light >> (corner * 8u)) & 0xffu;
+    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
+    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+}
 
 vec3 quadCorner(uint face, uint corner, vec3 o, float w, float h)
 {
@@ -77,4 +92,5 @@ void main()
     outShade = faceShade[face];
     outRelative = position;
     outTint = inQuad.z;
+    outLight = cornerLight(inQuad.w, inAo, corner);
 }

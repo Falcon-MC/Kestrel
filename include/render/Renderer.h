@@ -34,8 +34,8 @@ struct ChunkMeshUpload {
     uint32_t translucentModelCount = 0;
 };
 
-inline constexpr uint32_t CubeQuadBytes = 12;
-inline constexpr uint32_t ModelQuadBytes = 48;
+inline constexpr uint32_t CubeQuadBytes = 20;
+inline constexpr uint32_t ModelQuadBytes = 64;
 
 enum SkyVertexFlag : uint32_t {
     SkyTextured = 1 << 0,

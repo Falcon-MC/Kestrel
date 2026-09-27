@@ -694,12 +694,15 @@ private:
         stages[1].pName = "main";
 
         VkVertexInputBindingDescription vertexBinding { 0, CubeQuadBytes, VK_VERTEX_INPUT_RATE_INSTANCE };
-        VkVertexInputAttributeDescription attribute { 0, 0, VK_FORMAT_R32G32B32_UINT, 0 };
+        VkVertexInputAttributeDescription attributes[] = {
+            { 0, 0, VK_FORMAT_R32G32B32A32_UINT, 0 },
+            { 1, 0, VK_FORMAT_R32_UINT, 16 },
+        };
         VkPipelineVertexInputStateCreateInfo vertexInput { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &vertexBinding;
-        vertexInput.vertexAttributeDescriptionCount = 1;
-        vertexInput.pVertexAttributeDescriptions = &attribute;
+        vertexInput.vertexAttributeDescriptionCount = 2;
+        vertexInput.pVertexAttributeDescriptions = attributes;
 
         VkPipelineInputAssemblyStateCreateInfo assembly { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
         assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -768,11 +771,12 @@ private:
             { 0, 0, VK_FORMAT_R32G32B32A32_UINT, 0 },
             { 1, 0, VK_FORMAT_R32G32B32A32_UINT, 16 },
             { 2, 0, VK_FORMAT_R32G32B32A32_UINT, 32 },
+            { 3, 0, VK_FORMAT_R32G32B32A32_UINT, 48 },
         };
         VkPipelineVertexInputStateCreateInfo modelInput { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
         modelInput.vertexBindingDescriptionCount = 1;
         modelInput.pVertexBindingDescriptions = &modelBinding;
-        modelInput.vertexAttributeDescriptionCount = 3;
+        modelInput.vertexAttributeDescriptionCount = 4;
         modelInput.pVertexAttributeDescriptions = modelAttributes;
         info.pVertexInputState = &modelInput;
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &modelPipeline), "vkCreateGraphicsPipelines");

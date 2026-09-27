@@ -152,12 +152,17 @@ std::vector<SubChunkKey> ChunkStore::takeDirty()
 void ChunkStore::markDirty(const SubChunkKey& key)
 {
     dirty.insert(key);
-    dirty.insert({ key.dimension, key.x - 1, key.y, key.z });
-    dirty.insert({ key.dimension, key.x + 1, key.y, key.z });
-    dirty.insert({ key.dimension, key.x, key.y - 1, key.z });
-    dirty.insert({ key.dimension, key.x, key.y + 1, key.z });
-    dirty.insert({ key.dimension, key.x, key.y, key.z - 1 });
-    dirty.insert({ key.dimension, key.x, key.y, key.z + 1 });
+    for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            auto column = columnsByKey.find({ key.dimension, key.x + dx, key.z + dz });
+            if (column == columnsByKey.end()) {
+                continue;
+            }
+            for (auto it = column->second.subChunks.begin(); it != column->second.subChunks.end() && it->first <= key.y + 1; ++it) {
+                dirty.insert({ key.dimension, key.x + dx, it->first, key.z + dz });
+            }
+        }
+    }
 }
 
 }

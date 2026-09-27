@@ -1,4 +1,5 @@
 #include "world/BlockAssets.h"
+#include "BlockLightJson.h"
 
 #include "Core/Json/Json.h"
 #include "Protocol/BlockStateHasher.h"
@@ -428,6 +429,73 @@ std::optional<int32_t> stateInt(const Tag& states, const std::string& key)
         return value->asInt();
     default:
         return std::nullopt;
+    }
+}
+
+bool stateMatches(const Tag& states, const json::Value& expected)
+{
+    for (const std::string& key : expected.mKeys) {
+        const json::Value& value = *expected.mObject.at(key);
+        const Tag* actual = states.get(key);
+        if (!actual) {
+            return false;
+        }
+        if (value.isString()) {
+            if (actual->getType() != Tag::Type::String || actual->asString() != value.mString) {
+                return false;
+            }
+        } else if (value.mType == json::Value::Type::Boolean) {
+            if (stateInt(states, key).value_or(-1) != (value.mBoolean ? 1 : 0)) {
+                return false;
+            }
+        } else if (stateInt(states, key).value_or(INT32_MIN) != value.integer()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Light emission and filter of every vanilla state from the measured block
+ * light table: a per-block default, then the first override whose states all
+ * match. Blocks the table does not list filter fully when they occlude.
+ */
+void applyBlockLight(const BlockRegistry& registry, std::vector<BlockVisual>& visuals)
+{
+    std::string text(reinterpret_cast<const char*>(KestrelBlockLightData::kBlockLightJson), KestrelBlockLightData::kBlockLightJsonSize);
+    std::unique_ptr<json::Value> root = json::parse(text);
+    std::unordered_map<std::string, const json::Value*> byName;
+    if (const json::Value* blocks = root ? root->get("blocks") : nullptr; blocks && blocks->isArray()) {
+        for (const std::unique_ptr<json::Value>& block : blocks->mArray) {
+            if (const json::Value* name = block->get("name"); name && name->isString()) {
+                byName.emplace(name->mString, block.get());
+            }
+        }
+    }
+    auto level = [](const json::Value& entry, const char* key) {
+        const json::Value* value = entry.get(key);
+        return static_cast<uint8_t>(std::clamp(value ? value->integer() : 0, 0, 15));
+    };
+    for (size_t i = 0; i < registry.records().size() && i < visuals.size(); ++i) {
+        const BlockRecord& record = registry.records()[i];
+        BlockVisual& visual = visuals[i];
+        auto found = byName.find(record.name);
+        if (found == byName.end()) {
+            visual.lightFilter = (visual.flags & FlagOccludesFullFace) ? 15 : 0;
+            continue;
+        }
+        const json::Value* chosen = found->second;
+        if (const json::Value* overrides = chosen->get("overrides"); overrides && overrides->isArray()) {
+            for (const std::unique_ptr<json::Value>& entry : overrides->mArray) {
+                const json::Value* states = entry->get("states");
+                if (states && states->isObject() && stateMatches(record.states, *states)) {
+                    chosen = entry.get();
+                    break;
+                }
+            }
+        }
+        visual.lightEmission = level(*chosen, "emission");
+        visual.lightFilter = level(*chosen, "filter");
     }
 }
 
@@ -1778,6 +1846,10 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             visual.flags = FlagDiagnostic;
             visual.faces.fill(DiagnosticMaterial);
             ++diagnosticCount;
+        } else if (family == Family::Liquid) {
+            visual.liquid = contains(name, "lava") ? 2 : 1;
+            visual.liquidLevel = static_cast<uint8_t>(std::clamp(stateInt(record.states, "liquid_depth").value_or(0), 0, 15));
+            visual.flags = static_cast<uint8_t>(visual.flags & FlagTranslucent);
         }
     }
 
@@ -1870,6 +1942,13 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 visual = BlockVisual { FlagDiagnostic, {} };
                 ++diagnosticCount;
             }
+            visual.lightFilter = 15;
+            if (const Tag* emission = components.contains("minecraft:light_emission") ? components["minecraft:light_emission"] : nullptr) {
+                visual.lightEmission = static_cast<uint8_t>(std::clamp(static_cast<int32_t>(tagNumber(emission->get("emission"))), 0, 15));
+            }
+            if (const Tag* dampening = components.contains("minecraft:light_dampening") ? components["minecraft:light_dampening"] : nullptr) {
+                visual.lightFilter = static_cast<uint8_t>(std::clamp(static_cast<int32_t>(tagNumber(dampening->get("lightLevel"), 15.0f)), 0, 15));
+            }
 
             uint32_t index = static_cast<uint32_t>(visuals.size());
             customByHash.emplace(static_cast<uint32_t>(BlockStateHasher::hash(custom.name, states)), index);
@@ -1877,6 +1956,8 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             visuals.push_back(visual);
         }
     }
+
+    applyBlockLight(registry, visuals);
 
     auto loadImage = [&](const std::string& path, uint32_t& width, uint32_t& height, std::vector<uint8_t>& rgba) {
         std::string encoded;
