@@ -32,12 +32,17 @@ bool isHash(std::string_view text)
     });
 }
 
-void readSlice(const std::string& text, NineSlice& slice)
+void readSlice(const std::string& text, NineSlice& slice, float* baseWidth = nullptr, float* baseHeight = nullptr)
 {
     std::unique_ptr<json::Value> root = json::parse(text);
     const json::Value* size = root ? root->get("nineslice_size") : nullptr;
     if (!size) {
         return;
+    }
+    const json::Value* base = root->get("base_size");
+    if (base && base->isArray() && base->mArray.size() == 2 && baseWidth && baseHeight) {
+        *baseWidth = static_cast<float>(base->mArray[0]->number());
+        *baseHeight = static_cast<float>(base->mArray[1]->number());
     }
     if (size->isNumber()) {
         float value = static_cast<float>(size->number());
@@ -77,7 +82,7 @@ GameAssets::GameAssets()
 
 GameAssets::~GameAssets() = default;
 
-bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* slice)
+bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* slice, NineSlice* texels)
 {
     std::string encoded;
     if (!pack || !pack->readTexture(path, encoded) || !decodeBitmap(encoded, out)) {
@@ -85,10 +90,18 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
     }
     if (slice) {
         *slice = {};
+        float baseWidth = 0.0f;
+        float baseHeight = 0.0f;
         std::string text;
         fs::path source(path);
         if (pack->readText(path + ".json", text) || pack->readArchived(source.parent_path().generic_string(), source.filename().string() + ".json", text)) {
-            readSlice(text, *slice);
+            readSlice(text, *slice, &baseWidth, &baseHeight);
+        }
+        if (texels) {
+            // nineslice_size counts base_size pixels, so a 2x texture has twice as many texels per slice.
+            float sx = baseWidth > 0.0f ? static_cast<float>(out.width) / baseWidth : 1.0f;
+            float sy = baseHeight > 0.0f ? static_cast<float>(out.height) / baseHeight : 1.0f;
+            *texels = { slice->left * sx, slice->top * sy, slice->right * sx, slice->bottom * sy };
         }
     }
     return true;

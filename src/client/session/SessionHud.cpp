@@ -66,6 +66,8 @@ std::string componentIcon(const Tag& tag, int depth = 0)
  * The HUD view of a network stack: identifier, count, aux, the Damage tag of
  * tools and armor and the custom name under display.Name.
  */
+}
+
 HudItem hudItemOf(const ItemStack& stack)
 {
     HudItem item;
@@ -91,8 +93,6 @@ HudItem hudItemOf(const ItemStack& stack)
     return item;
 }
 
-}
-
 /**
  * Updates the local player's HUD state from inventory, equipment, attribute,
  * health, game mode, effect and air packets.
@@ -100,39 +100,7 @@ HudItem hudItemOf(const ItemStack& stack)
 void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
 {
     double now = secondsNow();
-    auto slotOf = [&](int32_t container, int32_t slot) -> HudItem* {
-        HudState& hud = current.hud;
-        if (container == InventoryContainer && slot >= 0 && slot < int32_t(hud.inventory.size())) {
-            return &hud.inventory[size_t(slot)];
-        }
-        if (container == ArmorContainer && slot >= 0 && slot < int32_t(hud.armor.size())) {
-            return &hud.armor[size_t(slot)];
-        }
-        if (container == OffhandContainer && slot == 0) {
-            return &hud.offhand;
-        }
-        return nullptr;
-    };
-    if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
-        debugLog("inventory content container " + std::to_string(content->mContainerId) + ", " + std::to_string(content->mContents.size()) + " slots");
-        std::lock_guard<std::mutex> guard(mutex);
-        for (size_t slot = 0; slot < content->mContents.size(); ++slot) {
-            if (HudItem* target = slotOf(content->mContainerId, int32_t(slot))) {
-                *target = hudItemOf(content->mContents[slot]);
-            }
-            if (content->mContainerId == InventoryContainer && slot < inventoryStacks.size()) {
-                inventoryStacks[slot] = content->mContents[slot];
-            }
-        }
-    } else if (auto single = std::dynamic_pointer_cast<InventorySlotPacket>(packet)) {
-        std::lock_guard<std::mutex> guard(mutex);
-        if (HudItem* target = slotOf(single->mContainerId, single->mSlot)) {
-            *target = hudItemOf(single->mItem);
-        }
-        if (single->mContainerId == InventoryContainer && single->mSlot >= 0 && size_t(single->mSlot) < inventoryStacks.size()) {
-            inventoryStacks[size_t(single->mSlot)] = single->mItem;
-        }
-    } else if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
+    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
         if (static_cast<uint64_t>(equipment->mRuntimeActorId) == localRuntimeId && equipment->mContainerId == InventoryContainer && equipment->mHotbarSlot >= 0 && equipment->mHotbarSlot < 9) {
             std::lock_guard<std::mutex> guard(mutex);
             if (current.hud.selectedSlot != equipment->mHotbarSlot) {
@@ -286,7 +254,7 @@ void Session::sendSelectedSlot(int slot)
     }
     MobEquipmentPacket packet;
     packet.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
-    packet.mItem = inventoryStacks[size_t(slot)];
+    packet.mItem = inventoryModel.slots[size_t(slot)];
     packet.mInventorySlot = slot;
     packet.mHotbarSlot = slot;
     packet.mContainerId = InventoryContainer;

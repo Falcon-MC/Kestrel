@@ -19,9 +19,23 @@ constexpr int32_t DescendingOrder = 1;
 void Session::handleScorePacket(const std::shared_ptr<Packet>& packet)
 {
     if (auto display = std::dynamic_pointer_cast<SetDisplayObjectivePacket>(packet)) {
-        if (display->mObjectiveId.empty()) {
-            displaySlots.erase(display->mDisplaySlot);
-        } else {
+        // Displaying an objective starts it over and clearing a slot drops what it showed,
+        // the way the game keeps no scores for objectives it is not shown: servers that
+        // rebuild their sidebar with fresh score ids would otherwise stack every copy.
+        auto forget = [&](const std::string& objective) {
+            std::erase_if(scores, [&](const auto& entry) { return entry.second.objective == objective; });
+            objectives.erase(objective);
+        };
+        if (auto shown = displaySlots.find(display->mDisplaySlot); shown != displaySlots.end()) {
+            std::string previous = shown->second.first;
+            displaySlots.erase(shown);
+            bool elsewhere = std::any_of(displaySlots.begin(), displaySlots.end(), [&](const auto& entry) { return entry.second.first == previous; });
+            if (!elsewhere) {
+                forget(previous);
+            }
+        }
+        if (!display->mObjectiveId.empty()) {
+            forget(display->mObjectiveId);
             objectives[display->mObjectiveId] = display->mDisplayName;
             displaySlots[display->mDisplaySlot] = { display->mObjectiveId, display->mSortOrder };
         }
@@ -33,6 +47,11 @@ void Session::handleScorePacket(const std::shared_ptr<Packet>& packet)
         for (const ScoreInfoEntry& info : score->mInfos) {
             if (info.mType == ScorerType::Invalid) {
                 scores.erase(info.mScoreboardId);
+                continue;
+            }
+            // The game drops scores of objectives it does not know, which is what keeps a
+            // server that is being left through a proxy from refilling a removed sidebar.
+            if (!objectives.contains(info.mObjectiveId)) {
                 continue;
             }
             ScoreLine& line = scores[info.mScoreboardId];

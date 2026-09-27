@@ -1,7 +1,9 @@
 #pragma once
 
 #include "menu/ChatCommands.h"
+#include "menu/FormScreen.h"
 #include "menu/Hud.h"
+#include "menu/InventoryScreen.h"
 #include "menu/ServerStore.h"
 #include "platform/Keys.h"
 #include "ui/Font.h"
@@ -254,6 +256,7 @@ struct SessionInfo {
     bool packDownloading = false;
     uint64_t packReceived = 0;
     uint64_t packTotal = 0;
+    bool packsResolved = false;
 };
 
 struct ChromeInfo {
@@ -274,6 +277,17 @@ enum class ChromeAction {
 class Menu {
 public:
     explicit Menu(ServerStore& store);
+
+    InventoryScreen& inventoryPanel() { return inventory; }
+    FormScreen& formPanel() { return forms; }
+
+    /**
+     * Shows a server form, or answers that the player is busy when another
+     * screen is open, the way the game does.
+     */
+    void openForm(uint32_t id, const std::string& json);
+    void prepareInventoryInput(const InputState& input);
+    void setInventory(const InventoryState& state, bool creative);
 
     void frame(ui::Context& ui, float width, float height);
 
@@ -484,6 +498,9 @@ public:
     }
 
 private:
+    InventoryScreen inventory;
+    FormScreen forms;
+    bool inventoryInputHandled = false;
     enum class ServerGroup {
         Featured,
         Creator,
@@ -517,7 +534,7 @@ private:
     void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
-    void playerModel(ui::Context& ui, float centerX, float top, float pixel);
+    void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false);
     void screenContent(ui::Context& ui, float width, float height);
     void gameView(ui::Context& ui, float width, float height);
 

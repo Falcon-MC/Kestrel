@@ -27,6 +27,7 @@ account and renders the world with the textures of the installed game.
 - **Atmosphere** - day and night cycle, sun, moon, fog and clouds
 - **Account** - Microsoft sign-in with a device code, Xbox profile and Realms list
 - **Chat** - the game's chat screen and fading HUD log, commands, and server messages in the chosen language
+- **Discord** - shows Minecraft activity while Kestrel is open, reconnecting if Discord starts later
 - **Server packs** - the scoreboard sidebar drawn from the game's UI files as the server's packs restyle it, and
   the packs' glyph sheets in text
 

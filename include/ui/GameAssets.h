@@ -41,7 +41,7 @@ public:
         return pack != nullptr;
     }
 
-    bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr);
+    bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr, NineSlice* texels = nullptr);
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
     bool readHbuiImage(std::string_view name, Bitmap& out);
     std::vector<unsigned char> readHbuiFont(std::string_view name);

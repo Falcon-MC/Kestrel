@@ -99,6 +99,8 @@ public:
     void nameTag(std::string_view value, float x, float y, float magnify, float depth, bool sneaking);
     float paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     float paragraphHeight(std::string_view value, TextStyle style, float width) const;
+    float pixelParagraph(std::string_view value, float x, float y, float width, float magnify, Color color);
+    size_t wrap(std::string_view value, TextStyle style, float width, std::vector<std::string_view>& lines) const;
 
     bool classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled = true);
     Interaction pressable(std::string_view id, std::string_view component, const Rect& rect, bool enabled = true, bool selected = false);

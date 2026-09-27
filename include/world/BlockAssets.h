@@ -194,12 +194,14 @@ inline constexpr uint32_t SkinSlots = 32;
 
 /**
  * One geometry of an entity: quads in 1/256 block around its feet, facing
- * north, unposed and tagged with the bone they follow, and its bone rig.
+ * north, unposed and tagged with the bone they follow, its bone rig and the
+ * height to width ratio of the texture its UVs were laid out for.
  */
 struct EntityRig {
     std::vector<ModelQuad> quads;
     std::vector<uint16_t> quadBones;
     std::vector<EntityBone> bones;
+    float textureAspect = 1.0f;
 };
 
 /**

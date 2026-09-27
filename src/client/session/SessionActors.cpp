@@ -1,6 +1,7 @@
 #include "SessionData.h"
 
 #include "Protocol/Types/SerializedSkin.h"
+#include "client/DebugLog.h"
 #include "world/BlockAssets.h"
 
 #include <cstring>
@@ -131,8 +132,9 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
 }
 
 /**
- * Keeps a player's skin in a free skin slot, scaled to the entity texture
- * size, and points that player's entity at it.
+ * Remembers a player's skin. Proxies list every player of the network, far
+ * more than there are skin slots, so a skin only takes a slot while an entity
+ * in the world wears it, or when it is the local player's own.
  */
 void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
 {
@@ -140,6 +142,29 @@ void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
     if (image.mWidth <= 0 || image.mHeight <= 0 || image.mData.size() < size_t(image.mWidth) * size_t(image.mHeight) * 4) {
         return;
     }
+    knownSkins[uuid] = skin;
+    if (uuid == localUuid || skinByUuid.contains(uuid) || skinWorn(uuid)) {
+        assignSkin(uuid);
+    }
+}
+
+bool Session::skinWorn(const std::string& uuid) const
+{
+    return std::any_of(uuidByRuntime.begin(), uuidByRuntime.end(), [&](const auto& entry) { return entry.second == uuid; });
+}
+
+/**
+ * Puts a remembered skin in a skin slot, scaled to the entity texture size,
+ * and points the entities wearing it at that slot.
+ */
+void Session::assignSkin(const std::string& uuid)
+{
+    auto known = knownSkins.find(uuid);
+    if (known == knownSkins.end()) {
+        return;
+    }
+    const SerializedSkin& skin = known->second;
+    const SkinImageData& image = skin.mSkinData;
     uint32_t slot = NoSkin;
     if (auto existing = skinByUuid.find(uuid); existing != skinByUuid.end()) {
         slot = existing->second.first;
@@ -165,11 +190,18 @@ void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
     uint32_t width = uint32_t(image.mWidth);
     uint32_t height = uint32_t(image.mHeight);
     std::vector<uint8_t> squared;
-    if (!upload.rig && width == height * 2 && width % 64 == 0) {
+    // Legacy 64x32 skins often come with geometry laid out for a square texture, which
+    // then reads the missing lower half, so they are squared unless the geometry is flat too.
+    bool squareGeometry = !upload.rig || upload.rig->textureAspect > 0.75f;
+    if (squareGeometry && width == height * 2 && width % 64 == 0) {
         squared = squareLegacySkin(image);
         pixels = squared.data();
         height = width;
     }
+    debugLog("skin " + uuid + " slot " + std::to_string(slot) + " image " + std::to_string(image.mWidth) + "x" + std::to_string(image.mHeight)
+        + " patch " + skin.mSkinResourcePatch + " geometry bytes " + std::to_string(skin.mGeometryData.size())
+        + (upload.rig ? " rig quads " + std::to_string(upload.rig->quads.size()) + " aspect " + std::to_string(upload.rig->textureAspect) : std::string(" no rig"))
+        + (squared.empty() ? "" : " squared"));
     upload.pixels.resize(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4);
     for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
         for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
@@ -189,20 +221,19 @@ void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
 }
 
 /**
- * Frees the skin slot of a player once nothing shows it. Servers put their
+ * Frees the skin slot of a player once nothing in the world wears it, and
+ * forgets the skin once the player is off the list too. Servers put their
  * NPCs on the player list just long enough to send the skin and take them off
- * again, so an entity still wearing the skin keeps the slot until it leaves.
+ * again, so an entity still wearing the skin keeps it until it leaves.
  */
 void Session::releaseSkin(const std::string& uuid)
 {
-    auto skin = skinByUuid.find(uuid);
-    if (skin == skinByUuid.end()) {
-        return;
+    if (!playerNames.contains(uuid) && !skinWorn(uuid)) {
+        knownSkins.erase(uuid);
     }
-    for (const auto& [runtime, owner] : uuidByRuntime) {
-        if (owner == uuid) {
-            return;
-        }
+    auto skin = skinByUuid.find(uuid);
+    if (skin == skinByUuid.end() || uuid == localUuid || skinWorn(uuid)) {
+        return;
     }
     slotOwners[skin->second.first].clear();
     skinByUuid.erase(skin);

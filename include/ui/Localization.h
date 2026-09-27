@@ -8,6 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace json {
+struct Value;
+}
+
 namespace kestrel::world {
 class PackSource;
 }
@@ -87,5 +91,10 @@ private:
 std::string tr(std::string_view key, std::string_view fallback);
 
 std::string trf(std::string_view key, std::string_view fallback, const std::vector<std::string>& arguments);
+
+/**
+ * The text a rawtext component spells out, translate components translated.
+ */
+std::string rawText(const json::Value& component);
 
 }

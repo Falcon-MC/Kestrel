@@ -12,6 +12,28 @@ namespace {
 
 constexpr const char* FallbackLanguage = "en_US";
 
+/**
+ * The arguments of a translate component: a plain list of strings, or a
+ * rawtext object whose every component is one argument.
+ */
+std::vector<std::string> rawArguments(const json::Value* with)
+{
+    std::vector<std::string> arguments;
+    if (!with) {
+        return arguments;
+    }
+    if (with->isArray()) {
+        for (const std::unique_ptr<json::Value>& item : with->mArray) {
+            arguments.push_back(item->isString() ? item->string() : rawText(*item));
+        }
+    } else if (const json::Value* parts = with->get("rawtext"); parts && parts->isArray()) {
+        for (const std::unique_ptr<json::Value>& part : parts->mArray) {
+            arguments.push_back(rawText(*part));
+        }
+    }
+    return arguments;
+}
+
 }
 
 Localization& Localization::shared()
@@ -247,6 +269,27 @@ std::string tr(std::string_view key, std::string_view fallback)
 std::string trf(std::string_view key, std::string_view fallback, const std::vector<std::string>& arguments)
 {
     return Localization::shared().format(key, fallback, arguments);
+}
+
+// Selectors and scores are left out, servers resolve those before sending.
+std::string rawText(const json::Value& component)
+{
+    if (!component.isObject()) {
+        return {};
+    }
+    if (const json::Value* text = component.get("text"); text && text->isString()) {
+        return text->string();
+    }
+    if (const json::Value* key = component.get("translate"); key && key->isString()) {
+        return trf(key->string(), key->string(), rawArguments(component.get("with")));
+    }
+    std::string joined;
+    if (const json::Value* parts = component.get("rawtext"); parts && parts->isArray()) {
+        for (const std::unique_ptr<json::Value>& child : parts->mArray) {
+            joined += rawText(*child);
+        }
+    }
+    return joined;
 }
 
 }

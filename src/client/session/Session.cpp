@@ -21,6 +21,7 @@
 #include "Protocol/Packets/MoveActorAbsolutePacket.h"
 #include "Protocol/Packets/MoveActorDeltaPacket.h"
 #include "Protocol/Packets/PlayerListPacket.h"
+#include "Protocol/Packets/PlayerSkinPacket.h"
 #include "Protocol/Packets/RemoveActorPacket.h"
 #include "Protocol/Packets/PlayStatusPacket.h"
 #include "Protocol/Packets/InventoryContentPacket.h"
@@ -278,6 +279,8 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
         current.target = target;
         pendingChat.clear();
         outgoingChat.clear();
+        pendingForms.clear();
+        outgoingForms.clear();
     }
     worker = std::thread([this, target = std::move(target), authentication, offlineName = std::move(offlineName)]() mutable {
         run(std::move(target), authentication, std::move(offlineName));
@@ -512,6 +515,12 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::MoveActorAbsolute:
     case MinecraftPacketIds::MoveActorDelta:
     case MinecraftPacketIds::SetActorData:
+    case MinecraftPacketIds::ContainerOpen:
+    case MinecraftPacketIds::ContainerClose:
+    case MinecraftPacketIds::ContainerSetData:
+    case MinecraftPacketIds::ItemStackResponse:
+    case MinecraftPacketIds::CreativeContent:
+    case MinecraftPacketIds::CraftingData:
     case MinecraftPacketIds::InventoryContent:
     case MinecraftPacketIds::InventorySlot:
     case MinecraftPacketIds::MobEquipment:
@@ -521,6 +530,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::SetPlayerGameType:
     case MinecraftPacketIds::MobEffect:
     case MinecraftPacketIds::PlayerList:
+    case MinecraftPacketIds::PlayerSkin:
     case MinecraftPacketIds::SetTime:
     case MinecraftPacketIds::GameRulesChanged:
     case MinecraftPacketIds::LevelEvent:
@@ -539,6 +549,8 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::SetDisplayObjective:
     case MinecraftPacketIds::SetScore:
     case MinecraftPacketIds::RemoveObjective:
+    case MinecraftPacketIds::ModalFormRequest:
+    case MinecraftPacketIds::ClientboundCloseForm:
         break;
     default:
         return;
@@ -546,13 +558,16 @@ void Session::handleWorldPacket(const std::string& payload)
 
     std::shared_ptr<Packet> packet = connection->decode(payload);
     if (!packet) {
+        debugLog("could not decode packet " + std::to_string(static_cast<int>(id)) + ": " + connection->getLastDecodeError());
         return;
     }
+    handleInventoryPacket(packet);
     handleHudPacket(packet);
     handleMotionPacket(packet);
     handleSoundPacket(packet);
     handleChatPacket(packet);
     handleScorePacket(packet);
+    handleFormPacket(packet);
 
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         world.handle(*levelChunk);
@@ -591,6 +606,9 @@ void Session::handleWorldPacket(const std::string& payload)
             actor.name = player->mUsername;
             std::string uuid = player->mUuid.toString();
             uuidByRuntime[runtime] = uuid;
+            if (!skinByUuid.contains(uuid)) {
+                assignSkin(uuid);
+            }
             if (auto skin = skinByUuid.find(uuid); skin != skinByUuid.end()) {
                 actor.skinSlot = skin->second.first;
                 actor.slim = skin->second.second;
@@ -623,9 +641,7 @@ void Session::handleWorldPacket(const std::string& payload)
             if (auto owner = uuidByRuntime.find(runtime->second); owner != uuidByRuntime.end()) {
                 std::string uuid = owner->second;
                 uuidByRuntime.erase(owner);
-                if (!playerNames.contains(uuid)) {
-                    releaseSkin(uuid);
-                }
+                releaseSkin(uuid);
             }
             runtimeByUnique.erase(runtime);
         }
@@ -639,20 +655,30 @@ void Session::handleWorldPacket(const std::string& payload)
                 delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
                 delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);
         }
+    } else if (auto changed = std::dynamic_pointer_cast<PlayerSkinPacket>(packet)) {
+        std::string uuid = changed->mUuid.toString();
+        storeSkin(uuid, changed->mSkin);
+        if (uuid == localUuid) {
+            if (auto skin = skinByUuid.find(uuid); skin != skinByUuid.end()) {
+                std::lock_guard<std::mutex> guard(mutex);
+                current.localSkinSlot = skin->second.first;
+                current.localSlim = skin->second.second;
+            }
+        }
     } else if (auto list = std::dynamic_pointer_cast<PlayerListPacket>(packet)) {
         for (const PlayerListPacket::Entry& entry : list->mEntries) {
             std::string uuid = entry.mUuid.toString();
             if (entry.mAction == PlayerListPacket::Action::Remove) {
-                releaseSkin(uuid);
                 playerNames.erase(uuid);
+                releaseSkin(uuid);
                 continue;
             }
-            storeSkin(uuid, entry.mSkin);
-            playerNames[uuid] = entry.mName;
-            playerNamesByActor[entry.mActorId] = entry.mName;
             if (entry.mActorId == localUniqueId) {
                 localUuid = uuid;
             }
+            playerNames[uuid] = entry.mName;
+            playerNamesByActor[entry.mActorId] = entry.mName;
+            storeSkin(uuid, entry.mSkin);
         }
         if (auto skin = skinByUuid.find(localUuid); skin != skinByUuid.end()) {
             std::lock_guard<std::mutex> guard(mutex);
@@ -713,8 +739,15 @@ void Session::handleWorldPacket(const std::string& payload)
         motionStarted = false;
         actors.clear();
         runtimeByUnique.clear();
+        std::vector<std::string> worn;
+        for (const auto& [runtime, uuid] : uuidByRuntime) {
+            worn.push_back(uuid);
+        }
         uuidByRuntime.clear();
         dimensionAckReceived = false;
+        for (const std::string& uuid : worn) {
+            releaseSkin(uuid);
+        }
         std::lock_guard<std::mutex> guard(mutex);
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
@@ -960,8 +993,12 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     resetDebugLog();
     debugLog("dial " + settings.mHost + ":" + std::to_string(settings.mPort) + " radius " + std::to_string(settings.mChunkRadius));
     settings.mDeferSpawn = true;
-    settings.mPacketObserver = [](MinecraftPacketIds id) {
+    settings.mPacketObserver = [this](MinecraftPacketIds id) {
         debugLog("dial packet " + std::to_string(static_cast<int>(id)));
+        if (id == MinecraftPacketIds::ResourcePackStack) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.packsResolved = true;
+        }
     };
     ClientConnectionResult result = ClientNetworkSystem::dial(settings);
     {
@@ -987,7 +1024,13 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
     codecContext = std::make_unique<PacketCodecContext>(blockDefinitions, itemDefinitions);
     result.mConnection->setCodecContext(codecContext.get());
-    inventoryStacks = {};
+    inventoryModel = {};
+    inventoryBefore.reset();
+    inventoryChangedSlots.clear();
+    pendingInventoryRequest = 0;
+    inventoryRequestId = -1;
+    inventoryClosing = false;
+    { std::lock_guard<std::mutex> guard(mutex); inventoryCommands.clear(); }
     requestedSlot = -1;
     spawnInitialized = false;
     motion = PlayerMotion {};
@@ -1014,6 +1057,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         runtimeByUnique.clear();
         uuidByRuntime.clear();
         skinByUuid.clear();
+        knownSkins.clear();
         playerNames.clear();
         playerNamesByActor.clear();
         objectives.clear();
@@ -1169,7 +1213,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         if (useRequested.exchange(false)) {
             interact(true);
         }
+        flushInventory();
         flushChat();
+        flushForms();
         tickMotion();
         scheduleMeshes();
         collectMeshes();

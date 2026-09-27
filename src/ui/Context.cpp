@@ -155,7 +155,7 @@ void Context::nineSlice(const Rect& rect, std::string_view name, Color tint)
     const Sprite& source = art.sprite(name);
     BorderImage border;
     border.sprite = std::string(name);
-    border.slice = source.slice;
+    border.slice = source.texels;
     border.width = source.slice;
     border.fill = true;
     border.valid = true;
@@ -311,6 +311,16 @@ float Context::paragraphHeight(std::string_view value, TextStyle style, float wi
 {
     std::vector<std::string_view> lines;
     return static_cast<float>(font.wrap(value, style, width, lines)) * font.lineHeight(style);
+}
+
+float Context::pixelParagraph(std::string_view value, float x, float y, float width, float magnify, Color color)
+{
+    return font.drawWrappedPixel(drawList, value, x, y, width, magnify, color);
+}
+
+size_t Context::wrap(std::string_view value, TextStyle style, float width, std::vector<std::string_view>& lines) const
+{
+    return font.wrap(value, style, width, lines);
 }
 
 bool Context::classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled)

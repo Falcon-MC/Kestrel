@@ -62,6 +62,9 @@ private:
     void syncAccount();
     void syncSession();
     void syncFeatured();
+    void collectFeaturedImages();
+    void syncForms();
+    std::string formImage(const menu::FormImage& image);
     void syncChat();
     void applyServerPacks(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
     void loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
@@ -82,6 +85,7 @@ private:
     float swingProgress();
     void appendHeldItem(const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
     void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out);
+    menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
     void handleHotbarInput();
