@@ -6,11 +6,16 @@
 #include "Network/Session/RealmsService.h"
 #include "Network/Http/HttpClient.h"
 #include "Core/Json/Json.h"
+#include "client/DebugLog.h"
 #include "ui/Font.h"
 #include "ui/Image.h"
+#include "ui/Localization.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <random>
 
 namespace kestrel {
 
@@ -18,7 +23,9 @@ namespace {
 
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* XboxLiveRelyingParty = "http://xboxlive.com";
-constexpr const char* ProfileSettingsUrl = "https://profile.xboxlive.com/users/me/profile/settings?settings=GameDisplayPicRaw";
+constexpr const char* GameTitleId = "896928775";
+constexpr const char* GameServiceConfigId = "4fc10100-5f7a-4470-899b-280835760c07";
+constexpr const char* ProfileSettingsUrl ="https://profile.xboxlive.com/users/me/profile/settings?settings=GameDisplayPicRaw";
 
 }
 
@@ -189,6 +196,208 @@ void Account::run(bool interactive)
         fetchAvatar(profile.getAuthorizationHeader());
     }
     fetchRealms();
+    if (!profile.mToken.empty() && !cancelled) {
+        fetchProfile(profile.getAuthorizationHeader(), !profile.mXuid.empty() ? profile.mXuid : token.mXuid);
+    }
+}
+
+/**
+ * An Xbox Live authorization for the user alone, without the device and
+ * title the sign-in token carries: the achievements service scopes a titled
+ * token to its own title, which hides the Windows edition's progress.
+ */
+std::string Account::userAuthorization()
+{
+    LiveToken live;
+    std::string error;
+    if (!authentication->getLiveAuthentication().getToken(live, error)) {
+        return {};
+    }
+    auto post = [](const std::string& url, const std::string& body) -> std::unique_ptr<json::Value> {
+        HttpClient::Headers headers;
+        headers.emplace_back("Content-Type", "application/json");
+        headers.emplace_back("Accept", "application/json");
+        headers.emplace_back("x-xbl-contract-version", "1");
+        HttpResponse response;
+        std::string failure;
+        if (!HttpClient::post(url, headers, body, response, failure) || response.mStatus != 200) {
+            return nullptr;
+        }
+        return json::parse(response.mBody);
+    };
+    std::unique_ptr<json::Value> user = post("https://user.auth.xboxlive.com/user/authenticate",
+        "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\"t=" + live.mAccessToken + "\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}");
+    const json::Value* userToken = user ? user->get("Token") : nullptr;
+    if (!userToken) {
+        return {};
+    }
+    std::unique_ptr<json::Value> xsts = post("https://xsts.auth.xboxlive.com/xsts/authorize",
+        "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\"" + userToken->string() + "\"]},\"RelyingParty\":\"http://xboxlive.com\",\"TokenType\":\"JWT\"}");
+    const json::Value* token = xsts ? xsts->get("Token") : nullptr;
+    const json::Value* claims = xsts ? xsts->get("DisplayClaims") : nullptr;
+    const json::Value* users = claims ? claims->get("xui") : nullptr;
+    if (!token || !users || !users->isArray() || users->mArray.empty()) {
+        return {};
+    }
+    const json::Value* hash = users->mArray.front()->get("uhs");
+    return hash ? "XBL3.0 x=" + hash->string() + ";" + token->string() : std::string();
+}
+
+/**
+ * Loads the player's achievements for the game in the interface language, the
+ * icons of the few the profile page lists, and the play statistics.
+ */
+void Account::fetchProfile(const std::string& titleAuthorization, const std::string& xuid)
+{
+    if (xuid.empty()) {
+        return;
+    }
+    std::string authorization = userAuthorization();
+    if (authorization.empty()) {
+        authorization = titleAuthorization;
+    }
+    std::string language = ui::Localization::shared().code();
+    std::replace(language.begin(), language.end(), '_', '-');
+    auto request = [&](const std::string& url, const char* contract, HttpResponse& response) {
+        HttpClient::Headers headers;
+        headers.emplace_back("Authorization", authorization);
+        headers.emplace_back("x-xbl-contract-version", contract);
+        headers.emplace_back("Accept", "application/json");
+        headers.emplace_back("Accept-Language", language);
+        std::string error;
+        return HttpClient::get(url, headers, response, error) && response.mStatus == 200;
+    };
+
+    PlayerProfile loaded;
+    struct Entry {
+        Achievement achievement;
+        std::string unlocked;
+        std::string iconUrl;
+    };
+    std::vector<Entry> entries;
+    HttpResponse response;
+    if (request("https://achievements.xboxlive.com/users/xuid(" + xuid + ")/achievements?titleId=" + GameTitleId + "&maxItems=1000", "2", response)) {
+        std::unique_ptr<json::Value> root = json::parse(response.mBody);
+        const json::Value* list = root ? root->get("achievements") : nullptr;
+        if (list && list->isArray()) {
+            for (const std::unique_ptr<json::Value>& item : list->mArray) {
+                Entry entry;
+                const json::Value* name = item->get("name");
+                const json::Value* description = item->get("description");
+                const json::Value* locked = item->get("lockedDescription");
+                const json::Value* state = item->get("progressState");
+                entry.achievement.name = name ? name->string() : std::string();
+                entry.achievement.achieved = state && state->string() == "Achieved";
+                entry.achievement.description = description ? description->string() : std::string();
+                if (!entry.achievement.achieved && locked && !locked->string().empty()) {
+                    entry.achievement.description = locked->string();
+                }
+                if (const json::Value* rewards = item->get("rewards"); rewards && rewards->isArray()) {
+                    for (const std::unique_ptr<json::Value>& reward : rewards->mArray) {
+                        const json::Value* type = reward->get("type");
+                        const json::Value* value = reward->get("value");
+                        if (type && value && type->string() == "Gamerscore") {
+                            entry.achievement.gamerscore = std::atoi(value->string().c_str());
+                        }
+                    }
+                }
+                if (const json::Value* progression = item->get("progression")) {
+                    if (const json::Value* time = progression->get("timeUnlocked")) {
+                        entry.unlocked = time->string();
+                    }
+                }
+                if (const json::Value* media = item->get("mediaAssets"); media && media->isArray() && !media->mArray.empty()) {
+                    if (const json::Value* url = media->mArray.front()->get("url")) {
+                        entry.iconUrl = url->string();
+                    }
+                }
+                ++loaded.total;
+                loaded.totalGamerscore += entry.achievement.gamerscore;
+                if (entry.achievement.achieved) {
+                    ++loaded.achieved;
+                    loaded.gamerscore += entry.achievement.gamerscore;
+                }
+                entries.push_back(std::move(entry));
+            }
+            loaded.achievementsLoaded = true;
+        }
+        debugLog("profile: " + std::to_string(entries.size()) + " achievements");
+    } else {
+        debugLog("profile: achievements request failed, status " + std::to_string(response.mStatus));
+    }
+
+    std::vector<const Entry*> earned;
+    std::vector<const Entry*> open;
+    for (const Entry& entry : entries) {
+        (entry.achievement.achieved ? earned : open).push_back(&entry);
+    }
+    std::sort(earned.begin(), earned.end(), [](const Entry* a, const Entry* b) {
+        return a->unlocked > b->unlocked;
+    });
+    std::shuffle(open.begin(), open.end(), std::mt19937(std::random_device {}()));
+    auto withIcon = [&](const Entry& entry) {
+        Achievement achievement = entry.achievement;
+        HttpResponse image;
+        std::string error;
+        if (!entry.iconUrl.empty() && HttpClient::get(entry.iconUrl + "&w=176&h=108", {}, image, error) && image.mStatus == 200) {
+            uint32_t width = 0;
+            uint32_t height = 0;
+            std::vector<uint8_t> rgba;
+            if (ui::decodeImage(image.mBody, width, height, rgba) && width > 0 && height > 0) {
+                if (!achievement.achieved) {
+                    for (size_t i = 0; i + 3 < rgba.size(); i += 4) {
+                        uint8_t grey = static_cast<uint8_t>((rgba[i] * 30 + rgba[i + 1] * 59 + rgba[i + 2] * 11) / 100);
+                        rgba[i] = grey;
+                        rgba[i + 1] = grey;
+                        rgba[i + 2] = grey;
+                    }
+                }
+                achievement.icon = std::move(rgba);
+                achievement.iconWidth = width;
+                achievement.iconHeight = height;
+            }
+        }
+        return achievement;
+    };
+    for (size_t i = 0; i < open.size() && i < 3 && !cancelled; ++i) {
+        loaded.suggested.push_back(withIcon(*open[i]));
+    }
+    for (size_t i = 0; i < earned.size() && i < 3 && !cancelled; ++i) {
+        loaded.recent.push_back(withIcon(*earned[i]));
+    }
+
+    HttpResponse stats;
+    if (request("https://userstats.xboxlive.com/users/xuid(" + xuid + ")/scids/" + GameServiceConfigId + "/stats/MinutesPlayed,BlockBrokenTotal,MobKilled.IsMonster.1,DistanceTravelled", "1", stats)) {
+        std::unique_ptr<json::Value> root = json::parse(stats.mBody);
+        const json::Value* list = root ? root->get("stats") : nullptr;
+        if (list && list->isArray()) {
+            for (const std::unique_ptr<json::Value>& stat : list->mArray) {
+                const json::Value* name = stat->get("statname");
+                const json::Value* value = stat->get("value");
+                if (!name || !value) {
+                    continue;
+                }
+                int64_t number = static_cast<int64_t>(std::strtod(value->string().c_str(), nullptr));
+                if (name->string() == "MinutesPlayed") {
+                    loaded.minutesPlayed = number;
+                } else if (name->string() == "BlockBrokenTotal") {
+                    loaded.blocksBroken = number;
+                } else if (name->string() == "MobKilled.IsMonster.1") {
+                    loaded.mobsDefeated = number;
+                } else if (name->string() == "DistanceTravelled") {
+                    loaded.distanceTravelled = number;
+                }
+            }
+            loaded.statsLoaded = true;
+        }
+    }
+
+    std::lock_guard<std::mutex> guard(mutex);
+    if (cancelled || current.state != AccountState::SignedIn) {
+        return;
+    }
+    loaded.revision = ++profileRevision;
+    current.profile = std::move(loaded);
 }
 
 void Account::fetchAvatar(const std::string& authorization)

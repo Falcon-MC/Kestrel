@@ -204,6 +204,9 @@ struct SessionSnapshot {
     size_t customBlocks = 0;
     size_t customPermutations = 0;
     std::string blockAtPlayer;
+    double boomFraction = 0.0;
+    uint32_t localSkinSlot = NoSkin;
+    bool localSlim = false;
     uint32_t airSequential = 0;
     uint32_t airHash = 0;
     uint64_t unresolvedLookups = 0;
@@ -251,6 +254,7 @@ public:
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
+    void setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
@@ -277,6 +281,7 @@ private:
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     std::string traceTarget();
+    double boomFraction();
     uint8_t mediumAt(const std::array<double, 3>& position);
 
     std::thread worker;
@@ -295,8 +300,12 @@ private:
     std::vector<MeshUpdate> pendingUpdates;
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
+    int64_t localUniqueId = 0;
+    std::string localUuid;
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
+    std::array<double, 3> boomOrigin {};
+    std::array<double, 3> boomDelta {};
     std::atomic<int> packDecision { 0 };
     std::atomic<int> requestedRadius { 16 };
     int sentRadius = 0;

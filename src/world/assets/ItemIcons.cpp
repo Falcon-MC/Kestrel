@@ -313,4 +313,17 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
     return isometricIcon(faces, tints);
 }
 
+const BlockVisual* BlockAssets::itemCube(const std::string& identifier) const
+{
+    auto block = blockByName.find(identifier);
+    if (block == blockByName.end()) {
+        return nullptr;
+    }
+    const BlockVisual& look = visual(block->second, true);
+    if (!look.emitsCubeGeometry() || (look.flags & FlagDiagnostic)) {
+        return nullptr;
+    }
+    return &look;
+}
+
 }

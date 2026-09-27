@@ -199,7 +199,7 @@ void Menu::screenContent(Context& ui, float width, float height)
         todoScreen(ui, width, height, tr("profileScreen.header", "Dressing Room"));
         break;
     case Screen::Profile:
-        todoScreen(ui, width, height, tr("menu.profile", "Profile"));
+        profile(ui, width, height);
         break;
     }
 }

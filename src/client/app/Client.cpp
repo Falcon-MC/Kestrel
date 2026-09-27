@@ -142,17 +142,36 @@ int Client::run()
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
                 double eye = playerView.sneaking ? 1.54 : 1.62;
-                camera.setPosition(playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
+                eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
-                    playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend);
+                    playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
+                if (captured && keys.pressedKey == bindings.perspective()) {
+                    perspective = (perspective + 1) % 3;
+                }
+                camera.setOrbiting(perspective != PerspectiveFirst);
+                std::array<double, 3> boom {};
+                std::array<float, 3> look = camera.viewForward();
+                if (perspective == PerspectiveBack) {
+                    boom = { -look[0] * ThirdPersonRadius, -look[1] * ThirdPersonRadius, -look[2] * ThirdPersonRadius };
+                } else if (perspective == PerspectiveFront) {
+                    double flat = std::sqrt(double(look[0]) * look[0] + double(look[2]) * look[2]);
+                    boom = flat > 1.0e-6 ? std::array<double, 3> { look[0] / flat * ThirdPersonRadius, 0.0, look[2] / flat * ThirdPersonRadius } : std::array<double, 3> { 0.0, 0.0, -ThirdPersonRadius };
+                }
+                session.setCameraBoom(eyePosition, boom);
+                camera.setFacingSubject(perspective == PerspectiveFront);
+                camera.setPosition(eyePosition[0] + boom[0] * boomFraction, eyePosition[1] + boom[1] * boomFraction, eyePosition[2] + boom[2] * boomFraction);
             } else {
+                perspective = PerspectiveFirst;
+                camera.setFacingSubject(false);
+                camera.setOrbiting(false);
                 camera.easeFov(1.0f, deltaSeconds);
                 camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
+                eyePosition = { camera.x(), camera.y(), camera.z() };
             }
             char cameraText[96];
             std::snprintf(cameraText, sizeof(cameraText), "Camera %.1f, %.1f, %.1f", camera.x(), camera.y(), camera.z());
             menu.setCameraInfo(cameraText);
-            session.setLookRay({ camera.x(), camera.y(), camera.z() }, camera.forward());
+            session.setLookRay(eyePosition, camera.forward());
         }
         {
             Profiler::Section section(profiler, "hud");
@@ -295,7 +314,23 @@ int Client::run()
             {
                 Profiler::Section section(profiler, "entities");
                 interpolateActors(secondsNow());
+                if (perspective != PerspectiveFirst && playerView.active) {
+                    ActorView self;
+                    self.runtimeId = LocalActorId;
+                    self.identifier = "minecraft:player";
+                    self.x = eyePosition[0];
+                    self.y = eyePosition[1] - (playerView.sneaking ? 1.54 : 1.62);
+                    self.z = eyePosition[2];
+                    self.yaw = camera.minecraftYaw();
+                    self.headYaw = self.yaw;
+                    self.pitch = camera.minecraftPitch();
+                    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0);
+                    self.skinSlot = localSkinSlot;
+                    self.slim = localSlim;
+                    actorViews.push_back(self);
+                }
                 entityQuads = buildActorQuads(entityOrigin);
+                appendFirstPerson(entityOrigin, entityQuads);
             }
             view.entityQuads = entityQuads.data();
             view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());
@@ -328,6 +363,14 @@ void Client::syncFeatured()
         for (const FeaturedServer& server : featuredList) {
             featured->requestImage(server.iconUrl, false);
         }
+        for (const FeaturedServer& server : featuredList) {
+            for (const std::string& url : server.showcaseUrls) {
+                featured->requestImage(url, true);
+            }
+            for (const FeaturedGame& game : server.games) {
+                featured->requestImage(game.imageUrl, true);
+            }
+        }
     }
     for (const FeaturedServer& server : featuredList) {
         if (!server.creatorExperience()) {
@@ -335,24 +378,50 @@ void Client::syncFeatured()
         }
     }
 
+    std::set<std::string> showcaseUrls;
+    for (const FeaturedServer& server : featuredList) {
+        showcaseUrls.insert(server.showcaseUrls.begin(), server.showcaseUrls.end());
+        for (const FeaturedGame& game : server.games) {
+            showcaseUrls.insert(game.imageUrl);
+        }
+    }
+    for (auto& [url, bitmap] : featured->takeImages()) {
+        if (showcaseUrls.count(url)) {
+            featuredShowcases[url] = std::move(bitmap);
+            continue;
+        }
+        skin.setDynamic(FeaturedSpritePrefix + url, std::move(bitmap));
+        featuredImages.insert(url);
+        featuredDirty = true;
+    }
     std::optional<std::string> focus = menu.focusedFeatured();
-    if (focus != featuredFocus) {
-        featuredFocus = focus;
-        for (const FeaturedServer& server : featuredList) {
-            if (focus && server.id == *focus) {
-                for (const std::string& url : server.showcaseUrls) {
-                    featured->requestImage(url, true);
-                }
-                for (const FeaturedGame& game : server.games) {
-                    featured->requestImage(game.imageUrl, true);
-                }
+    std::set<std::string> wanted;
+    for (const FeaturedServer& server : featuredList) {
+        if (focus && server.id == *focus) {
+            wanted.insert(server.showcaseUrls.begin(), server.showcaseUrls.end());
+            for (const FeaturedGame& game : server.games) {
+                wanted.insert(game.imageUrl);
             }
         }
     }
-
-    for (auto& [url, bitmap] : featured->takeImages()) {
-        skin.setDynamic(FeaturedSpritePrefix + url, std::move(bitmap));
+    for (auto it = shownShowcases.begin(); it != shownShowcases.end();) {
+        if (wanted.count(*it)) {
+            ++it;
+            continue;
+        }
+        skin.clearDynamic(FeaturedSpritePrefix + *it);
+        featuredImages.erase(*it);
+        featuredDirty = true;
+        it = shownShowcases.erase(it);
+    }
+    for (const std::string& url : wanted) {
+        auto stored = featuredShowcases.find(url);
+        if (stored == featuredShowcases.end() || shownShowcases.count(url)) {
+            continue;
+        }
+        skin.setDynamic(FeaturedSpritePrefix + url, stored->second);
         featuredImages.insert(url);
+        shownShowcases.insert(url);
         featuredDirty = true;
     }
     if (!featuredDirty) {
@@ -421,6 +490,44 @@ void Client::syncAccount()
             skin.clearDynamic("dynamic/avatar");
         }
     }
+    if (snapshot.profile.revision != profileRevision) {
+        profileRevision = snapshot.profile.revision;
+        const PlayerProfile& loaded = snapshot.profile;
+        for (const std::string& sprite : profileSprites) {
+            skin.clearDynamic(sprite);
+        }
+        profileSprites.clear();
+        profileInfo = menu::ProfileInfo {};
+        profileInfo.achievementsLoaded = loaded.achievementsLoaded;
+        profileInfo.achieved = loaded.achieved;
+        profileInfo.total = loaded.total;
+        profileInfo.gamerscore = loaded.gamerscore;
+        profileInfo.totalGamerscore = loaded.totalGamerscore;
+        profileInfo.statsLoaded = loaded.statsLoaded;
+        profileInfo.minutesPlayed = loaded.minutesPlayed;
+        profileInfo.blocksBroken = loaded.blocksBroken;
+        profileInfo.mobsDefeated = loaded.mobsDefeated;
+        profileInfo.distanceTravelled = loaded.distanceTravelled;
+        auto convert = [this](const std::vector<Achievement>& source, const std::string& group, std::vector<menu::ProfileAchievement>& target) {
+            for (size_t i = 0; i < source.size(); ++i) {
+                const Achievement& achievement = source[i];
+                menu::ProfileAchievement entry;
+                entry.name = achievement.name;
+                entry.description = achievement.description;
+                entry.gamerscore = achievement.gamerscore;
+                entry.achieved = achievement.achieved;
+                if (!achievement.icon.empty()) {
+                    entry.icon = "profile/" + group + "/" + std::to_string(i);
+                    skin.setDynamic(entry.icon, { achievement.iconWidth, achievement.iconHeight, achievement.icon });
+                    profileSprites.push_back(entry.icon);
+                }
+                target.push_back(std::move(entry));
+            }
+        };
+        convert(loaded.suggested, "suggested", profileInfo.suggested);
+        convert(loaded.recent, "recent", profileInfo.recent);
+    }
+    info.profile = profileInfo;
     info.realmsLoading = snapshot.realmsLoading;
     info.realmsError = std::move(snapshot.realmsError);
     for (const Realm& realm : snapshot.realms) {
@@ -595,8 +702,10 @@ void Client::syncSession()
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
-        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots);
+        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
+        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots + 1);
+        heldItemKey.clear();
+        handAnimator = world::EntityAnimator();
         for (const auto& [slot, pixels] : skinPixels) {
             renderer->updateEntityTexture(assets->skinLayerBase() + slot, pixels.data());
         }
@@ -630,6 +739,9 @@ void Client::syncSession()
     timeState.thunderLevel = snapshot.thunderLevel;
     timeState.cameraMedium = snapshot.cameraMedium;
     actorViews = std::move(snapshot.actors);
+    localSkinSlot = snapshot.localSkinSlot;
+    boomFraction = snapshot.boomFraction;
+    localSlim = snapshot.localSlim;
     hudState = std::move(snapshot.hud);
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {

@@ -68,6 +68,8 @@ private:
     size_t visibleTerrain() const;
     std::vector<world::ModelQuadGpu> buildActorQuads(const std::array<int32_t, 3>& origin);
     void interpolateActors(double now);
+    void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    uint32_t heldItemLayer() const;
     menu::HudView buildHudView();
     void handleHotbarInput();
     bool terrainReady(const SessionSnapshot& snapshot);
@@ -96,6 +98,9 @@ private:
     std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;
     uint64_t avatarRevision = 0;
+    uint64_t profileRevision = 0;
+    menu::ProfileInfo profileInfo;
+    std::vector<std::string> profileSprites;
     std::shared_ptr<const std::vector<uint8_t>> shownTitle;
     FreeCamera camera;
     uint64_t seenJoin = 0;
@@ -131,10 +136,28 @@ private:
     std::unique_ptr<FeaturedServers> featured;
     std::vector<FeaturedServer> featuredList;
     std::set<std::string> featuredImages;
+    std::map<std::string, ui::Bitmap> featuredShowcases;
+    std::set<std::string> shownShowcases;
     std::optional<std::string> featuredFocus;
     bool featuredListed = false;
     bool featuredDirty = false;
     uint64_t actorFrame = 0;
+    world::EntityAnimator handAnimator;
+    static constexpr int PerspectiveFirst = 0;
+    static constexpr int PerspectiveBack = 1;
+    static constexpr int PerspectiveFront = 2;
+    static constexpr double ThirdPersonRadius = 4.0;
+    static constexpr uint64_t LocalActorId = ~0ull;
+    int perspective = PerspectiveFirst;
+    std::array<double, 3> eyePosition {};
+    double boomFraction = 0.0;
+    uint32_t localSkinSlot = NoSkin;
+    bool localSlim = false;
+    double swingStart = -1.0;
+    std::string lastHeldIdentity;
+    double heldChangedAt = 0.0;
+    std::string heldItemKey;
+    std::vector<uint8_t> heldIcon;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
 };
 

@@ -29,6 +29,40 @@ struct Realm {
     bool expired = false;
 };
 
+/**
+ * One Xbox achievement of the game as the profile page shows it; the icon is
+ * RGBA, greyed out while the achievement is still locked.
+ */
+struct Achievement {
+    std::string name;
+    std::string description;
+    int gamerscore = 0;
+    bool achieved = false;
+    std::vector<uint8_t> icon;
+    uint32_t iconWidth = 0;
+    uint32_t iconHeight = 0;
+};
+
+/**
+ * The player's progress in the game: achievement and gamerscore totals, a few
+ * suggested and recently earned achievements, and the play statistics.
+ */
+struct PlayerProfile {
+    bool achievementsLoaded = false;
+    int achieved = 0;
+    int total = 0;
+    int gamerscore = 0;
+    int totalGamerscore = 0;
+    std::vector<Achievement> suggested;
+    std::vector<Achievement> recent;
+    bool statsLoaded = false;
+    int64_t minutesPlayed = 0;
+    int64_t blocksBroken = 0;
+    int64_t mobsDefeated = 0;
+    int64_t distanceTravelled = 0;
+    uint64_t revision = 0;
+};
+
 struct AccountSnapshot {
     AccountState state = AccountState::SignedOut;
     std::string verificationUri;
@@ -41,6 +75,7 @@ struct AccountSnapshot {
     std::string realmsError;
     std::vector<uint8_t> avatar;
     uint64_t avatarRevision = 0;
+    PlayerProfile profile;
 };
 
 class Account {
@@ -67,6 +102,8 @@ private:
     std::filesystem::path profileFile() const;
     std::filesystem::path avatarFile() const;
     void fetchAvatar(const std::string& authorization);
+    void fetchProfile(const std::string& titleAuthorization, const std::string& xuid);
+    std::string userAuthorization();
 
     std::filesystem::path cacheFile;
     std::unique_ptr<MinecraftAuthentication> authentication;
@@ -75,6 +112,7 @@ private:
     mutable std::mutex mutex;
     AccountSnapshot current;
     uint64_t avatarRevision = 0;
+    uint64_t profileRevision = 0;
 };
 
 }

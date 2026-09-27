@@ -314,6 +314,12 @@ public:
 
     std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
 
+    /**
+     * The look of the default state of the block an item places, when it is
+     * drawn as a full cube; null for other items.
+     */
+    const BlockVisual* itemCube(const std::string& identifier) const;
+
     size_t itemTextureCount() const
     {
         return itemTextures.size() + itemFiles.size();
