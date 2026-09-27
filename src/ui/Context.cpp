@@ -2,9 +2,9 @@
 
 #include "ui/DrawList.h"
 #include "ui/Theme.h"
-#include "ui/Utf8.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace kestrel::ui {
@@ -23,9 +23,10 @@ uint64_t hashId(std::string_view id)
 
 }
 
-Context::Context(DrawList& drawList, const Font& font, const InputState& input, WidgetState& state, float scale)
+Context::Context(DrawList& drawList, const Font& font, Skin& skin, const InputState& input, WidgetState& state, float scale)
     : drawList(drawList)
     , font(font)
+    , art(skin)
     , in(input)
     , state(state)
     , scale(scale)
@@ -42,22 +43,35 @@ float Context::mouseY() const
     return in.mouseY / scale;
 }
 
+void Context::setClip(const Rect& rect)
+{
+    clip = rect;
+    drawList.setClip({ std::round(rect.x * scale), std::round(rect.y * scale), std::round(rect.w * scale), std::round(rect.h * scale) });
+}
+
+void Context::clearClip()
+{
+    clip = {};
+    drawList.clearClip();
+}
+
+bool Context::clipped(const Rect& rect) const
+{
+    (void)rect;
+    return clip.w > 0.0f && !clip.contains(mouseX(), mouseY());
+}
+
 bool Context::hovered(const Rect& rect) const
 {
-    return !blocked && rect.contains(mouseX(), mouseY()) && !excluded.contains(mouseX(), mouseY());
+    return !blocked && rect.contains(mouseX(), mouseY()) && !clipped(rect);
 }
 
 Interaction Context::interact(std::string_view id, const Rect& rect)
 {
-    if (excluded.w <= 0.0f || rect.y >= excluded.bottom()) {
-        interactive.push_back(rect);
-    }
+    interactive.push_back(rect);
     uint64_t key = hashId(id);
     Interaction result;
     result.hovered = hovered(rect);
-    if (result.hovered) {
-        wantedCursor = Cursor::Hand;
-    }
     if (result.hovered && in.mousePressed) {
         state.active = key;
     }
@@ -66,47 +80,96 @@ Interaction Context::interact(std::string_view id, const Rect& rect)
     return result;
 }
 
-void Context::fill(const Rect& rect, Color color, float radius)
+void Context::fill(const Rect& rect, Color color)
 {
-    if (radius <= 0.0f) {
-        drawList.fill(rect, color);
+    drawList.fill(rect, color);
+}
+
+void Context::outline(const Rect& rect, Color color, float thickness)
+{
+    fill({ rect.x, rect.y, rect.w, thickness }, color);
+    fill({ rect.x, rect.bottom() - thickness, rect.w, thickness }, color);
+    fill({ rect.x, rect.y + thickness, thickness, rect.h - thickness * 2.0f }, color);
+    fill({ rect.right() - thickness, rect.y + thickness, thickness, rect.h - thickness * 2.0f }, color);
+}
+
+void Context::image(const Rect& rect, const ImageRef& source, Color tint)
+{
+    if (!source.valid) {
         return;
     }
-    drawList.shape(rect, color, color, radius, 1.0f);
+    drawList.quad(std::round(rect.x * scale), std::round(rect.y * scale), std::round(rect.right() * scale), std::round(rect.bottom() * scale),
+        source.u0, source.v0, source.u1, source.v1, tint.packed());
 }
 
-void Context::gradient(const Rect& rect, Color top, Color bottom, float radius)
+void Context::sprite(const Rect& rect, std::string_view name, Color tint)
 {
-    drawList.shape(rect, top, bottom, radius, 1.0f);
+    image(rect, art.sprite(name).image, tint);
 }
 
-void Context::shadow(const Rect& rect, float radius, float blur, Color color)
+void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& texels, Color tint)
 {
-    drawList.shape(rect, color, color, radius, blur);
+    const Sprite& source = art.sprite(name);
+    if (!source.valid) {
+        return;
+    }
+    float du = (source.image.u1 - source.image.u0) / source.width;
+    float dv = (source.image.v1 - source.image.v0) / source.height;
+    ImageRef region { source.image.u0 + texels.x * du, source.image.v0 + texels.y * dv, source.image.u0 + texels.right() * du, source.image.v0 + texels.bottom() * dv, true };
+    image(rect, region, tint);
 }
 
-void Context::glow(float x, float y, float size, Color color)
+void Context::nineSlice(const Rect& rect, std::string_view name, Color tint)
 {
-    drawList.shape({ x - size * 0.25f, y - size * 0.25f, size * 0.5f, size * 0.5f }, color, color, size * 0.25f, size);
+    const Sprite& source = art.sprite(name);
+    BorderImage border;
+    border.sprite = std::string(name);
+    border.slice = source.slice;
+    border.width = source.slice;
+    border.fill = true;
+    border.valid = true;
+    borderImage(rect, border, tint);
 }
 
-void Context::card(const Rect& rect, Color background, Color border, float radius)
+void Context::borderImage(const Rect& rect, const BorderImage& border, Color tint)
 {
-    fill(rect, border, radius);
-    fill(rect.inset(1.0f), background, std::max(radius - 1.0f, 0.0f));
+    const Sprite& source = art.sprite(border.sprite);
+    if (!border.valid || !source.valid) {
+        return;
+    }
+    Rect outer { rect.x - border.outset.left, rect.y - border.outset.top, rect.w + border.outset.left + border.outset.right, rect.h + border.outset.top + border.outset.bottom };
+    float xs[4] = {
+        std::round(outer.x * scale),
+        std::round((outer.x + border.width.left) * scale),
+        std::round((outer.right() - border.width.right) * scale),
+        std::round(outer.right() * scale),
+    };
+    float ys[4] = {
+        std::round(outer.y * scale),
+        std::round((outer.y + border.width.top) * scale),
+        std::round((outer.bottom() - border.width.bottom) * scale),
+        std::round(outer.bottom() * scale),
+    };
+    float du = (source.image.u1 - source.image.u0) / source.width;
+    float dv = (source.image.v1 - source.image.v0) / source.height;
+    float us[4] = { source.image.u0, source.image.u0 + border.slice.left * du, source.image.u1 - border.slice.right * du, source.image.u1 };
+    float vs[4] = { source.image.v0, source.image.v0 + border.slice.top * dv, source.image.v1 - border.slice.bottom * dv, source.image.v1 };
+    uint32_t color = tint.packed();
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            if (row == 1 && column == 1 && !border.fill) {
+                continue;
+            }
+            if (xs[column + 1] > xs[column] && ys[row + 1] > ys[row]) {
+                drawList.quad(xs[column], ys[row], xs[column + 1], ys[row + 1], us[column], vs[row], us[column + 1], vs[row + 1], color);
+            }
+        }
+    }
 }
 
-void Context::outline(const Rect& rect, Color color)
+void Context::border(const Rect& rect, std::string_view component, std::string_view stateName, Color tint)
 {
-    fill({ rect.x, rect.y, rect.w, 1.0f }, color);
-    fill({ rect.x, rect.bottom() - 1.0f, rect.w, 1.0f }, color);
-    fill({ rect.x, rect.y + 1.0f, 1.0f, rect.h - 2.0f }, color);
-    fill({ rect.right() - 1.0f, rect.y + 1.0f, 1.0f, rect.h - 2.0f }, color);
-}
-
-void Context::image(const Rect& rect, const ImageRef& source, float radius)
-{
-    drawList.image(rect, source.u0, source.v0, source.u1, source.v1, radius);
+    borderImage(rect, art.border(component, stateName), tint);
 }
 
 float Context::measure(std::string_view text, TextStyle style) const
@@ -124,6 +187,13 @@ void Context::text(std::string_view value, TextStyle style, float x, float y, Co
     font.draw(drawList, value, style, x, y, color, maxWidth);
 }
 
+void Context::textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth)
+{
+    float offset = style == TextStyle::Pixel ? 1.0f : 1.0f / scale * std::max(1.0f, std::round(scale * theme::css(2.0f)));
+    font.draw(drawList, value, style, x + offset, y + offset, shadow, maxWidth);
+    font.draw(drawList, value, style, x, y, color, maxWidth);
+}
+
 void Context::textCentered(std::string_view value, TextStyle style, const Rect& rect, Color color)
 {
     float width = std::min(measure(value, style), rect.w);
@@ -137,125 +207,47 @@ float Context::paragraph(std::string_view value, TextStyle style, float x, float
     return font.drawWrapped(drawList, value, style, x, y, width, color);
 }
 
-bool Context::button(std::string_view id, std::string_view label, const Rect& rect, ButtonKind kind, bool enabled)
+float Context::paragraphHeight(std::string_view value, TextStyle style, float width) const
 {
-    Interaction state = enabled ? interact(id, rect) : Interaction {};
-    constexpr float radius = 10.0f;
-    Rect body = state.pressed ? Rect { rect.x, rect.y + 1.0f, rect.w, rect.h } : rect;
-
-    if (!enabled) {
-        if (kind != ButtonKind::Ghost) {
-            card(rect, theme::SurfaceAlt, theme::Line, radius);
-        }
-        textCentered(label, TextStyle::Label, rect.inset(8.0f), theme::Subtle);
-        return false;
-    }
-
-    switch (kind) {
-    case ButtonKind::Primary:
-        shadow({ body.x, body.y + 6.0f, body.w, body.h }, radius, state.hovered ? 22.0f : 16.0f, theme::AccentGlow);
-        gradient(body, state.hovered ? theme::AccentHover : theme::Accent, state.pressed ? theme::AccentPressed : theme::AccentDeep, radius);
-        textCentered(label, TextStyle::Label, body.inset(8.0f), theme::OnAccent);
-        break;
-    case ButtonKind::Danger:
-        gradient(body, state.hovered ? theme::DangerHover : theme::Danger, theme::DangerDeep, radius);
-        textCentered(label, TextStyle::Label, body.inset(8.0f), theme::OnAccent);
-        break;
-    case ButtonKind::Ghost:
-        if (state.hovered || state.pressed) {
-            fill(body, state.pressed ? theme::Raised : theme::GhostHover, radius);
-        }
-        textCentered(label, TextStyle::Label, body.inset(8.0f), state.hovered ? theme::Text : theme::Muted);
-        break;
-    case ButtonKind::Secondary:
-        card(body, state.pressed ? theme::Raised : state.hovered ? theme::Hover : theme::SurfaceAlt, state.hovered ? theme::LineStrong : theme::Line, radius);
-        textCentered(label, TextStyle::Label, body.inset(8.0f), theme::Text);
-        break;
-    }
-    return state.clicked;
+    std::vector<std::string_view> lines;
+    return static_cast<float>(font.wrap(value, style, width, lines)) * font.lineHeight(style);
 }
 
-bool Context::tab(std::string_view id, std::string_view label, const Rect& rect, bool active)
+bool Context::classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled)
 {
-    Interaction state = interact(id, rect);
-    Rect pill = rect.inset(0.0f);
-    if (active) {
-        card(pill, theme::AccentSoft, theme::AccentLine, pill.h * 0.5f);
-    } else if (state.hovered) {
-        fill(pill, theme::GhostHover, pill.h * 0.5f);
-    }
-    textCentered(label, TextStyle::Label, rect, active ? theme::Accent : state.hovered ? theme::Text : theme::Muted);
-    return state.clicked;
+    Interaction interaction = enabled ? interact(id, rect) : Interaction {};
+    fill(rect, { 19, 19, 19, 255 });
+    const char* face = !enabled ? "ui/button_borderless_dark"
+        : interaction.pressed ? "ui/button_borderless_lightpressed"
+        : interaction.hovered ? "ui/button_borderless_lighthover"
+                              : "ui/button_borderless_light";
+    nineSlice(rect.inset(1.0f), face);
+    Color ink = !enabled ? Color { 140, 140, 140, 255 } : interaction.hovered ? theme::ButtonTextHover : theme::ButtonText;
+    float y = rect.y + std::floor((rect.h - 8.0f) * 0.5f) + (interaction.pressed ? 1.0f : 0.0f);
+    float width = measure(label, TextStyle::Pixel);
+    text(label, TextStyle::Pixel, rect.x + std::floor((rect.w - width) * 0.5f), y, ink, rect.w - 4.0f);
+    return interaction.clicked;
 }
 
-bool Context::field(std::string_view id, std::string_view placeholder, std::string_view value, const Rect& rect, bool focused)
+Interaction Context::pressable(std::string_view id, std::string_view component, const Rect& rect, bool enabled, bool selected)
 {
-    Interaction state = interact(id, rect);
-    if (state.hovered) {
-        wantedCursor = Cursor::Text;
-    }
-    constexpr float radius = 10.0f;
-    if (focused) {
-        shadow(rect, radius, 14.0f, theme::AccentGlow);
-    }
-    card(rect, focused ? theme::FieldFocused : theme::Field, focused ? theme::Accent : state.hovered ? theme::LineStrong : theme::Line, radius);
-
-    float inner = rect.w - 32.0f;
-    float y = rect.y + (rect.h - lineHeight(TextStyle::Body)) * 0.5f;
-    if (value.empty() && !focused) {
-        text(placeholder, TextStyle::Body, rect.x + 16.0f, y, theme::Subtle, inner);
-        return state.clicked;
-    }
-
-    std::string shown(value);
-    while (!shown.empty() && measure(shown, TextStyle::Body) > inner - 4.0f) {
-        dropFirstUtf8(shown);
-    }
-    text(shown, TextStyle::Body, rect.x + 16.0f, y, theme::Text);
-    if (focused) {
-        float caret = rect.x + 16.0f + measure(shown, TextStyle::Body) + 1.0f;
-        fill({ caret, rect.y + rect.h * 0.25f, 2.0f, rect.h * 0.5f }, theme::Accent, 1.0f);
-    }
-    return state.clicked;
+    Interaction interaction = enabled ? interact(id, rect) : Interaction {};
+    const char* stateName = !enabled ? "Disabled" : (interaction.pressed || selected) ? "Pressed" : interaction.hovered ? "Hovered" : "Default";
+    border(rect, component, stateName);
+    return interaction;
 }
 
-bool Context::toggle(std::string_view id, const Rect& rect, bool on)
+bool Context::pressableButton(std::string_view id, std::string_view component, std::string_view label, const Rect& rect, TextStyle style, bool enabled)
 {
-    Interaction state = interact(id, rect);
-    Rect box { rect.x + (rect.w - 18.0f) * 0.5f, rect.y + (rect.h - 18.0f) * 0.5f, 18.0f, 18.0f };
-    if (on) {
-        shadow(box, 6.0f, 10.0f, theme::AccentGlow);
-        gradient(box, theme::AccentHover, theme::AccentDeep, 6.0f);
-        fill(box.inset(6.0f), theme::OnAccent, 2.0f);
-    } else {
-        card(box, state.hovered ? theme::Hover : theme::Field, state.hovered ? theme::Accent : theme::LineStrong, 6.0f);
+    Interaction interaction = pressable(id, component, rect, enabled);
+    bool light = component.find("Secondary") != std::string_view::npos || component.find("Neutral") != std::string_view::npos;
+    Color ink = !enabled ? theme::Disabled : light ? Color { 0x1e, 0x1e, 0x1f, 255 } : theme::White;
+    Rect face = rect;
+    if (!interaction.pressed) {
+        face.h -= theme::css(4.0f);
     }
-    return state.clicked;
-}
-
-/**
- * A horizontal slider over [0, 1]: pressing anywhere on the track grabs the
- * knob, which then follows the mouse until the button is released.
- */
-bool Context::slider(std::string_view id, const Rect& rect, float& fraction)
-{
-    constexpr float knobSize = 20.0f;
-    constexpr float trackHeight = 6.0f;
-    Interaction interaction = interact(id, rect);
-    float before = fraction;
-    if (state.active == hashId(id) && in.mouseDown) {
-        fraction = std::clamp((mouseX() - rect.x - knobSize * 0.5f) / std::max(rect.w - knobSize, 1.0f), 0.0f, 1.0f);
-    }
-    float travel = rect.w - knobSize;
-    Rect track { rect.x + knobSize * 0.5f, rect.y + (rect.h - trackHeight) * 0.5f, travel, trackHeight };
-    fill(track, theme::Field, trackHeight * 0.5f);
-    fill({ track.x, track.y, travel * fraction, trackHeight }, theme::Accent, trackHeight * 0.5f);
-    Rect knob { rect.x + travel * fraction, rect.y + (rect.h - knobSize) * 0.5f, knobSize, knobSize };
-    if (interaction.hovered || state.active == hashId(id)) {
-        shadow(knob, knobSize * 0.5f, 10.0f, theme::AccentGlow);
-    }
-    gradient(knob, theme::AccentHover, theme::AccentDeep, knobSize * 0.5f);
-    return fraction != before;
+    textCentered(label, style, face, ink);
+    return interaction.clicked;
 }
 
 void Context::endFrame()

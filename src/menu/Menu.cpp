@@ -6,9 +6,8 @@
 #include "ui/Utf8.h"
 
 #include <algorithm>
-#include <chrono>
+#include <cmath>
 #include <cstdio>
-#include <span>
 
 namespace kestrel::menu {
 
@@ -18,20 +17,46 @@ using namespace ui::theme;
 namespace {
 
 constexpr size_t MaxFieldLength = 96;
+constexpr float TitleButtonWidth = 148.0f;
+constexpr float TitleButtonHeight = 30.0f;
+constexpr float TitleButtonStep = 32.0f;
+constexpr float CornerButtonHeight = 24.0f;
+constexpr Color DialogInk { 0x4c, 0x4c, 0x4c, 255 };
+constexpr Color Backing { 0, 0, 0, 150 };
 
-struct Hue {
-    Color top;
-    Color bottom;
-    Color ink;
-};
+std::string megabytes(uint64_t bytes)
+{
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return text;
+}
 
-constexpr Hue Hues[] = {
-    { { 208, 180, 248, 255 }, { 150, 108, 214, 255 }, { 30, 18, 46, 255 } },
-    { { 140, 230, 208, 255 }, { 70, 170, 150, 255 }, { 12, 38, 32, 255 } },
-    { { 248, 170, 206, 255 }, { 206, 96, 150, 255 }, { 46, 14, 30, 255 } },
-    { { 160, 190, 250, 255 }, { 92, 124, 214, 255 }, { 16, 24, 50, 255 } },
-    { { 250, 204, 150, 255 }, { 214, 146, 82, 255 }, { 50, 30, 10, 255 } },
-};
+// White text on the translucent strip the title screen puts under its corner labels.
+void backedLabel(Context& ui, std::string_view label, float x, float y)
+{
+    float width = ui.measure(label, TextStyle::Pixel);
+    ui.fill({ x - 1.0f, y - 1.0f, width + 2.0f, 10.0f }, Backing);
+    ui.text(label, TextStyle::Pixel, x, y, White);
+}
+
+// A classic button with a small picture in front of its label, like Profile or Social.
+bool iconButton(Context& ui, std::string_view id, std::string_view label, std::string_view icon, const Rect& rect, float iconSize)
+{
+    Interaction state = ui.interact(id, rect);
+    ui.fill(rect, { 19, 19, 19, 255 });
+    ui.nineSlice(rect.inset(1.0f), state.pressed ? "ui/button_borderless_lightpressed" : state.hovered ? "ui/button_borderless_lighthover" : "ui/button_borderless_light");
+    float x = rect.x + 3.0f;
+    if (!icon.empty()) {
+        ui.sprite({ x, rect.y + std::floor((rect.h - iconSize) * 0.5f), iconSize, iconSize }, icon);
+        x += iconSize + 3.0f;
+    }
+    if (!label.empty()) {
+        float width = ui.measure(label, TextStyle::Pixel);
+        float room = rect.right() - 3.0f - x;
+        ui.text(label, TextStyle::Pixel, x + std::floor((room - width) * 0.5f), rect.y + std::floor((rect.h - 8.0f) * 0.5f), state.hovered ? White : ButtonText, room);
+    }
+    return state.clicked;
+}
 
 }
 
@@ -60,11 +85,9 @@ void Menu::setAccount(AccountInfo info)
     bool knownAccount = signedIn() || account.status == AccountStatus::Connecting;
     displayName = knownAccount && !account.gamertag.empty() ? account.gamertag : "Steve";
 
-    if (previous != AccountStatus::SignedIn && account.status == AccountStatus::SignedIn) {
-        if (sheet == Sheet::SignIn) {
-            sheet = Sheet::None;
-            notify("Signed in as " + displayName);
-        }
+    if (previous != AccountStatus::SignedIn && account.status == AccountStatus::SignedIn && dialog == Dialog::SignIn) {
+        dialog = Dialog::None;
+        notify("Signed in as " + displayName);
     }
 }
 
@@ -76,7 +99,7 @@ bool Menu::signedIn() const
 void Menu::beginSignIn()
 {
     accountRequest = AccountRequest::SignIn;
-    sheet = Sheet::SignIn;
+    dialog = Dialog::SignIn;
     field = Field::None;
 }
 
@@ -92,12 +115,15 @@ bool Menu::worldVisible() const
 
 bool Menu::capturesMouse() const
 {
-    return inGame() && screen == Screen::Home && sheet == Sheet::None;
+    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen;
 }
 
-bool Menu::headerVisible() const
+float Menu::captionHeight() const
 {
-    return !capturesMouse() && !(chrome.fullscreen && inGame());
+    if (capturesMouse()) {
+        return 0.0f;
+    }
+    return screen == Screen::Title ? 0.0f : 48.0f;
 }
 
 void Menu::setSession(SessionInfo info)
@@ -111,26 +137,26 @@ void Menu::setSession(SessionInfo info)
     switch (session.status) {
     case SessionStatus::Resolving:
     case SessionStatus::Connecting:
-        sheet = Sheet::Connecting;
+        dialog = Dialog::Connecting;
         field = Field::None;
+        socialOpen = false;
         break;
     case SessionStatus::Joined:
-        if (sheet == Sheet::Connecting) {
-            sheet = Sheet::None;
+        if (dialog == Dialog::Connecting) {
+            dialog = Dialog::None;
         }
-        navigate(Screen::Home);
-        notify("Joined " + session.name);
+        navigate(Screen::Title);
         break;
     case SessionStatus::Failed:
     case SessionStatus::Disconnected:
-        sheet = Sheet::ConnectionError;
+        dialog = Dialog::ConnectionError;
         break;
     case SessionStatus::Idle:
-        if (sheet == Sheet::Connecting || sheet == Sheet::Pause) {
-            sheet = Sheet::None;
+        if (dialog == Dialog::Connecting || dialog == Dialog::Pause) {
+            dialog = Dialog::None;
         }
         if (previous == SessionStatus::Joined) {
-            notify("Disconnected");
+            navigate(Screen::Title);
         }
         break;
     }
@@ -143,523 +169,385 @@ void Menu::frame(Context& ui, float width, float height)
         rebinding.reset();
     }
 
-    ui.setBlocked(sheet != Sheet::None || capturesMouse());
+    bool modal = dialog != Dialog::None || socialOpen;
+    ui.setBlocked(modal || capturesMouse());
+
     if (!worldVisible()) {
-        background(ui, width, height);
-    } else if (screen != Screen::Home) {
-        ui.fill({ 0.0f, 0.0f, width, height }, { 12, 10, 18, 215 });
+        panorama(ui, width, height);
     }
 
-    float contentWidth = std::min(width - PadXl * 2.0f, ContentMaxWidth);
-    float top = headerVisible() ? HeaderHeight : 0.0f;
-    Area area {
-        (width - contentWidth) * 0.5f,
-        top + PadXl,
-        contentWidth,
-        height - top - PadXl * 2.0f,
-    };
-
-    ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
-    switch (inGame() && screen != Screen::Settings ? Screen::Home : screen) {
-    case Screen::Home:
+    switch (screen) {
+    case Screen::Title:
         if (inGame()) {
-            gameView(ui, area);
-        } else {
-            home(ui, area);
+            gameView(ui, width, height);
+        } else if (dialog != Dialog::Connecting && dialog != Dialog::ConnectionError) {
+            title(ui, width, height);
         }
         break;
-    case Screen::Servers:
-        servers(ui, area);
-        break;
-    case Screen::Worlds:
-        worlds(ui, area);
-        break;
-    case Screen::Friends:
-        friends(ui, area);
+    case Screen::Play:
+        play(ui, width, height);
         break;
     case Screen::Settings:
-        settings(ui, area);
+        settings(ui, width, height);
+        break;
+    case Screen::ServerForm:
+        serverForm(ui, width, height);
+        break;
+    case Screen::Marketplace:
+        todoScreen(ui, width, height, "Marketplace");
+        break;
+    case Screen::DressingRoom:
+        todoScreen(ui, width, height, "Dressing Room");
+        break;
+    case Screen::Profile:
+        todoScreen(ui, width, height, "Profile");
         break;
     }
 
     ui.setBlocked(false);
-    ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
-    switch (sheet) {
-    case Sheet::None:
-        break;
-    case Sheet::ServerEditor:
-        serverEditor(ui, width, height);
-        break;
-    case Sheet::ConfirmDelete: {
-        std::string name = selection && !selection->featured && selection->index < store.servers().size()
-            ? store.servers()[selection->index].name
-            : std::string("this server");
-        confirm(ui, width, height, "Delete server?", "\"" + name + "\" will be removed from your list.", "Delete");
-        break;
-    }
-    case Sheet::ConfirmExit:
-        confirm(ui, width, height, "Quit Kestrel?", "Your servers and settings are saved on this device.", "Quit");
-        break;
-    case Sheet::Pause:
-        pause(ui, width, height);
-        break;
-    case Sheet::SignIn:
-        signInSheet(ui, width, height);
-        break;
-    case Sheet::Connecting:
-        connectingSheet(ui, width, height);
-        break;
-    case Sheet::ConnectionError:
-        connectionErrorSheet(ui, width, height);
-        break;
+    if (socialOpen) {
+        socialDrawer(ui, width, height);
     }
 
-    ui.clearExcluded();
-    if (headerVisible()) {
-        Screen before = screen;
-        header(ui, width);
-        if (screen != before && sheet == Sheet::Pause) {
-            sheet = Sheet::None;
+    bool confirmed = false;
+    bool cancelled = false;
+    switch (dialog) {
+    case Dialog::None:
+        break;
+    case Dialog::Pause:
+        pause(ui, width, height);
+        break;
+    case Dialog::Connecting:
+    case Dialog::ConnectionError:
+    case Dialog::SignIn:
+        progressDialog(ui, width, height);
+        break;
+    case Dialog::ConfirmDelete: {
+        std::optional<ServerRow> row = selectedRow();
+        messageDialog(ui, width, height, "Delete Server", "Are you sure you want to delete " + (row ? "\"" + row->name + "\"" : std::string("this server")) + "?", "Delete", "Cancel", confirmed, cancelled);
+        if (confirmed && row && !row->featured) {
+            store.remove(row->index);
+            selection.reset();
+            navigate(Screen::Play);
         }
+        break;
+    }
+    case Dialog::ConfirmExit:
+        messageDialog(ui, width, height, "Quit Game", "Are you sure you want to quit Kestrel?", "Quit", "Cancel", confirmed, cancelled);
+        if (confirmed) {
+            quit = true;
+        }
+        break;
+    }
+    if (confirmed || cancelled) {
+        dialog = Dialog::None;
     }
 
     toast(ui, width, height);
     handleKeys(ui);
 }
 
-void Menu::background(Context& ui, float width, float height)
+void Menu::panorama(Context& ui, float width, float height)
 {
-    ui.gradient({ 0.0f, 0.0f, width, height }, CanvasTop, Canvas);
-    ui.glow(width * 0.18f, HeaderHeight + 40.0f, 760.0f, { 150, 100, 230, 34 });
-    ui.glow(width * 0.92f, height * 0.9f, 680.0f, { 90, 200, 180, 18 });
+    // The classic title background is a cube map turning slowly. Its four side faces laid out
+    // in a row and scrolled sideways give the same drift without a 3D pass.
+    float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
+    float face = std::max(width, height);
+    float strip = face * 4.0f;
+    float offset = std::fmod(seconds * face / 60.0f, strip);
+    float y = (height - face) * 0.5f;
+    for (int i = 0; i < 5; ++i) {
+        int index = i % 4;
+        float x = static_cast<float>(i) * face - offset;
+        if (x < width && x + face > 0.0f) {
+            ui.sprite({ x, y, face, face }, "ui/panorama_" + std::to_string(index));
+        }
+    }
 }
 
-void Menu::badge(Context& ui, const Rect& rect, std::string_view name, TextStyle style)
+void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
 {
-    uint32_t hash = 2166136261u;
-    for (char c : name) {
-        hash ^= static_cast<uint8_t>(c);
-        hash *= 16777619u;
-    }
-    const Hue& hue = Hues[hash % std::size(Hues)];
-    float radius = rect.w * 0.28f;
-    ui.gradient(rect, hue.top, hue.bottom, radius);
-    ui.fill({ rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h * 0.45f }, { 255, 255, 255, 22 }, radius - 1.0f);
-
-    std::string initial;
-    if (!name.empty()) {
-        char first = name.front();
-        initial.push_back(first >= 'a' && first <= 'z' ? static_cast<char>(first - 32) : first);
-    }
-    ui.textCentered(initial, style, rect, hue.ink);
-}
-
-void Menu::profileBadge(Context& ui, const Rect& rect, TextStyle style)
-{
-    if (avatar.valid && displayName == account.gamertag) {
-        ui.image(rect, avatar, rect.w * 0.28f);
+    // A server that ships its own title art gets it instead of the game logo, as in game.
+    const Sprite& art = ui.skin().sprite("dynamic/title");
+    if (art.valid && session.status != SessionStatus::Idle) {
+        float w = std::min(maxWidth, 263.0f);
+        ui.sprite({ std::floor(centerX - w * 0.5f), y, w, w * art.height / art.width }, "dynamic/title");
         return;
     }
-    badge(ui, rect, displayName, style);
+    const Sprite& word = ui.skin().sprite("ui/title");
+    if (!word.valid) {
+        return;
+    }
+    float w = std::min(maxWidth, 378.5f);
+    ui.sprite({ centerX - w * 0.5f, y, w, w * word.height / word.width }, "ui/title");
 }
 
-float Menu::captionButtons(Context& ui, float width)
+// Kestrel doesn't have the player's skin, so the default Steve stands in, seen from the front.
+// Each part is its front face from the 64x64 skin layout, overlay layer on top.
+void Menu::playerModel(Context& ui, float centerX, float top, float pixel)
 {
-    if (!chrome.captionButtons) {
-        return width;
+    struct Part {
+        float x;
+        float y;
+        float w;
+        float h;
+        float u;
+        float v;
+        float overlayU;
+        float overlayV;
+    };
+    constexpr Part Parts[] = {
+        { 4.0f, 0.0f, 8.0f, 8.0f, 8.0f, 8.0f, 40.0f, 8.0f },
+        { 4.0f, 8.0f, 8.0f, 12.0f, 20.0f, 20.0f, 20.0f, 36.0f },
+        { 0.0f, 8.0f, 4.0f, 12.0f, 44.0f, 20.0f, 44.0f, 36.0f },
+        { 12.0f, 8.0f, 4.0f, 12.0f, 36.0f, 52.0f, 52.0f, 52.0f },
+        { 4.0f, 20.0f, 4.0f, 12.0f, 4.0f, 20.0f, 4.0f, 36.0f },
+        { 8.0f, 20.0f, 4.0f, 12.0f, 20.0f, 52.0f, 4.0f, 52.0f },
+    };
+    constexpr std::string_view Skin = "textures/entity/steve";
+    float left = std::round(centerX - 8.0f * pixel);
+    for (const Part& part : Parts) {
+        Rect target { left + part.x * pixel, top + part.y * pixel, part.w * pixel, part.h * pixel };
+        ui.spriteRegion(target, Skin, { part.u, part.v, part.w, part.h });
+        ui.spriteRegion(target, Skin, { part.overlayU, part.overlayV, part.w, part.h });
     }
-
-    constexpr float buttonWidth = 48.0f;
-    constexpr float buttonHeight = 36.0f;
-    float x = width - buttonWidth * 3.0f;
-
-    Rect minimize { x, 0.0f, buttonWidth, buttonHeight };
-    Interaction minimizeState = ui.interact("chrome:minimize", minimize);
-    if (minimizeState.hovered) {
-        ui.fill(minimize, GhostHover);
-    }
-    ui.fill({ minimize.x + 19.0f, minimize.y + 18.0f, 10.0f, 1.0f }, minimizeState.hovered ? Text : Muted);
-
-    Rect maximize { x + buttonWidth, 0.0f, buttonWidth, buttonHeight };
-    Interaction maximizeState = ui.interact("chrome:maximize", maximize);
-    if (maximizeState.hovered) {
-        ui.fill(maximize, GhostHover);
-    }
-    Color maximizeInk = maximizeState.hovered ? Text : Muted;
-    if (chrome.maximized) {
-        ui.outline({ maximize.x + 21.0f, maximize.y + 11.0f, 9.0f, 9.0f }, maximizeInk);
-        ui.fill({ maximize.x + 18.0f, maximize.y + 14.0f, 9.0f, 9.0f }, Canvas);
-        ui.outline({ maximize.x + 18.0f, maximize.y + 14.0f, 9.0f, 9.0f }, maximizeInk);
-    } else {
-        ui.outline({ maximize.x + 19.0f, maximize.y + 13.0f, 10.0f, 10.0f }, maximizeInk);
-    }
-
-    Rect close { x + buttonWidth * 2.0f, 0.0f, buttonWidth, buttonHeight };
-    Interaction closeState = ui.interact("chrome:close", close);
-    if (closeState.hovered) {
-        ui.fill(close, CloseHover);
-    }
-    ui.textCentered("\xC3\x97", TextStyle::Heading, { close.x, close.y - 1.0f, close.w, close.h }, closeState.hovered ? Text : Muted);
-
-    if (minimizeState.clicked) {
-        chromeAction = ChromeAction::Minimize;
-    }
-    if (maximizeState.clicked) {
-        chromeAction = ChromeAction::Maximize;
-    }
-    if (closeState.clicked) {
-        chromeAction = ChromeAction::Close;
-    }
-    return x;
 }
 
-void Menu::header(Context& ui, float width)
+void Menu::title(Context& ui, float width, float height)
 {
-    ui.fill({ 0.0f, 0.0f, width, HeaderHeight }, Header);
-    ui.fill({ 0.0f, HeaderHeight - 1.0f, width, 1.0f }, Line);
+    logo(ui, width * 0.5f, 80.0f, width - 32.0f);
 
-    float right = captionButtons(ui, width) - Pad;
-    float left = PadLg + chrome.insetLeft;
-
-    Rect logo { left, (HeaderHeight - 34.0f) * 0.5f, 34.0f, 34.0f };
-    ui.shadow({ logo.x, logo.y + 4.0f, logo.w, logo.h }, 11.0f, 16.0f, AccentGlow);
-    ui.gradient(logo, AccentHover, AccentDeep, 11.0f);
-    ui.fill({ logo.x + 9.0f, logo.y + 10.0f, 16.0f, 4.0f }, OnAccent, 2.0f);
-    ui.fill({ logo.x + 9.0f, logo.y + 16.0f, 11.0f, 4.0f }, OnAccent, 2.0f);
-    ui.fill({ logo.x + 9.0f, logo.y + 22.0f, 6.0f, 4.0f }, OnAccent, 2.0f);
-    ui.text("Kestrel", TextStyle::Heading, logo.right() + 12.0f, (HeaderHeight - ui.lineHeight(TextStyle::Heading)) * 0.5f, Text);
-
-    struct Tab {
-        Screen target;
-        const char* label;
-    };
-    constexpr Tab tabs[] = {
-        { Screen::Home, "Home" },
-        { Screen::Servers, "Servers" },
-        { Screen::Worlds, "Worlds" },
-        { Screen::Friends, "Friends" },
-    };
-
-    constexpr Tab gameTabs[] = {
-        { Screen::Home, "Game" },
-    };
-
-    float x = logo.right() + 12.0f + ui.measure("Kestrel", TextStyle::Heading) + PadXl;
-    std::span<const Tab> shown = inGame() ? std::span<const Tab>(gameTabs) : std::span<const Tab>(tabs);
-    if (sheet == Sheet::Connecting) {
-        shown = {};
+    float x = std::floor((width - TitleButtonWidth) * 0.5f);
+    float y = std::round(height * 0.5f + 13.67f);
+    if (ui.classicButton("title:play", "Play", { x, y, TitleButtonWidth, TitleButtonHeight })) {
+        navigate(Screen::Play);
     }
-    for (const Tab& item : shown) {
-        float tabWidth = ui.measure(item.label, TextStyle::Label) + 32.0f;
-        if (ui.tab(std::string("tab:") + item.label, item.label, { x, (HeaderHeight - 36.0f) * 0.5f, tabWidth, 36.0f }, screen == item.target)) {
-            navigate(item.target);
-        }
-        x += tabWidth + 4.0f;
-    }
-
-    float chipWidth = ui.measure(displayName, TextStyle::Label) + 64.0f;
-    Rect chip { right - chipWidth, (HeaderHeight - 42.0f) * 0.5f, chipWidth, 42.0f };
-    Interaction account = ui.interact("header:account", chip);
-    ui.card(chip, account.hovered ? Hover : SurfaceAlt, account.hovered ? LineStrong : Line, 21.0f);
-    Rect avatar { chip.x + 5.0f, chip.y + 5.0f, 32.0f, 32.0f };
-    profileBadge(ui, avatar, TextStyle::Label);
-    ui.fill({ avatar.right() - 8.0f, avatar.bottom() - 8.0f, 10.0f, 10.0f }, Header, 5.0f);
-    ui.fill({ avatar.right() - 6.0f, avatar.bottom() - 6.0f, 6.0f, 6.0f }, signedIn() ? Secondary : Subtle, 3.0f);
-    ui.text(displayName, TextStyle::Label, avatar.right() + 10.0f, chip.y + (chip.h - ui.lineHeight(TextStyle::Label)) * 0.5f, Text);
-    if (account.clicked) {
+    if (ui.classicButton("title:settings", "Settings", { x, y + TitleButtonStep, TitleButtonWidth, TitleButtonHeight })) {
+        returnScreen = Screen::Title;
         navigate(Screen::Settings);
     }
-}
-
-Rect Menu::sheetFrame(Context& ui, float width, float height, float sheetWidth, float sheetHeight)
-{
-    ui.fill({ 0.0f, 0.0f, width, height }, Scrim);
-    float w = std::min(sheetWidth, width - PadXl);
-    Rect frame { (width - w) * 0.5f, (height - sheetHeight) * 0.5f, w, sheetHeight };
-    ui.shadow({ frame.x, frame.y + 16.0f, frame.w, frame.h }, 20.0f, 48.0f, Shadow);
-    ui.fill(frame, LineStrong, 20.0f);
-    ui.gradient(frame.inset(1.0f), SurfaceTop, Surface, 19.0f);
-    return frame;
-}
-
-void Menu::serverEditor(Context& ui, float width, float height)
-{
-    Rect frame = sheetFrame(ui, width, height, 480.0f, 330.0f);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
-    ui.text(editing ? "Edit server" : "Add a server", TextStyle::Heading, x, frame.y + PadXl, Text);
-    ui.text("Saved on this device.", TextStyle::Body, x, frame.y + PadXl + 32.0f, Muted);
-
-    float y = frame.y + 104.0f;
-    ui.text("NAME", TextStyle::Caption, x, y, Subtle);
-    if (ui.field("editor:name", "My server", editName, { x, y + 20.0f, w, 44.0f }, field == Field::EditName)) {
-        field = Field::EditName;
-    }
-    y += 78.0f;
-    ui.text("ADDRESS", TextStyle::Caption, x, y, Subtle);
-    if (ui.field("editor:address", "play.example.net:19132", editAddress, { x, y + 20.0f, w, 44.0f }, field == Field::EditAddress)) {
-        field = Field::EditAddress;
+    if (ui.classicButton("title:marketplace", "Marketplace", { x, y + TitleButtonStep * 2.0f, TitleButtonWidth, TitleButtonHeight })) {
+        navigate(Screen::Marketplace);
     }
 
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
-    if (ui.button("editor:save", "Save", { frame.right() - PadXl - 112.0f, buttonsY, 112.0f, ControlHeight }, ButtonKind::Primary)) {
-        saveEditor();
+    if (iconButton(ui, "title:social", "Social (0)", "ui/FriendsIcon", { width - 48.0f - 80.0f, 29.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+        socialOpen = true;
+        socialParty = false;
     }
-    if (ui.button("editor:cancel", "Cancel", { frame.right() - PadXl - 112.0f - Gap - 100.0f, buttonsY, 100.0f, ControlHeight }, ButtonKind::Ghost)) {
-        sheet = Sheet::None;
-        field = Field::None;
-    }
-}
 
-void Menu::confirm(Context& ui, float width, float height, std::string_view title, std::string_view body, std::string_view action)
-{
-    Rect frame = sheetFrame(ui, width, height, 440.0f, 200.0f);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
-    ui.text(title, TextStyle::Heading, x, frame.y + PadXl, Text, w);
-    ui.paragraph(body, TextStyle::Body, x, frame.y + PadXl + 38.0f, w, Muted);
+    float bottom = height - 95.33f;
+    if (iconButton(ui, "title:inbox", "", "ui/mail_icon", { 47.33f, bottom, 23.0f, CornerButtonHeight }, 15.0f)) {
+        notify("TODO: Inbox");
+    }
+    const Sprite& avatar = ui.skin().sprite("dynamic/avatar");
+    if (iconButton(ui, "title:profile", "Profile", avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { 78.33f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
+        navigate(Screen::Profile);
+    }
 
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
-    if (ui.button("confirm:ok", action, { frame.right() - PadXl - 112.0f, buttonsY, 112.0f, ControlHeight }, ButtonKind::Danger)) {
-        confirmSheet();
+    float dressingX = width - 158.0f;
+    if (ui.classicButton("title:dressing", "Dressing Room", { dressingX, height - 96.33f, 82.0f, CornerButtonHeight })) {
+        navigate(Screen::DressingRoom);
     }
-    if (ui.button("confirm:cancel", "Cancel", { frame.right() - PadXl - 112.0f - Gap - 100.0f, buttonsY, 100.0f, ControlHeight }, ButtonKind::Ghost)) {
-        sheet = Sheet::None;
-    }
+    float nameWidth = ui.measure(displayName, TextStyle::Pixel);
+    backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), 276.67f);
+    playerModel(ui, dressingX + 41.0f, 292.67f, 2.23f);
+
+    backedLabel(ui, "Kestrel", 42.33f, height - 36.0f);
+    constexpr std::string_view Version = "v1.26.51";
+    backedLabel(ui, Version, width - 45.0f - ui.measure(Version, TextStyle::Pixel), height - 36.0f);
 }
 
 void Menu::pause(Context& ui, float width, float height)
 {
-    Rect frame = sheetFrame(ui, width, height, 380.0f, 272.0f);
-    connectionTitle(ui, width, frame);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
-    ui.text("Paused", TextStyle::Heading, x, frame.y + PadXl, Text);
+    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 90 });
+    constexpr float ButtonWidth = 276.0f;
+    constexpr float ButtonHeight = 28.0f;
+    constexpr float Step = 31.0f;
+    float x = std::round(width * 0.5f - 296.33f);
+    float y = std::round(height * 0.5f - 47.67f);
 
-    float y = frame.y + 90.0f;
-    if (ui.button("pause:resume", "Back to game", { x, y, w, ControlHeight }, ButtonKind::Primary)) {
-        sheet = Sheet::None;
-        navigate(Screen::Home);
+    logo(ui, x + ButtonWidth * 0.5f, y - 59.0f, ButtonWidth);
+
+    if (ui.classicButton("pause:resume", "Resume Game", { x, y, ButtonWidth, ButtonHeight })) {
+        dialog = Dialog::None;
     }
-    y += ControlHeight + Gap;
-    if (ui.button("pause:settings", "Settings", { x, y, w, ControlHeight })) {
-        sheet = Sheet::None;
+    if (ui.classicButton("pause:settings", "Settings", { x, y + Step, ButtonWidth, ButtonHeight })) {
+        dialog = Dialog::None;
+        returnScreen = Screen::Title;
         navigate(Screen::Settings);
     }
-    y += ControlHeight + Gap;
-    if (ui.button("pause:disconnect", "Disconnect", { x, y, w, ControlHeight }, ButtonKind::Ghost)) {
-        sheet = Sheet::None;
+    if (ui.classicButton("pause:quit", "Save & Quit", { x, y + Step * 2.0f, ButtonWidth, ButtonHeight })) {
+        dialog = Dialog::None;
         disconnectRequested = true;
     }
+
+    if (iconButton(ui, "pause:social", "Social (0)", "ui/FriendsIcon", { width - 48.0f - 80.0f, 29.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+        socialOpen = true;
+    }
+    float dressingX = width - 158.0f;
+    if (ui.classicButton("pause:dressing", "Dressing Room", { dressingX, y + 119.0f, 82.0f, CornerButtonHeight })) {
+        notify("TODO: Dressing Room");
+    }
+    float nameWidth = ui.measure(displayName, TextStyle::Pixel);
+    backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), y - 25.67f);
+    playerModel(ui, dressingX + 41.0f, y - 13.0f, 4.06f);
 }
 
-void Menu::signInSheet(Context& ui, float width, float height)
+void Menu::progressDialog(Context& ui, float width, float height)
 {
-    Rect frame = sheetFrame(ui, width, height, 500.0f, 380.0f);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
+    constexpr float DialogWidth = 286.67f;
+    constexpr float DialogHeight = 97.33f;
+    Rect frame { std::round((width - DialogWidth) * 0.5f), std::round(height * 0.5f - 49.0f), DialogWidth, DialogHeight };
+    logo(ui, width * 0.5f, frame.y - 145.33f, width - 32.0f);
 
-    Rect logo { x, frame.y + PadXl, 40.0f, 40.0f };
-    float cell = 9.0f;
-    ui.fill({ logo.x + 10.0f, logo.y + 10.0f, cell, cell }, { 242, 80, 34, 255 }, 1.0f);
-    ui.fill({ logo.x + 21.0f, logo.y + 10.0f, cell, cell }, { 127, 186, 0, 255 }, 1.0f);
-    ui.fill({ logo.x + 10.0f, logo.y + 21.0f, cell, cell }, { 0, 164, 239, 255 }, 1.0f);
-    ui.fill({ logo.x + 21.0f, logo.y + 21.0f, cell, cell }, { 255, 185, 0, 255 }, 1.0f);
-    ui.text("Sign in with Microsoft", TextStyle::Heading, logo.right() + 14.0f, logo.y + (logo.h - ui.lineHeight(TextStyle::Heading)) * 0.5f, Text, w - 54.0f);
+    std::string heading;
+    std::string body;
+    std::string button = "Cancel";
+    bool progress = false;
+    float fraction = -1.0f;
+    bool twoButtons = false;
 
-    float y = logo.bottom() + PadLg;
-    int dots = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 400 % 4);
-    std::string ellipsis(static_cast<size_t>(dots), '.');
-
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
-    bool closeSheet = false;
-
-    switch (account.status) {
-    case AccountStatus::SignedOut:
-    case AccountStatus::Connecting:
-    case AccountStatus::SignedIn:
-        ui.paragraph("Contacting Microsoft to get a sign-in code" + ellipsis, TextStyle::Body, x, y, w, Muted);
-        break;
-    case AccountStatus::AwaitingCode: {
-        ui.paragraph("Open the page below on any device, then enter this code to link your Xbox account.", TextStyle::Body, x, y, w, Muted);
-        Rect codeBox { x, y + 52.0f, w, 84.0f };
-        ui.card(codeBox, theme::Field, AccentLine, 14.0f);
-        ui.textCentered(account.userCode, TextStyle::Display, codeBox, Accent);
-
-        Rect link { x, codeBox.bottom() + 12.0f, w, 24.0f };
-        Interaction linkState = ui.interact("signin:link", link);
-        ui.textCentered(account.verificationUri, TextStyle::Label, link, linkState.hovered ? AccentHover : Secondary);
-        if (linkState.clicked) {
-            platform::openUrl(account.verificationUri);
+    if (dialog == Dialog::SignIn) {
+        switch (account.status) {
+        case AccountStatus::AwaitingCode:
+            heading = "Sign in with a Microsoft account";
+            body = "Go to " + account.verificationUri + " and enter the code " + account.userCode;
+            twoButtons = true;
+            break;
+        case AccountStatus::Failed:
+            heading = "Sign-in failed";
+            body = account.error;
+            button = "Try Again";
+            twoButtons = true;
+            break;
+        default:
+            heading = "Signing in";
+            progress = true;
+            break;
         }
+    } else if (dialog == Dialog::ConnectionError) {
+        heading = session.status == SessionStatus::Disconnected ? "Disconnected from Server" : "Unable to connect to world";
+        body = session.error.empty() ? "The connection was closed." : session.error;
+        button = "OK";
+    } else if (session.packPrompt) {
+        heading = "Resource Packs Required";
+        std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
+        body = "This server uses " + count + " (" + megabytes(session.packBytes) + "). Download them?";
+        button = "Download";
+        twoButtons = true;
+    } else if (session.packDownloading) {
+        heading = "Downloading packs (" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")";
+        fraction = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
+    } else {
+        heading = session.status == SessionStatus::Resolving ? "Locating server" : session.loadingTerrain ? "Generating world" : "Connecting to online experience";
+        progress = true;
+    }
 
-        ui.text("Waiting for you to finish" + ellipsis, TextStyle::Caption, x, buttonsY - 30.0f, Subtle);
-        if (ui.button("signin:open", "Open page", { frame.right() - PadXl - 132.0f, buttonsY, 132.0f, ControlHeight }, ButtonKind::Primary)) {
-            platform::copyText(account.userCode);
-            platform::openUrl(account.verificationUri);
-            notify("Code copied, paste it on the page");
+    ui.nineSlice(frame, "ui/dialog_background_opaque");
+    float headingWidth = ui.measure(heading, TextStyle::Pixel);
+    ui.text(heading, TextStyle::Pixel, frame.x + std::floor((frame.w - std::min(headingWidth, frame.w - 12.0f)) * 0.5f), frame.y + 9.0f, DialogInk, frame.w - 12.0f);
+
+    Rect well { frame.x + 5.67f, frame.y + 21.33f, frame.w - 11.33f, frame.h - 27.0f };
+    ui.fill(well, { 85, 85, 85, 255 });
+    ui.fill(well.inset(1.0f), { 0, 0, 0, 220 });
+
+    float buttonY = well.bottom() - 8.0f - 24.0f;
+    if (!body.empty()) {
+        ui.paragraph(body, TextStyle::Pixel, well.x + 6.0f, well.y + 6.0f, well.w - 12.0f, White);
+    }
+    if (progress) {
+        const Sprite& bar = ui.skin().sprite("ui/loading_bar");
+        if (bar.valid) {
+            float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
+            int frames = std::max(1, static_cast<int>(bar.width / 64.0f));
+            int current = static_cast<int>(seconds * 10.0f) % frames;
+            ui.spriteRegion({ std::floor(well.x + (well.w - 64.0f) * 0.5f), buttonY - 14.0f, 64.0f, 8.0f }, "ui/loading_bar", { current * 64.0f, 0.0f, 64.0f, bar.height });
         }
-        if (ui.button("signin:copy", "Copy code", { frame.right() - PadXl - 132.0f - Gap - 120.0f, buttonsY, 120.0f, ControlHeight })) {
-            if (platform::copyText(account.userCode)) {
-                notify("Code copied");
+    }
+    if (fraction >= 0.0f) {
+        Rect track { well.x + 20.0f, buttonY - 14.0f, well.w - 40.0f, 5.0f };
+        ui.nineSlice(track, "ui/empty_progress_bar");
+        if (fraction > 0.0f) {
+            ui.nineSlice({ track.x, track.y, std::max(track.w * fraction, 8.0f), track.h }, "ui/filled_progress_bar");
+        }
+    }
+
+    constexpr float ButtonWidth = 64.0f;
+    Rect primary { std::floor(well.x + (well.w - ButtonWidth) * 0.5f), buttonY, ButtonWidth, 24.0f };
+    Rect secondary {};
+    if (twoButtons) {
+        primary.x = std::floor(well.x + well.w * 0.5f - ButtonWidth - 2.0f);
+        secondary = { primary.right() + 4.0f, buttonY, ButtonWidth, 24.0f };
+    }
+
+    if (dialog == Dialog::SignIn) {
+        if (account.status == AccountStatus::AwaitingCode) {
+            if (ui.classicButton("signin:open", "Open Page", primary)) {
+                platform::copyText(account.userCode);
+                platform::openUrl(account.verificationUri);
+                notify("Code copied, paste it on the page");
+            }
+        } else if (account.status == AccountStatus::Failed) {
+            if (ui.classicButton("signin:retry", button, primary)) {
+                beginSignIn();
             }
         }
-        break;
-    }
-    case AccountStatus::Failed:
-        ui.text("Sign-in failed", TextStyle::Label, x, y, Danger, w);
-        ui.paragraph(account.error, TextStyle::Caption, x, y + 28.0f, w, Muted);
-        if (ui.button("signin:retry", "Try again", { frame.right() - PadXl - 120.0f, buttonsY, 120.0f, ControlHeight }, ButtonKind::Primary)) {
-            beginSignIn();
+        Rect cancel = twoButtons ? secondary : primary;
+        if (ui.classicButton("signin:cancel", "Cancel", cancel)) {
+            if (account.status != AccountStatus::Failed) {
+                accountRequest = AccountRequest::Cancel;
+            }
+            dialog = Dialog::None;
         }
-        break;
-    }
-
-    if (ui.button("signin:cancel", account.status == AccountStatus::Failed ? "Close" : "Cancel", { x - 8.0f, buttonsY, 100.0f, ControlHeight }, ButtonKind::Ghost)) {
-        closeSheet = true;
-    }
-    if (closeSheet) {
-        if (account.status != AccountStatus::Failed) {
-            accountRequest = AccountRequest::Cancel;
-        }
-        sheet = Sheet::None;
-    }
-}
-
-namespace {
-
-std::string megabytes(uint64_t bytes)
-{
-    char text[32];
-    std::snprintf(text, sizeof(text), "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
-    return text;
-}
-
-}
-
-void Menu::connectionTitle(Context& ui, float width, const Rect& frame)
-{
-    float bottom = frame.y - 28.0f;
-    if (titleImage.valid) {
-        float titleWidth = std::min(440.0f, width - PadXl * 2.0f);
-        float titleHeight = titleWidth * static_cast<float>(ui::Font::TitleHeight) / static_cast<float>(ui::Font::TitleWidth);
-        ui.image({ (width - titleWidth) * 0.5f, bottom - titleHeight, titleWidth, titleHeight }, titleImage, 0.0f);
         return;
     }
-
-    constexpr std::string_view Word = "KESTREL";
-    constexpr float Tracking = 10.0f;
-    float lineHeight = ui.lineHeight(TextStyle::Display);
-    float wordWidth = -Tracking;
-    for (char letter : Word) {
-        wordWidth += ui.measure(std::string_view(&letter, 1), TextStyle::Display) + Tracking;
+    if (dialog == Dialog::ConnectionError) {
+        if (ui.classicButton("error:ok", button, primary)) {
+            dialog = Dialog::None;
+        }
+        return;
     }
-    float x = (width - wordWidth) * 0.5f;
-    float y = bottom - lineHeight - 14.0f;
-    ui.glow(width * 0.5f, y + lineHeight * 0.5f, wordWidth * 1.4f, AccentGlow);
-    for (char letter : Word) {
-        std::string_view glyph(&letter, 1);
-        ui.text(glyph, TextStyle::Display, x + 2.0f, y + 4.0f, { 70, 44, 118, 220 });
-        ui.text(glyph, TextStyle::Display, x, y, Accent);
-        x += ui.measure(glyph, TextStyle::Display) + Tracking;
-    }
-    float underline = wordWidth * 0.3f;
-    ui.gradient({ (width - underline) * 0.5f, y + lineHeight + 6.0f, underline, 4.0f }, Secondary, SecondaryDeep, 2.0f);
-}
-
-void Menu::connectingSheet(Context& ui, float width, float height)
-{
-    Rect frame = sheetFrame(ui, width, height, 460.0f, 250.0f);
-    connectionTitle(ui, width, frame);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
-
     if (session.packPrompt) {
-        ui.text("Download resource packs?", TextStyle::Heading, x, frame.y + PadXl, Text, w);
-        ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
-        std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
-        ui.paragraph("This server uses " + count + " (" + megabytes(session.packBytes) + "). They are saved on this device and only downloaded once.",
-            TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
-        if (ui.button("packs:download", "Download", { frame.right() - PadXl - 130.0f, buttonsY, 130.0f, ControlHeight }, ButtonKind::Primary)) {
+        if (ui.classicButton("packs:download", button, primary)) {
             packAnswer = true;
         }
-        if (ui.button("packs:skip", "Skip", { frame.right() - PadXl - 130.0f - Gap - 100.0f, buttonsY, 100.0f, ControlHeight }, ButtonKind::Ghost)) {
+        if (ui.classicButton("packs:skip", "Skip", secondary)) {
             packAnswer = false;
         }
         return;
     }
-
-    if (session.packDownloading) {
-        ui.text("Downloading resource packs", TextStyle::Heading, x, frame.y + PadXl, Text, w);
-        ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
-        float progress = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
-        std::string detail = megabytes(session.packReceived) + " of " + megabytes(session.packTotal) + "  \xC2\xB7  " + std::to_string(static_cast<int>(progress * 100.0f)) + "%";
-        ui.text(detail, TextStyle::Body, x, frame.y + PadXl + 70.0f, Muted, w);
-        Rect track { x, frame.bottom() - PadLg - ControlHeight - 26.0f, w, 8.0f };
-        ui.fill(track, theme::Field, 4.0f);
-        if (progress > 0.0f) {
-            ui.gradient({ track.x, track.y, std::max(track.w * progress, 8.0f), track.h }, AccentHover, AccentDeep, 4.0f);
-        }
-        if (ui.button("packs:cancel", "Cancel", { frame.right() - PadXl - 110.0f, buttonsY, 110.0f, ControlHeight }, ButtonKind::Ghost)) {
-            disconnectRequested = true;
-            sheet = Sheet::None;
-        }
-        return;
-    }
-
-    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    std::string dots(static_cast<size_t>(now / 450 % 3 + 1), '.');
-    bool resolving = session.status == SessionStatus::Resolving;
-    const char* heading = resolving ? "Finding the Realm" : (session.loadingTerrain ? "Loading terrain" : "Connecting to server");
-    ui.text(heading + dots, TextStyle::Heading, x, frame.y + PadXl, Text, w);
-    ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
-    ui.paragraph(resolving ? "A sleeping Realm can take a moment to wake up." : "Hang tight, the world is almost here.",
-        TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
-
-    Rect track { x, frame.bottom() - PadLg - ControlHeight - 26.0f, w, 6.0f };
-    ui.fill(track, theme::Field, 3.0f);
-    float phase = static_cast<float>(now % 1400) / 1400.0f;
-    float barWidth = w * 0.3f;
-    float barX = track.x + (w + barWidth) * phase - barWidth;
-    float left = std::max(barX, track.x);
-    float right = std::min(barX + barWidth, track.right());
-    if (right > left) {
-        ui.gradient({ left, track.y, right - left, track.h }, AccentHover, AccentDeep, 3.0f);
-    }
-
-    if (ui.button("connecting:cancel", "Cancel", { frame.right() - PadXl - 110.0f, buttonsY, 110.0f, ControlHeight }, ButtonKind::Ghost)) {
+    if (ui.classicButton("connecting:cancel", button, primary)) {
         disconnectRequested = true;
-        sheet = Sheet::None;
+        dialog = Dialog::None;
     }
 }
 
-void Menu::connectionErrorSheet(Context& ui, float width, float height)
+void Menu::messageDialog(Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled)
 {
-    Rect frame = sheetFrame(ui, width, height, 480.0f, 260.0f);
-    float x = frame.x + PadXl;
-    float w = frame.w - PadXl * 2.0f;
-    bool lost = session.status == SessionStatus::Disconnected;
-
-    ui.text(lost ? "Disconnected" : "Couldn't connect", TextStyle::Heading, x, frame.y + PadXl, Text, w);
-    ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Danger, w);
-    ui.paragraph(session.error.empty() ? "The connection was closed." : session.error, TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
-
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
-    if (ui.button("error:back", "Back", { frame.right() - PadXl - 110.0f, buttonsY, 110.0f, ControlHeight }, ButtonKind::Primary)) {
-        sheet = Sheet::None;
-    }
+    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    constexpr float DialogWidth = 200.0f;
+    float bodyHeight = ui.paragraphHeight(body, TextStyle::Pixel, DialogWidth - 16.0f);
+    float dialogHeight = 21.0f + bodyHeight + 16.0f + 20.0f * 2.0f + 8.0f;
+    Rect frame { std::round((width - DialogWidth) * 0.5f), std::round((height - dialogHeight) * 0.5f), DialogWidth, dialogHeight };
+    ui.nineSlice(frame, "ui/dialog_background_opaque");
+    ui.textCentered(heading, TextStyle::Pixel, { frame.x, frame.y + 5.0f, frame.w, 12.0f }, DialogInk);
+    Rect well { frame.x + 4.0f, frame.y + 20.0f, frame.w - 8.0f, frame.h - 24.0f };
+    ui.fill(well, { 0, 0, 0, 230 });
+    ui.paragraph(body, TextStyle::Pixel, well.x + 4.0f, well.y + 6.0f, well.w - 8.0f, White);
+    float y = well.bottom() - 4.0f - 20.0f * 2.0f - 2.0f;
+    confirmed = ui.classicButton("dialog:confirm", confirm, { well.x + 4.0f, y, well.w - 8.0f, 20.0f });
+    cancelled = ui.classicButton("dialog:cancel", cancel, { well.x + 4.0f, y + 22.0f, well.w - 8.0f, 20.0f });
 }
 
-void Menu::gameView(Context& ui, const Area& area)
+void Menu::gameView(Context& ui, float width, float height)
 {
     std::vector<std::string> lines {
         session.levelName.empty() ? session.name : session.levelName,
         cameraInfo,
         "Looking at " + (session.targetBlock.empty() ? std::string("nothing") : session.targetBlock),
-        "Chunks " + std::to_string(session.columns) + "  \xC2\xB7  sub-chunks " + std::to_string(session.subChunks) + "  \xC2\xB7  pending " + std::to_string(session.pendingSubChunks),
-        "Meshes " + std::to_string(session.meshes) + "  \xC2\xB7  quads " + std::to_string(session.meshQuads) + "  \xC2\xB7  jobs " + std::to_string(session.meshJobs),
-        "Textures " + std::to_string(session.textureLayers) + "  \xC2\xB7  decode errors " + std::to_string(session.worldErrors),
+        "Chunks " + std::to_string(session.columns) + ", sub-chunks " + std::to_string(session.subChunks) + ", pending " + std::to_string(session.pendingSubChunks),
+        "Meshes " + std::to_string(session.meshes) + ", quads " + std::to_string(session.meshQuads) + ", jobs " + std::to_string(session.meshJobs),
+        "Textures " + std::to_string(session.textureLayers) + ", decode errors " + std::to_string(session.worldErrors),
         session.registryInfo,
     };
     if (!session.assetsError.empty()) {
@@ -668,20 +556,18 @@ void Menu::gameView(Context& ui, const Area& area)
     if (!session.lastWorldError.empty()) {
         lines.push_back(session.lastWorldError);
     }
-
-    float lineHeight = ui.lineHeight(TextStyle::Caption) + 4.0f;
-    float top = headerVisible() ? HeaderHeight : 0.0f;
-    Rect panel { Pad, top + Pad, 520.0f, 20.0f + lineHeight * static_cast<float>(lines.size()) };
-    ui.fill(panel, { 10, 8, 14, 150 }, 12.0f);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        Color color = i == 0 ? Text : i >= 7 ? Danger : Muted;
-        ui.text(lines[i], i == 0 ? TextStyle::Label : TextStyle::Caption, panel.x + 12.0f, panel.y + 10.0f + lineHeight * static_cast<float>(i), color, panel.w - 24.0f);
+    float y = 2.0f;
+    for (const std::string& line : lines) {
+        if (!line.empty()) {
+            ui.fill({ 1.0f, y - 1.0f, ui.measure(line, TextStyle::Pixel) + 2.0f, 10.0f }, { 0, 0, 0, 110 });
+            ui.text(line, TextStyle::Pixel, 2.0f, y, White);
+        }
+        y += 10.0f;
     }
 
-    float centerX = area.x + area.w * 0.5f;
-    float centerY = (top + area.y + area.h + PadXl) * 0.5f;
-    ui.fill({ centerX - 8.0f, centerY - 1.0f, 16.0f, 2.0f }, { 255, 255, 255, 200 });
-    ui.fill({ centerX - 1.0f, centerY - 8.0f, 2.0f, 16.0f }, { 255, 255, 255, 200 });
+    float cx = std::floor(width * 0.5f - 7.5f);
+    float cy = std::floor(height * 0.5f - 7.5f);
+    ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });
 }
 
 void Menu::toast(Context& ui, float width, float height)
@@ -689,12 +575,10 @@ void Menu::toast(Context& ui, float width, float height)
     if (toastMessage.empty() || std::chrono::steady_clock::now() > toastUntil) {
         return;
     }
-    float w = std::min(ui.measure(toastMessage, TextStyle::Label) + 64.0f, width - PadXl);
-    Rect frame { (width - w) * 0.5f, height - PadXl - 48.0f, w, 48.0f };
-    ui.shadow({ frame.x, frame.y + 10.0f, frame.w, frame.h }, 24.0f, 30.0f, Shadow);
-    ui.card(frame, Raised, LineStrong, 24.0f);
-    ui.fill({ frame.x + 20.0f, frame.y + 20.0f, 8.0f, 8.0f }, Secondary, 4.0f);
-    ui.text(toastMessage, TextStyle::Label, frame.x + 40.0f, frame.y + (frame.h - ui.lineHeight(TextStyle::Label)) * 0.5f, Text, frame.w - 56.0f);
+    float w = std::min(ui.measure(toastMessage, TextStyle::Pixel) + 16.0f, width - 16.0f);
+    Rect frame { std::round((width - w) * 0.5f), height - 40.0f, w, 20.0f };
+    ui.nineSlice(frame, "ui/hud_tip_text_background", { 255, 255, 255, 230 });
+    ui.textCentered(toastMessage, TextStyle::Pixel, frame, White);
 }
 
 void Menu::handleKeys(Context& ui)
@@ -722,48 +606,35 @@ void Menu::handleKeys(Context& ui)
             popUtf8(*target);
         }
     }
-    if (input.tab && sheet == Sheet::ServerEditor) {
-        field = field == Field::EditName ? Field::EditAddress : Field::EditName;
+    if (input.tab && screen == Screen::ServerForm) {
+        field = field == Field::ServerName ? Field::ServerAddress : field == Field::ServerAddress ? Field::ServerPort : Field::ServerName;
     }
-    if (input.enter) {
-        if (sheet == Sheet::ServerEditor) {
-            saveEditor();
-        } else if (sheet == Sheet::ConfirmDelete || sheet == Sheet::ConfirmExit) {
-            confirmSheet();
-        } else if (field == Field::QuickAddress) {
-            quickConnect();
-        } else if (screen == Screen::Servers && selection) {
-            for (const Row& row : rowsFor(filter)) {
-                if (row.featured == selection->featured && row.index == selection->index) {
-                    connect(row);
-                    break;
-                }
-            }
-        }
+    if (input.enter && screen == Screen::ServerForm && dialog == Dialog::None) {
+        saveServerForm(false);
     }
-    if (input.escape) {
-        if (sheet == Sheet::Pause) {
-            sheet = Sheet::None;
-        } else if (sheet == Sheet::SignIn) {
-            accountRequest = AccountRequest::Cancel;
-            sheet = Sheet::None;
-        } else if (sheet == Sheet::Connecting) {
-            disconnectRequested = true;
-            sheet = Sheet::None;
-        } else if (sheet != Sheet::None) {
-            sheet = Sheet::None;
-            field = Field::None;
-        } else if (field != Field::None) {
-            field = Field::None;
-        } else if (inGame() && screen != Screen::Home) {
-            navigate(Screen::Home);
-        } else if (inGame()) {
-            sheet = Sheet::Pause;
-        } else if (screen != Screen::Home) {
-            navigate(Screen::Home);
-        } else {
-            sheet = Sheet::ConfirmExit;
-        }
+    if (!input.escape) {
+        return;
+    }
+    if (socialOpen) {
+        socialOpen = false;
+    } else if (dialog == Dialog::Pause) {
+        dialog = Dialog::None;
+    } else if (dialog == Dialog::SignIn) {
+        accountRequest = AccountRequest::Cancel;
+        dialog = Dialog::None;
+    } else if (dialog == Dialog::Connecting) {
+        disconnectRequested = true;
+        dialog = Dialog::None;
+    } else if (dialog != Dialog::None) {
+        dialog = Dialog::None;
+    } else if (field != Field::None) {
+        field = Field::None;
+    } else if (screen != Screen::Title) {
+        goBack();
+    } else if (inGame()) {
+        dialog = Dialog::Pause;
+    } else {
+        dialog = Dialog::ConfirmExit;
     }
 }
 
@@ -777,6 +648,9 @@ void Menu::type(std::u32string_view text)
         if (target->size() >= MaxFieldLength) {
             break;
         }
+        if (field == Field::ServerPort && (cp < U'0' || cp > U'9' || target->size() >= 5)) {
+            continue;
+        }
         appendUtf8(*target, cp);
     }
 }
@@ -784,12 +658,12 @@ void Menu::type(std::u32string_view text)
 std::string* Menu::focusedText()
 {
     switch (field) {
-    case Field::QuickAddress:
-        return &quickAddress;
-    case Field::EditName:
+    case Field::ServerName:
         return &editName;
-    case Field::EditAddress:
+    case Field::ServerAddress:
         return &editAddress;
+    case Field::ServerPort:
+        return &editPort;
     case Field::None:
         break;
     }
@@ -800,13 +674,27 @@ void Menu::navigate(Screen target)
 {
     screen = target;
     field = Field::None;
-    scrollRow = 0;
-    worldsScroll = 0.0f;
-    settingsScroll = 0.0f;
+    listScroll = 0.0f;
+    detailScroll = 0.0f;
+    pageScroll = 0.0f;
     rebinding.reset();
 }
 
-void Menu::connect(const Row& row)
+void Menu::goBack()
+{
+    if (screen == Screen::ServerForm) {
+        navigate(Screen::Play);
+    } else if (screen == Screen::Settings) {
+        navigate(returnScreen);
+        if (inGame()) {
+            dialog = Dialog::Pause;
+        }
+    } else {
+        navigate(Screen::Title);
+    }
+}
+
+void Menu::connect(const ServerRow& row)
 {
     if (!row.featured) {
         store.markJoined(row.index);
@@ -814,73 +702,55 @@ void Menu::connect(const Row& row)
     pending = ConnectRequest { row.name, row.address };
 }
 
-void Menu::quickConnect()
-{
-    std::string address = normalizeAddress(quickAddress);
-    if (address.empty()) {
-        notify("Enter a server address first");
-        field = Field::QuickAddress;
-        return;
-    }
-
-    for (size_t i = 0; i < store.servers().size(); ++i) {
-        if (store.servers()[i].address == address) {
-            connect({ false, i, store.servers()[i].name, address, {} });
-            quickAddress.clear();
-            return;
-        }
-    }
-    size_t index = store.add(address, address);
-    connect({ false, index, address, address, {} });
-    quickAddress.clear();
-}
-
-void Menu::openEditor(std::optional<size_t> index)
+void Menu::openServerForm(std::optional<size_t> index)
 {
     editing = index;
+    editName.clear();
+    editAddress.clear();
+    editPort = "19132";
     if (index && *index < store.servers().size()) {
-        editName = store.servers()[*index].name;
-        editAddress = store.servers()[*index].address;
+        const SavedServer& server = store.servers()[*index];
+        editName = server.name;
+        editAddress = server.address;
+        size_t colon = editAddress.rfind(':');
+        if (colon != std::string::npos && editAddress.find(':') == colon) {
+            editPort = editAddress.substr(colon + 1);
+            editAddress.resize(colon);
+        }
     } else {
         editing.reset();
-        editName.clear();
-        editAddress.clear();
     }
-    sheet = Sheet::ServerEditor;
-    field = Field::EditName;
+    navigate(Screen::ServerForm);
+    field = Field::ServerName;
 }
 
-void Menu::saveEditor()
+bool Menu::saveServerForm(bool andPlay)
 {
-    if (normalizeAddress(editAddress).empty()) {
-        notify("The address can't be empty");
-        field = Field::EditAddress;
-        return;
+    std::string address = editAddress;
+    if (!editPort.empty() && address.find(':') == std::string::npos) {
+        address += ":" + editPort;
     }
+    if (normalizeAddress(address).empty()) {
+        notify("Enter a server address");
+        field = Field::ServerAddress;
+        return false;
+    }
+    std::string name = editName.empty() ? editAddress : editName;
+    size_t index = 0;
     if (editing) {
-        store.update(*editing, editName, editAddress);
-        selection = Selection { false, *editing };
+        store.update(*editing, name, address);
+        index = *editing;
     } else {
-        size_t index = store.add(editName, editAddress);
-        selection = Selection { false, index };
-        if (filter == ServerFilter::Featured) {
-            filter = ServerFilter::All;
-        }
+        index = store.add(name, address);
     }
-    sheet = Sheet::None;
-    field = Field::None;
-}
-
-void Menu::confirmSheet()
-{
-    if (sheet == Sheet::ConfirmExit) {
-        quit = true;
-    } else if (sheet == Sheet::ConfirmDelete && selection && !selection->featured) {
-        store.remove(selection->index);
-        selection.reset();
-        notify("Server deleted");
+    selection = Selection { false, index };
+    playTab = PlayTab::Servers;
+    navigate(Screen::Play);
+    if (andPlay) {
+        const SavedServer& server = store.servers()[index];
+        connect({ false, index, server.name, server.address, {} });
     }
-    sheet = Sheet::None;
+    return true;
 }
 
 }

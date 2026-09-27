@@ -37,8 +37,8 @@ Client::Client()
     loadSettings();
     loadWorlds();
     account.restore();
-    if (!font.load()) {
-        throw std::runtime_error("No UI font found");
+    if (!font.load(assets, skin)) {
+        throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
     window = Window::create("Kestrel", 1280, 760);
     renderer = Renderer::create(*window);
@@ -54,7 +54,7 @@ Client::~Client()
 int Client::run()
 {
     float bakedScale = 0.0f;
-    constexpr ui::Color canvas = ui::theme::Canvas;
+    constexpr ui::Color canvas = ui::theme::Black;
     auto lastFrame = std::chrono::steady_clock::now();
 
     while (window->pump()) {
@@ -82,29 +82,28 @@ int Client::run()
         menu.setCameraInfo(cameraText);
         session.setLookRay({ camera.x(), camera.y(), camera.z() }, camera.forward());
 
-        float scale = window->contentScale() * menu.interfaceScale();
+        float scale = guiScale();
         bool rebaked = scale != bakedScale;
         if (rebaked) {
             font.bake(scale);
             bakedScale = scale;
         }
-        if (rebaked || avatarRevision != uploadedAvatarRevision || titleRevision != uploadedTitleRevision) {
-            uploadAtlas();
-            uploadedAvatarRevision = avatarRevision;
-            uploadedTitleRevision = titleRevision;
-        }
 
-        menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / menu.interfaceScale(), window->maximized(), window->fullscreen() });
+        menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / scale, window->maximized(), window->fullscreen() });
 
         drawList.reset(scale, font.whiteU(), font.whiteV());
-        ui::Context context(drawList, font, window->input(), widgets, scale);
+        ui::Context context(drawList, font, skin, window->input(), widgets, scale);
         menu.frame(context, window->width() / scale, window->height() / scale);
         context.endFrame();
+        if (rebaked || skin.dirty()) {
+            uploadAtlas();
+        }
 
         WindowChrome chrome;
-        chrome.captionHeight = menu.headerVisible() ? ui::theme::HeaderHeight * scale : 0.0f;
+        float caption = menu.captionHeight();
+        chrome.captionHeight = caption * scale;
         for (const ui::Rect& rect : context.interactiveRects()) {
-            if (rect.y < ui::theme::HeaderHeight) {
+            if (rect.y < caption) {
                 chrome.interactive.push_back({ rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale });
             }
         }
@@ -219,7 +218,11 @@ void Client::syncAccount()
     info.error = std::move(snapshot.error);
     if (snapshot.avatarRevision != avatarRevision) {
         avatarRevision = snapshot.avatarRevision;
-        avatarPixels = std::move(snapshot.avatar);
+        if (snapshot.avatar.size() == size_t(ui::Font::ImageSlotSize) * ui::Font::ImageSlotSize * 4) {
+            skin.setDynamic("dynamic/avatar", { ui::Font::ImageSlotSize, ui::Font::ImageSlotSize, std::move(snapshot.avatar) });
+        } else {
+            skin.clearDynamic("dynamic/avatar");
+        }
     }
     info.realmsLoading = snapshot.realmsLoading;
     info.realmsError = std::move(snapshot.realmsError);
@@ -235,47 +238,25 @@ void Client::syncAccount()
     menu.setAccount(std::move(info));
 }
 
+// Mirrors the game's automatic GUI scale, one menu unit being a whole number of pixels.
+float Client::guiScale() const
+{
+    float automatic = std::max(1.0f, std::floor(static_cast<float>(window->height()) / 400.0f));
+    return std::max(1.0f, std::round(automatic * menu.interfaceScale()));
+}
+
 void Client::uploadAtlas()
 {
-    const std::vector<uint8_t>& coverage = font.atlasPixels();
-    uint32_t size = font.atlasSize();
-    atlasPixels.resize(static_cast<size_t>(size) * size * 4);
+    constexpr uint32_t size = ui::Skin::AtlasSize;
+    atlasPixels.assign(static_cast<size_t>(size) * size * 4, 0);
+    const std::vector<uint8_t>& coverage = font.coverage();
     for (size_t i = 0; i < coverage.size(); ++i) {
         atlasPixels[i * 4 + 0] = 255;
         atlasPixels[i * 4 + 1] = 255;
         atlasPixels[i * 4 + 2] = 255;
         atlasPixels[i * 4 + 3] = coverage[i];
     }
-
-    ui::ImageRef avatarImage;
-    ui::Font::ImageSlot slot = font.imageSlot();
-    if (avatarPixels.size() == static_cast<size_t>(slot.size) * slot.size * 4) {
-        for (uint32_t row = 0; row < slot.size; ++row) {
-            std::memcpy(atlasPixels.data() + ((static_cast<size_t>(slot.y) + row) * size + slot.x) * 4, avatarPixels.data() + static_cast<size_t>(row) * slot.size * 4, static_cast<size_t>(slot.size) * 4);
-        }
-        float extent = static_cast<float>(size);
-        avatarImage.u0 = (slot.x + 0.5f) / extent;
-        avatarImage.v0 = (slot.y + 0.5f) / extent;
-        avatarImage.u1 = (slot.x + slot.size - 0.5f) / extent;
-        avatarImage.v1 = (slot.y + slot.size - 0.5f) / extent;
-        avatarImage.valid = true;
-    }
-    menu.setAvatar(avatarImage);
-
-    ui::ImageRef titleImage;
-    ui::Font::ImageSlot title = font.titleSlot();
-    if (titlePixels.size() == size_t(ui::Font::TitleWidth) * ui::Font::TitleHeight * 4) {
-        for (uint32_t row = 0; row < ui::Font::TitleHeight; ++row) {
-            std::memcpy(atlasPixels.data() + ((static_cast<size_t>(title.y) + row) * size + title.x) * 4, titlePixels.data() + static_cast<size_t>(row) * ui::Font::TitleWidth * 4, size_t(ui::Font::TitleWidth) * 4);
-        }
-        float extent = static_cast<float>(size);
-        titleImage.u0 = (title.x + 0.5f) / extent;
-        titleImage.v0 = (title.y + 0.5f) / extent;
-        titleImage.u1 = (title.x + ui::Font::TitleWidth - 0.5f) / extent;
-        titleImage.v1 = (title.y + ui::Font::TitleHeight - 0.5f) / extent;
-        titleImage.valid = true;
-    }
-    menu.setTitleImage(titleImage);
+    skin.pack(atlasPixels);
     renderer->uploadUiAtlas(atlasPixels.data(), size, size);
 }
 
@@ -384,8 +365,11 @@ void Client::syncSession()
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
         shownTitle = snapshot.titleImage;
-        titlePixels = shownTitle ? *shownTitle : std::vector<uint8_t> {};
-        ++titleRevision;
+        if (shownTitle && shownTitle->size() == size_t(ui::Font::TitleWidth) * ui::Font::TitleHeight * 4) {
+            skin.setDynamic("dynamic/title", { ui::Font::TitleWidth, ui::Font::TitleHeight, *shownTitle });
+        } else {
+            skin.clearDynamic("dynamic/title");
+        }
     }
     if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
         seenJoin = snapshot.joinCount;

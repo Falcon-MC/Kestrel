@@ -4,6 +4,7 @@
 #include "platform/Window.h"
 #include "ui/Font.h"
 #include "ui/Image.h"
+#include "ui/Skin.h"
 #include "ui/Types.h"
 
 #include <cstdint>
@@ -13,13 +14,6 @@
 namespace kestrel::ui {
 
 class DrawList;
-
-enum class ButtonKind {
-    Secondary,
-    Primary,
-    Ghost,
-    Danger,
-};
 
 struct WidgetState {
     uint64_t active = 0;
@@ -33,11 +27,16 @@ struct Interaction {
 
 class Context {
 public:
-    Context(DrawList& drawList, const Font& font, const InputState& input, WidgetState& state, float scale);
+    Context(DrawList& drawList, const Font& font, Skin& skin, const InputState& input, WidgetState& state, float scale);
 
     const InputState& input() const
     {
         return in;
+    }
+
+    Skin& skin()
+    {
+        return art;
     }
 
     const std::vector<Rect>& interactiveRects() const
@@ -55,51 +54,53 @@ public:
         blocked = value;
     }
 
-    void setExcluded(const Rect& rect)
+    bool isBlocked() const
     {
-        excluded = rect;
+        return blocked;
     }
 
-    void clearExcluded()
-    {
-        excluded = {};
-    }
+    void setClip(const Rect& rect);
+    void clearClip();
 
     float mouseX() const;
     float mouseY() const;
     bool hovered(const Rect& rect) const;
     Interaction interact(std::string_view id, const Rect& rect);
 
-    void fill(const Rect& rect, Color color, float radius = 0.0f);
-    void gradient(const Rect& rect, Color top, Color bottom, float radius = 0.0f);
-    void shadow(const Rect& rect, float radius, float blur, Color color);
-    void glow(float x, float y, float size, Color color);
-    void card(const Rect& rect, Color background, Color border, float radius);
-    void outline(const Rect& rect, Color color);
-    void image(const Rect& rect, const ImageRef& image, float radius);
+    void fill(const Rect& rect, Color color);
+    void outline(const Rect& rect, Color color, float thickness = 1.0f);
+    void image(const Rect& rect, const ImageRef& image, Color tint = { 255, 255, 255, 255 });
+    void sprite(const Rect& rect, std::string_view name, Color tint = { 255, 255, 255, 255 });
+    void spriteRegion(const Rect& rect, std::string_view name, const Rect& texels, Color tint = { 255, 255, 255, 255 });
+    void nineSlice(const Rect& rect, std::string_view name, Color tint = { 255, 255, 255, 255 });
+    void borderImage(const Rect& rect, const BorderImage& border, Color tint = { 255, 255, 255, 255 });
+    void border(const Rect& rect, std::string_view component, std::string_view state, Color tint = { 255, 255, 255, 255 });
 
     float measure(std::string_view text, TextStyle style) const;
     float lineHeight(TextStyle style) const;
     void text(std::string_view value, TextStyle style, float x, float y, Color color, float maxWidth = 0.0f);
+    void textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth = 0.0f);
     void textCentered(std::string_view value, TextStyle style, const Rect& rect, Color color);
     float paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color);
+    float paragraphHeight(std::string_view value, TextStyle style, float width) const;
 
-    bool button(std::string_view id, std::string_view label, const Rect& rect, ButtonKind kind = ButtonKind::Secondary, bool enabled = true);
-    bool tab(std::string_view id, std::string_view label, const Rect& rect, bool active);
-    bool field(std::string_view id, std::string_view placeholder, std::string_view value, const Rect& rect, bool focused);
-    bool toggle(std::string_view id, const Rect& rect, bool on);
-    bool slider(std::string_view id, const Rect& rect, float& fraction);
+    bool classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled = true);
+    Interaction pressable(std::string_view id, std::string_view component, const Rect& rect, bool enabled = true, bool selected = false);
+    bool pressableButton(std::string_view id, std::string_view component, std::string_view label, const Rect& rect, TextStyle style = TextStyle::Ui, bool enabled = true);
 
     void endFrame();
 
 private:
+    bool clipped(const Rect& rect) const;
+
     DrawList& drawList;
     const Font& font;
+    Skin& art;
     const InputState& in;
     WidgetState& state;
     float scale;
     bool blocked = false;
-    Rect excluded {};
+    Rect clip {};
     std::vector<Rect> interactive;
     Cursor wantedCursor = Cursor::Arrow;
 };

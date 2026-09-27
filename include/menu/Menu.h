@@ -28,22 +28,41 @@ inline constexpr int UnlimitedFps = 0;
 inline constexpr int DefaultMaxFps = 120;
 
 enum class Screen {
-    Home,
-    Servers,
-    Worlds,
-    Friends,
+    Title,
+    Play,
     Settings,
+    ServerForm,
+    Marketplace,
+    DressingRoom,
+    Profile,
 };
 
-enum class ServerFilter {
-    All,
-    Favorites,
-    Featured,
+enum class PlayTab {
+    Worlds,
+    Realms,
+    Servers,
 };
 
-enum class Sheet {
+enum class SettingsPage {
+    Accessibility,
+    Keyboard,
+    Controller,
+    Touch,
+    Party,
+    General,
+    Video,
+    Audio,
+    Account,
+    Subscriptions,
+    GlobalResources,
+    Storage,
+    Language,
+    Creator,
+    Count,
+};
+
+enum class Dialog {
     None,
-    ServerEditor,
     ConfirmDelete,
     ConfirmExit,
     Pause,
@@ -54,9 +73,9 @@ enum class Sheet {
 
 enum class Field {
     None,
-    QuickAddress,
-    EditName,
-    EditAddress,
+    ServerName,
+    ServerAddress,
+    ServerPort,
 };
 
 struct ConnectRequest {
@@ -162,13 +181,6 @@ enum class ChromeAction {
     Close,
 };
 
-struct Area {
-    float x = 0.0f;
-    float y = 0.0f;
-    float w = 0.0f;
-    float h = 0.0f;
-};
-
 class Menu {
 public:
     explicit Menu(ServerStore& store);
@@ -232,7 +244,7 @@ public:
 
     bool worldVisible() const;
     bool capturesMouse() const;
-    bool headerVisible() const;
+    float captionHeight() const;
 
     bool takeDisconnectRequest()
     {
@@ -268,16 +280,6 @@ public:
         fpsLimit = limit;
     }
 
-    void setAvatar(ui::ImageRef image)
-    {
-        avatar = image;
-    }
-
-    void setTitleImage(ui::ImageRef image)
-    {
-        titleImage = image;
-    }
-
     AccountRequest takeAccountRequest()
     {
         AccountRequest request = accountRequest;
@@ -289,12 +291,7 @@ public:
     void notify(std::string message);
 
 private:
-    struct Selection {
-        bool featured = false;
-        size_t index = 0;
-    };
-
-    struct Row {
+    struct ServerRow {
         bool featured = false;
         size_t index = 0;
         std::string name;
@@ -302,66 +299,76 @@ private:
         std::string detail;
     };
 
-    void background(ui::Context& ui, float width, float height);
-    void header(ui::Context& ui, float width);
-    float captionButtons(ui::Context& ui, float width);
-    void badge(ui::Context& ui, const ui::Rect& rect, std::string_view name, ui::TextStyle style);
-    void profileBadge(ui::Context& ui, const ui::Rect& rect, ui::TextStyle style);
-    void home(ui::Context& ui, const Area& area);
-    void servers(ui::Context& ui, const Area& area);
-    void worlds(ui::Context& ui, const Area& area);
-    void friends(ui::Context& ui, const Area& area);
-    void settings(ui::Context& ui, const Area& area);
+    struct Selection {
+        bool featured = false;
+        size_t index = 0;
+    };
 
-    void serverEditor(ui::Context& ui, float width, float height);
-    void confirm(ui::Context& ui, float width, float height, std::string_view title, std::string_view body, std::string_view action);
+    // Screens drawn with the classic textures.
+    void panorama(ui::Context& ui, float width, float height);
+    void title(ui::Context& ui, float width, float height);
     void pause(ui::Context& ui, float width, float height);
-    void signInSheet(ui::Context& ui, float width, float height);
-    void connectingSheet(ui::Context& ui, float width, float height);
-    void connectionTitle(ui::Context& ui, float width, const ui::Rect& frame);
-    void connectionErrorSheet(ui::Context& ui, float width, float height);
-    void gameView(ui::Context& ui, const Area& area);
-    void beginSignIn();
-    bool signedIn() const;
-    bool inGame() const;
-    void toast(ui::Context& ui, float width, float height);
-    ui::Rect sheetFrame(ui::Context& ui, float width, float height, float sheetWidth, float sheetHeight);
+    void progressDialog(ui::Context& ui, float width, float height);
+    void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
+    void logo(ui::Context& ui, float centerX, float y, float maxWidth);
+    void playerModel(ui::Context& ui, float centerX, float top, float pixel);
+    void gameView(ui::Context& ui, float width, float height);
 
-    float tileGrid(ui::Context& ui, const std::vector<Row>& rows, float x, float y, float width, size_t limit);
-    bool tile(ui::Context& ui, std::string_view id, const ui::Rect& rect, std::string_view title, std::string_view subtitle, std::string_view tag, bool secondaryTag, bool enabled);
-    ui::Rect gridCell(size_t index, float x, float y, float width, float height) const;
-    void heading(ui::Context& ui, std::string_view title, float x, float y);
-    std::vector<Row> rowsFor(ServerFilter filter) const;
-    std::vector<Row> recentRows(size_t limit) const;
-    std::vector<Row> featuredRows() const;
+    // Screens drawn the way the HTML menus draw them.
+    float header(ui::Context& ui, float width, std::string_view heading, bool social);
+    void play(ui::Context& ui, float width, float height);
+    void worldsTab(ui::Context& ui, const ui::Rect& area);
+    void realmsTab(ui::Context& ui, const ui::Rect& area);
+    void serversTab(ui::Context& ui, const ui::Rect& area);
+    void serverForm(ui::Context& ui, float width, float height);
+    void settings(ui::Context& ui, float width, float height);
+    void settingsPage(ui::Context& ui, const ui::Rect& area);
+    void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
+    void socialDrawer(ui::Context& ui, float width, float height);
+    void toast(ui::Context& ui, float width, float height);
+
+    bool textField(ui::Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const ui::Rect& rect, bool focused);
+    bool toggle(ui::Context& ui, std::string_view id, const ui::Rect& rect, bool on);
+    bool slider(ui::Context& ui, std::string_view id, const ui::Rect& rect, float& fraction);
+    float scrollArea(ui::Context& ui, const ui::Rect& area, float& offset, float contentHeight);
+    void settingsHeading(ui::Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail);
+    void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight);
+    void todoRow(ui::Context& ui, float x, float& y, float width, std::string_view label);
+
+    std::vector<ServerRow> featuredRows() const;
+    std::vector<ServerRow> savedRows() const;
+    std::optional<ServerRow> selectedRow() const;
 
     void handleKeys(ui::Context& ui);
     void type(std::u32string_view text);
     std::string* focusedText();
     void navigate(Screen target);
-    void connect(const Row& row);
-    void quickConnect();
-    void openEditor(std::optional<size_t> index);
-    void saveEditor();
-    void confirmSheet();
+    void goBack();
+    void connect(const ServerRow& row);
+    void openServerForm(std::optional<size_t> index);
+    bool saveServerForm(bool andPlay);
+    void beginSignIn();
+    bool signedIn() const;
+    bool inGame() const;
 
     ServerStore& store;
-    Screen screen = Screen::Home;
-    ServerFilter filter = ServerFilter::All;
-    Sheet sheet = Sheet::None;
+    Screen screen = Screen::Title;
+    Screen returnScreen = Screen::Title;
+    PlayTab playTab = PlayTab::Servers;
+    SettingsPage settingsSection = SettingsPage::Keyboard;
+    Dialog dialog = Dialog::None;
     Field field = Field::None;
+    bool socialOpen = false;
+    bool socialParty = false;
     std::optional<Selection> selection;
     std::optional<size_t> editing;
-    size_t scrollRow = 0;
-    float worldsScroll = 0.0f;
-    std::string quickAddress;
     std::string editName;
     std::string editAddress;
+    std::string editPort;
     std::string displayName = "Steve";
     std::string toastMessage;
     std::chrono::steady_clock::time_point toastUntil;
-    std::chrono::steady_clock::time_point lastRowClick;
-    std::optional<Selection> lastRowClicked;
+    std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
     std::optional<ConnectRequest> pending;
     ChromeInfo chrome;
     ChromeAction chromeAction = ChromeAction::None;
@@ -369,12 +376,13 @@ private:
     AccountRequest accountRequest = AccountRequest::None;
     std::vector<WorldEntry> worldEntries;
     SessionInfo session;
-    ui::ImageRef avatar;
-    ui::ImageRef titleImage;
     std::string cameraInfo;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
-    float settingsScroll = 0.0f;
+    float listScroll = 0.0f;
+    float detailScroll = 0.0f;
+    float pageScroll = 0.0f;
+    float pageContent = 0.0f;
     bool disconnectRequested = false;
     std::optional<bool> packAnswer;
     float scale = 1.0f;

@@ -4,7 +4,6 @@
 #include "ui/Theme.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <string>
 
@@ -32,533 +31,759 @@ constexpr FeaturedServer Featured[] = {
 constexpr float InterfaceScales[] = { 1.0f, 1.25f, 1.5f, 2.0f };
 constexpr const char* InterfaceScaleLabels[] = { "100%", "125%", "150%", "200%" };
 
-std::string joinedLabel(int64_t timestamp)
+constexpr float HeaderHeight = 48.0f;
+constexpr float ColumnWidth = 631.0f;
+constexpr float TabHeight = 37.0f;
+constexpr float RowHeight = 23.33f;
+constexpr float ButtonHeight = 22.0f;
+
+struct SettingsEntry {
+    SettingsPage page;
+    const char* label;
+    const char* icon;
+    const char* group;
+};
+
+constexpr SettingsEntry SettingsEntries[] = {
+    { SettingsPage::Accessibility, "Accessibility", "hbui/accessibility", nullptr },
+    { SettingsPage::Keyboard, "Keyboard & Mouse", "hbui/keyboard-mouse", "Controls" },
+    { SettingsPage::Controller, "Controller", "hbui/cursor_gamepad_brackets", nullptr },
+    { SettingsPage::Touch, "Touch", "hbui/touch", nullptr },
+    { SettingsPage::Party, "Party", "hbui/party", "Social" },
+    { SettingsPage::General, "General", "hbui/general-icon", "General" },
+    { SettingsPage::Video, "Video", "hbui/World", nullptr },
+    { SettingsPage::Audio, "Audio", "hbui/sound-block", nullptr },
+    { SettingsPage::Account, "Account", "hbui/account", nullptr },
+    { SettingsPage::Subscriptions, "Subscriptions", "hbui/subscriptions", nullptr },
+    { SettingsPage::GlobalResources, "Global Resources", "hbui/resource-packs-icon", nullptr },
+    { SettingsPage::Storage, "Storage", "hbui/storage", nullptr },
+    { SettingsPage::Language, "Language", "hbui/language", nullptr },
+    { SettingsPage::Creator, "Creator", "hbui/Settings", nullptr },
+};
+
+Rect column(float width, float top, float bottom)
 {
-    if (timestamp <= 0) {
-        return "Never joined";
-    }
-    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    int64_t elapsed = std::max<int64_t>(0, now - timestamp);
-    if (elapsed < 60) {
-        return "Joined just now";
-    }
-    if (elapsed < 3600) {
-        return "Joined " + std::to_string(elapsed / 60) + " min ago";
-    }
-    if (elapsed < 86400) {
-        return "Joined " + std::to_string(elapsed / 3600) + " h ago";
-    }
-    int64_t days = elapsed / 86400;
-    return "Joined " + std::to_string(days) + (days == 1 ? " day ago" : " days ago");
+    float w = std::min(ColumnWidth, width - 16.0f);
+    return { std::round((width - w) * 0.5f), top, w, bottom - top };
 }
 
-void panel(Context& ui, const Rect& rect)
+void divider(Context& ui, float x, float y, float width)
 {
-    ui.shadow({ rect.x, rect.y + 10.0f, rect.w, rect.h }, Radius, 30.0f, { 0, 0, 0, 70 });
-    ui.fill(rect, Line, Radius);
-    ui.gradient(rect.inset(1.0f), SurfaceTop, Surface, Radius - 1.0f);
+    ui.fill({ x, y, width, css(2.0f) }, Divider);
 }
 
-void pill(Context& ui, std::string_view label, float x, float y, Color background, Color ink)
+// The pill the HTML menus put under the label of the active tab.
+void tabUnderline(Context& ui, const Rect& tab)
 {
-    float width = ui.measure(label, TextStyle::Caption) + 20.0f;
-    Rect rect { x, y, width, 24.0f };
-    ui.fill(rect, background, 12.0f);
-    ui.textCentered(label, TextStyle::Caption, rect, ink);
+    ui.fill({ std::round(tab.x + tab.w * 0.5f - 6.0f), tab.bottom() - 5.0f, 12.0f, 1.0f }, White);
 }
 
 }
 
-std::vector<Menu::Row> Menu::featuredRows() const
+std::vector<Menu::ServerRow> Menu::featuredRows() const
 {
-    std::vector<Row> rows;
+    std::vector<ServerRow> rows;
     for (size_t i = 0; i < std::size(Featured); ++i) {
         rows.push_back({ true, i, Featured[i].name, Featured[i].address, Featured[i].genre });
     }
     return rows;
 }
 
-std::vector<Menu::Row> Menu::rowsFor(ServerFilter source) const
+std::vector<Menu::ServerRow> Menu::savedRows() const
 {
-    if (source == ServerFilter::Featured) {
-        return featuredRows();
-    }
-    std::vector<Row> rows;
+    std::vector<ServerRow> rows;
     const std::vector<SavedServer>& saved = store.servers();
     for (size_t i = 0; i < saved.size(); ++i) {
-        if (source == ServerFilter::Favorites && !saved[i].favorite) {
-            continue;
-        }
-        rows.push_back({ false, i, saved[i].name, saved[i].address, joinedLabel(saved[i].lastJoined) });
+        rows.push_back({ false, i, saved[i].name, saved[i].address, {} });
     }
     return rows;
 }
 
-std::vector<Menu::Row> Menu::recentRows(size_t limit) const
+std::optional<Menu::ServerRow> Menu::selectedRow() const
 {
-    std::vector<size_t> order;
-    const std::vector<SavedServer>& saved = store.servers();
-    for (size_t i = 0; i < saved.size(); ++i) {
-        if (saved[i].lastJoined > 0) {
-            order.push_back(i);
+    if (!selection) {
+        return std::nullopt;
+    }
+    std::vector<ServerRow> rows = selection->featured ? featuredRows() : savedRows();
+    if (selection->index >= rows.size()) {
+        return std::nullopt;
+    }
+    return rows[selection->index];
+}
+
+float Menu::header(Context& ui, float width, std::string_view heading, bool social)
+{
+    ui.fill({ 0.0f, 0.0f, width, HeaderHeight - 2.0f }, HeaderBar);
+    ui.fill({ 0.0f, HeaderHeight - 2.0f, width, 2.0f }, HeaderEdge);
+
+    Rect back { 0.0f, 0.0f, 106.0f, HeaderHeight - 2.0f };
+    Interaction backState = ui.interact("header:back", back);
+    ui.sprite({ 51.0f, 21.0f, 3.0f, 6.0f }, "hbui/arrowBack", backState.hovered ? Color { 90, 90, 90, 255 } : InkDark);
+    if (backState.clicked) {
+        goBack();
+    }
+
+    ui.textCentered(heading, TextStyle::Heading, { 0.0f, 0.0f, width, HeaderHeight - 2.0f }, InkDark);
+
+    if (social) {
+        float left = width - 120.0f;
+        ui.fill({ left, 0.0f, 1.0f, HeaderHeight - 2.0f }, White);
+        Rect button { left + 1.0f, 0.0f, width - left - 1.0f, HeaderHeight - 2.0f };
+        Interaction state = ui.interact("header:social", button);
+        if (state.hovered) {
+            ui.fill(button, { 0, 0, 0, 20 });
+        }
+        constexpr std::string_view Label = "Social (0)";
+        float textWidth = ui.measure(Label, TextStyle::Ui);
+        float x = std::round(button.x + (button.w - textWidth - 9.0f) * 0.5f);
+        ui.sprite({ x, 19.0f, 7.5f, 7.5f }, "hbui/friends", InkDark);
+        ui.text(Label, TextStyle::Ui, x + 9.0f, std::round((HeaderHeight - 2.0f - ui.lineHeight(TextStyle::Ui)) * 0.5f), InkDark);
+        if (state.clicked) {
+            socialOpen = true;
+            socialParty = false;
         }
     }
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        return saved[a].lastJoined > saved[b].lastJoined;
-    });
-    if (order.size() > limit) {
-        order.resize(limit);
-    }
-
-    std::vector<Row> rows;
-    for (size_t i : order) {
-        rows.push_back({ false, i, saved[i].name, saved[i].address, joinedLabel(saved[i].lastJoined) });
-    }
-    return rows;
+    return HeaderHeight;
 }
 
-void Menu::heading(Context& ui, std::string_view title, float x, float y)
+float Menu::scrollArea(Context& ui, const Rect& area, float& offset, float contentHeight)
 {
-    ui.text(title, TextStyle::Heading, x, y, Text);
+    float limit = std::max(0.0f, contentHeight - area.h);
+    if (ui.hovered(area) && ui.input().wheel != 0.0f) {
+        offset -= ui.input().wheel * 24.0f;
+    }
+    offset = std::clamp(offset, 0.0f, limit);
+    if (limit > 0.0f) {
+        Rect track { area.right() - 3.0f, area.y, 3.0f, area.h };
+        ui.fill(track, { 0, 0, 0, 120 });
+        float thumbHeight = std::max(12.0f, area.h * area.h / contentHeight);
+        float thumbY = area.y + (area.h - thumbHeight) * (offset / limit);
+        ui.fill({ track.x, thumbY, track.w, thumbHeight }, { 0xef, 0xf0, 0xf1, 255 });
+    }
+    return offset;
 }
 
-Rect Menu::gridCell(size_t index, float x, float y, float width, float height) const
-{
-    size_t columns = width >= 880.0f ? 3 : width >= 540.0f ? 2 : 1;
-    float cellWidth = (width - PadLg * static_cast<float>(columns - 1)) / static_cast<float>(columns);
-    return {
-        x + static_cast<float>(index % columns) * (cellWidth + PadLg),
-        y + static_cast<float>(index / columns) * (height + PadLg),
-        cellWidth,
-        height,
-    };
-}
-
-bool Menu::tile(Context& ui, std::string_view id, const Rect& rect, std::string_view title, std::string_view subtitle, std::string_view tag, bool secondaryTag, bool enabled)
+bool Menu::textField(Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const Rect& rect, bool focused)
 {
     Interaction state = ui.interact(id, rect);
-    bool lifted = state.hovered && enabled;
-    Rect body = lifted ? Rect { rect.x, rect.y - 2.0f, rect.w, rect.h } : rect;
-
-    ui.shadow({ body.x, body.y + (lifted ? 14.0f : 8.0f), body.w, body.h }, Radius, lifted ? 36.0f : 24.0f, lifted ? AccentGlow : Color { 0, 0, 0, 80 });
-    ui.fill(body, lifted ? AccentLine : Line, Radius);
-    ui.gradient(body.inset(1.0f), lifted ? Hover : SurfaceTop, Surface, Radius - 1.0f);
-
-    Rect icon { body.x + 20.0f, body.y + 20.0f, 52.0f, 52.0f };
-    badge(ui, icon, title, TextStyle::Heading);
-
-    float textX = icon.right() + 16.0f;
-    float textWidth = body.right() - textX - 20.0f;
-    ui.text(title, TextStyle::Label, textX, icon.y + 4.0f, Text, textWidth);
-    ui.text(subtitle, TextStyle::Caption, textX, icon.y + 28.0f, Muted, textWidth);
-
-    float footer = body.bottom() - 20.0f - 24.0f;
-    if (!tag.empty()) {
-        pill(ui, tag, body.x + 20.0f, footer, secondaryTag ? SecondarySoft : AccentSoft, secondaryTag ? Secondary : Accent);
-    }
-    if (lifted) {
-        Rect play { body.right() - 20.0f - 72.0f, footer - 4.0f, 72.0f, 32.0f };
-        ui.gradient(play, AccentHover, AccentDeep, 16.0f);
-        ui.textCentered("Play", TextStyle::Label, play, OnAccent);
-    }
-    return state.clicked && enabled;
-}
-
-float Menu::tileGrid(Context& ui, const std::vector<Row>& rows, float x, float y, float width, size_t limit)
-{
-    constexpr float tileHeight = 132.0f;
-    size_t count = std::min(rows.size(), limit);
-
-    for (size_t i = 0; i < count; ++i) {
-        const Row& row = rows[i];
-        std::string id = std::string(row.featured ? "tile:f:" : "tile:s:") + std::to_string(row.index);
-        if (tile(ui, id, gridCell(i, x, y, width, tileHeight), row.name, row.address, row.detail, row.featured, true)) {
-            connect(row);
-        }
-    }
-
-    size_t columns = width >= 880.0f ? 3 : width >= 540.0f ? 2 : 1;
-    size_t lines = (count + columns - 1) / columns;
-    return lines == 0 ? 0.0f : static_cast<float>(lines) * (tileHeight + PadLg) - PadLg;
-}
-
-void Menu::home(Context& ui, const Area& area)
-{
-    Rect hero { area.x, area.y, area.w, 214.0f };
-    ui.shadow({ hero.x, hero.y + 18.0f, hero.w, hero.h }, 22.0f, 48.0f, { 90, 50, 160, 70 });
-    ui.fill(hero, AccentLine, 22.0f);
-    ui.gradient(hero.inset(1.0f), { 64, 46, 98, 255 }, { 30, 24, 44, 255 }, 21.0f);
-    ui.glow(hero.right() - 120.0f, hero.y + 30.0f, 520.0f, { 200, 160, 255, 40 });
-    ui.glow(hero.right() - 40.0f, hero.bottom(), 300.0f, { 124, 220, 198, 26 });
-
-    float x = hero.x + 40.0f;
-    float w = hero.w - 80.0f;
-    pill(ui, "DIRECT CONNECT", x, hero.y + 32.0f, { 255, 255, 255, 18 }, AccentHover);
-    ui.text("Jump into a server", TextStyle::Display, x, hero.y + 64.0f, Text, w);
-    ui.text("Paste an address, or pick up right where you left off.", TextStyle::Body, x, hero.y + 114.0f, Muted, w);
-
-    float fieldWidth = std::min(w - 140.0f - Gap, 560.0f);
-    Rect input { x, hero.bottom() - 40.0f - 48.0f + 12.0f, fieldWidth, 48.0f };
-    if (ui.field("home:quick", "play.example.net:19132", quickAddress, input, field == Field::QuickAddress)) {
-        field = Field::QuickAddress;
-    }
-    if (ui.button("home:join", "Join", { input.right() + 12.0f, input.y, 128.0f, 48.0f }, ButtonKind::Primary)) {
-        quickConnect();
-    }
-
-    float y = hero.bottom() + 40.0f;
-    std::vector<Row> recent = recentRows(3);
-    if (!recent.empty()) {
-        heading(ui, "Continue playing", area.x, y);
-        y += 44.0f;
-        y += tileGrid(ui, recent, area.x, y, area.w, 3) + 40.0f;
-    }
-
-    heading(ui, "Featured servers", area.x, y);
-    if (ui.button("home:browse", "See all", { area.x + area.w - 100.0f, y - 4.0f, 100.0f, 36.0f }, ButtonKind::Ghost)) {
-        filter = ServerFilter::Featured;
-        navigate(Screen::Servers);
-    }
-    y += 44.0f;
-    size_t columns = area.w >= 880.0f ? 3 : area.w >= 540.0f ? 2 : 1;
-    tileGrid(ui, featuredRows(), area.x, y, area.w, columns);
-}
-
-void Menu::servers(Context& ui, const Area& area)
-{
-    ui.text("Servers", TextStyle::Display, area.x, area.y - 6.0f, Text);
-
-    struct FilterTab {
-        ServerFilter value;
-        const char* label;
-    };
-    constexpr FilterTab filters[] = {
-        { ServerFilter::All, "All" },
-        { ServerFilter::Favorites, "Favorites" },
-        { ServerFilter::Featured, "Featured" },
-    };
-    float segmentWidth = 0.0f;
-    for (const FilterTab& item : filters) {
-        segmentWidth += ui.measure(item.label, TextStyle::Label) + 32.0f;
-    }
-    Rect segment { area.x + area.w - segmentWidth - 8.0f, area.y + 2.0f, segmentWidth + 8.0f, 44.0f };
-    ui.card(segment, theme::Field, Line, 22.0f);
-    float tabX = segment.x + 4.0f;
-    for (const FilterTab& item : filters) {
-        float tabWidth = ui.measure(item.label, TextStyle::Label) + 32.0f;
-        if (ui.tab(std::string("filter:") + item.label, item.label, { tabX, segment.y + 4.0f, tabWidth, 36.0f }, filter == item.value)) {
-            filter = item.value;
-            selection.reset();
-            scrollRow = 0;
-        }
-        tabX += tabWidth;
-    }
-
-    std::vector<Row> rows = rowsFor(filter);
-    float barHeight = 48.0f + PadLg;
-    Rect list { area.x, area.y + 72.0f, area.w, area.h - 72.0f - barHeight };
-    panel(ui, list);
-
-    Rect inner = list.inset(8.0f);
-    size_t visible = static_cast<size_t>(std::max(1.0f, inner.h / RowHeight));
-    size_t maxScroll = rows.size() > visible ? rows.size() - visible : 0;
-    if (ui.hovered(list) && ui.input().wheel != 0.0f) {
-        if (ui.input().wheel > 0.0f && scrollRow > 0) {
-            --scrollRow;
-        } else if (ui.input().wheel < 0.0f) {
-            ++scrollRow;
-        }
-    }
-    scrollRow = std::min(scrollRow, maxScroll);
-
-    if (rows.empty()) {
-        Rect empty { inner.x, inner.y + inner.h * 0.5f - 70.0f, inner.w, 140.0f };
-        Rect icon { empty.x + (empty.w - 56.0f) * 0.5f, empty.y, 56.0f, 56.0f };
-        ui.fill(icon, AccentSoft, 18.0f);
-        ui.fill({ icon.x + 18.0f, icon.y + 18.0f, 20.0f, 20.0f }, Accent, 6.0f);
-        ui.textCentered(filter == ServerFilter::Favorites ? "No favorites yet" : "No saved servers yet", TextStyle::Heading, { empty.x, icon.bottom() + 14.0f, empty.w, 30.0f }, Text);
-        ui.textCentered(filter == ServerFilter::Favorites ? "Tick the box next to a server to pin it here." : "Add one below, or join from Home.", TextStyle::Body, { empty.x, icon.bottom() + 46.0f, empty.w, 24.0f }, Muted);
-    }
-
-    for (size_t i = scrollRow; i < rows.size() && i < scrollRow + visible; ++i) {
-        const Row& row = rows[i];
-        Rect bounds { inner.x, inner.y + static_cast<float>(i - scrollRow) * RowHeight, inner.w, RowHeight - 4.0f };
-        bool selected = selection && selection->featured == row.featured && selection->index == row.index;
-
-        Rect favoriteBox { bounds.x + 10.0f, bounds.y + (bounds.h - 36.0f) * 0.5f, 36.0f, 36.0f };
-        Rect body { favoriteBox.right() + 2.0f, bounds.y, bounds.right() - favoriteBox.right() - 2.0f, bounds.h };
-        std::string id = std::string(row.featured ? "row:f:" : "row:s:") + std::to_string(row.index);
-        Interaction state = ui.interact(id, body);
-
-        if (selected) {
-            ui.card(bounds, { 200, 170, 242, 24 }, AccentLine, 12.0f);
-        } else if (state.hovered) {
-            ui.fill(bounds, GhostHover, 12.0f);
-        }
-
-        if (row.featured) {
-            ui.fill({ favoriteBox.x + 14.0f, favoriteBox.y + 14.0f, 8.0f, 8.0f }, Secondary, 4.0f);
-        } else if (ui.toggle(id + ":fav", favoriteBox, store.servers()[row.index].favorite)) {
-            store.toggleFavorite(row.index);
-        }
-
-        Rect icon { body.x + 4.0f, bounds.y + (bounds.h - 40.0f) * 0.5f, 40.0f, 40.0f };
-        badge(ui, icon, row.name, TextStyle::Label);
-
-        float textX = icon.right() + 14.0f;
-        float detailWidth = std::min(200.0f, body.w * 0.3f);
-        float textWidth = body.right() - textX - detailWidth - PadLg;
-        ui.text(row.name, TextStyle::Label, textX, bounds.y + 12.0f, Text, textWidth);
-        ui.text(row.address, TextStyle::Caption, textX, bounds.y + 34.0f, Muted, textWidth);
-        float detailWidthUsed = std::min(ui.measure(row.detail, TextStyle::Caption), detailWidth);
-        ui.text(row.detail, TextStyle::Caption, body.right() - 20.0f - detailWidthUsed, bounds.y + (bounds.h - ui.lineHeight(TextStyle::Caption)) * 0.5f, row.featured ? Secondary : Subtle, detailWidth);
-
-        if (state.clicked) {
-            Selection clicked { row.featured, row.index };
-            auto now = std::chrono::steady_clock::now();
-            bool doubleClick = lastRowClicked && lastRowClicked->featured == clicked.featured && lastRowClicked->index == clicked.index
-                && now - lastRowClick < std::chrono::milliseconds(400);
-            selection = clicked;
-            lastRowClicked = clicked;
-            lastRowClick = now;
-            if (doubleClick) {
-                lastRowClicked.reset();
-                connect(row);
-            }
-        }
-    }
-
-    const Row* selected = nullptr;
-    for (const Row& row : rows) {
-        if (selection && selection->featured == row.featured && selection->index == row.index) {
-            selected = &row;
-            break;
-        }
-    }
-    bool savedSelected = selected && !selected->featured;
-
-    float barY = list.bottom() + PadLg;
-    float x = area.x;
-    if (ui.button("servers:join", "Join server", { x, barY, 150.0f, 48.0f }, ButtonKind::Primary, selected != nullptr)) {
-        connect(*selected);
-    }
-    x += 150.0f + 12.0f;
-    if (ui.button("servers:add", "Add server", { x, barY, 136.0f, 48.0f })) {
-        openEditor(std::nullopt);
-    }
-    x += 136.0f + 12.0f;
-    if (ui.button("servers:edit", "Edit", { x, barY, 100.0f, 48.0f }, ButtonKind::Secondary, savedSelected)) {
-        openEditor(selected->index);
-    }
-    x += 100.0f + 12.0f;
-    if (ui.button("servers:delete", "Delete", { x, barY, 100.0f, 48.0f }, ButtonKind::Ghost, savedSelected)) {
-        sheet = Sheet::ConfirmDelete;
-    }
-    if (rows.size() > visible) {
-        std::string range = std::to_string(scrollRow + 1) + "\xE2\x80\x93" + std::to_string(std::min(rows.size(), scrollRow + visible)) + " of " + std::to_string(rows.size());
-        float rangeWidth = ui.measure(range, TextStyle::Caption);
-        ui.text(range, TextStyle::Caption, area.x + area.w - rangeWidth, barY + (48.0f - ui.lineHeight(TextStyle::Caption)) * 0.5f, Subtle);
-    }
-}
-
-void Menu::worlds(Context& ui, const Area& area)
-{
-    constexpr float tileHeight = 132.0f;
-    if (ui.input().wheel != 0.0f && !ui.hovered({ 0.0f, 0.0f, area.x + area.w, HeaderHeight })) {
-        worldsScroll = std::max(0.0f, worldsScroll - ui.input().wheel * 80.0f);
-    }
-
-    float y = area.y - worldsScroll;
-    ui.text("Worlds", TextStyle::Display, area.x, y - 6.0f, Text);
-    y += 72.0f;
-
-    heading(ui, "Realms", area.x, y);
-    y += 44.0f;
-    auto notice = [&](std::string_view title, std::string_view body) {
-        Rect card { area.x, y, area.w, 96.0f };
-        panel(ui, card);
-        ui.text(title, TextStyle::Label, card.x + 28.0f, card.y + 24.0f, Text, card.w - 280.0f);
-        ui.text(body, TextStyle::Body, card.x + 28.0f, card.y + 50.0f, Muted, card.w - 280.0f);
-        return card;
-    };
-
-    if (!signedIn()) {
-        Rect card = notice("Sign in to see your Realms", "Realms you own or were invited to show up here.");
-        if (ui.button("worlds:signin", "Sign in with Microsoft", { card.right() - 28.0f - 220.0f, card.y + 24.0f, 220.0f, 48.0f }, ButtonKind::Primary)) {
-            beginSignIn();
-        }
-        y = card.bottom();
-    } else if (account.realmsLoading) {
-        y = notice("Loading your Realms\xE2\x80\xA6", "Asking Realms for the worlds you can join.").bottom();
-    } else if (!account.realmsError.empty()) {
-        y = notice("Couldn't load your Realms", account.realmsError).bottom();
-    } else if (account.realms.empty()) {
-        y = notice("No Realms yet", "Realms you own or were invited to show up here.").bottom();
+    ui.border(rect, "baseTextField", focused ? "Focused" : state.hovered ? "Hovered" : "Default");
+    float x = rect.x + css(14.0f);
+    float y = std::round(rect.y + (rect.h - ui.lineHeight(TextStyle::Ui)) * 0.5f + css(2.0f));
+    float room = rect.w - css(26.0f);
+    if (value.empty() && !focused) {
+        ui.text(placeholder, TextStyle::Ui, x, y, Muted1, room);
     } else {
-        for (size_t i = 0; i < account.realms.size(); ++i) {
-            const RealmEntry& realm = account.realms[i];
-            std::string tag = realm.expired ? "EXPIRED" : realm.open ? "OPEN" : "CLOSED";
-            Rect cell = gridCell(i, area.x, y, area.w, tileHeight);
-            if (tile(ui, "realm:" + std::to_string(realm.id), cell, realm.name, realm.detail, tag, realm.open && !realm.expired, true)) {
-                if (realm.open && !realm.expired) {
-                    pending = ConnectRequest { realm.name, "realm_id/" + std::to_string(realm.id) };
-                } else {
-                    notify(realm.name + (realm.expired ? " has expired" : " is closed"));
-                }
-            }
-            y = std::max(y, cell.bottom());
+        ui.text(value, TextStyle::Ui, x, y, White, room);
+        if (focused) {
+            float caret = x + std::min(ui.measure(value, TextStyle::Ui), room) + 0.5f;
+            ui.fill({ caret, y, 1.0f, ui.lineHeight(TextStyle::Ui) - 1.0f }, Caret);
         }
     }
-    y += 40.0f;
-
-    heading(ui, "On this device", area.x, y);
-    y += 44.0f;
-    if (worldEntries.empty()) {
-        y = notice("No local worlds found", "Worlds from Minecraft Bedrock on this device show up here.").bottom();
-    }
-    for (size_t i = 0; i < worldEntries.size(); ++i) {
-        const WorldEntry& world = worldEntries[i];
-        Rect cell = gridCell(i, area.x, y, area.w, tileHeight);
-        if (tile(ui, "world:" + std::to_string(i), cell, world.name, world.detail, "LOCAL", false, true)) {
-            notify("Playing local worlds needs the built-in server");
-        }
-    }
-    if (!worldEntries.empty()) {
-        y = gridCell(worldEntries.size() - 1, area.x, y, area.w, tileHeight).bottom();
-    }
-
-    float contentHeight = y + worldsScroll - area.y + PadXl;
-    worldsScroll = std::min(worldsScroll, std::max(0.0f, contentHeight - area.h));
+    return state.clicked;
 }
 
-void Menu::friends(Context& ui, const Area& area)
+bool Menu::toggle(Context& ui, std::string_view id, const Rect& rect, bool on)
 {
-    ui.text("Friends", TextStyle::Display, area.x, area.y - 6.0f, Text);
-    Rect card { area.x, area.y + 72.0f, area.w, 260.0f };
-    panel(ui, card);
-    ui.glow(card.right() - 80.0f, card.y + 40.0f, 360.0f, { 200, 160, 255, 30 });
+    Interaction state = ui.interact(id, rect);
+    ui.fill(rect, Divider);
+    Rect inner = rect.inset(1.0f);
+    ui.fill(inner, on ? Primary : PanelDark);
+    Rect knob { on ? inner.right() - inner.h : inner.x, inner.y, inner.h, inner.h };
+    ui.fill(knob, state.hovered ? White : Secondary);
+    ui.fill({ knob.x, knob.bottom() - 1.0f, knob.w, 1.0f }, { 0x8c, 0x8d, 0x90, 255 });
+    if (on) {
+        ui.fill({ std::round(inner.x + (inner.w - inner.h) * 0.5f), inner.y + 3.0f, 1.0f, inner.h - 6.0f }, White);
+    } else {
+        Rect ring { std::round(inner.x + inner.h + (inner.w - inner.h * 2.0f) * 0.5f + inner.h * 0.5f - 2.5f), inner.y + 3.5f, 5.0f, inner.h - 7.0f };
+        ui.outline(ring, Muted1);
+    }
+    return state.clicked;
+}
 
-    Rect icon { card.x + 40.0f, card.y + 40.0f, 72.0f, 72.0f };
-    profileBadge(ui, icon, TextStyle::Display);
+bool Menu::slider(Context& ui, std::string_view id, const Rect& rect, float& fraction)
+{
+    Interaction state = ui.interact(id, rect);
+    float before = fraction;
+    constexpr float Knob = 14.0f;
+    if (state.pressed || (state.hovered && ui.input().mouseDown)) {
+        fraction = std::clamp((ui.mouseX() - rect.x - Knob * 0.5f) / std::max(rect.w - Knob, 1.0f), 0.0f, 1.0f);
+    }
+    float travel = rect.w - Knob;
+    Rect track { rect.x, std::round(rect.y + rect.h * 0.5f - 2.0f), rect.w, 4.0f };
+    ui.fill(track, Divider);
+    ui.fill(track.inset(1.0f), { 0x8c, 0x8d, 0x90, 255 });
+    ui.fill({ track.x + 1.0f, track.y + 1.0f, travel * fraction + Knob * 0.5f, 2.0f }, Primary);
+    Rect knob { std::round(rect.x + travel * fraction), std::round(rect.y + (rect.h - Knob) * 0.5f), Knob, Knob };
+    ui.fill(knob, Divider);
+    ui.fill(knob.inset(1.0f), state.hovered ? White : Secondary);
+    ui.fill({ knob.x + 1.0f, knob.bottom() - 2.0f, knob.w - 2.0f, 1.0f }, { 0x8c, 0x8d, 0x90, 255 });
+    return fraction != before;
+}
 
-    float x = icon.right() + 28.0f;
-    float w = card.right() - x - 40.0f;
-    ui.text("Play together", TextStyle::Heading, x, card.y + 74.0f, Text, w);
-    if (signedIn()) {
-        pill(ui, "SIGNED IN", x, card.y + 40.0f, SecondarySoft, Secondary);
-        ui.paragraph("You're signed in as " + displayName + ". Your friends list and their joinable worlds will show up here.", TextStyle::Body, x, card.y + 108.0f, w, Muted);
+void Menu::play(Context& ui, float width, float height)
+{
+    header(ui, width, "PLAY", true);
+    Rect body = column(width, 52.0f, height);
+
+    struct TabInfo {
+        PlayTab tab;
+        std::string label;
+        const char* icon;
+    };
+    TabInfo tabs[] = {
+        { PlayTab::Worlds, "Worlds (" + std::to_string(worldEntries.size()) + ")", "hbui/worlds" },
+        { PlayTab::Realms, "Realms", "hbui/Realms" },
+        { PlayTab::Servers, "Servers", "hbui/server" },
+    };
+    float tabWidth = body.w / 3.0f;
+    for (size_t i = 0; i < std::size(tabs); ++i) {
+        Rect tab { std::round(body.x + tabWidth * static_cast<float>(i)), body.y, std::round(tabWidth), TabHeight };
+        bool active = playTab == tabs[i].tab;
+        Interaction state = ui.pressable("tab:" + tabs[i].label, "tabBarNeutral", tab, true, active);
+        float textWidth = ui.measure(tabs[i].label, TextStyle::Ui);
+        float x = std::round(tab.x + (tab.w - textWidth - 9.0f) * 0.5f);
+        float y = std::round(tab.y + (tab.h - css(4.0f) - ui.lineHeight(TextStyle::Ui)) * 0.5f) + (active ? 1.0f : 0.0f);
+        ui.sprite({ x, y + 1.0f, 6.0f, 6.0f }, tabs[i].icon);
+        ui.text(tabs[i].label, TextStyle::Ui, x + 9.0f, y, White);
+        if (active) {
+            tabUnderline(ui, tab);
+        }
+        if (state.clicked && !active) {
+            playTab = tabs[i].tab;
+            listScroll = 0.0f;
+            detailScroll = 0.0f;
+        }
+    }
+
+    Rect area { body.x, body.y + TabHeight + 1.0f, body.w, height - body.y - TabHeight - 1.0f };
+    switch (playTab) {
+    case PlayTab::Worlds:
+        worldsTab(ui, area);
+        break;
+    case PlayTab::Realms:
+        realmsTab(ui, area);
+        break;
+    case PlayTab::Servers:
+        serversTab(ui, area);
+        break;
+    }
+}
+
+void Menu::worldsTab(Context& ui, const Rect& area)
+{
+    ui.fill(area, { 0, 0, 0, 200 });
+    Rect bar { area.x, area.y + 4.0f, area.w, 22.0f };
+    ui.pressableButton("worlds:layout", "pressableElevatedSecondary", "", { bar.x + 1.0f, bar.y, 22.0f, bar.h });
+    ui.sprite({ bar.x + 8.0f, bar.y + 6.0f, 8.0f, 8.0f }, "hbui/List", InkDark);
+    if (ui.pressableButton("worlds:create", "pressableElevatedPrimary", "Create new world", { bar.right() - 127.0f, bar.y, 127.0f, bar.h })) {
+        notify("TODO: Creating worlds");
+    }
+
+    Rect grid { area.x, bar.bottom() + 8.0f, area.w, area.bottom() - bar.bottom() - 8.0f };
+    constexpr float Gap = 10.0f;
+    constexpr size_t Columns = 4;
+    float cardWidth = std::floor((grid.w - 3.0f - Gap * static_cast<float>(Columns - 1)) / static_cast<float>(Columns));
+    float imageHeight = std::round(cardWidth * 0.566f);
+    float cardHeight = imageHeight + 32.0f;
+    size_t rows = (worldEntries.size() + Columns - 1) / Columns;
+    float content = rows == 0 ? 0.0f : static_cast<float>(rows) * (cardHeight + Gap) - Gap;
+    scrollArea(ui, grid, listScroll, content);
+
+    if (worldEntries.empty()) {
+        ui.textCentered("No worlds were found on this device", TextStyle::Ui, { grid.x, grid.y + 40.0f, grid.w, 20.0f }, Muted0);
         return;
     }
-    pill(ui, "OFFLINE", x, card.y + 40.0f, { 255, 255, 255, 16 }, Muted);
-    ui.paragraph("Sign in with your Microsoft account to see which friends are online and hop into their worlds and Realms.", TextStyle::Body, x, card.y + 108.0f, w, Muted);
-    if (ui.button("friends:signin", "Sign in with Microsoft", { x, card.bottom() - 40.0f - 48.0f, 220.0f, 48.0f }, ButtonKind::Primary)) {
-        beginSignIn();
+    ui.setClip(grid);
+    for (size_t i = 0; i < worldEntries.size(); ++i) {
+        const WorldEntry& world = worldEntries[i];
+        Rect card {
+            grid.x + static_cast<float>(i % Columns) * (cardWidth + Gap),
+            grid.y - listScroll + static_cast<float>(i / Columns) * (cardHeight + Gap),
+            cardWidth,
+            cardHeight,
+        };
+        if (card.bottom() < grid.y || card.y > grid.bottom()) {
+            continue;
+        }
+        Interaction state = ui.interact("world:" + std::to_string(i), card);
+        ui.fill(card, state.hovered ? Color { 0x5a, 0x5b, 0x5c, 255 } : Panel);
+        ui.sprite({ card.x, card.y, card.w, imageHeight }, "hbui/world-preview-default");
+        ui.fill({ card.x, card.y + imageHeight, card.w, 32.0f }, PanelDark);
+        ui.text(world.name, TextStyle::Ui, card.x + 3.0f, card.y + imageHeight + 5.0f, White, card.w - 34.0f);
+        ui.text(world.detail, TextStyle::UiSmall, card.x + 3.0f, card.y + imageHeight + 17.0f, Muted0, card.w - 34.0f);
+        Rect edit { card.right() - 28.0f, card.y + imageHeight + 2.0f, 26.0f, 28.0f };
+        ui.pressable("world:edit:" + std::to_string(i), "pressableNeutral", edit);
+        ui.sprite({ edit.x + 9.0f, edit.y + 10.0f, 8.0f, 8.0f }, "hbui/Edit", White);
+        if (state.clicked) {
+            notify("TODO: Playing local worlds");
+        }
+    }
+    ui.clearClip();
+}
+
+void Menu::realmsTab(Context& ui, const Rect& area)
+{
+    ui.fill(area, { 0, 0, 0, 200 });
+    Rect banner { area.x, area.y + 5.0f, area.w - 5.0f, 12.0f };
+    ui.fill(banner, { 0x28, 0x5f, 0xe0, 255 });
+    ui.textCentered("Realms subscriptions can be purchased in the full version of Minecraft.", TextStyle::UiSmall, banner, White);
+
+    float y = banner.bottom() + 5.0f;
+    float center = std::round(area.x + area.w * 0.5f);
+    if (ui.pressableButton("realms:invites", "pressableElevatedSecondary", "Invitations", { center - 128.0f, y, 126.0f, ButtonHeight })) {
+        notify("TODO: Realm invitations");
+    }
+    if (ui.pressableButton("realms:join", "pressableElevatedSecondary", "Join a Realm", { center + 2.0f, y, 126.0f, ButtonHeight })) {
+        notify("TODO: Joining a Realm by code");
+    }
+    y += ButtonHeight + 8.0f;
+
+    Rect list { area.x, y, area.w - 5.0f, area.bottom() - y };
+    if (!signedIn()) {
+        ui.textCentered("Sign in with a Microsoft account to see your Realms", TextStyle::Ui, { list.x, list.y + 10.0f, list.w, 20.0f }, Muted0);
+        if (ui.pressableButton("realms:signin", "pressableElevatedPrimary", "Sign In", { center - 63.0f, list.y + 36.0f, 126.0f, ButtonHeight })) {
+            beginSignIn();
+        }
+        return;
+    }
+    if (account.realmsLoading || !account.realmsError.empty() || account.realms.empty()) {
+        std::string_view message = account.realmsLoading ? "Loading your Realms..." : !account.realmsError.empty() ? std::string_view(account.realmsError) : "You aren't a member of any Realms yet";
+        ui.textCentered(message, TextStyle::Ui, { list.x, list.y + 10.0f, list.w, 20.0f }, Muted0);
+        return;
+    }
+
+    constexpr float Row = 36.0f;
+    float content = static_cast<float>(account.realms.size()) * (Row + 4.0f);
+    scrollArea(ui, list, listScroll, content);
+    ui.setClip(list);
+    for (size_t i = 0; i < account.realms.size(); ++i) {
+        const RealmEntry& realm = account.realms[i];
+        Rect row { list.x, list.y - listScroll + static_cast<float>(i) * (Row + 4.0f), list.w - 4.0f, Row };
+        ui.fill(row, Panel);
+        ui.sprite({ row.x + 6.0f, row.y + 6.0f, 24.0f, 24.0f }, "hbui/Realms");
+        ui.text(realm.name, TextStyle::Ui, row.x + 36.0f, row.y + 7.0f, White, row.w - 140.0f);
+        std::string state = realm.expired ? "Expired" : realm.open ? realm.detail : "Closed";
+        ui.text(state, TextStyle::UiSmall, row.x + 36.0f, row.y + 20.0f, Muted0, row.w - 140.0f);
+        bool joinable = realm.open && !realm.expired;
+        if (ui.pressableButton("realm:" + std::to_string(realm.id), "pressableElevatedPrimary", "Play", { row.right() - 86.0f, row.y + 7.0f, 80.0f, ButtonHeight }, TextStyle::HeadingSmall, joinable)) {
+            pending = ConnectRequest { realm.name, "realm_id/" + std::to_string(realm.id) };
+        }
+    }
+    ui.clearClip();
+}
+
+void Menu::serversTab(Context& ui, const Rect& area)
+{
+    Rect list { area.x, area.y, 197.0f, area.h };
+    Rect detail { list.right() + 13.0f, area.y, area.right() - list.right() - 20.0f, area.h };
+    ui.fill(list, { 0, 0, 0, 220 });
+
+    std::vector<ServerRow> featured = featuredRows();
+    std::vector<ServerRow> saved = savedRows();
+    if (!selection) {
+        selection = saved.empty() ? Selection { true, 0 } : Selection { false, 0 };
+    }
+
+    float content = 34.0f + 12.0f + RowHeight * static_cast<float>(featured.size()) + 14.0f + 12.0f + RowHeight * static_cast<float>(saved.size());
+    Rect view { list.x, list.y + 4.0f, list.w, list.h - 4.0f };
+    scrollArea(ui, view, listScroll, content);
+    ui.setClip(view);
+    float y = view.y - listScroll;
+
+    if (ui.pressableButton("servers:add", "pressableElevatedSecondary", "Add server", { list.x + 8.67f, y + 5.0f, 174.67f, 20.67f })) {
+        openServerForm(std::nullopt);
+    }
+    ui.sprite({ list.x + 8.67f + 87.0f - ui.measure("Add server", TextStyle::Ui) * 0.5f - 9.0f, y + 11.0f, 6.0f, 6.0f }, "hbui/Plus", InkDark);
+    y += 34.0f;
+
+    auto section = [&](std::string_view label, const std::vector<ServerRow>& rows) {
+        ui.text(label, TextStyle::UiSmall, list.x + 7.33f, y, Muted0);
+        y += 12.0f;
+        for (const ServerRow& row : rows) {
+            Rect bounds { list.x, y, list.w - 4.0f, RowHeight };
+            bool selected = selection && selection->featured == row.featured && selection->index == row.index;
+            Interaction state = ui.interact(std::string(row.featured ? "server:f:" : "server:s:") + std::to_string(row.index), bounds);
+            if (selected) {
+                ui.fill(bounds, Panel);
+            } else if (state.hovered) {
+                ui.fill(bounds, { 0x48, 0x49, 0x4a, 140 });
+            }
+            float textX = bounds.x + 7.33f;
+            if (row.featured) {
+                ui.sprite({ bounds.x + 8.67f, bounds.y + 5.67f, 12.0f, 12.0f }, "hbui/server");
+                textX = bounds.x + 25.0f;
+            }
+            if (row.detail.empty()) {
+                ui.text(row.name, TextStyle::Ui, textX, std::round(bounds.y + (bounds.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White, bounds.right() - textX - 4.0f);
+            } else {
+                ui.text(row.name, TextStyle::Ui, textX, bounds.y + 3.0f, White, bounds.right() - textX - 4.0f);
+                ui.text(row.detail, TextStyle::UiSmall, textX, bounds.y + 12.67f, Muted0, bounds.right() - textX - 4.0f);
+            }
+            if (state.clicked) {
+                selection = Selection { row.featured, row.index };
+                detailScroll = 0.0f;
+            }
+            y += RowHeight;
+        }
+    };
+    section("Featured experiences (" + std::to_string(featured.size()) + ")", featured);
+    y += 6.0f;
+    divider(ui, list.x, y, list.w - 4.0f);
+    y += 8.0f;
+    std::vector<ServerRow> savedWithDetail = saved;
+    for (ServerRow& row : savedWithDetail) {
+        row.detail = row.address;
+    }
+    section("Other Servers (" + std::to_string(saved.size()) + ")", savedWithDetail);
+    ui.clearClip();
+
+    std::optional<ServerRow> row = selectedRow();
+    if (!row) {
+        return;
+    }
+    ui.fill(detail, PanelDark);
+    Rect top { detail.x, detail.y, detail.w, 32.0f };
+    ui.fill(top, Divider);
+    ui.fill(top.inset(1.0f), PanelDark);
+    ui.text(row->featured ? "Featured server" : "Saved server", TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0);
+    if (ui.pressableButton("server:play", "pressableElevatedPrimary", "PLAY", { top.right() - 13.33f - 157.33f, top.y + 5.0f, 157.33f, 20.0f }, TextStyle::HeadingSmall)) {
+        connect(*row);
+    }
+
+    float rowY = top.bottom();
+    auto value = [&](std::string_view text, std::string_view label) {
+        Rect bounds { detail.x, rowY, detail.w, 36.0f };
+        ui.text(text, TextStyle::Ui, bounds.x + 8.0f, bounds.y + 8.0f, White, bounds.w - 16.0f);
+        ui.text(label, TextStyle::UiSmall, bounds.x + 8.0f, bounds.y + 21.0f, Muted0, bounds.w - 16.0f);
+        divider(ui, bounds.x, bounds.bottom() - css(2.0f), bounds.w);
+        rowY = bounds.bottom();
+    };
+    std::string host = row->address;
+    std::string port = "19132";
+    size_t colon = host.rfind(':');
+    if (colon != std::string::npos && host.find(':') == colon) {
+        port = host.substr(colon + 1);
+        host.resize(colon);
+    }
+    value(row->name, "Server name");
+    if (row->featured) {
+        value(row->detail, "Description");
+        return;
+    }
+    value(host, "Server address");
+    value(port, "Server port");
+    Rect bar { detail.x, rowY, detail.w, 36.0f };
+    ui.fill(bar, Panel);
+    float buttonsX = std::round(bar.x + bar.w * 0.5f - 159.0f);
+    if (ui.pressableButton("server:edit", "pressableElevatedSecondary", "Edit server", { buttonsX, bar.y + 7.0f, 156.0f, ButtonHeight })) {
+        openServerForm(row->index);
+    }
+    if (ui.pressableButton("server:delete", "pressableElevatedDestructive", "Delete server", { buttonsX + 162.0f, bar.y + 7.0f, 156.0f, ButtonHeight })) {
+        dialog = Dialog::ConfirmDelete;
     }
 }
 
-void Menu::settings(Context& ui, const Area& area)
+void Menu::serverForm(Context& ui, float width, float height)
 {
-    if (ui.input().wheel != 0.0f && ui.mouseY() > HeaderHeight) {
-        settingsScroll = std::max(0.0f, settingsScroll - ui.input().wheel * 80.0f);
-    }
-    float top = area.y - settingsScroll;
-    ui.text("Settings", TextStyle::Display, area.x, top - 6.0f, Text);
-    float y = top + 72.0f;
+    (void)height;
+    header(ui, width, editing ? "EDIT SERVER" : "ADD A NEW SERVER", false);
+    constexpr float PanelWidth = 522.67f;
+    constexpr float RowStep = 50.0f;
+    Rect panel { std::round((width - PanelWidth) * 0.5f), 53.33f, PanelWidth, 191.33f };
+    ui.fill(panel, Panel);
 
-    Rect account { area.x, y, area.w, 112.0f };
-    panel(ui, account);
-    Rect avatar { account.x + 28.0f, account.y + 24.0f, 64.0f, 64.0f };
-    profileBadge(ui, avatar, TextStyle::Display);
-    ui.text(displayName, TextStyle::Heading, avatar.right() + 20.0f, avatar.y + 6.0f, Text);
-    if (signedIn()) {
-        pill(ui, "Xbox Live", avatar.right() + 20.0f, avatar.y + 38.0f, SecondarySoft, Secondary);
-        if (ui.button("settings:signout", "Sign out", { account.right() - 28.0f - 120.0f, account.y + (account.h - 48.0f) * 0.5f, 120.0f, 48.0f })) {
-            accountRequest = AccountRequest::SignOut;
-            notify("Signed out");
+    struct Entry {
+        Field field;
+        const char* label;
+        const char* placeholder;
+        const std::string* value;
+    };
+    Entry entries[] = {
+        { Field::ServerName, "Server name", "Example server name", &editName },
+        { Field::ServerAddress, "Server address", "IP (1.0.0.1) or URL (www.example.com)", &editAddress },
+        { Field::ServerPort, "Port", "19132", &editPort },
+    };
+    float y = panel.y;
+    for (const Entry& entry : entries) {
+        ui.text(entry.label, TextStyle::Ui, panel.x + 12.0f, y + 6.0f, White);
+        Rect input { panel.x + 12.0f, y + 18.67f, panel.w - 24.0f, 22.67f };
+        if (textField(ui, std::string("form:") + entry.label, entry.placeholder, *entry.value, input, field == entry.field)) {
+            field = entry.field;
+        }
+        y += RowStep;
+        ui.fill({ panel.x, y - 3.0f, panel.w, 3.0f }, PanelDark);
+    }
+
+    Rect left { panel.x + 4.33f, panel.y + 159.33f, panel.w * 0.5f - 7.0f, ButtonHeight };
+    Rect right { panel.x + panel.w * 0.5f + 2.67f, left.y, left.w, ButtonHeight };
+    if (editing) {
+        if (ui.pressableButton("form:delete", "pressableElevatedDestructive", "Delete server", left)) {
+            selection = Selection { false, *editing };
+            dialog = Dialog::ConfirmDelete;
+        }
+        if (ui.pressableButton("form:save", "pressableElevatedPrimary", "Save changes", right)) {
+            saveServerForm(false);
         }
     } else {
-        pill(ui, "Offline profile", avatar.right() + 20.0f, avatar.y + 38.0f, { 255, 255, 255, 16 }, Muted);
-        if (ui.button("settings:signin", "Sign in with Microsoft", { account.right() - 28.0f - 220.0f, account.y + (account.h - 48.0f) * 0.5f, 220.0f, 48.0f }, ButtonKind::Primary)) {
-            beginSignIn();
+        if (ui.pressableButton("form:add", "pressableElevatedSecondary", "Add server", left)) {
+            saveServerForm(false);
+        }
+        if (ui.pressableButton("form:play", "pressableElevatedPrimary", "Add and play", right)) {
+            saveServerForm(true);
         }
     }
-    y = account.bottom() + PadLg;
+}
 
-    Rect interfacePanel { area.x, y, area.w, 144.0f };
-    panel(ui, interfacePanel);
-    float x = interfacePanel.x + 28.0f;
-    ui.text("Interface size", TextStyle::Label, x, interfacePanel.y + 26.0f, Text);
-    ui.text("Scales every menu on top of your display settings.", TextStyle::Body, x, interfacePanel.y + 50.0f, Muted, interfacePanel.w - 56.0f);
+void Menu::settings(Context& ui, float width, float height)
+{
+    header(ui, width, "SETTINGS", false);
+    Rect sidebar { std::round(width * 0.5f - 314.67f), 53.33f, 196.0f, std::min(402.0f, height - 53.33f - 8.0f) };
+    Rect page { sidebar.right() + 17.33f, 53.33f, 408.0f, height - 53.33f - 8.0f };
 
-    float segmentWidth = 4.0f * 84.0f + 8.0f;
-    Rect segment { x, interfacePanel.bottom() - 26.0f - 44.0f, segmentWidth, 44.0f };
-    ui.card(segment, theme::Field, Line, 22.0f);
-    for (size_t i = 0; i < std::size(InterfaceScales); ++i) {
-        Rect option { segment.x + 4.0f + static_cast<float>(i) * 84.0f, segment.y + 4.0f, 84.0f, 36.0f };
-        if (ui.tab(std::string("scale:") + InterfaceScaleLabels[i], InterfaceScaleLabels[i], option, scale == InterfaceScales[i])) {
-            scale = InterfaceScales[i];
+    ui.fill(sidebar, PanelDark);
+    ui.setClip(sidebar);
+    float y = sidebar.y;
+    for (const SettingsEntry& entry : SettingsEntries) {
+        if (entry.group) {
+            ui.text(entry.group, TextStyle::UiSmall, sidebar.x + 8.0f, y + 9.0f, Muted0);
+            y += 24.0f;
+            divider(ui, sidebar.x, y - css(2.0f), sidebar.w);
+        }
+        Rect row { sidebar.x, y, sidebar.w, 24.0f };
+        bool active = settingsSection == entry.page;
+        Interaction state = ui.interact(std::string("settings:") + entry.label, row);
+        if (active || state.hovered) {
+            ui.fill(row, active ? Panel : Color { 0x48, 0x49, 0x4a, 150 });
+        }
+        ui.sprite({ row.x + 8.67f, row.y + 8.33f, 7.5f, 7.5f }, entry.icon);
+        ui.text(entry.label, TextStyle::Ui, row.x + 20.0f, std::round(row.y + (row.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White, row.w - 24.0f);
+        divider(ui, row.x, row.bottom() - css(2.0f), row.w);
+        if (state.clicked && !active) {
+            settingsSection = entry.page;
+            pageScroll = 0.0f;
+            rebinding.reset();
+        }
+        y += 24.0f;
+    }
+    ui.clearClip();
+
+    ui.fill({ sidebar.right() + 3.33f, sidebar.y, 3.0f, sidebar.h }, { 0xef, 0xf0, 0xf1, 255 });
+    settingsPage(ui, page);
+}
+
+void Menu::settingsHeading(Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail)
+{
+    y += 14.0f;
+    std::string upper(heading);
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    ui.text(upper, TextStyle::HeadingSmall, x + 12.0f, y, White, width - 24.0f);
+    y += 10.0f;
+    if (!detail.empty()) {
+        ui.text(detail, TextStyle::UiSmall, x + 12.0f, y, Muted0, width - 24.0f);
+        y += 12.0f;
+    }
+    y += 6.0f;
+    divider(ui, x, y - css(2.0f), width);
+}
+
+void Menu::settingsRow(Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight)
+{
+    ui.text(label, TextStyle::Ui, x + 12.0f, y + 7.0f, White, width - 90.0f);
+    float height = 18.0f;
+    if (!detail.empty()) {
+        height += ui.paragraph(detail, TextStyle::UiSmall, x + 12.0f, y + 17.0f, width - 90.0f, Muted0);
+    }
+    y += std::max(height + 6.0f, controlHeight);
+    divider(ui, x, y - css(2.0f), width);
+}
+
+void Menu::todoRow(Context& ui, float x, float& y, float width, std::string_view label)
+{
+    settingsRow(ui, x, y, width, label, "TODO", 31.33f);
+}
+
+void Menu::settingsPage(Context& ui, const Rect& area)
+{
+    Rect view { area.x, area.y, area.w + 7.0f, area.h };
+    ui.fill(area, Panel);
+    scrollArea(ui, view, pageScroll, pageContent);
+    ui.setClip(area);
+    float x = area.x;
+    float w = area.w;
+    float y = area.y - pageScroll;
+
+    const SettingsEntry* entry = nullptr;
+    for (const SettingsEntry& candidate : SettingsEntries) {
+        if (candidate.page == settingsSection) {
+            entry = &candidate;
         }
     }
-    y = interfacePanel.bottom() + PadLg;
 
-    Rect video { area.x, y, area.w, 196.0f };
-    panel(ui, video);
-    ui.text("Video", TextStyle::Label, x, video.y + 26.0f, Text);
-    float sliderWidth = std::min(video.w - 56.0f - 160.0f, 420.0f);
-
-    ui.text("Render distance", TextStyle::Body, x, video.y + 66.0f, Muted);
-    float distanceFraction = float(chunkDistance - MinRenderDistance) / float(MaxRenderDistance - MinRenderDistance);
-    if (ui.slider("settings:distance", { x + 160.0f, video.y + 60.0f, sliderWidth, 32.0f }, distanceFraction)) {
-        chunkDistance = MinRenderDistance + int(std::lround(distanceFraction * float(MaxRenderDistance - MinRenderDistance)));
-    }
-    ui.text(std::to_string(chunkDistance) + " chunks", TextStyle::Label, x + 176.0f + sliderWidth, video.y + 66.0f, Text);
-
-    int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
-    int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;
-    ui.text("Max FPS", TextStyle::Body, x, video.y + 126.0f, Muted);
-    float fpsFraction = float(fpsStep) / float(fpsSteps);
-    if (ui.slider("settings:fps", { x + 160.0f, video.y + 120.0f, sliderWidth, 32.0f }, fpsFraction)) {
-        int step = int(std::lround(fpsFraction * float(fpsSteps)));
-        fpsLimit = step >= fpsSteps ? UnlimitedFps : MinMaxFps + step * MaxFpsStep;
-    }
-    ui.text(fpsLimit == UnlimitedFps ? std::string("Unlimited") : std::to_string(fpsLimit), TextStyle::Label, x + 176.0f + sliderWidth, video.y + 126.0f, Text);
-    y = video.bottom() + PadLg;
-
-    constexpr float bindingRow = 56.0f;
-    size_t bindingRows = (KeyBindings::Count + 1) / 2;
-    Rect controls { area.x, y, area.w, 90.0f + bindingRow * static_cast<float>(bindingRows) };
-    panel(ui, controls);
-    ui.text("Controls", TextStyle::Label, controls.x + 28.0f, controls.y + 26.0f, Text);
-    ui.text("Click a key, then press the new one. Esc cancels.", TextStyle::Body, controls.x + 28.0f, controls.y + 50.0f, Muted, controls.w - 56.0f);
-    float columnWidth = (controls.w - 56.0f - PadLg) * 0.5f;
-    for (size_t i = 0; i < KeyBindings::Count; ++i) {
-        float columnX = controls.x + 28.0f + static_cast<float>(i % 2) * (columnWidth + PadLg);
-        float rowY = controls.y + 84.0f + static_cast<float>(i / 2) * bindingRow;
-        ui.text(KeyBindings::label(i), TextStyle::Body, columnX, rowY + (44.0f - ui.lineHeight(TextStyle::Body)) * 0.5f, Text, columnWidth - 150.0f);
-        bool waiting = rebinding && *rebinding == i;
-        std::string label = waiting ? std::string("Press a key\xE2\x80\xA6") : std::string(keyName(bindings.keys[i]));
-        if (ui.button(std::string("bind:") + KeyBindings::id(i), label, { columnX + columnWidth - 140.0f, rowY, 140.0f, 44.0f }, waiting ? ButtonKind::Primary : ButtonKind::Secondary)) {
-            rebinding = i;
+    switch (settingsSection) {
+    case SettingsPage::Keyboard: {
+        settingsHeading(ui, x, y, w, "Keyboard & Mouse", "Input options and key mapping for keyboard and mouse");
+        settingsHeading(ui, x, y, w, "Keyboard & Mouse Mappings", "Click a key, then press the new one. Esc cancels.");
+        for (size_t i = 0; i < KeyBindings::Count; ++i) {
+            float rowY = y;
+            bool waiting = rebinding && *rebinding == i;
+            settingsRow(ui, x, y, w, KeyBindings::label(i), {}, 31.33f);
+            std::string label = waiting ? std::string("Press a key...") : std::string(keyName(bindings.keys[i]));
+            if (ui.pressableButton(std::string("bind:") + KeyBindings::id(i), waiting ? "pressableElevatedPrimary" : "pressableElevatedSecondary", label, { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
+                rebinding = i;
+            }
         }
+        float rowY = y;
+        settingsRow(ui, x, y, w, "Reset settings to default", "Restore all the above keyboard & mouse actions to their original values", 31.33f);
+        if (ui.pressableButton("bind:reset", "pressableElevatedSecondary", "Reset", { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
+            bindings = KeyBindings {};
+            rebinding.reset();
+        }
+        break;
     }
-    if (ui.button("bind:reset", "Reset", { controls.right() - 28.0f - 100.0f, controls.y + 20.0f, 100.0f, 40.0f }, ButtonKind::Ghost)) {
-        bindings = KeyBindings {};
-        rebinding.reset();
-    }
-    y = controls.bottom() + PadLg;
+    case SettingsPage::Video: {
+        settingsHeading(ui, x, y, w, "Video", "Adjust graphics and visual quality");
+        float rowY = y;
+        settingsRow(ui, x, y, w, "Render distance", "How far away chunks are drawn", 44.0f);
+        std::string distance = std::to_string(chunkDistance) + " chunks";
+        ui.text(distance, TextStyle::Ui, x + w - 12.0f - ui.measure(distance, TextStyle::Ui), rowY + 7.0f, White);
+        float distanceFraction = float(chunkDistance - MinRenderDistance) / float(MaxRenderDistance - MinRenderDistance);
+        if (slider(ui, "video:distance", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, distanceFraction)) {
+            chunkDistance = MinRenderDistance + int(std::lround(distanceFraction * float(MaxRenderDistance - MinRenderDistance)));
+        }
 
-    Rect about { area.x, y, area.w, 84.0f };
-    panel(ui, about);
-    Rect logo { about.x + 28.0f, about.y + 24.0f, 36.0f, 36.0f };
-    ui.gradient(logo, AccentHover, AccentDeep, 11.0f);
-    ui.text("Kestrel", TextStyle::Label, logo.right() + 14.0f, about.y + 22.0f, Text);
-    ui.text("Bedrock 1.26.51 \xC2\xB7 protocol 2193", TextStyle::Caption, logo.right() + 14.0f, about.y + 44.0f, Subtle);
-    if (ui.button("settings:quit", "Quit Kestrel", { about.right() - 28.0f - 110.0f, about.y + 20.0f, 110.0f, 44.0f }, ButtonKind::Ghost)) {
-        sheet = Sheet::ConfirmExit;
+        rowY = y;
+        settingsRow(ui, x, y, w, "Max framerate", "Caps how many frames are drawn each second", 44.0f);
+        int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
+        int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;
+        std::string fps = fpsLimit == UnlimitedFps ? std::string("Unlimited") : std::to_string(fpsLimit);
+        ui.text(fps, TextStyle::Ui, x + w - 12.0f - ui.measure(fps, TextStyle::Ui), rowY + 7.0f, White);
+        float fpsFraction = float(fpsStep) / float(fpsSteps);
+        if (slider(ui, "video:fps", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fpsFraction)) {
+            int step = int(std::lround(fpsFraction * float(fpsSteps)));
+            fpsLimit = step >= fpsSteps ? UnlimitedFps : MinMaxFps + step * MaxFpsStep;
+        }
+
+        rowY = y;
+        settingsRow(ui, x, y, w, "GUI scale modifier", "Makes every menu larger on top of the automatic scale", 44.0f);
+        float segment = std::floor((w - 24.0f) / static_cast<float>(std::size(InterfaceScales)));
+        for (size_t i = 0; i < std::size(InterfaceScales); ++i) {
+            Rect option { x + 12.0f + segment * static_cast<float>(i), rowY + 20.0f, segment, 20.0f };
+            bool active = scale == InterfaceScales[i];
+            if (ui.pressableButton(std::string("scale:") + InterfaceScaleLabels[i], active ? "pressableElevatedPrimary" : "pressableElevatedSecondary", InterfaceScaleLabels[i], option)) {
+                scale = InterfaceScales[i];
+            }
+        }
+        todoRow(ui, x, y, w, "Field of view");
+        todoRow(ui, x, y, w, "Brightness");
+        break;
+    }
+    case SettingsPage::Account: {
+        settingsHeading(ui, x, y, w, "Account", "Access your account information");
+        float rowY = y;
+        settingsRow(ui, x, y, w, signedIn() ? "Gamertag: " + displayName : "Not signed in", {}, 27.33f);
+        ui.sprite({ x + w - 12.0f - 16.0f, rowY + 6.0f, 16.0f, 16.0f }, ui.skin().sprite("dynamic/avatar").valid ? "dynamic/avatar" : "ui/profile_glyph_color");
+        rowY = y;
+        if (signedIn()) {
+            settingsRow(ui, x, y, w, "Sign out of your Microsoft account", {}, 36.0f);
+            if (ui.pressableButton("account:signout", "pressableElevatedSecondary", "Sign Out", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+                accountRequest = AccountRequest::SignOut;
+                notify("Signed out");
+            }
+        } else {
+            settingsRow(ui, x, y, w, "Sign in with a Microsoft account", "Needed for online servers and Realms", 36.0f);
+            if (ui.pressableButton("account:signin", "pressableElevatedPrimary", "Sign In", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+                beginSignIn();
+            }
+        }
+        rowY = y;
+        settingsRow(ui, x, y, w, "Quit Kestrel", {}, 36.0f);
+        if (ui.pressableButton("account:quit", "pressableElevatedDestructive", "Quit", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+            dialog = Dialog::ConfirmExit;
+        }
+        break;
+    }
+    default:
+        settingsHeading(ui, x, y, w, entry ? entry->label : "Settings", {});
+        ui.textCentered("TODO", TextStyle::Heading, { x, y + 20.0f, w, 20.0f }, Muted0);
+        y += 40.0f;
+        break;
+    }
+    ui.clearClip();
+    pageContent = y + pageScroll - area.y + 8.0f;
+}
+
+void Menu::todoScreen(Context& ui, float width, float height, std::string_view heading)
+{
+    std::string upper(heading);
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    header(ui, width, upper, heading != "Dressing Room");
+    Rect panel = column(width, 53.33f, height - 8.0f);
+    ui.fill(panel, PanelDark);
+    ui.textCentered("TODO", TextStyle::HeadingLarge, { panel.x, panel.y + panel.h * 0.4f, panel.w, 20.0f }, White);
+    ui.textCentered(std::string(heading) + " isn't implemented in Kestrel yet", TextStyle::Ui, { panel.x, panel.y + panel.h * 0.4f + 24.0f, panel.w, 12.0f }, Muted0);
+}
+
+void Menu::socialDrawer(Context& ui, float width, float height)
+{
+    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    Rect panel { width - 229.33f, 24.0f, 186.67f, height - 48.0f };
+    ui.fill(panel, Divider);
+    Rect inner = panel.inset(2.0f);
+    ui.fill(inner, PanelDark);
+
+    Rect search { inner.x + 2.0f, inner.y + 2.0f, inner.w - 29.0f, 22.67f };
+    textField(ui, "social:search", "Search for people", {}, search, false);
+    ui.sprite({ search.x + 4.0f, search.y + 7.0f, 8.0f, 8.0f }, "hbui/Search", Muted1);
+    Rect close { search.right() + 2.0f, search.y, 23.0f, 22.67f };
+    if (ui.pressable("social:close", "pressableElevatedSecondary", close).clicked) {
+        socialOpen = false;
+    }
+    ui.sprite({ close.x + 8.0f, close.y + 7.0f, 7.0f, 7.0f }, "hbui/Close", InkDark);
+
+    Rect tabs { inner.x + 2.0f, search.bottom() + 3.0f, inner.w - 4.0f, 21.0f };
+    Rect peopleTab { tabs.x, tabs.y, std::round(tabs.w * 0.5f), tabs.h };
+    Rect partyTab { peopleTab.right(), tabs.y, tabs.w - peopleTab.w, tabs.h };
+    if (ui.pressable("social:people", "tabBarNeutral", peopleTab, true, !socialParty).clicked) {
+        socialParty = false;
+    }
+    ui.sprite({ peopleTab.x + peopleTab.w * 0.5f - 4.0f, peopleTab.y + 5.0f, 8.0f, 8.0f }, "hbui/friends");
+    if (ui.pressable("social:party", "tabBarNeutral", partyTab, true, socialParty).clicked) {
+        socialParty = true;
+    }
+    ui.sprite({ partyTab.x + partyTab.w * 0.5f - 4.0f, partyTab.y + 5.0f, 8.0f, 8.0f }, "hbui/party");
+    tabUnderline(ui, socialParty ? partyTab : peopleTab);
+
+    float y = tabs.bottom() + 4.0f;
+    ui.textCentered(socialParty ? "PARTY" : "PEOPLE", TextStyle::Heading, { inner.x, y, inner.w, 12.0f }, White);
+    y += 16.0f;
+    if (socialParty) {
+        ui.textCentered("No parties available", TextStyle::Ui, { inner.x, inner.y + inner.h * 0.4f, inner.w, 12.0f }, White);
+        if (ui.pressableButton("social:create", "pressableElevatedSecondary", "Create party", { inner.x + 8.0f, inner.y + inner.h * 0.4f + 42.0f, inner.w - 16.0f, ButtonHeight })) {
+            notify("TODO: Parties");
+        }
+        return;
     }
 
-    float contentHeight = about.bottom() + settingsScroll - area.y + PadXl;
-    settingsScroll = std::min(settingsScroll, std::max(0.0f, contentHeight - area.h));
+    Rect you { inner.x + 4.0f, y, inner.w - 8.0f, 32.0f };
+    ui.fill(you, Panel);
+    bool hasAvatar = ui.skin().sprite("dynamic/avatar").valid;
+    ui.sprite({ you.x + 4.0f, you.y + 4.0f, 24.0f, 24.0f }, hasAvatar ? "dynamic/avatar" : "ui/profile_glyph_color");
+    ui.text(displayName + " (You)", TextStyle::Ui, you.x + 32.0f, you.y + 7.0f, White, you.w - 36.0f);
+    ui.text(inGame() ? "Playing on a server" : "In the Minecraft Menus", TextStyle::UiSmall, you.x + 32.0f, you.y + 18.0f, Muted0, you.w - 36.0f);
+    y = you.bottom() + 4.0f;
+
+    if (ui.pressableButton("social:requests", "pressableElevatedSecondary", "Friend requests", { you.x, y, you.w, ButtonHeight })) {
+        notify("TODO: Friend requests");
+    }
+    y += ButtonHeight + 6.0f;
+    ui.fill({ you.x, y, you.w, 10.0f }, Primary);
+    ui.text("Online (0)", TextStyle::UiSmall, you.x + 3.0f, y + 1.0f, White);
+    y += 12.0f;
+    ui.textCentered("TODO: Friends list", TextStyle::Ui, { you.x, y + 4.0f, you.w, 12.0f }, Muted0);
 }
 
 }
