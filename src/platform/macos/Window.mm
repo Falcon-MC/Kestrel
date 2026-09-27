@@ -1,5 +1,7 @@
 #include "platform/Window.h"
 
+#include "AppIconPng.h"
+
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -39,6 +41,8 @@ public:
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         [NSApp finishLaunching];
+        NSData* icon = [NSData dataWithBytes:KestrelAppIconData::kAppIconPng length:KestrelAppIconData::kAppIconPngSize];
+        NSApp.applicationIconImage = [[NSImage alloc] initWithData:icon];
 
         NSRect frame = NSMakeRect(0, 0, w, h);
         NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView;

@@ -31,6 +31,7 @@ public:
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = &Win32Window::proc;
         wc.hInstance = instance;
+        wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         wc.hbrBackground = CreateSolidBrush(RGB(15, 13, 19));
         wc.lpszClassName = L"KestrelWindow";

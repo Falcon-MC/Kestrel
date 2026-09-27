@@ -64,7 +64,35 @@ std::vector<char32_t> coveredCodepoints()
     for (char32_t cp : { 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2122 }) {
         result.push_back(cp);
     }
+    // Symbols servers like to put in their MOTD. Only Noto has them, see pack().
+    for (char32_t cp : { 0x2190, 0x2191, 0x2192, 0x2193, 0x25A0, 0x25B6, 0x25C0, 0x25CF, 0x2605, 0x2606, 0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B, 0x2694, 0x26A1, 0x2714, 0x2716, 0x2726, 0x2727, 0x2764, 0x27A4 }) {
+        result.push_back(cp);
+    }
+    for (char32_t cp = 0x2654; cp <= 0x265F; ++cp) {
+        result.push_back(cp);
+    }
+    std::sort(result.begin(), result.end());
     return result;
+}
+
+/**
+ * Servers love dressing up their MOTD with the math alphanumeric letters and
+ * fullwidth forms, which no bundled font has. They are just styled ASCII, so
+ * show the plain letter instead of a row of question marks.
+ */
+char32_t plainForm(char32_t cp)
+{
+    if (cp >= 0x1D400 && cp <= 0x1D6A3) {
+        char32_t letter = (cp - 0x1D400) % 52;
+        return letter < 26 ? U'A' + letter : U'a' + letter - 26;
+    }
+    if (cp >= 0x1D7CE && cp <= 0x1D7FF) {
+        return U'0' + (cp - 0x1D7CE) % 10;
+    }
+    if (cp >= 0xFF01 && cp <= 0xFF5E) {
+        return cp - 0xFEE0;
+    }
+    return cp;
 }
 
 constexpr char32_t FormatSign = 0xA7;
@@ -197,7 +225,7 @@ bool nextVisible(std::string_view text, size_t& i, Formatting& state, Color base
     while (i < text.size()) {
         char32_t cp = nextCodepoint(text, i);
         if (cp != FormatSign) {
-            out = cp;
+            out = plainForm(cp);
             return true;
         }
         if (i < text.size()) {
@@ -324,38 +352,55 @@ bool Font::pack(uint32_t height, float packScale)
     }
 
     std::vector<char32_t> wanted = coveredCodepoints();
-    std::vector<int> codepoints(wanted.begin(), wanted.end());
+    const std::vector<unsigned char>& fallback = sources[Noto];
+    stbtt_fontinfo fallbackInfo;
+    stbtt_InitFont(&fallbackInfo, fallback.data(), stbtt_GetFontOffsetForIndex(fallback.data(), 0));
     bool packed = true;
-    for (size_t style = 1; style < faces.size(); ++style) {
+    for (size_t style = 1; style < faces.size() && packed; ++style) {
         const FaceSpec& spec = Specs[style];
         const std::vector<unsigned char>& data = sources[spec.source];
         float pixelSize = std::round(theme::css(spec.cssSize) * packScale);
         stbtt_PackSetOversampling(&context, 1, 1);
 
-        std::vector<stbtt_packedchar> chars(codepoints.size());
-        stbtt_pack_range range {};
-        range.font_size = STBTT_POINT_SIZE(pixelSize);
-        range.array_of_unicode_codepoints = codepoints.data();
-        range.num_chars = static_cast<int>(codepoints.size());
-        range.chardata_for_range = chars.data();
-        if (!stbtt_PackFontRanges(&context, data.data(), 0, &range, 1)) {
-            packed = false;
-            break;
+        stbtt_fontinfo info;
+        stbtt_InitFont(&info, data.data(), stbtt_GetFontOffsetForIndex(data.data(), 0));
+
+        // The Minecraft fonts stop at Latin, so anything they lack is borrowed from Noto.
+        std::array<std::vector<int>, 2> codepoints;
+        std::array<std::vector<size_t>, 2> slots;
+        for (size_t i = 0; i < wanted.size(); ++i) {
+            int cp = static_cast<int>(wanted[i]);
+            bool borrow = &data != &fallback && !stbtt_FindGlyphIndex(&info, cp) && stbtt_FindGlyphIndex(&fallbackInfo, cp);
+            codepoints[borrow].push_back(cp);
+            slots[borrow].push_back(i);
         }
 
         Face& target = faces[style];
         target.codepoints = wanted;
-        target.glyphs.resize(chars.size());
-        for (size_t i = 0; i < chars.size(); ++i) {
-            float x = 0.0f;
-            float y = 0.0f;
-            stbtt_aligned_quad quad;
-            stbtt_GetPackedQuad(chars.data(), static_cast<int>(AtlasWidth), static_cast<int>(AtlasWidth), static_cast<int>(i), &x, &y, &quad, 0);
-            target.glyphs[i] = { quad.x0, quad.y0, quad.x1, quad.y1, quad.s0, quad.t0, quad.s1, quad.t1, x };
+        target.glyphs.resize(wanted.size());
+        for (size_t part = 0; part < 2 && packed; ++part) {
+            if (codepoints[part].empty()) {
+                continue;
+            }
+            std::vector<stbtt_packedchar> chars(codepoints[part].size());
+            stbtt_pack_range range {};
+            range.font_size = STBTT_POINT_SIZE(pixelSize);
+            range.array_of_unicode_codepoints = codepoints[part].data();
+            range.num_chars = static_cast<int>(chars.size());
+            range.chardata_for_range = chars.data();
+            if (!stbtt_PackFontRanges(&context, part ? fallback.data() : data.data(), 0, &range, 1)) {
+                packed = false;
+                break;
+            }
+            for (size_t i = 0; i < chars.size(); ++i) {
+                float x = 0.0f;
+                float y = 0.0f;
+                stbtt_aligned_quad quad;
+                stbtt_GetPackedQuad(chars.data(), static_cast<int>(AtlasWidth), static_cast<int>(AtlasWidth), static_cast<int>(i), &x, &y, &quad, 0);
+                target.glyphs[slots[part][i]] = { quad.x0, quad.y0, quad.x1, quad.y1, quad.s0, quad.t0, quad.s1, quad.t1, x };
+            }
         }
 
-        stbtt_fontinfo info;
-        stbtt_InitFont(&info, data.data(), stbtt_GetFontOffsetForIndex(data.data(), 0));
         int ascent = 0;
         int descent = 0;
         int gap = 0;
@@ -563,7 +608,7 @@ void Font::draw(DrawList& list, std::string_view text, TextStyle style, float x,
             clipped.append(text.substr(start, i - start));
             continue;
         }
-        float step = advance(style, cp) + (state.bold ? boldStep(style) : 0.0f);
+        float step = advance(style, plainForm(cp)) + (state.bold ? boldStep(style) : 0.0f);
         if (width + step > budget) {
             break;
         }

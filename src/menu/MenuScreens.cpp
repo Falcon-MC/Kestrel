@@ -410,7 +410,7 @@ void Menu::serversTab(Context& ui, const Rect& area)
         } else if (!status->second.online) {
             row.detail = "\xC2\xA7" "c" + tr("disconnectionScreen.title.unableToConnect", "Unable to connect to world");
         } else {
-            row.detail = status->second.motd + "\xC2\xA7" "r (" + std::to_string(status->second.players) + "/" + std::to_string(status->second.maxPlayers) + ")";
+            row.detail = status->second.motd;
         }
     }
     section(tr("thirdPartyWorld.Additional", "Other Servers") + " (" + std::to_string(saved.size()) + ")", savedWithDetail);

@@ -63,15 +63,21 @@ falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlo
 falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLightData
         SYMBOL kBlockLightJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockLightJson.h")
 
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt" kestrelCollisionHex HEX)
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," FALCON_BEDROCK_DATA_BYTES "${kestrelCollisionHex}")
-string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n"
-        FALCON_BEDROCK_DATA_BYTES "${FALCON_BEDROCK_DATA_BYTES}")
-set(FALCON_BEDROCK_DATA_NAMESPACE KestrelBlockCollisionData)
-set(FALCON_BEDROCK_DATA_SYMBOL kBlockCollisions)
-configure_file("${FALCON_BEDROCK_DATA_CMAKE_DIR}/EmbeddedBinary.h.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockCollisionTable.h" @ONLY)
+function(kestrel_embed_file file namespace symbol output)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
+    file(READ "${file}" hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," FALCON_BEDROCK_DATA_BYTES "${hex}")
+    string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n"
+            FALCON_BEDROCK_DATA_BYTES "${FALCON_BEDROCK_DATA_BYTES}")
+    set(FALCON_BEDROCK_DATA_NAMESPACE ${namespace})
+    set(FALCON_BEDROCK_DATA_SYMBOL ${symbol})
+    configure_file("${FALCON_BEDROCK_DATA_CMAKE_DIR}/EmbeddedBinary.h.in" "${output}" @ONLY)
+endfunction()
+
+kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt" KestrelBlockCollisionData kBlockCollisions
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockCollisionTable.h")
+kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png" KestrelAppIconData kAppIconPng
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/AppIconPng.h")
 
 find_package(ZLIB REQUIRED)
 
@@ -84,6 +90,7 @@ list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux)|re
 if(WIN32)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32/*.rc
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/d3d12/*.cpp
     )
 elseif(APPLE)
@@ -110,6 +117,9 @@ else()
         GIT_SHALLOW TRUE
         PATCH_COMMAND ${CMAKE_COMMAND}
             -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw-wayland-fullscreen-output.patch
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ApplyPatch.cmake
+        COMMAND ${CMAKE_COMMAND}
+            -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw-wayland-window-icon.patch
             -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ApplyPatch.cmake
     )
     FetchContent_MakeAvailable(glfw)
