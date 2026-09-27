@@ -21,6 +21,7 @@ constexpr float TitleButtonWidth = 148.0f;
 constexpr float TitleButtonHeight = 30.0f;
 constexpr float TitleButtonStep = 32.0f;
 constexpr float CornerButtonHeight = 24.0f;
+constexpr uint32_t PanoramaSize = 512;
 constexpr Color DialogInk { 0x4c, 0x4c, 0x4c, 255 };
 constexpr Color Backing { 0, 0, 0, 150 };
 
@@ -257,18 +258,102 @@ void Menu::frame(Context& ui, float width, float height)
 
 void Menu::panorama(Context& ui, float width, float height)
 {
-    // The classic title background is a cube map turning slowly. Its four side faces laid out
-    // in a row and scrolled sideways give the same drift without a 3D pass.
+    using Vec = std::array<float, 3>;
+    struct CubeFace {
+        Vec center;
+        Vec right;
+        Vec up;
+    };
+    constexpr CubeFace Faces[6] = {
+        { { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
+        { { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { 0.0f, 1.0f, 0.0f } },
+        { { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
+        { { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f } },
+        { { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f } },
+        { { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } },
+    };
+    constexpr int Cells = 12;
+    constexpr float Degrees = 3.14159265f / 180.0f;
+    constexpr float Near = 0.02f;
+
     float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
-    float face = std::max(width, height);
-    float strip = face * 4.0f;
-    float offset = std::fmod(seconds * face / 60.0f, strip);
-    float y = (height - face) * 0.5f;
-    for (int i = 0; i < 5; ++i) {
-        int index = i % 4;
-        float x = static_cast<float>(i) * face - offset;
-        if (x < width && x + face > 0.0f) {
-            ui.sprite({ x, y, face, face }, "ui/panorama_" + std::to_string(index));
+    float yaw = seconds * 2.0f * Degrees;
+    float pitch = 8.0f * Degrees;
+    float cy = std::cos(yaw);
+    float sy = std::sin(yaw);
+    float cp = std::cos(pitch);
+    float sp = std::sin(pitch);
+    float focal = 1.0f / std::tan(42.5f * Degrees) * height * 0.5f;
+
+    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 255 });
+    for (int index = 0; index < 6; ++index) {
+        const CubeFace& face = Faces[index];
+        std::string name = "dynamic/panorama_" + std::to_string(index);
+        if (!panoramaReady[size_t(index)]) {
+            panoramaReady[size_t(index)] = true;
+            std::string source = "ui/panorama_" + std::to_string(index);
+            if (const Bitmap* full = ui.skin().bitmap(source)) {
+                uint32_t step = std::max<uint32_t>(1, full->width / PanoramaSize);
+                Bitmap reduced { full->width / step, full->height / step, {} };
+                reduced.rgba.resize(size_t(reduced.width) * reduced.height * 4);
+                for (uint32_t y = 0; y < reduced.height; ++y) {
+                    for (uint32_t x = 0; x < reduced.width; ++x) {
+                        const uint8_t* texel = full->rgba.data() + (size_t(y * step) * full->width + x * step) * 4;
+                        std::copy(texel, texel + 4, reduced.rgba.data() + (size_t(y) * reduced.width + x) * 4);
+                    }
+                }
+                ui.skin().setDynamic(name, std::move(reduced));
+            }
+            ui.skin().clearDynamic(source);
+        }
+        const Sprite& sprite = ui.skin().sprite(name);
+        if (!sprite.valid) {
+            continue;
+        }
+        auto project = [&](float u, float v, bool& visible) -> std::array<float, 2> {
+            Vec point {};
+            for (int axis = 0; axis < 3; ++axis) {
+                point[axis] = face.center[axis] + face.right[axis] * (u * 2.0f - 1.0f) + face.up[axis] * (1.0f - v * 2.0f);
+            }
+            float x = point[0] * cy - point[2] * sy;
+            float z = point[0] * sy + point[2] * cy;
+            float y = point[1] * cp - z * sp;
+            z = point[1] * sp + z * cp;
+            visible = z > Near;
+            float depth = std::max(z, Near);
+            return { width * 0.5f + x / depth * focal, height * 0.5f - y / depth * focal };
+        };
+        for (int row = 0; row < Cells; ++row) {
+            for (int column = 0; column < Cells; ++column) {
+                float u0 = static_cast<float>(column) / Cells;
+                float u1 = static_cast<float>(column + 1) / Cells;
+                float v0 = static_cast<float>(row) / Cells;
+                float v1 = static_cast<float>(row + 1) / Cells;
+                std::array<bool, 4> visible {};
+                std::array<std::array<float, 2>, 4> points {
+                    project(u0, v0, visible[0]),
+                    project(u1, v0, visible[1]),
+                    project(u1, v1, visible[2]),
+                    project(u0, v1, visible[3]),
+                };
+                if (!(visible[0] && visible[1] && visible[2] && visible[3])) {
+                    continue;
+                }
+                float minX = std::min({ points[0][0], points[1][0], points[2][0], points[3][0] });
+                float maxX = std::max({ points[0][0], points[1][0], points[2][0], points[3][0] });
+                float minY = std::min({ points[0][1], points[1][1], points[2][1], points[3][1] });
+                float maxY = std::max({ points[0][1], points[1][1], points[2][1], points[3][1] });
+                if (maxX < 0.0f || minX > width || maxY < 0.0f || minY > height) {
+                    continue;
+                }
+                std::array<std::array<float, 2>, 4> texels {
+                    std::array<float, 2> { u0 * sprite.width, v0 * sprite.height },
+                    { u1 * sprite.width, v0 * sprite.height },
+                    { u1 * sprite.width, v1 * sprite.height },
+                    { u0 * sprite.width, v1 * sprite.height },
+                };
+                ui.spriteQuad(points, name, texels, { 255, 255, 255, 255 });
+            }
         }
     }
 }
@@ -496,7 +581,8 @@ void Menu::progressDialog(Context& ui, float width, float height)
     constexpr float DialogWidth = 286.67f;
     constexpr float DialogHeight = 97.33f;
     Rect frame { std::round((width - DialogWidth) * 0.5f), std::round(height * 0.5f - 49.0f), DialogWidth, DialogHeight };
-    logo(ui, width * 0.5f, frame.y - 145.33f, width - 32.0f);
+    float logoTop = std::max(8.0f, frame.y - 145.33f);
+    logo(ui, width * 0.5f, logoTop, std::min(width - 32.0f, std::max(120.0f, (frame.y - 12.0f - logoTop) * 4.4f)));
 
     std::string heading;
     std::string body;
@@ -648,6 +734,9 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
 
 void Menu::gameView(Context& ui, float width, float height)
 {
+    if (dialog != Dialog::None) {
+        return;
+    }
     std::vector<std::string> lines {
         session.levelName.empty() ? session.name : session.levelName,
         cameraInfo,
