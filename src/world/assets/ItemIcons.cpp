@@ -1,4 +1,5 @@
 #include "world/BlockAssets.h"
+#include "world/BlockModels.h"
 
 #include "TextureTools.h"
 #include "Core/Json/Json.h"
@@ -86,6 +87,88 @@ std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, c
                 uint8_t* pixel = out.data() + (size_t(y) * ItemIconSize + x) * 4;
                 for (int channel = 0; channel < 3; ++channel) {
                     pixel[channel] = static_cast<uint8_t>(std::clamp(texel[channel] * f.shade * tints[face][channel] / 255.0f, 0.0f, 255.0f));
+                }
+                pixel[3] = 255;
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Draws block model quads with the same projection as isometricIcon, keeping the nearest
+ * texel per pixel, so slabs and stairs keep their shape instead of showing one flat face.
+ */
+template <typename Texture>
+std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture texture)
+{
+    constexpr float Size = static_cast<float>(ItemIconSize);
+    const float h = Size * 0.5f;
+    const float q = Size * 0.25f;
+    auto project = [&](const std::array<float, 3>& p) {
+        return std::array<float, 2> { h * (1.0f + p[0] - p[2]), q * (p[0] + p[2]) + h * (1.0f - p[1]) };
+    };
+    std::vector<uint8_t> out(size_t(ItemIconSize) * ItemIconSize * 4, 0);
+    std::vector<float> depth(size_t(ItemIconSize) * ItemIconSize, -1.0e9f);
+    for (const ModelQuad& quad : quads) {
+        uint32_t face = quad.flags & QuadFaceMask;
+        bool facing = face == 2 || face == 4 || face == 6;
+        if (quad.flags & QuadInward) {
+            facing = !facing;
+        }
+        if (!facing && !(quad.flags & QuadTwoSided)) {
+            continue;
+        }
+        float shade = face == 2 ? 1.0f : face == 4 ? 0.62f : 0.8f;
+        std::array<uint8_t, 3> tint { 255, 255, 255 };
+        const uint8_t* pixels = texture(quad.material, tint);
+        if (!pixels) {
+            continue;
+        }
+        std::array<std::array<float, 3>, 4> corners {};
+        for (size_t c = 0; c < 4; ++c) {
+            for (size_t axis = 0; axis < 3; ++axis) {
+                corners[c][axis] = quad.positions[c][axis] / 256.0f;
+            }
+        }
+        auto s0 = project(corners[0]);
+        auto s1 = project(corners[1]);
+        auto s3 = project(corners[3]);
+        float ux = s1[0] - s0[0], uy = s1[1] - s0[1];
+        float vx = s3[0] - s0[0], vy = s3[1] - s0[1];
+        float determinant = ux * vy - uy * vx;
+        if (std::abs(determinant) < 1.0e-4f) {
+            continue;
+        }
+        for (uint32_t y = 0; y < ItemIconSize; ++y) {
+            for (uint32_t x = 0; x < ItemIconSize; ++x) {
+                float px = x + 0.5f - s0[0];
+                float py = y + 0.5f - s0[1];
+                float a = (px * vy - py * vx) / determinant;
+                float b = (ux * py - uy * px) / determinant;
+                if (a < 0.0f || a >= 1.0f || b < 0.0f || b >= 1.0f) {
+                    continue;
+                }
+                float z = 0.0f;
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    z += corners[0][axis] + a * (corners[1][axis] - corners[0][axis]) + b * (corners[3][axis] - corners[0][axis]);
+                }
+                size_t at = size_t(y) * ItemIconSize + x;
+                if (z <= depth[at]) {
+                    continue;
+                }
+                float u = quad.uvs[0][0] + a * (quad.uvs[1][0] - quad.uvs[0][0]) + b * (quad.uvs[3][0] - quad.uvs[0][0]);
+                float v = quad.uvs[0][1] + a * (quad.uvs[1][1] - quad.uvs[0][1]) + b * (quad.uvs[3][1] - quad.uvs[0][1]);
+                uint32_t tu = std::min(uint32_t(std::max(0.0f, u) * TextureSize / 4096.0f), TextureSize - 1);
+                uint32_t tv = std::min(uint32_t(std::max(0.0f, v) * TextureSize / 4096.0f), TextureSize - 1);
+                const uint8_t* texel = pixels + (size_t(tv) * TextureSize + tu) * 4;
+                if (texel[3] < 128) {
+                    continue;
+                }
+                depth[at] = z;
+                uint8_t* pixel = out.data() + at * 4;
+                for (int channel = 0; channel < 3; ++channel) {
+                    pixel[channel] = static_cast<uint8_t>(std::clamp(texel[channel] * shade * tint[channel] / 255.0f, 0.0f, 255.0f));
                 }
                 pixel[3] = 255;
             }
@@ -277,9 +360,8 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
     const BlockVisual& look = *found;
     const std::vector<uint8_t>& texels = textureArray.mips[0];
     size_t layerBytes = size_t(TextureSize) * TextureSize * 4;
-    auto facePixels = [&](size_t side, std::array<uint8_t, 3>& tint) -> const uint8_t* {
+    auto materialPixels = [&](uint32_t material, std::array<uint8_t, 3>& tint) -> const uint8_t* {
         tint = { 255, 255, 255 };
-        uint32_t material = look.faces[side];
         if (material >= materialTable.size()) {
             return nullptr;
         }
@@ -290,6 +372,38 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         size_t offset = size_t(entry.layer) * layerBytes;
         return offset + layerBytes <= texels.size() ? texels.data() + offset : nullptr;
     };
+    auto facePixels = [&](size_t side, std::array<uint8_t, 3>& tint) {
+        return materialPixels(look.faces[side], tint);
+    };
+    if (look.hasModel() && look.blockEntity == EntityNone && look.modelTemplate < templates.size()) {
+        const ModelTemplate& model = templates[look.modelTemplate];
+        std::vector<ModelQuad> shape;
+        if (model.flags & (TemplateFenceWood | TemplateFenceNether)) {
+            // The world template is a lone post, the item shows two posts joined by rails.
+            constexpr uint32_t EastWest = 2 | 8;
+            for (int16_t shift : { -96, 96 }) {
+                for (ModelQuad quad : models::fencePost(look.faces[models::South])) {
+                    for (auto& corner : quad.positions) {
+                        corner[0] = static_cast<int16_t>(corner[0] + shift);
+                    }
+                    shape.push_back(quad);
+                }
+            }
+            std::vector<ModelQuad> arms = models::fenceArms(look.faces[models::South], EastWest);
+            shape.insert(shape.end(), arms.begin(), arms.end());
+        } else if (model.flags & TemplateWall) {
+            constexpr uint32_t PostWithShortSides = (1u << 8) | (1u << 2) | (1u << 6);
+            shape = models::wall(look.faces, PostWithShortSides);
+        } else if (!(model.flags & TemplatePane)) {
+            shape.assign(quads.begin() + model.quadStart, quads.begin() + std::min<size_t>(quads.size(), model.quadStart + model.quadCount));
+        }
+        std::vector<uint8_t> icon = modelIcon(shape, materialPixels);
+        for (size_t alpha = 3; alpha < icon.size(); alpha += 4) {
+            if (icon[alpha]) {
+                return icon;
+            }
+        }
+    }
     std::array<std::array<uint8_t, 3>, 3> tints {};
     if (!look.emitsCubeGeometry() || (look.flags & FlagDiagnostic)) {
         const uint8_t* flat = facePixels(5, tints[0]);

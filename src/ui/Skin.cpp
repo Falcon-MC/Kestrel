@@ -199,14 +199,14 @@ Skin::Entry& Skin::load(std::string_view name)
             entry.bitmap = shrink(decoded, TitleWidth);
         }
     } else if (name.rfind("ui/", 0) == 0) {
-        loaded = assets.readTexture("textures/" + std::string(name), entry.bitmap, &entry.sprite.slice);
+        loaded = assets.readTexture("textures/" + std::string(name), entry.bitmap, &entry.sprite.slice, &entry.sprite.texels);
     } else if (name.rfind("hbui/", 0) == 0) {
         loaded = assets.readHbuiImage(name.substr(5), entry.bitmap);
     } else if (name.rfind("font/", 0) == 0) {
         std::string encoded;
         loaded = assets.readArchived("font", std::string(name.substr(5)) + ".png", encoded) && decodeBitmap(encoded, entry.bitmap);
     } else if (name.rfind("textures/", 0) == 0) {
-        loaded = assets.readTexture(std::string(name), entry.bitmap, &entry.sprite.slice);
+        loaded = assets.readTexture(std::string(name), entry.bitmap, &entry.sprite.slice, &entry.sprite.texels);
     }
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
@@ -234,6 +234,7 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
     entry.bitmap = std::move(bitmap);
     entry.sprite = {};
     entry.sprite.slice = slice;
+    entry.sprite.texels = slice;
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     entry.placed = false;

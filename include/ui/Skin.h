@@ -16,6 +16,7 @@ struct Sprite {
     float width = 0.0f;
     float height = 0.0f;
     NineSlice slice;
+    NineSlice texels;
     bool valid = false;
 };
 

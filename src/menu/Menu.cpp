@@ -123,7 +123,42 @@ bool Menu::worldVisible() const
 
 bool Menu::capturesMouse() const
 {
-    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen;
+    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !forms.active();
+}
+
+void Menu::openForm(uint32_t id, const std::string& json)
+{
+    bool busy = !inGame() || session.dead || inventory.active || dialog != Dialog::None || socialOpen || screen != Screen::Title;
+    if (busy) {
+        forms.reject(id);
+    } else {
+        forms.open(id, json);
+    }
+}
+
+void Menu::setInventory(const InventoryState& state, bool creative)
+{
+    if (state.openRevision != inventory.state.openRevision) inventory.open();
+    if (state.closeRevision != inventory.state.closeRevision) inventory.active = false;
+    inventory.state = state;
+    inventory.creativeMode = creative;
+}
+
+void Menu::prepareInventoryInput(const InputState& input)
+{
+    inventoryInputHandled = false;
+    if (!inGame() || session.dead || session.loadingTerrain) {
+        if (inventory.active) inventory.close();
+        return;
+    }
+    if (inventory.active) {
+        inventoryInputHandled = inventory.handleKeys(input, bindings.inventory());
+    } else if (capturesMouse() && input.pressedKey == bindings.inventory() && session.gameMode != "Spectator") {
+        inventory.open();
+        inventoryInputHandled = true;
+        // Opening is the only command sent before the server identifies a window.
+        inventory.requestOpen();
+    }
 }
 
 void Menu::pauseIfPlaying()
@@ -249,6 +284,20 @@ void Menu::frame(Context& ui, float width, float height)
         }
     } else if (dialog == Dialog::Death) {
         dialog = Dialog::None;
+    }
+
+    if (inventory.active) {
+        ui.setBlocked(false);
+        inventory.draw(ui, width, height, [&](float x, float y, float pixel) { playerModel(ui, x, y, pixel, true); });
+        return;
+    }
+    if (!inGame() && forms.active()) {
+        forms.closeAll();
+    }
+    if (forms.active()) {
+        ui.setBlocked(false);
+        forms.draw(ui, width, height);
+        return;
     }
 
     bool modal =dialog != Dialog::None || socialOpen;
@@ -464,7 +513,7 @@ void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
 
 // Kestrel doesn't have the player's skin, so the default Steve stands in, seen from the front.
 // Each part is its front face from the 64x64 skin layout, overlay layer on top.
-void Menu::playerModel(Context& ui, float centerX, float top, float pixel)
+void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool inventoryPreview)
 {
     struct Part {
         std::array<float, 3> min;
@@ -481,7 +530,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel)
         { { -4.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 0.0f, 16.0f }, { 0.0f, 32.0f }, false },
         { { 0.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 16.0f, 48.0f }, { 0.0f, 48.0f }, false },
     };
-    constexpr std::string_view Skin = "textures/entity/steve";
+    std::string_view Skin = inventoryPreview && ui.skin().sprite("dynamic/inventory_skin").valid ? "dynamic/inventory_skin" : "textures/entity/steve";
     constexpr float Degrees = 3.14159265f / 180.0f;
     constexpr float NeckY = 24.0f;
 
@@ -906,7 +955,8 @@ void Menu::progressDialog(Context& ui, float width, float height)
         heading = trf("progressScreen.title.downloading", "Downloading packs %1", { "(" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")" });
         fraction = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
     } else {
-        heading = tr("progressScreen.title.connectingExternal", "Connecting to external server");
+        bool generating = session.packsResolved || session.loadingTerrain;
+        heading = generating ? tr("progressScreen.generating", "Generating World") : tr("progressScreen.title.connectingExternal", "Connecting to external server");
         progress = true;
     }
 
@@ -922,13 +972,13 @@ void Menu::progressDialog(Context& ui, float width, float height)
     if (!body.empty()) {
         ui.paragraph(body, TextStyle::Pixel, well.x + 6.0f, well.y + 6.0f, well.w - 12.0f, White);
     }
-    if (progress && dialog == Dialog::Connecting) {
+    if (progress && dialog == Dialog::Connecting && (session.packsResolved || session.loadingTerrain)) {
         std::string stage = session.loadingTerrain ? tr("progressScreen.message.building", "Building terrain") : tr("progressScreen.message.locating", "Locating server");
         float stageWidth = ui.measure(stage, TextStyle::Pixel);
         float buttonCenter = std::floor(well.x + (well.w - 64.0f) * 0.5f) + 32.0f;
         ui.text(stage, TextStyle::Pixel, std::round(buttonCenter - stageWidth * 0.5f), buttonY - 33.0f, White);
     }
-    if (progress) {
+    if (progress && !session.loadingTerrain) {
         const Sprite& bar = ui.skin().sprite("ui/loading_bar");
         if (bar.valid) {
             float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
@@ -1083,6 +1133,7 @@ void Menu::handleKeys(Context& ui)
     if (input.pressedKey == Key::F3) {
         debugShown = !debugShown;
     }
+    if (inventoryInputHandled || inventory.active) return;
     if (handleChatKeys(input)) {
         return;
     }

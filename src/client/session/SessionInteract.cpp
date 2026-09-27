@@ -146,7 +146,7 @@ void Session::interact(bool use)
 
     InventoryTransactionPacket packet;
     packet.mHotbarSlot = slot;
-    packet.mItemInHand = inventoryStacks[size_t(slot)];
+    packet.mItemInHand = inventoryModel.slots[size_t(slot)];
     packet.mPlayerPosition = Vector3f(float(origin[0]), float(origin[1]), float(origin[2]));
     packet.mTriggerType = ItemUseTriggerType::PlayerInput;
     packet.mClientInteractPrediction = ItemUsePredictedResult::Success;

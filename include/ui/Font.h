@@ -34,6 +34,8 @@ enum class TextStyle {
     BodyBold,
     ErrorBody,
     ErrorTab,
+    // Minecraft Seven sized to the pixel font, for what default8 has no cell for.
+    PixelFallback,
     Count,
 };
 
@@ -93,6 +95,13 @@ public:
     void drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow = false) const;
     // Centered multiline label in font pixels, independent of the UI atlas scale.
     void drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const;
+
+    /**
+     * Pixel font text wrapped to width with every font pixel magnify menu
+     * units wide, the way sized labels in the game's JSON UI draw. Returns the
+     * height it took.
+     */
+    float drawWrappedPixel(DrawList& list, std::string_view text, float x, float y, float width, float magnify, Color color) const;
 
     /**
      * The skin sprite of a pixel font sheet: font/default8 for index 0, then
@@ -162,6 +171,7 @@ private:
     void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow = false) const;
     void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify = 1.0f) const;
     float pixelAdvance(char32_t cp) const;
+    const Glyph* pixelFallback(char32_t cp) const;
     const BitmapPage* pixelPage(char32_t cp, size_t* index = nullptr) const;
     void readPixelPage(size_t index) const;
     static void placePage(size_t index, BitmapPage& page);

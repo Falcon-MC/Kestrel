@@ -1,11 +1,13 @@
 #include "client/Client.h"
 #include "client/DebugLog.h"
+#include "client/DiscordPresence.h"
 
 #include "platform/Paths.h"
 #include "platform/Window.h"
 #include "render/Renderer.h"
 #include "ui/Localization.h"
 #include "ui/Theme.h"
+#include "util/Text.h"
 
 #include "client/Sky.h"
 #include "world/PackSource.h"
@@ -42,6 +44,7 @@ Client::Client()
     loadSettings();
     account.restore();
     featured = std::make_unique<FeaturedServers>(menu.language());
+    menu.formPanel().imageSprite = [this](const menu::FormImage& image) { return formImage(image); };
     if (!font.load(assets, skin)) {
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
@@ -73,6 +76,7 @@ Client::~Client()
 
 int Client::run()
 {
+    DiscordPresence discord;
     float bakedScale = 0.0f;
     constexpr ui::Color canvas = ui::theme::Black;
     auto lastFrame = std::chrono::steady_clock::now();
@@ -85,6 +89,7 @@ int Client::run()
                 break;
             }
         }
+        discord.update();
         if (window->consumeFocusLost()) {
             menu.pauseIfPlaying();
         }
@@ -110,6 +115,7 @@ int Client::run()
             session.setRenderDistance(menu.renderDistance());
             syncSession();
             syncChat();
+            syncForms();
         }
         {
             Profiler::Section section(profiler, "mesh upload");
@@ -118,6 +124,8 @@ int Client::run()
 
         {
             Profiler::Section section(profiler, "camera");
+            menu.setInventory(hudState.container, hudState.gameType == 1);
+            menu.prepareInventoryInput(window->input());
             bool captured = menu.capturesMouse();
             window->setMouseCaptured(captured);
             camera.setBaseFov(static_cast<float>(menu.fov()));
@@ -208,6 +216,10 @@ int Client::run()
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
+            for (auto& command : menu.inventoryPanel().takeCommands()) session.requestInventory(std::move(command));
+            for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
+                session.answerForm(answer.id, std::move(answer.data), answer.busy);
+            }
             context.endFrame();
         }
         if (rebaked || skin.dirty()) {
@@ -350,6 +362,64 @@ int Client::run()
     return 0;
 }
 
+void Client::collectFeaturedImages()
+{
+    std::set<std::string> showcaseUrls;
+    for (const FeaturedServer& server : featuredList) {
+        showcaseUrls.insert(server.showcaseUrls.begin(), server.showcaseUrls.end());
+        for (const FeaturedGame& game : server.games) {
+            showcaseUrls.insert(game.imageUrl);
+        }
+    }
+    for (auto& [url, bitmap] : featured->takeImages()) {
+        if (showcaseUrls.count(url)) {
+            featuredShowcases[url] = std::move(bitmap);
+            continue;
+        }
+        skin.setDynamic(FeaturedSpritePrefix + url, std::move(bitmap));
+        featuredImages.insert(url);
+        featuredDirty = true;
+    }
+}
+
+void Client::syncForms()
+{
+    for (FormRequest& request : session.takeForms()) {
+        if (request.close) {
+            menu.formPanel().closeAll();
+        } else {
+            menu.openForm(request.id, request.data);
+        }
+    }
+    if (worldShown && menu.formPanel().active()) {
+        collectFeaturedImages();
+    }
+}
+
+/**
+ * The sprite of a form button icon. Pack textures come straight from the
+ * skin, web images go through the featured servers downloader, which already
+ * decodes square icons off the main thread.
+ */
+std::string Client::formImage(const menu::FormImage& image)
+{
+    if (image.url) {
+        if (featuredImages.count(image.data)) {
+            return FeaturedSpritePrefix + image.data;
+        }
+        featured->requestImage(image.data, false);
+        return menu::FormImageLoading;
+    }
+    std::string path = image.data;
+    for (const char* extension : { ".png", ".tga", ".jpg" }) {
+        if (util::endsWith(path, extension)) {
+            path.resize(path.size() - std::char_traits<char>::length(extension));
+            break;
+        }
+    }
+    return skin.bitmap(path) ? path : std::string();
+}
+
 void Client::syncFeatured()
 {
     if (!featuredListed && !featured->loading()) {
@@ -374,22 +444,7 @@ void Client::syncFeatured()
         }
     }
 
-    std::set<std::string> showcaseUrls;
-    for (const FeaturedServer& server : featuredList) {
-        showcaseUrls.insert(server.showcaseUrls.begin(), server.showcaseUrls.end());
-        for (const FeaturedGame& game : server.games) {
-            showcaseUrls.insert(game.imageUrl);
-        }
-    }
-    for (auto& [url, bitmap] : featured->takeImages()) {
-        if (showcaseUrls.count(url)) {
-            featuredShowcases[url] = std::move(bitmap);
-            continue;
-        }
-        skin.setDynamic(FeaturedSpritePrefix + url, std::move(bitmap));
-        featuredImages.insert(url);
-        featuredDirty = true;
-    }
+    collectFeaturedImages();
     std::optional<std::string> focus = menu.focusedFeatured();
     std::set<std::string> wanted;
     for (const FeaturedServer& server : featuredList) {
@@ -729,6 +784,8 @@ void Client::syncSession()
         opaqueChunks.clear();
     }
     if (snapshot.state != SessionState::Joined) {
+        menu.inventoryPanel().reset();
+        menu.formPanel().reset();
         terrainReleased = false;
         readinessFrame.reset();
     }
@@ -749,6 +806,9 @@ void Client::syncSession()
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {
             renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());
+        }
+        if (skin.slot == localSkinSlot && !skin.pixels.empty()) {
+            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ world::EntityTextureSize, world::EntityTextureSize, skin.pixels }, 64));
         }
         skinPixels[skin.slot] = std::move(skin.pixels);
         skinRigs[skin.slot] = std::move(skin.rig);
@@ -812,6 +872,7 @@ void Client::syncSession()
     info.packDownloading = snapshot.packDownloading;
     info.packReceived = snapshot.packReceived;
     info.packTotal = snapshot.packTotal;
+    info.packsResolved = snapshot.packsResolved;
     info.error = std::move(snapshot.error);
     info.dead = snapshot.dead && snapshot.state == SessionState::Joined;
     info.changingDimension = snapshot.changingDimension && snapshot.state == SessionState::Joined;

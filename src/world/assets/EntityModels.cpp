@@ -158,6 +158,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
     static constexpr int GeometrySides[6] = { 4, 5, 0, 1, 3, 2 };
     float width = geometry.textureWidth > 0.0f ? geometry.textureWidth : 64.0f;
     float height = geometry.textureHeight > 0.0f ? geometry.textureHeight : 64.0f;
+    model.textureAspect = height / width;
 
     for (size_t boneIndex = 0; boneIndex < geometry.bones.size(); ++boneIndex) {
         const GeometryBone& bone = geometry.bones[boneIndex];

@@ -48,12 +48,14 @@ constexpr std::array<FaceSpec, static_cast<size_t>(TextStyle::Count)> Specs { {
     { NotoBold, 14.0f },
     { Noto, 24.0f },
     { Noto, 20.0f },
+    { Seven, 8.0f * 10.0f / theme::Rem },
 } };
 
 constexpr uint32_t AtlasWidth = Skin::AtlasSize;
 constexpr uint32_t FontRows = Skin::ImageTop;
 constexpr float PixelLineHeight = 10.0f;
 constexpr float PixelSpace = 4.0f;
+constexpr float PixelBaseline = 7.0f;
 
 std::vector<char32_t> coveredCodepoints()
 {
@@ -67,7 +69,9 @@ std::vector<char32_t> coveredCodepoints()
         result.push_back(cp);
     }
     // Symbols servers like to put in their MOTD. Only Noto has them, see pack().
-    for (char32_t cp : { 0x2190, 0x2191, 0x2192, 0x2193, 0x25A0, 0x25B6, 0x25C0, 0x25CF, 0x2605, 0x2606, 0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B, 0x2694, 0x26A1, 0x2714, 0x2716, 0x2726, 0x2727, 0x2764, 0x27A4 }) {
+    for (char32_t cp : { 0x2190, 0x2191, 0x2192, 0x2193, 0x2194, 0x2195, 0x21D0, 0x21D2, 0x21E8, 0x25A0, 0x25B2, 0x25B6, 0x25BA, 0x25BC, 0x25C0, 0x25C4, 0x25CF,
+             0x2605, 0x2606, 0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B, 0x2694, 0x26A1, 0x2713, 0x2714, 0x2716, 0x2717, 0x2718, 0x2726, 0x2727, 0x2764,
+             0x2794, 0x279C, 0x27A1, 0x27A4 }) {
         result.push_back(cp);
     }
     for (char32_t cp = 0x2654; cp <= 0x265F; ++cp) {
@@ -478,6 +482,11 @@ bool Font::pack(uint32_t height, float packScale)
                 stbtt_aligned_quad quad;
                 stbtt_GetPackedQuad(chars.data(), static_cast<int>(AtlasWidth), static_cast<int>(AtlasWidth), static_cast<int>(i), &x, &y, &quad, 0);
                 target.glyphs[slots[part][i]] = { quad.x0, quad.y0, quad.x1, quad.y1, quad.s0, quad.t0, quad.s1, quad.t1, x };
+                // The pixel text only borrows glyphs a font really has, never its missing glyph box.
+                bool missing = !stbtt_FindGlyphIndex(part ? &fallbackInfo : &info, codepoints[part][i]);
+                if (missing && style == static_cast<size_t>(TextStyle::PixelFallback)) {
+                    target.glyphs[slots[part][i]] = {};
+                }
             }
         }
 
@@ -536,10 +545,33 @@ const Font::BitmapPage* Font::pixelPage(char32_t cp, size_t* index) const
     return &pages[chosen];
 }
 
+/**
+ * The Minecraft Seven glyph drawn in place of the thin Unicode sheets for
+ * letters and symbols default8 has no cell for (Turkish letters, arrows),
+ * which is how the game shows them in its own font. Pack sheets and the
+ * private use area keep their bitmaps.
+ */
+const Font::Glyph* Font::pixelFallback(char32_t cp) const
+{
+    if (cp < 0x80 || (cp >= 0xE000 && cp <= 0xF8FF) || cp > 0xFFFF || splitPages[1 + (cp >> 8)]) {
+        return nullptr;
+    }
+    const Face& face = faces[static_cast<size_t>(TextStyle::PixelFallback)];
+    auto found = std::lower_bound(face.codepoints.begin(), face.codepoints.end(), cp);
+    if (found == face.codepoints.end() || *found != cp) {
+        return nullptr;
+    }
+    const Glyph& glyph = face.glyphs[static_cast<size_t>(found - face.codepoints.begin())];
+    return glyph.advance > 0.0f ? &glyph : nullptr;
+}
+
 float Font::pixelAdvance(char32_t cp) const
 {
     if (cp == U' ') {
         return PixelSpace;
+    }
+    if (const Glyph* fallback = pixelFallback(cp)) {
+        return std::round(fallback->advance / scale);
     }
     const BitmapPage* page = pixelPage(cp);
     if (!page) {
@@ -617,13 +649,29 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
     while (nextVisible(text, i, state, color, visible)) {
         char32_t cp = state.obfuscated ? scrambled(TextStyle::Pixel, visible, tick * 2654435761u ^ index * 40503u) : visible;
         ++index;
-        uint32_t packed = (shadow ? shaded(state.color) : state.color).packed();
+        // Pack icons in the private use area keep their own colors whatever the text color.
+        bool icon = cp >= 0xE000 && cp <= 0xF8FF;
+        Color ink = icon ? Color { 255, 255, 255, state.color.a } : state.color;
+        uint32_t packed = (shadow ? shaded(ink) : ink).packed();
         size_t pageIndex = 0;
         const BitmapPage* page = pixelPage(cp, &pageIndex);
         float bold = state.bold ? unit : 0.0f;
         float step = pixelAdvance(cp) * unit + bold;
         const Sprite* sheet = page && !page->split ? &skin->sprite(page->sprite) : nullptr;
-        if (cp != U' ' && page && page->split) {
+        if (const Glyph* fallback = cp != U' ' ? pixelFallback(cp) : nullptr) {
+            if (fallback->x1 > fallback->x0) {
+                float baseline = top + std::round(PixelBaseline * unit);
+                float x0 = pen + fallback->x0 * magnify;
+                float x1 = pen + fallback->x1 * magnify;
+                float y0 = baseline + fallback->y0 * magnify;
+                float y1 = baseline + fallback->y1 * magnify;
+                float slant = state.italic ? (y1 - y0) * ItalicSlant : 0.0f;
+                list.quad(x0, y0, x1, y1, fallback->u0, fallback->v0, fallback->u1, fallback->v1, packed, slant, 0.0f);
+                if (state.bold) {
+                    list.quad(x0 + bold, y0, x1 + bold, y1, fallback->u0, fallback->v0, fallback->u1, fallback->v1, packed, slant, 0.0f);
+                }
+            }
+        } else if (cp != U' ' && page && page->split) {
             uint32_t code = static_cast<uint32_t>(cp & 0xFF);
             const std::string& name = page->glyphSprites[code];
             const Sprite* glyph = name.empty() ? nullptr : &skin->sprite(name);
@@ -802,6 +850,20 @@ void Font::drawNameTag(DrawList& list, std::string_view text, Color color, bool 
         text.remove_prefix(end + 1);
         y += 9.0f;
     }
+}
+
+float Font::drawWrappedPixel(DrawList& list, std::string_view text, float x, float y, float width, float magnify, Color color) const
+{
+    std::vector<std::string_view> lines;
+    wrap(text, TextStyle::Pixel, width / magnify, lines);
+    float height = PixelLineHeight * magnify;
+    std::string carried;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::string line = carried + std::string(lines[i]);
+        emitPixel(list, line, x, y + static_cast<float>(i) * height, color, false, magnify);
+        carried = activeFormatting(line);
+    }
+    return static_cast<float>(lines.size()) * height;
 }
 
 float Font::drawWrappedShadowed(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color, float shadowOffset) const

@@ -36,9 +36,9 @@ inline Key functionKey(uint32_t offset)
 }
 
 struct KeyBindings {
-    static constexpr size_t Count = 8;
+    static constexpr size_t Count = 10;
 
-    Key keys[Count] = { Key::W, Key::S, Key::A, Key::D, Key::Space, Key::Shift, Key::F5, Key::T };
+    Key keys[Count] = { Key::W, Key::S, Key::A, Key::D, Key::Space, Key::Shift, Key::F5, Key::T, Key::E, Key::Q };
 
     static const char* label(size_t index);
     static const char* translationKey(size_t index);
@@ -83,6 +83,9 @@ struct KeyBindings {
     {
         return keys[7];
     }
+
+    Key inventory() const { return keys[8]; }
+    Key drop() const { return keys[9]; }
 
     bool operator==(const KeyBindings& other) const
     {

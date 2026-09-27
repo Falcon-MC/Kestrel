@@ -10,6 +10,26 @@
 
 namespace kestrel {
 
+menu::HudSlot Client::inventoryIcon(const HudItem& item)
+{
+    menu::HudSlot slot;
+    if (item.empty() || !blockAssets) return slot;
+    slot.filled = true;
+    slot.count = item.count;
+    std::string name = "item/" + item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    auto known = itemIcons.find(name);
+    if (known == itemIcons.end()) {
+        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon);
+        bool rendered = pixels.size() == size_t(world::ItemIconSize) * world::ItemIconSize * 4;
+        if (rendered) skin.setDynamic(name, { world::ItemIconSize, world::ItemIconSize, std::move(pixels) });
+        known = itemIcons.emplace(name, rendered).first;
+    }
+    if (known->second) slot.icon = name;
+    int maximum = world::itemMaxDurability(item.identifier);
+    if (maximum > 0 && item.damage > 0) slot.durability = std::clamp(float(maximum - item.damage) / maximum, 0.0f, 1.0f);
+    return slot;
+}
+
 /**
  * Changes the held hotbar slot with the number keys and the mouse wheel while
  * the game has the mouse, and passes clicks on to the session: left hits,
@@ -27,6 +47,9 @@ void Client::handleHotbarInput()
     if (input.rightMousePressed) {
         session.requestInteraction(true);
         swingStart = secondsNow();
+    }
+    if (input.pressedKey == menu.keyBindings().drop()) {
+        session.requestInventory({ InventoryAction::Drop, hudState.selectedSlot, 0, input.isHeld(Key::Control), {} });
     }
     int selected = hudState.selectedSlot;
     if (input.pressedKey >= Key::Num1 && input.pressedKey <= Key::Num9) {
@@ -93,49 +116,9 @@ menu::HudView Client::buildHudView()
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);
 
-    std::set<std::string> wanted;
-    auto slotOf = [&](const HudItem& item) {
-        menu::HudSlot slot;
-        if (item.empty()) {
-            return slot;
-        }
-        slot.filled = true;
-        slot.count = item.count;
-        std::string name = "item/" + item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
-        wanted.insert(name);
-        auto known = itemIcons.find(name);
-        if (known == itemIcons.end()) {
-            std::vector<uint8_t> pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon);
-            bool rendered = pixels.size() == size_t(world::ItemIconSize) * world::ItemIconSize * 4;
-            if (rendered) {
-                skin.setDynamic(name, { world::ItemIconSize, world::ItemIconSize, std::move(pixels) });
-            }
-            debugLog("item icon " + name + (rendered ? " rendered" : " missing"));
-            known = itemIcons.emplace(name, rendered).first;
-        }
-        if (known->second) {
-            slot.icon = name;
-        }
-        int32_t maximum = world::itemMaxDurability(item.identifier);
-        if (maximum > 0 && item.damage > 0) {
-            slot.durability = std::clamp(float(maximum - item.damage) / float(maximum), 0.0f, 1.0f);
-        }
-        return slot;
-    };
-    for (size_t index = 0; index < 9; ++index) {
-        view.hotbar[index] = slotOf(state.inventory[index]);
-    }
-    view.offhand = slotOf(state.offhand);
-    if (itemIcons.size() > 64) {
-        for (auto it = itemIcons.begin(); it != itemIcons.end();) {
-            if (wanted.count(it->first)) {
-                ++it;
-            } else {
-                skin.clearDynamic(it->first);
-                it = itemIcons.erase(it);
-            }
-        }
-    }
+    for (size_t index = 0; index < 9; ++index) view.hotbar[index] = inventoryIcon(state.inventory[index]);
+    view.offhand = inventoryIcon(state.offhand);
+    menu.inventoryPanel().itemIcon = [this](const HudItem& item) { return inventoryIcon(item); };
 
     const HudItem& held = state.inventory[size_t(view.selected)];
     if (!held.empty()) {

@@ -3,6 +3,7 @@
 #include "Protocol/PacketCodecContext.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/Inventory.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
 #include "world/MeshScheduler.h"
@@ -96,21 +97,6 @@ struct SkinUpload {
  * aux value (the variant for legacy items), the damage of tools and armor and
  * any custom name.
  */
-struct HudItem {
-    std::string identifier;
-    int32_t count = 0;
-    int32_t aux = 0;
-    int32_t damage = 0;
-    std::string customName;
-    std::string icon;
-
-    bool empty() const
-    {
-        return identifier.empty() || count <= 0;
-    }
-
-    bool operator==(const HudItem&) const = default;
-};
 
 /**
  * A status effect on the local player; expires is in secondsNow time, or
@@ -132,6 +118,7 @@ struct HudState {
     std::array<HudItem, 36> inventory {};
     std::array<HudItem, 4> armor {};
     HudItem offhand;
+    InventoryState container;
     int32_t selectedSlot = 0;
     double selectedChanged = 0.0;
     bool statsKnown = false;
@@ -221,6 +208,16 @@ struct ChatMessage {
 };
 
 /**
+ * A form from the server: its id and JSON, or with close set, the server
+ * asking every open form to go away.
+ */
+struct FormRequest {
+    uint32_t id = 0;
+    std::string data;
+    bool close = false;
+};
+
+/**
  * The objective shown in the sidebar slot: its display name and the lines in
  * the order the objective sorts them, at most the fifteen the game shows.
  */
@@ -288,6 +285,7 @@ struct SessionSnapshot {
     bool packDownloading = false;
     uint64_t packReceived = 0;
     uint64_t packTotal = 0;
+    bool packsResolved = false;
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
@@ -323,6 +321,7 @@ public:
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
     std::vector<ChatMessage> takeChatMessages();
+    std::vector<FormRequest> takeForms();
 
     /**
      * Queues a line typed into chat: commands (starting with a slash) go out
@@ -342,6 +341,13 @@ public:
      * item, a left click hits the entity under the crosshair.
      */
     void requestInteraction(bool use);
+    void requestInventory(InventoryCommand command);
+
+    /**
+     * Answers a form: with its response JSON, or without one when the player
+     * closed it or was busy with another screen.
+     */
+    void answerForm(uint32_t id, std::optional<std::string> data, bool busy);
 
 private:
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
@@ -350,6 +356,8 @@ private:
     void handleScorePacket(const std::shared_ptr<Packet>& packet);
     void rebuildSidebar();
     void flushChat();
+    void handleFormPacket(const std::shared_ptr<Packet>& packet);
+    void flushForms();
     void queueSound(SoundRequest request);
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
@@ -357,6 +365,9 @@ private:
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
+    void handleInventoryPacket(const std::shared_ptr<Packet>& packet);
+    void flushInventory();
+    void publishInventory();
     void sendSelectedSlot(int slot);
     void sendRespawnRequest();
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
@@ -369,6 +380,8 @@ private:
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
+    void assignSkin(const std::string& uuid);
+    bool skinWorn(const std::string& uuid) const;
     std::string traceTarget();
     std::optional<BlockHit> traceBlock(double reach);
     void interact(bool use);
@@ -405,6 +418,7 @@ private:
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, std::string> uuidByRuntime;
     std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
+    std::map<std::string, SerializedSkin> knownSkins;
     std::map<std::string, std::string> playerNames;
     std::map<int64_t, std::string> playerNamesByActor;
 
@@ -426,7 +440,14 @@ private:
     BlockDefinitionRegistry blockDefinitions;
     ItemDefinitionRegistry itemDefinitions;
     std::unique_ptr<PacketCodecContext> codecContext;
-    std::array<ItemStack, 36> inventoryStacks {};
+    InventoryModel inventoryModel;
+    std::vector<InventoryCommand> inventoryCommands;
+    std::optional<std::array<ItemStack, inventory::SlotCount>> inventoryBefore;
+    std::set<int> inventoryChangedSlots;
+    int32_t inventoryRequestId = -1;
+    int32_t pendingInventoryRequest = 0;
+    double inventoryRequestTime = 0.0;
+    bool inventoryClosing = false;
     std::atomic<int> requestedSlot { -1 };
     std::atomic<bool> respawnRequested { false };
     bool respawnPending = false;
@@ -444,6 +465,15 @@ private:
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;
     std::vector<std::string> outgoingChat;
+
+    struct FormAnswer {
+        uint32_t id = 0;
+        std::optional<std::string> data;
+        bool busy = false;
+    };
+
+    std::vector<FormRequest> pendingForms;
+    std::vector<FormAnswer> outgoingForms;
     std::string localXuid;
     float walkedDistance = 0.0f;
     float nextStepDistance = 1.0f;

@@ -7,55 +7,10 @@ namespace kestrel {
 
 namespace {
 
-std::string rawComponent(const json::Value& part);
-
-/**
- * The arguments of a translate component: a plain list of strings, or a
- * rawtext object whose every component is one argument.
- */
-std::vector<std::string> rawArguments(const json::Value* with)
-{
-    std::vector<std::string> arguments;
-    if (!with) {
-        return arguments;
-    }
-    if (with->isArray()) {
-        for (const std::unique_ptr<json::Value>& item : with->mArray) {
-            arguments.push_back(item->isString() ? item->string() : rawComponent(*item));
-        }
-    } else if (const json::Value* parts = with->get("rawtext"); parts && parts->isArray()) {
-        for (const std::unique_ptr<json::Value>& part : parts->mArray) {
-            arguments.push_back(rawComponent(*part));
-        }
-    }
-    return arguments;
-}
-
-// Selectors and scores are left out, servers resolve those before sending.
-std::string rawComponent(const json::Value& part)
-{
-    if (!part.isObject()) {
-        return {};
-    }
-    if (const json::Value* text = part.get("text"); text && text->isString()) {
-        return text->string();
-    }
-    if (const json::Value* key = part.get("translate"); key && key->isString()) {
-        return ui::trf(key->string(), key->string(), rawArguments(part.get("with")));
-    }
-    std::string joined;
-    if (const json::Value* parts = part.get("rawtext"); parts && parts->isArray()) {
-        for (const std::unique_ptr<json::Value>& child : parts->mArray) {
-            joined += rawComponent(*child);
-        }
-    }
-    return joined;
-}
-
 std::string rawText(const std::string& message)
 {
     std::unique_ptr<json::Value> root = json::parse(message);
-    return root && root->isObject() ? rawComponent(*root) : message;
+    return root && root->isObject() ? ui::rawText(*root) : message;
 }
 
 /**
