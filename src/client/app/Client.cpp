@@ -4,9 +4,9 @@
 #include "platform/Paths.h"
 #include "platform/Window.h"
 #include "render/Renderer.h"
+#include "ui/Localization.h"
 #include "ui/Theme.h"
 
-#include "client/LocalWorlds.h"
 #include "client/Sky.h"
 #include "world/PackSource.h"
 
@@ -39,7 +39,6 @@ Client::Client()
 {
     store.load();
     loadSettings();
-    loadWorlds();
     account.restore();
     if (!font.load(assets, skin)) {
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
@@ -57,6 +56,7 @@ Client::Client()
             musicSounds = std::make_shared<world::PackSource>(vanilla.parent_path() / "vanilla_music");
         }
     }
+    ui::Localization::shared().load(vanillaSounds, menu.language());
 }
 
 Client::~Client()
@@ -242,6 +242,10 @@ int Client::run()
         }
         if (std::optional<bool> answer = menu.takePackAnswer()) {
             session.answerResourcePacks(*answer);
+        }
+        if (menu.language() != savedLanguage) {
+            ui::Localization::shared().load(vanillaSounds, menu.language());
+            saveSettings();
         }
         if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || menu.soundVolumes() != savedVolumes) {
             saveSettings();

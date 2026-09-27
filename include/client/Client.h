@@ -70,7 +70,6 @@ private:
     bool terrainReady(const SessionSnapshot& snapshot);
     float guiScale() const;
     void uploadAtlas();
-    void loadWorlds();
     void loadSettings();
     void saveSettings();
 
@@ -91,6 +90,7 @@ private:
     int savedRenderDistance = menu::DefaultRenderDistance;
     int savedMaxFps = menu::DefaultMaxFps;
     int savedFov = menu::DefaultFov;
+    std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;
     uint64_t avatarRevision = 0;
     std::shared_ptr<const std::vector<uint8_t>> shownTitle;
