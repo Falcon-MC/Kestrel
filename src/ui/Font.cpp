@@ -334,7 +334,7 @@ bool Font::pack(uint32_t height, float packScale)
 
         std::vector<stbtt_packedchar> chars(codepoints.size());
         stbtt_pack_range range {};
-        range.font_size = pixelSize;
+        range.font_size = STBTT_POINT_SIZE(pixelSize);
         range.array_of_unicode_codepoints = codepoints.data();
         range.num_chars = static_cast<int>(codepoints.size());
         range.chardata_for_range = chars.data();
@@ -360,7 +360,7 @@ bool Font::pack(uint32_t height, float packScale)
         int descent = 0;
         int gap = 0;
         stbtt_GetFontVMetrics(&info, &ascent, &descent, &gap);
-        float unit = stbtt_ScaleForPixelHeight(&info, pixelSize);
+        float unit = stbtt_ScaleForMappingEmToPixels(&info, pixelSize);
         target.ascent = std::round(ascent * unit);
         target.lineHeight = std::round((ascent - descent + gap) * unit);
     }
