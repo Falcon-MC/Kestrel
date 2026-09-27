@@ -895,6 +895,9 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
             runScripts(scripts->initialize);
         }
     }
+    for (const auto& [name, value] : input.engineVariables) {
+        variables[name] = value;
+    }
     ++frame;
     poses.assign(bones.size(), BonePose {});
     animTime = 0.0;
@@ -1157,7 +1160,9 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return molang::internString(current.name);
     }
     if (name == "get_equipped_item_name") {
-        return molang::internString(std::string());
+        bool offHand = argument(0) == molang::internString("off_hand") || argument(0) == 1.0;
+        const std::string& item = offHand ? current.offHandItem : current.mainHandItem;
+        return molang::internString(item.substr(item.find(':') == std::string::npos ? 0 : item.find(':') + 1));
     }
     if (name == "get_actor_info_id" || name == "owner_identifier" || name == "identifier" || name == "entity_identifier") {
         return molang::internString(current.identifier);

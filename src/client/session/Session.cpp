@@ -7,6 +7,9 @@
 #include "Network/Client/ClientNetworkSystem.h"
 #include "Network/Session/RealmsService.h"
 #include "client/DebugLog.h"
+#include "Network/Crypto/Base64.h"
+#include "ui/Image.h"
+#include "world/PackSource.h"
 #include "Protocol/Packets/AddActorPacket.h"
 #include "Protocol/Packets/AddPlayerPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
@@ -87,6 +90,29 @@ constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr const char* ExperiencePrefix = "experience_id/";
 constexpr unsigned int TimeoutMs = 30000;
+
+/**
+ * Sends the game's Steve texture as the player's skin, so other players and
+ * the first person arm see Steve instead of a blank skin.
+ */
+void applyDefaultSkin(ClientData& identity)
+{
+    std::filesystem::path vanilla = world::PackSource::locateVanilla();
+    if (vanilla.empty()) {
+        return;
+    }
+    world::PackSource pack(vanilla);
+    std::string encoded;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> rgba;
+    if (!pack.readTexture("textures/entity/steve", encoded) || !ui::decodeImage(encoded, width, height, rgba) || width != 64 || (height != 64 && height != 32)) {
+        return;
+    }
+    identity.mSkinData = Base64::encode(std::string(rgba.begin(), rgba.end()));
+    identity.mSkinImageWidth = static_cast<int>(width);
+    identity.mSkinImageHeight = static_cast<int>(height);
+}
 
 using session::applyActorMetadata;
 using session::EyeHeight;
@@ -363,6 +389,78 @@ uint8_t Session::mediumAt(const std::array<double, 3>& position)
     return position[1] - static_cast<double>(y) < surface ? kind : 0;
 }
 
+void Session::setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    boomOrigin = origin;
+    boomDelta = delta;
+}
+
+/**
+ * How far along the camera boom a box of radius 0.2 at the eye can travel
+ * before touching a block, as a fraction of the boom, backed off by a
+ * thousandth of a block. Unloaded space stops the camera at the eye.
+ */
+double Session::boomFraction()
+{
+    constexpr double Radius = 0.2;
+    constexpr double Epsilon = 0.001;
+    double length = std::sqrt(boomDelta[0] * boomDelta[0] + boomDelta[1] * boomDelta[1] + boomDelta[2] * boomDelta[2]);
+    if (length < 1.0e-6) {
+        return 1.0;
+    }
+    std::array<int32_t, 3> low {};
+    std::array<int32_t, 3> high {};
+    for (size_t axis = 0; axis < 3; ++axis) {
+        double a = boomOrigin[axis];
+        double b = boomOrigin[axis] + boomDelta[axis];
+        low[axis] = static_cast<int32_t>(std::floor(std::min(a, b) - Radius)) - 1;
+        high[axis] = static_cast<int32_t>(std::floor(std::max(a, b) + Radius)) + 1;
+    }
+    const world::BlockCollisions& table = world::BlockCollisions::shared();
+    world::BlockCollisions::Lookup lookup = [this](int32_t x, int32_t y, int32_t z) {
+        return motionCell(x, y, z).primary;
+    };
+    std::vector<world::CollisionBox> boxes;
+    for (int32_t x = low[0]; x <= high[0]; ++x) {
+        for (int32_t y = low[1]; y <= high[1]; ++y) {
+            for (int32_t z = low[2]; z <= high[2]; ++z) {
+                if (!world.store().subChunk({ motionDimension, x >> 4, y >> 4, z >> 4 })) {
+                    return 0.0;
+                }
+                if (const world::CollisionState* state = motionCell(x, y, z).primary) {
+                    table.boxes(*state, x, y, z, lookup, boxes);
+                }
+            }
+        }
+    }
+    double fraction = 1.0;
+    for (const world::CollisionBox& box : boxes) {
+        std::array<double, 3> minimum { box.minX - Radius, box.minY - Radius, box.minZ - Radius };
+        std::array<double, 3> maximum { box.maxX + Radius, box.maxY + Radius, box.maxZ + Radius };
+        double entry = 0.0;
+        double exit = 1.0;
+        bool missed = false;
+        for (size_t axis = 0; axis < 3 && !missed; ++axis) {
+            if (std::abs(boomDelta[axis]) <= 1.0e-12) {
+                missed = boomOrigin[axis] < minimum[axis] || boomOrigin[axis] > maximum[axis];
+                continue;
+            }
+            double first = (minimum[axis] - boomOrigin[axis]) / boomDelta[axis];
+            double second = (maximum[axis] - boomOrigin[axis]) / boomDelta[axis];
+            entry = std::max(entry, std::min(first, second));
+            exit = std::min(exit, std::max(first, second));
+        }
+        if (!missed && entry <= exit) {
+            fraction = std::min(fraction, entry);
+        }
+    }
+    if (fraction >= 1.0) {
+        return 1.0;
+    }
+    return std::max(fraction * length - Epsilon, 0.0) / length;
+}
+
 std::string Session::traceTarget()
 {
     constexpr double Reach = 32.0;
@@ -546,6 +644,14 @@ void Session::handleWorldPacket(const std::string& payload)
                 continue;
             }
             storeSkin(uuid, entry.mSkin);
+            if (entry.mActorId == localUniqueId) {
+                localUuid = uuid;
+            }
+        }
+        if (auto skin = skinByUuid.find(localUuid); skin != skinByUuid.end()) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.localSkinSlot = skin->second.first;
+            current.localSlim = skin->second.second;
         }
     } else if (auto time = std::dynamic_pointer_cast<SetTimePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
@@ -710,6 +816,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     settings.mGameVersion = GameVersion;
     settings.mAuthentication = authentication;
     settings.mIdentity.mDisplayName = offlineName;
+    applyDefaultSkin(settings.mClientData);
     settings.mChunkRadius = requestedRadius.load();
     settings.mTimeoutMs = TimeoutMs;
     settings.mCancel = &cancelled;
@@ -856,6 +963,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             current.spawnYaw = startGame->mRotation.y;
             current.hashedIds = startGame->mBlockNetworkIdsHashed;
             localRuntimeId = startGame->mRuntimeActorId;
+            localUniqueId = startGame->mUniqueActorId;
+            localUuid.clear();
             current.hud = HudState {};
             current.hud.gameType = static_cast<int32_t>(startGame->mPlayerGameType == GameType::Default ? startGame->mLevelGameType : startGame->mPlayerGameType);
             motionDimension = startGame->mDimensionId;
@@ -1022,6 +1131,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
                 current.blockAtPlayer = "no sub-chunk (air)";
             }
             current.targetBlock = traceTarget();
+            current.boomFraction = boomFraction();
             current.cameraMedium = mediumAt(lookOrigin);
             current.airSequential = assets->airSequentialId();
             current.airHash = assets->airNetworkHash();

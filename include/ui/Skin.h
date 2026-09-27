@@ -34,7 +34,9 @@ struct BorderImage {
  * Owns every picture the menus draw and packs them into the bottom half of the UI atlas,
  * below the rows the font rasterizer uses. Sprites are named "ui/<file>" for classic
  * textures, "hbui/<file>" for the HTML menus and "font/<file>" for bitmap glyph pages.
- * Anything asked for that isn't loaded yet gets read on the spot and triggers a repack.
+ * Anything asked for that isn't loaded yet gets read on the spot and is added after the
+ * pictures already placed, which keep their place so a frame drawn before the upload
+ * still samples the right texels.
  */
 class Skin {
 public:
@@ -62,15 +64,22 @@ private:
     struct Entry {
         Bitmap bitmap;
         Sprite sprite;
+        bool placed = false;
+        uint32_t x = 0;
+        uint32_t y = 0;
     };
 
     Entry& load(std::string_view name);
+    bool place(Entry& entry);
 
     GameAssets& assets;
     std::unordered_map<std::string, Entry> entries;
     std::unordered_map<std::string, std::string> theme;
     std::unordered_map<std::string, BorderImage> borders;
     bool changed = false;
+    uint32_t cursorX = 0;
+    uint32_t cursorY = ImageTop;
+    uint32_t shelfHeight = 0;
 };
 
 }

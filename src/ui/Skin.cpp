@@ -225,6 +225,7 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap)
     entry.sprite = {};
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
+    entry.placed = false;
     changed = true;
 }
 
@@ -235,41 +236,77 @@ void Skin::clearDynamic(const std::string& name)
     }
 }
 
+bool Skin::place(Entry& entry)
+{
+    uint32_t w = entry.bitmap.width + 2;
+    uint32_t h = entry.bitmap.height + 2;
+    if (w > AtlasSize) {
+        return false;
+    }
+    if (cursorX + w > AtlasSize) {
+        cursorX = 0;
+        cursorY += shelfHeight;
+        shelfHeight = 0;
+    }
+    if (cursorY + h > AtlasSize) {
+        return false;
+    }
+    entry.x = cursorX;
+    entry.y = cursorY;
+    entry.placed = true;
+    cursorX += w;
+    shelfHeight = std::max(shelfHeight, h);
+    return true;
+}
+
 void Skin::pack(std::vector<uint8_t>& atlasRgba)
 {
     changed = false;
-    std::vector<Entry*> order;
-    for (auto& [name, entry] : entries) {
-        entry.sprite.valid = false;
-        if (!entry.bitmap.rgba.empty()) {
-            order.push_back(&entry);
+    auto unplaced = [&]() {
+        std::vector<Entry*> order;
+        for (auto& [name, entry] : entries) {
+            if (!entry.placed && !entry.bitmap.rgba.empty()) {
+                order.push_back(&entry);
+            }
+        }
+        std::sort(order.begin(), order.end(), [](const Entry* a, const Entry* b) {
+            return a->bitmap.height > b->bitmap.height;
+        });
+        return order;
+    };
+    bool full = false;
+    for (Entry* entry : unplaced()) {
+        if (!place(*entry) && entry->bitmap.width + 2 <= AtlasSize) {
+            full = true;
+            break;
         }
     }
-    std::sort(order.begin(), order.end(), [](const Entry* a, const Entry* b) {
-        return a->bitmap.height > b->bitmap.height;
-    });
+    if (full) {
+        cursorX = 0;
+        cursorY = ImageTop;
+        shelfHeight = 0;
+        for (auto& [name, entry] : entries) {
+            entry.placed = false;
+        }
+        for (Entry* entry : unplaced()) {
+            place(*entry);
+        }
+    }
 
     // A one texel gutter copied from the edge keeps nearest sampling from bleeding into neighbours.
     constexpr uint32_t Gutter = 1;
-    uint32_t x = 0;
-    uint32_t y = ImageTop;
-    uint32_t shelf = 0;
     const float extent = static_cast<float>(AtlasSize);
-    for (Entry* entry : order) {
+    for (auto& [name, slot] : entries) {
+        Entry* entry = &slot;
+        entry->sprite.valid = false;
+        if (!entry->placed || entry->bitmap.rgba.empty()) {
+            continue;
+        }
         const Bitmap& source = entry->bitmap;
         uint32_t w = source.width + Gutter * 2;
         uint32_t h = source.height + Gutter * 2;
-        if (w > AtlasSize) {
-            continue;
-        }
-        if (x + w > AtlasSize) {
-            x = 0;
-            y += shelf;
-            shelf = 0;
-        }
-        if (y + h > AtlasSize) {
-            break;
-        }
+        uint32_t x = entry->x;
+        uint32_t y = entry->y;
         for (uint32_t row = 0; row < h; ++row) {
             uint32_t sourceRow = std::min(row > Gutter ? row - Gutter : 0, source.height - 1);
             for (uint32_t column = 0; column < w; ++column) {
@@ -285,8 +322,6 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
         sprite.image.v1 = (y + Gutter + source.height) / extent;
         sprite.image.valid = true;
         sprite.valid = true;
-        x += w;
-        shelf = std::max(shelf, h);
     }
 }
 

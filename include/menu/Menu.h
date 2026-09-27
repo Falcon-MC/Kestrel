@@ -140,8 +140,36 @@ struct RealmEntry {
     bool expired = false;
 };
 
+struct ProfileAchievement {
+    std::string name;
+    std::string description;
+    std::string icon;
+    int gamerscore = 0;
+    bool achieved = false;
+};
+
+/**
+ * What the profile page shows: achievement and gamerscore totals, suggested
+ * and recently earned achievements, and play statistics.
+ */
+struct ProfileInfo {
+    bool achievementsLoaded = false;
+    int achieved = 0;
+    int total = 0;
+    int gamerscore = 0;
+    int totalGamerscore = 0;
+    std::vector<ProfileAchievement> suggested;
+    std::vector<ProfileAchievement> recent;
+    bool statsLoaded = false;
+    int64_t minutesPlayed = 0;
+    int64_t blocksBroken = 0;
+    int64_t mobsDefeated = 0;
+    int64_t distanceTravelled = 0;
+};
+
 struct AccountInfo {
     AccountStatus status = AccountStatus::SignedOut;
+    ProfileInfo profile;
     std::string verificationUri;
     std::string userCode;
     std::string gamertag;
@@ -310,6 +338,8 @@ public:
         serverStatus = std::move(status);
     }
 
+    std::optional<std::string> focusedFeatured() const;
+
     void setFeatured(std::vector<FeaturedEntry> entries, bool loading)
     {
         featured = std::move(entries);
@@ -320,7 +350,6 @@ public:
      * The id of the partner server open in the detail pane, whose showcase
      * is worth downloading.
      */
-    std::optional<std::string> focusedFeatured() const;
 
     void setHud(HudView view)
     {
@@ -421,6 +450,10 @@ private:
     void serverForm(ui::Context& ui, float width, float height);
     void settings(ui::Context& ui, float width, float height);
     void settingsPage(ui::Context& ui, const ui::Rect& area);
+    void profile(ui::Context& ui, float width, float height);
+    void profileCard(ui::Context& ui, const ui::Rect& card);
+    void profileSummary(ui::Context& ui, const ui::Rect& area);
+    void profileStats(ui::Context& ui, const ui::Rect& area);
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
@@ -453,6 +486,7 @@ private:
     Screen screen = Screen::Title;
     Screen returnScreen = Screen::Title;
     PlayTab playTab = PlayTab::Servers;
+    bool profileStatsTab = false;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
     Field field = Field::None;

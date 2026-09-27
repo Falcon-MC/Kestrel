@@ -32,7 +32,32 @@ public:
     {
         baseFov = degrees;
     }
+
+    /**
+     * Turns the rendered view around to face the player from the front, level,
+     * with horizontal mouse movement reversed; the look direction is unchanged.
+     */
+    void setFacingSubject(bool facing)
+    {
+        facingSubject = facing;
+    }
+
+    /**
+     * While orbiting, the mouse turns only the camera around the player; the
+     * player's own look stays where it was. Leaving the orbit recentres it.
+     */
+    void setOrbiting(bool orbit);
+
+    /**
+     * The direction the rendered view looks in, orbit included.
+     */
+    std::array<float, 3> viewForward() const;
     Mat4 viewProjection(float aspect) const;
+
+    /**
+     * Tangent of half the vertical field of view for a width to height ratio.
+     */
+    float halfVerticalTangent(float aspect) const;
     std::array<float, 3> forward() const;
 
     double x() const
@@ -58,6 +83,10 @@ private:
     float pitch = 0.0f;
     float fovScale = 1.0f;
     float baseFov = HorizontalFovDegrees;
+    bool facingSubject = false;
+    bool orbiting = false;
+    float orbitYaw = 0.0f;
+    float orbitPitch = 0.0f;
 };
 
 }

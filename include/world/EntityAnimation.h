@@ -159,6 +159,9 @@ struct AnimationInput {
     bool onGround = true;
     std::string identifier;
     std::string name;
+    std::string mainHandItem;
+    std::string offHandItem;
+    std::vector<std::pair<std::string, double>> engineVariables;
 };
 
 /**
