@@ -119,6 +119,23 @@ void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& 
     image(rect, region, tint);
 }
 
+void Context::spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint)
+{
+    const Sprite& source = art.sprite(name);
+    if (!source.valid || source.width <= 0.0f || source.height <= 0.0f) {
+        return;
+    }
+    float du = (source.image.u1 - source.image.u0) / source.width;
+    float dv = (source.image.v1 - source.image.v0) / source.height;
+    std::array<std::array<float, 2>, 4> physical {};
+    std::array<std::array<float, 2>, 4> uvs {};
+    for (size_t corner = 0; corner < 4; ++corner) {
+        physical[corner] = { points[corner][0] * scale, points[corner][1] * scale };
+        uvs[corner] = { source.image.u0 + texels[corner][0] * du, source.image.v0 + texels[corner][1] * dv };
+    }
+    drawList.freeQuad(physical, uvs, tint.packed());
+}
+
 void Context::nineSlice(const Rect& rect, std::string_view name, Color tint)
 {
     const Sprite& source = art.sprite(name);

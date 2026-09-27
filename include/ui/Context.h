@@ -7,6 +7,7 @@
 #include "ui/Skin.h"
 #include "ui/Types.h"
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,8 @@ public:
     {
         return scale;
     }
+
+    void spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint);
 
     const std::vector<Rect>& interactiveRects() const
     {

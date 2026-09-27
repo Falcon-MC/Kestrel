@@ -287,29 +287,114 @@ void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
 void Menu::playerModel(Context& ui, float centerX, float top, float pixel)
 {
     struct Part {
-        float x;
-        float y;
-        float w;
-        float h;
-        float u;
-        float v;
-        float overlayU;
-        float overlayV;
+        std::array<float, 3> min;
+        std::array<float, 3> size;
+        std::array<float, 2> uv;
+        std::array<float, 2> overlay;
+        bool head;
     };
     constexpr Part Parts[] = {
-        { 4.0f, 0.0f, 8.0f, 8.0f, 8.0f, 8.0f, 40.0f, 8.0f },
-        { 4.0f, 8.0f, 8.0f, 12.0f, 20.0f, 20.0f, 20.0f, 36.0f },
-        { 0.0f, 8.0f, 4.0f, 12.0f, 44.0f, 20.0f, 44.0f, 36.0f },
-        { 12.0f, 8.0f, 4.0f, 12.0f, 36.0f, 52.0f, 52.0f, 52.0f },
-        { 4.0f, 20.0f, 4.0f, 12.0f, 4.0f, 20.0f, 4.0f, 36.0f },
-        { 8.0f, 20.0f, 4.0f, 12.0f, 20.0f, 52.0f, 4.0f, 52.0f },
+        { { -4.0f, 24.0f, -4.0f }, { 8.0f, 8.0f, 8.0f }, { 0.0f, 0.0f }, { 32.0f, 0.0f }, true },
+        { { -4.0f, 12.0f, -2.0f }, { 8.0f, 12.0f, 4.0f }, { 16.0f, 16.0f }, { 16.0f, 32.0f }, false },
+        { { -8.0f, 12.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 40.0f, 16.0f }, { 40.0f, 32.0f }, false },
+        { { 4.0f, 12.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 32.0f, 48.0f }, { 48.0f, 48.0f }, false },
+        { { -4.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 0.0f, 16.0f }, { 0.0f, 32.0f }, false },
+        { { 0.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 16.0f, 48.0f }, { 0.0f, 48.0f }, false },
     };
     constexpr std::string_view Skin = "textures/entity/steve";
-    float left = std::round(centerX - 8.0f * pixel);
+    constexpr float Degrees = 3.14159265f / 180.0f;
+    constexpr float NeckY = 24.0f;
+
+    float eyeY = top + 4.0f * pixel;
+    float dx = (ui.mouseX() - centerX) / pixel;
+    float dy = (ui.mouseY() - eyeY) / pixel;
+    float bodyYaw = std::atan(dx / 40.0f) * 20.0f * Degrees;
+    float headYaw = std::atan(dx / 40.0f) * 40.0f * Degrees;
+    float headPitch = std::atan(dy / 40.0f) * 20.0f * Degrees;
+
+    using Vec = std::array<float, 3>;
+    auto yaw = [](const Vec& p, float angle) -> Vec {
+        float c = std::cos(angle);
+        float s = std::sin(angle);
+        return { p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c };
+    };
+    auto pitch = [](const Vec& p, float angle) -> Vec {
+        float c = std::cos(angle);
+        float s = std::sin(angle);
+        return { p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c };
+    };
+    auto transform = [&](Vec p, bool head) -> Vec {
+        if (head) {
+            p[1] -= NeckY;
+            p = yaw(pitch(p, headPitch), headYaw - bodyYaw);
+            p[1] += NeckY;
+        }
+        return yaw(p, bodyYaw);
+    };
+
+    struct Face {
+        std::array<std::array<float, 2>, 4> points;
+        std::array<std::array<float, 2>, 4> texels;
+        float depth;
+        float light;
+    };
+    std::vector<Face> faces;
+    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate) {
+        float x0 = part.min[0] - inflate;
+        float y0 = part.min[1] - inflate;
+        float z0 = part.min[2] - inflate;
+        float x1 = part.min[0] + part.size[0] + inflate;
+        float y1 = part.min[1] + part.size[1] + inflate;
+        float z1 = part.min[2] + part.size[2] + inflate;
+        float w = part.size[0];
+        float h = part.size[1];
+        float d = part.size[2];
+        float u = uv[0];
+        float v = uv[1];
+        struct Side {
+            std::array<Vec, 4> corners;
+            std::array<float, 4> region;
+            Vec normal;
+        };
+        const Side sides[6] = {
+            { { { { x0, y1, z1 }, { x1, y1, z1 }, { x1, y0, z1 }, { x0, y0, z1 } } }, { u + d, v + d, w, h }, { 0.0f, 0.0f, 1.0f } },
+            { { { { x1, y1, z0 }, { x0, y1, z0 }, { x0, y0, z0 }, { x1, y0, z0 } } }, { u + d + w + d, v + d, w, h }, { 0.0f, 0.0f, -1.0f } },
+            { { { { x0, y1, z0 }, { x0, y1, z1 }, { x0, y0, z1 }, { x0, y0, z0 } } }, { u, v + d, d, h }, { -1.0f, 0.0f, 0.0f } },
+            { { { { x1, y1, z1 }, { x1, y1, z0 }, { x1, y0, z0 }, { x1, y0, z1 } } }, { u + d + w, v + d, d, h }, { 1.0f, 0.0f, 0.0f } },
+            { { { { x0, y1, z0 }, { x1, y1, z0 }, { x1, y1, z1 }, { x0, y1, z1 } } }, { u + d, v, w, d }, { 0.0f, 1.0f, 0.0f } },
+            { { { { x0, y0, z1 }, { x1, y0, z1 }, { x1, y0, z0 }, { x0, y0, z0 } } }, { u + d + w, v, w, d }, { 0.0f, -1.0f, 0.0f } },
+        };
+        for (const Side& side : sides) {
+            Vec normal = transform(side.normal, part.head);
+            Vec origin = transform({ 0.0f, 0.0f, 0.0f }, part.head);
+            Vec facing { normal[0] - origin[0], normal[1] - origin[1], normal[2] - origin[2] };
+            if (facing[2] <= 0.0f) {
+                continue;
+            }
+            Face face;
+            float depth = 0.0f;
+            for (size_t corner = 0; corner < 4; ++corner) {
+                Vec p = transform(side.corners[corner], part.head);
+                face.points[corner] = { centerX + p[0] * pixel, top + (32.0f - p[1]) * pixel };
+                depth += p[2];
+            }
+            const std::array<float, 4>& r = side.region;
+            face.texels = { { { r[0], r[1] }, { r[0] + r[2], r[1] }, { r[0] + r[2], r[1] + r[3] }, { r[0], r[1] + r[3] } } };
+            face.depth = depth * 0.25f + inflate;
+            face.light = 0.6f + 0.4f * std::clamp(facing[2] * 0.8f + facing[1] * 0.4f, 0.0f, 1.0f);
+            faces.push_back(face);
+        }
+    };
     for (const Part& part : Parts) {
-        Rect target { left + part.x * pixel, top + part.y * pixel, part.w * pixel, part.h * pixel };
-        ui.spriteRegion(target, Skin, { part.u, part.v, part.w, part.h });
-        ui.spriteRegion(target, Skin, { part.overlayU, part.overlayV, part.w, part.h });
+        addBox(part, part.uv, 0.0f);
+        addBox(part, part.overlay, part.head ? 0.5f : 0.25f);
+    }
+    std::stable_sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) {
+        return a.depth < b.depth;
+    });
+    for (const Face& face : faces) {
+        uint8_t shade = static_cast<uint8_t>(std::clamp(face.light, 0.0f, 1.0f) * 255.0f);
+        ui.spriteQuad(face.points, Skin, face.texels, { shade, shade, shade, 255 });
     }
 }
 
@@ -335,26 +420,30 @@ void Menu::title(Context& ui, float width, float height)
         socialParty = false;
     }
 
-    float bottom = height - 95.33f;
-    if (iconButton(ui, "title:inbox", "", "ui/mail_icon", { 47.33f, bottom, 23.0f, CornerButtonHeight }, 15.0f)) {
+    constexpr float CornerMargin = 2.0f;
+    float labelY = std::floor(height - CornerMargin - 9.0f);
+    float cornerLeft = CornerMargin - 1.0f;
+    float bottom = std::floor(labelY - 1.0f - CornerMargin - CornerButtonHeight);
+    if (iconButton(ui, "title:inbox", "", "ui/mail_icon", { cornerLeft, bottom, 23.0f, CornerButtonHeight }, 15.0f)) {
         notify("TODO: Inbox");
     }
     const Sprite& avatar = ui.skin().sprite("dynamic/avatar");
-    if (iconButton(ui, "title:profile", "Profile", avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { 78.33f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
+    if (iconButton(ui, "title:profile", "Profile", avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { cornerLeft + 31.0f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
         navigate(Screen::Profile);
     }
 
     float dressingX = width - 158.0f;
-    if (ui.classicButton("title:dressing", "Dressing Room", { dressingX, height - 96.33f, 82.0f, CornerButtonHeight })) {
+    float dressingY = height - 96.33f;
+    if (ui.classicButton("title:dressing", "Dressing Room", { dressingX, dressingY, 82.0f, CornerButtonHeight })) {
         navigate(Screen::DressingRoom);
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
-    backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), 276.67f);
-    playerModel(ui, dressingX + 41.0f, 292.67f, 2.23f);
+    backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), std::floor(dressingY - 97.67f));
+    playerModel(ui, dressingX + 41.0f, dressingY - 81.67f, 2.23f);
 
-    backedLabel(ui, "Kestrel", 42.33f, height - 36.0f);
+    backedLabel(ui, "Kestrel", CornerMargin, labelY);
     constexpr std::string_view Version = "v1.26.51";
-    backedLabel(ui, Version, width - 45.0f - ui.measure(Version, TextStyle::Pixel), height - 36.0f);
+    backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
 }
 
 void Menu::pause(Context& ui, float width, float height)

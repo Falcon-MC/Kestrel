@@ -17,6 +17,7 @@ namespace {
 
 constexpr DWORD DarkModeAttribute = 20;
 constexpr DWORD CaptionColorAttribute = 35;
+constexpr DWORD CaptionTextColorAttribute = 36;
 
 class Win32Window final : public Window {
 public:
@@ -61,10 +62,10 @@ public:
 
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, DarkModeAttribute, &dark, sizeof(dark));
-        COLORREF caption = RGB(20, 18, 26);
+        COLORREF caption = RGB(0, 0, 0);
         DwmSetWindowAttribute(hwnd, CaptionColorAttribute, &caption, sizeof(caption));
-        MARGINS margins { 0, 0, 1, 0 };
-        DwmExtendFrameIntoClientArea(hwnd, &margins);
+        COLORREF captionText = RGB(255, 255, 255);
+        DwmSetWindowAttribute(hwnd, CaptionTextColorAttribute, &captionText, sizeof(captionText));
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
         dpi = GetDpiForWindow(hwnd);
@@ -167,7 +168,7 @@ public:
 
     bool drawsCaptionButtons() const override
     {
-        return true;
+        return false;
     }
 
     float captionInsetLeft() const override
@@ -332,79 +333,9 @@ private:
         SetCursor(LoadCursorW(nullptr, shape));
     }
 
-    int frameThickness() const
-    {
-        return GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-    }
-
-    LRESULT hitTest(LPARAM lParam) const
-    {
-        POINT point { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        ScreenToClient(hwnd, &point);
-        float x = static_cast<float>(point.x);
-        float y = static_cast<float>(point.y);
-
-        if (!maximized() && !isFullscreen) {
-            int border = frameThickness();
-            bool left = point.x < border;
-            bool right = point.x >= static_cast<LONG>(clientWidth) - border;
-            bool top = point.y < border;
-            bool bottom = point.y >= static_cast<LONG>(clientHeight) - border;
-            if (top && left) {
-                return HTTOPLEFT;
-            }
-            if (top && right) {
-                return HTTOPRIGHT;
-            }
-            if (bottom && left) {
-                return HTBOTTOMLEFT;
-            }
-            if (bottom && right) {
-                return HTBOTTOMRIGHT;
-            }
-            if (left) {
-                return HTLEFT;
-            }
-            if (right) {
-                return HTRIGHT;
-            }
-            if (top) {
-                return HTTOP;
-            }
-            if (bottom) {
-                return HTBOTTOM;
-            }
-        }
-
-        if (y < chrome.captionHeight) {
-            for (const ui::Rect& rect : chrome.interactive) {
-                if (rect.contains(x, y)) {
-                    return HTCLIENT;
-                }
-            }
-            return HTCAPTION;
-        }
-        return HTCLIENT;
-    }
-
     std::optional<LRESULT> handle(UINT msg, WPARAM wParam, LPARAM lParam)
     {
         switch (msg) {
-        case WM_NCCALCSIZE:
-            if (wParam == TRUE) {
-                if (maximized()) {
-                    auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
-                    int inset = frameThickness();
-                    params->rgrc[0].left += inset;
-                    params->rgrc[0].top += inset;
-                    params->rgrc[0].right -= inset;
-                    params->rgrc[0].bottom -= inset;
-                }
-                return 0;
-            }
-            return std::nullopt;
-        case WM_NCHITTEST:
-            return hitTest(lParam);
         case WM_SETCURSOR:
             if (LOWORD(lParam) == HTCLIENT) {
                 applyCursor();
