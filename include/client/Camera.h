@@ -27,6 +27,11 @@ public:
      * the way sprinting and flying widen the view.
      */
     void easeFov(float target, float deltaSeconds);
+
+    void setBaseFov(float degrees)
+    {
+        baseFov = degrees;
+    }
     Mat4 viewProjection(float aspect) const;
     std::array<float, 3> forward() const;
 
@@ -52,6 +57,7 @@ private:
     float yaw = 0.0f;
     float pitch = 0.0f;
     float fovScale = 1.0f;
+    float baseFov = HorizontalFovDegrees;
 };
 
 }

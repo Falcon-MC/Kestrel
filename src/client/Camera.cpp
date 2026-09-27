@@ -115,7 +115,7 @@ Mat4 FreeCamera::viewProjection(float aspect) const
 
     constexpr float nearPlane = 0.05f;
     constexpr float farPlane = 1024.0f;
-    float horizontal = std::min(HorizontalFovDegrees * fovScale, 170.0f) * 3.14159265f / 180.0f;
+    float horizontal = std::min(baseFov * fovScale, 170.0f) * 3.14159265f / 180.0f;
     float vertical = 2.0f * std::atan(std::tan(horizontal * 0.5f) / std::max(aspect, 0.01f));
     float f = 1.0f / std::tan(vertical * 0.5f);
     Mat4 projection {
