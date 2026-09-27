@@ -706,8 +706,10 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.packPrompt = true;
         current.packCount = offers.size();
         current.packBytes = 0;
+        current.packSkippable = true;
         for (const ResourcePackOffer& offer : offers) {
             current.packBytes += offer.mPackSize;
+            current.packSkippable = current.packSkippable && !offer.mRequired;
         }
     };
     settings.mResourcePacks.mDecision = [this]() {

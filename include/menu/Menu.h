@@ -179,6 +179,7 @@ struct SessionInfo {
     std::string error;
     bool packPrompt = false;
     size_t packCount = 0;
+    bool packSkippable = true;
     uint64_t packBytes = 0;
     bool packDownloading = false;
     uint64_t packReceived = 0;

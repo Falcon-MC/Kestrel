@@ -614,6 +614,7 @@ void Client::syncSession()
     info.targetBlock = std::move(snapshot.targetBlock);
     info.packPrompt = snapshot.packPrompt;
     info.packCount = snapshot.packCount;
+    info.packSkippable = snapshot.packSkippable;
     info.packBytes = snapshot.packBytes;
     info.packDownloading = snapshot.packDownloading;
     info.packReceived = snapshot.packReceived;
