@@ -116,7 +116,7 @@ public:
     void setScale(float value);
     void setAbilities(bool mayFly, bool flying, bool noClip, float flySpeed, float verticalFlySpeed);
     void setGameType(int32_t gameType);
-    void setEffects(int32_t jumpBoost, int32_t levitation, bool slowFalling);
+    void setEffects(int32_t jumpBoost, int32_t levitation, bool slowFalling, bool weaving);
     void setHunger(float hunger);
 
     MotionTick step(const MotionInput& input, const CellLookup& lookup);
@@ -214,6 +214,7 @@ private:
     int32_t levitationLevel = 0;
     int32_t gameType = 0;
     bool slowFalling = false;
+    bool weaving = false;
     bool isSprinting = false;
     bool isSneaking = false;
     bool pressingSneak = false;

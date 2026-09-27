@@ -99,6 +99,7 @@ constexpr int HasGravityFlag = 49;
 constexpr int32_t JumpBoostEffect = 8;
 constexpr int32_t LevitationEffect = 24;
 constexpr int32_t SlowFallingEffect = 27;
+constexpr int32_t WeavingEffect = 33;
 constexpr uint16_t BaseAbilityLayer = 1;
 constexpr uint32_t FlyingAbility = 1u << 9;
 constexpr uint32_t MayFlyAbility = 1u << 10;
@@ -895,6 +896,7 @@ void Session::tickMotion()
         int32_t jumpBoost = 0;
         int32_t levitation = 0;
         bool slowFalling = false;
+        bool weaving = false;
         for (const HudEffect& effect : current.hud.effects) {
             if (effect.expires >= 0.0 && effect.expires < now) {
                 continue;
@@ -905,9 +907,11 @@ void Session::tickMotion()
                 levitation = effect.amplifier + 1;
             } else if (effect.id == SlowFallingEffect) {
                 slowFalling = true;
+            } else if (effect.id == WeavingEffect) {
+                weaving = true;
             }
         }
-        motion.setEffects(jumpBoost, levitation, slowFalling);
+        motion.setEffects(jumpBoost, levitation, slowFalling, weaving);
         motion.setHunger(current.hud.hunger);
     }
 
