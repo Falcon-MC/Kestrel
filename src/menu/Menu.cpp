@@ -334,7 +334,7 @@ void Menu::panorama(Context& ui, float width, float height)
         std::string name = "dynamic/panorama_" + std::to_string(index);
         if (!panoramaReady[size_t(index)]) {
             panoramaReady[size_t(index)] = true;
-            std::string source = "ui/panorama_" + std::to_string(index);
+            std::string source = "ui/panorama_alternate_" + std::to_string(index);
             if (const Bitmap* full = ui.skin().bitmap(source)) {
                 uint32_t step = std::max<uint32_t>(1, full->width / PanoramaSize);
                 Bitmap reduced { full->width / step, full->height / step, {} };
