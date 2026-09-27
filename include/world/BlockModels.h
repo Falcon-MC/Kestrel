@@ -36,6 +36,10 @@ std::vector<ModelQuad> gate(const Materials& materials, uint32_t orientation, bo
 std::vector<ModelQuad> button(const Materials& materials, uint32_t orientation, bool pressed);
 std::vector<ModelQuad> pressurePlate(const Materials& materials, bool pressed);
 std::vector<ModelQuad> torch(uint32_t material, uint32_t facing);
+std::vector<ModelQuad> standingSign(uint32_t material, uint32_t rotation);
+std::vector<ModelQuad> wallSign(uint32_t material, uint32_t facing);
+std::vector<ModelQuad> hangingWallSign(uint32_t material, uint32_t facing);
+std::vector<ModelQuad> hangingCeilingSign(uint32_t material, uint32_t rotation, bool attached);
 std::vector<ModelQuad> flatPlane(uint32_t material, int16_t height);
 std::vector<ModelQuad> attachedPlanes(uint32_t material, uint32_t sides);
 

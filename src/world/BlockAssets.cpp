@@ -197,10 +197,18 @@ enum class ModelKind {
     Multiface,
     Lily,
     Chest,
+    Sign,
+    SinkingCube,
 };
 
 ModelKind modelKind(const std::string& name)
 {
+    if (endsWith(name, "standing_sign") || endsWith(name, "wall_sign") || endsWith(name, "hanging_sign")) {
+        return ModelKind::Sign;
+    }
+    if (name == "soul_sand" || name == "mud") {
+        return ModelKind::SinkingCube;
+    }
     if (contains(name, "trapdoor")) {
         return ModelKind::Trapdoor;
     }
@@ -1376,6 +1384,7 @@ bool BlockAssets::build(std::string& error)
             case ModelKind::Farmland:
             case ModelKind::Cake:
             case ModelKind::Cactus:
+            case ModelKind::SinkingCube:
             case ModelKind::Chest: {
                 if (!complete) {
                     break;
@@ -1389,6 +1398,8 @@ bool BlockAssets::build(std::string& error)
                     max[1] = static_cast<int16_t>((layersHigh + 1) * 32);
                 } else if (kind == ModelKind::Farmland) {
                     max[1] = 240;
+                } else if (kind == ModelKind::SinkingCube) {
+                    max[1] = 224;
                 } else if (kind == ModelKind::Cake) {
                     int32_t bites = std::clamp(stateInt(record.states, "bite_counter").value_or(0), 0, 6);
                     min = { static_cast<int16_t>(16 + bites * 32), 0, 16 };
@@ -1525,6 +1536,33 @@ bool BlockAssets::build(std::string& error)
                 modelTemplate = intern(keyOf("cross", uniform(face), {}), [&] {
                     pushTemplate(models::cross(material, material), 0);
                 });
+                break;
+            }
+            case ModelKind::Sign: {
+                uint32_t material = materials[models::South];
+                if (material == DiagnosticMaterial) {
+                    break;
+                }
+                uint32_t facing = static_cast<uint32_t>(std::clamp(stateInt(record.states, "facing_direction").value_or(2), 0, 5));
+                uint32_t rotation = static_cast<uint32_t>(stateInt(record.states, "ground_sign_direction").value_or(0) & 15);
+                if (endsWith(name, "standing_sign")) {
+                    modelTemplate = intern(keyOf("sign_standing", uniform(models::South), { rotation }), [&] {
+                        pushTemplate(models::standingSign(material, rotation), 0);
+                    });
+                } else if (endsWith(name, "wall_sign")) {
+                    modelTemplate = intern(keyOf("sign_wall", uniform(models::South), { facing }), [&] {
+                        pushTemplate(models::wallSign(material, facing), 0);
+                    });
+                } else if (flag("hanging")) {
+                    bool attached = flag("attached_bit");
+                    modelTemplate = intern(keyOf("sign_ceiling", uniform(models::South), { rotation, attached }), [&] {
+                        pushTemplate(models::hangingCeilingSign(material, rotation, attached), 0);
+                    });
+                } else {
+                    modelTemplate = intern(keyOf("sign_hanging_wall", uniform(models::South), { facing }), [&] {
+                        pushTemplate(models::hangingWallSign(material, facing), 0);
+                    });
+                }
                 break;
             }
             case ModelKind::None:

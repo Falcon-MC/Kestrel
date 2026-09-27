@@ -757,6 +757,109 @@ std::vector<ModelQuad> torch(uint32_t material, uint32_t facing)
     return result;
 }
 
+namespace {
+
+uint32_t sideFromFaceId(uint32_t id)
+{
+    static constexpr uint32_t Sides[7] = { 0, Down, Up, West, East, North, South };
+    return Sides[std::min<uint32_t>(id, 6)];
+}
+
+void appendCuboid(std::vector<ModelQuad>& out, uint32_t material, Point min, Point max)
+{
+    Materials materials;
+    materials.fill(material);
+    auto faces = cuboid(materials, min, max);
+    out.insert(out.end(), faces.begin(), faces.end());
+}
+
+std::vector<ModelQuad> rotateSign(std::vector<ModelQuad> quads, uint32_t rotation)
+{
+    static constexpr std::pair<int32_t, int32_t> Trig[16] = {
+        { 1024, 0 }, { 946, 392 }, { 724, 724 }, { 392, 946 }, { 0, 1024 }, { -392, 946 }, { -724, 724 }, { -946, 392 },
+        { -1024, 0 }, { -946, -392 }, { -724, -724 }, { -392, -946 }, { 0, -1024 }, { 392, -946 }, { 724, -724 }, { 946, -392 },
+    };
+    auto [cosine, sine] = Trig[rotation & 15];
+    auto rounded = [](int32_t value) {
+        return value < 0 ? (value - 512) / 1024 : (value + 512) / 1024;
+    };
+    for (ModelQuad& quad : quads) {
+        for (Point& position : quad.positions) {
+            int32_t dx = int32_t(position[0]) - 128;
+            int32_t dz = int32_t(position[2]) - 128;
+            position[0] = static_cast<int16_t>(128 + rounded(dx * cosine - dz * sine));
+            position[2] = static_cast<int16_t>(128 + rounded(dx * sine + dz * cosine));
+        }
+        uint32_t face = quad.flags & QuadFaceMask;
+        quad.flags &= ~QuadFaceMask;
+        if (face == 1 || face == 2) {
+            quad.flags |= face;
+        } else if ((rotation & 15) % 4 == 0 && face != 0) {
+            quad.flags |= faceId(rotateGateFace(sideFromFaceId(face), (rotation & 15) / 4));
+        }
+    }
+    return quads;
+}
+
+}
+
+std::vector<ModelQuad> standingSign(uint32_t material, uint32_t rotation)
+{
+    std::vector<ModelQuad> quads;
+    appendCuboid(quads, material, { 0, 112, 120 }, { Full, 240, 136 });
+    appendCuboid(quads, material, { 120, 0, 120 }, { 136, 112, 136 });
+    return rotateSign(std::move(quads), rotation);
+}
+
+std::vector<ModelQuad> wallSign(uint32_t material, uint32_t facing)
+{
+    static constexpr Point Bounds[6][2] = {
+        { { 0, 240, 0 }, { Full, Full, Full } },
+        { { 0, 0, 0 }, { Full, 16, Full } },
+        { { 0, 72, 240 }, { Full, 200, Full } },
+        { { 0, 72, 0 }, { Full, 200, 16 } },
+        { { 240, 72, 0 }, { Full, 200, Full } },
+        { { 0, 72, 0 }, { 16, 200, Full } },
+    };
+    std::vector<ModelQuad> quads;
+    const Point* bounds = Bounds[std::min<uint32_t>(facing, 5)];
+    appendCuboid(quads, material, bounds[0], bounds[1]);
+    return quads;
+}
+
+std::vector<ModelQuad> hangingWallSign(uint32_t material, uint32_t facing)
+{
+    static constexpr Point Parts[6][4] = {
+        { { 16, 120, 48 }, { 240, 136, 176 }, { 96, 128, 176 }, { 160, Full, Full } },
+        { { 16, 120, 80 }, { 240, 136, 208 }, { 96, 0, 0 }, { 160, 128, 80 } },
+        { { 16, 48, 120 }, { 240, 176, 136 }, { 96, 224, 128 }, { 160, Full, Full } },
+        { { 16, 48, 120 }, { 240, 176, 136 }, { 96, 224, 0 }, { 160, Full, 128 } },
+        { { 120, 48, 16 }, { 136, 176, 240 }, { 128, 224, 96 }, { Full, Full, 160 } },
+        { { 120, 48, 16 }, { 136, 176, 240 }, { 0, 224, 96 }, { 128, Full, 160 } },
+    };
+    const Point* parts = Parts[std::min<uint32_t>(facing, 5)];
+    std::vector<ModelQuad> quads;
+    appendCuboid(quads, material, parts[0], parts[1]);
+    appendCuboid(quads, material, parts[2], parts[3]);
+    return quads;
+}
+
+std::vector<ModelQuad> hangingCeilingSign(uint32_t material, uint32_t rotation, bool attached)
+{
+    std::vector<ModelQuad> quads;
+    appendCuboid(quads, material, { 16, 48, 120 }, { 240, 176, 136 });
+    if (attached) {
+        appendCuboid(quads, material, { 48, 176, 120 }, { 64, Full, 136 });
+        appendCuboid(quads, material, { 192, 176, 120 }, { 208, Full, 136 });
+    } else {
+        appendCuboid(quads, material, { 32, 176, 120 }, { 48, Full, 136 });
+        appendCuboid(quads, material, { 64, 176, 120 }, { 80, Full, 136 });
+        appendCuboid(quads, material, { 176, 176, 120 }, { 192, Full, 136 });
+        appendCuboid(quads, material, { 208, 176, 120 }, { 224, Full, 136 });
+    }
+    return rotateSign(std::move(quads), rotation);
+}
+
 std::vector<ModelQuad> flatPlane(uint32_t material, int16_t height)
 {
     ModelQuad quad;
