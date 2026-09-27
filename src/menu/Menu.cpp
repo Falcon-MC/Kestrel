@@ -214,8 +214,15 @@ void Menu::frame(Context& ui, float width, float height)
         field = Field::None;
         rebinding.reset();
     }
+    if (inGame() && session.dead) {
+        if (dialog == Dialog::None && screen == Screen::Title) {
+            dialog = Dialog::Death;
+        }
+    } else if (dialog == Dialog::Death) {
+        dialog = Dialog::None;
+    }
 
-    bool modal = dialog != Dialog::None || socialOpen;
+    bool modal =dialog != Dialog::None || socialOpen;
     ui.setBlocked(modal || capturesMouse());
 
     if (!worldVisible()) {
@@ -267,6 +274,9 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     case Dialog::ProfileOptions:
         profileOptions(ui, width, height);
+        break;
+    case Dialog::Death:
+        deathScreen(ui, width, height);
         break;
     case Dialog::Connecting:
     case Dialog::ConnectionError:
@@ -624,6 +634,35 @@ void Menu::pause(Context& ui, float width, float height)
     playerModel(ui, dressingX + 41.0f, y - 13.0f, 4.06f);
 }
 
+/**
+ * The screen that covers the world while the player is dead: a red veil, the
+ * death title and cause, respawn, and the game menu, which comes back here
+ * when resumed.
+ */
+void Menu::deathScreen(Context& ui, float width, float height)
+{
+    ui.fill({ 0.0f, 0.0f, width, height }, { 110, 0, 0, 120 });
+    float top = std::round(height * 0.265f);
+    ui.textCentered(upperCase(tr("hbui.gameplay.DeathScreen.youDied", "You Died!")), TextStyle::HeadingLarge, { 0.0f, top - 12.0f, width, 24.0f }, White);
+    if (!session.deathMessage.empty()) {
+        ui.textCentered(session.deathMessage, TextStyle::Ui, { 0.0f, top + 10.0f, width, 12.0f }, White);
+    }
+
+    constexpr float ButtonWidth = 158.0f;
+    constexpr float ButtonHeight = 20.0f;
+    float x = std::round((width - ButtonWidth) * 0.5f);
+    float y = std::round(height * 0.713f);
+    bool waiting = respawnClicked != std::chrono::steady_clock::time_point {} && std::chrono::steady_clock::now() - respawnClicked < std::chrono::seconds(5);
+    std::string respawnLabel = upperCase(waiting ? tr("hbui.gameplay.DeathScreen.respawning", "Respawning...") : tr("hbui.gameplay.DeathScreen.respawn", "Respawn"));
+    if (ui.pressableButton("death:respawn", "pressableElevatedPrimary", respawnLabel, { x, y, ButtonWidth, ButtonHeight }, TextStyle::HeadingSmall, !waiting)) {
+        respawnRequested = true;
+        respawnClicked = std::chrono::steady_clock::now();
+    }
+    if (ui.pressableButton("death:menu", "pressableElevatedSecondary", tr("hbui.gameplay.DeathScreen.gameMenu", "Game Menu"), { x, y + ButtonHeight + 6.0f, ButtonWidth, ButtonHeight })) {
+        dialog = Dialog::Pause;
+    }
+}
+
 void Menu::progressDialog(Context& ui, float width, float height)
 {
     constexpr float DialogWidth = 286.67f;
@@ -926,6 +965,8 @@ void Menu::handleKeys(Context& ui)
         closeChat();
     } else if (dialog == Dialog::Pause) {
         dialog = Dialog::None;
+    } else if (dialog == Dialog::Death) {
+        dialog = Dialog::Pause;
     } else if (dialog == Dialog::SignIn) {
         accountRequest = AccountRequest::Cancel;
         dialog = Dialog::None;

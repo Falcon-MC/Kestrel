@@ -31,14 +31,6 @@ constexpr Color RecentTint { 160, 224, 129, 255 };
 constexpr Color EarnedFrame { 248, 175, 43, 255 };
 constexpr Color OnlineDot { 88, 196, 72, 255 };
 
-std::string upperCase(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::toupper(c));
-    });
-    return text;
-}
-
 /**
  * A count with a comma between every group of three digits, the way the
  * profile statistics print numbers.

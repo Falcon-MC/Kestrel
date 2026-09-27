@@ -123,7 +123,12 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         MotionVector feet { respawn->mPosition.x, respawn->mPosition.y - EyeHeight, respawn->mPosition.z };
         motion.reset(feet);
         debugLog("respawn at " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
-        if (connection) {
+        bool dead = false;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            dead = current.dead;
+        }
+        if (connection && !dead) {
             RespawnPacket ready;
             ready.mPosition = respawn->mPosition;
             ready.mState = RespawnPacket::State::ClientReady;

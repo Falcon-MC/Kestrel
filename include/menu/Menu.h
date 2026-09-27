@@ -79,6 +79,7 @@ enum class Dialog {
     ConnectionError,
     Chat,
     ProfileOptions,
+    Death,
 };
 
 enum class Field {
@@ -146,6 +147,19 @@ struct RealmEntry {
     bool expired = false;
 };
 
+/**
+ * The text with its ASCII letters in capitals, the way menu headings print.
+ */
+inline std::string upperCase(std::string text)
+{
+    for (char& c : text) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return text;
+}
+
 struct ProfileAchievement {
     std::string name;
     std::string description;
@@ -204,6 +218,8 @@ enum class SessionStatus {
 struct SessionInfo {
     SessionStatus status = SessionStatus::Idle;
     bool loadingTerrain = false;
+    bool dead = false;
+    std::string deathMessage;
     std::string name;
     std::string displayName;
     std::string levelName;
@@ -385,6 +401,13 @@ public:
     bool capturesMouse() const;
     float captionHeight() const;
 
+    bool takeRespawnRequest()
+    {
+        bool requested = respawnRequested;
+        respawnRequested = false;
+        return requested;
+    }
+
     bool takeDisconnectRequest()
     {
         bool requested = disconnectRequested;
@@ -502,6 +525,7 @@ private:
     void profileSummary(ui::Context& ui, const ui::Rect& area);
     void profileStats(ui::Context& ui, const ui::Rect& area);
     void profileOptions(ui::Context& ui, float width, float height);
+    void deathScreen(ui::Context& ui, float width, float height);
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
@@ -595,6 +619,8 @@ private:
     float sidebarScroll = 0.0f;
     float pageContent = 0.0f;
     bool disconnectRequested = false;
+    bool respawnRequested = false;
+    std::chrono::steady_clock::time_point respawnClicked {};
     std::optional<bool> packAnswer;
     std::deque<ChatLine> chatLines;
     std::string chatDraft;

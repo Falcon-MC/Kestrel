@@ -541,6 +541,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::LevelEvent:
     case MinecraftPacketIds::NetworkStackLatency:
     case MinecraftPacketIds::Respawn:
+    case MinecraftPacketIds::DeathInfo:
     case MinecraftPacketIds::LevelSoundEvent:
     case MinecraftPacketIds::PlaySound:
     case MinecraftPacketIds::StopSound:
@@ -1121,6 +1122,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         }
         if (int slot = requestedSlot.exchange(-1); slot >= 0) {
             sendSelectedSlot(slot);
+        }
+        if (respawnRequested.exchange(false)) {
+            sendRespawnRequest();
         }
         flushChat();
         tickMotion();
