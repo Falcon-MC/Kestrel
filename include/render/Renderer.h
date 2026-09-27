@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
 
 namespace kestrel {
 
@@ -181,6 +183,8 @@ class Renderer {
 public:
     virtual ~Renderer() = default;
 
+    virtual std::string_view backendName() const = 0;
+    virtual const std::string& deviceName() const = 0;
     virtual uint64_t submittedFrames() const = 0;
     virtual CompletedFrame completedFrame() const = 0;
 

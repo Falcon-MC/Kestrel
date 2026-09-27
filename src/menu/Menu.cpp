@@ -1058,6 +1058,27 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
     cancelled = ui.classicButton("dialog:cancel", cancel, { well.x + 4.0f, y + 22.0f, well.w - 8.0f, 20.0f });
 }
 
+namespace {
+
+float debugColumn(Context& ui, const std::vector<std::string>& lines, float width, bool alignRight)
+{
+    constexpr Color Backdrop { 80, 80, 80, 144 };
+    constexpr Color Ink { 224, 224, 224, 255 };
+    float y = 2.0f;
+    for (const std::string& line : lines) {
+        if (!line.empty()) {
+            float w = ui.measure(line, TextStyle::Pixel);
+            float x = alignRight ? width - 2.0f - w : 2.0f;
+            ui.fill({ x - 1.0f, y - 1.0f, w + 2.0f, 10.0f }, Backdrop);
+            ui.text(line, TextStyle::Pixel, x, y, Ink);
+        }
+        y += 10.0f;
+    }
+    return y;
+}
+
+}
+
 void Menu::gameView(Context& ui, float width, float height)
 {
     drawNameTags(ui, hud.nameTags);
@@ -1067,28 +1088,8 @@ void Menu::gameView(Context& ui, float width, float height)
 
     float y = 2.0f;
     if (debugShown) {
-        std::vector<std::string> lines {
-            session.levelName.empty() ? session.name : session.levelName,
-            cameraInfo,
-            "Looking at " + (session.targetBlock.empty() ? std::string("nothing") : session.targetBlock),
-            "Chunks " + std::to_string(session.columns) + ", sub-chunks " + std::to_string(session.subChunks) + ", pending " + std::to_string(session.pendingSubChunks),
-            "Meshes " + std::to_string(session.meshes) + ", quads " + std::to_string(session.meshQuads) + ", jobs " + std::to_string(session.meshJobs),
-            "Textures " + std::to_string(session.textureLayers) + ", decode errors " + std::to_string(session.worldErrors),
-            session.registryInfo,
-        };
-        if (!session.assetsError.empty()) {
-            lines.push_back(session.assetsError);
-        }
-        if (!session.lastWorldError.empty()) {
-            lines.push_back(session.lastWorldError);
-        }
-        for (const std::string& line : lines) {
-            if (!line.empty()) {
-                ui.fill({ 1.0f, y - 1.0f, ui.measure(line, TextStyle::Pixel) + 2.0f, 10.0f }, { 0, 0, 0, 110 });
-                ui.text(line, TextStyle::Pixel, 2.0f, y, White);
-            }
-            y += 10.0f;
-        }
+        y = debugColumn(ui, debugView.left, width, false);
+        debugColumn(ui, debugView.right, width, true);
     }
 
     drawHud(ui, hud, 0.0f, 0.0f, width, height);

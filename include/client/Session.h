@@ -18,6 +18,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 
 class BedrockConnection;
@@ -53,6 +54,16 @@ struct BlockHit {
     int32_t face = 0;
     std::array<double, 3> point {};
     double distance = 0.0;
+};
+
+/**
+ * The block the crosshair rests on as the debug screen lists it: where it
+ * is, its identifier and each state as "name: value".
+ */
+struct TargetBlock {
+    std::array<int32_t, 3> cell {};
+    std::string name;
+    std::vector<std::string> states;
 };
 
 struct ActorView {
@@ -274,7 +285,7 @@ struct SessionSnapshot {
     uint32_t airHash = 0;
     uint64_t unresolvedLookups = 0;
     uint32_t lastUnresolved = 0;
-    std::string targetBlock;
+    std::optional<TargetBlock> targetBlock;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -315,6 +326,8 @@ public:
 
     void connect(std::string name, std::string target, MinecraftAuthentication* authentication, std::string offlineName);
     void disconnect();
+
+    static std::string_view gameVersion();
 
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
@@ -382,7 +395,7 @@ private:
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);
     bool skinWorn(const std::string& uuid) const;
-    std::string traceTarget();
+    std::optional<TargetBlock> traceTarget();
     std::optional<BlockHit> traceBlock(double reach);
     void interact(bool use);
     double boomFraction();

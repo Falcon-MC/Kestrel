@@ -343,6 +343,7 @@ public:
         if (!device) {
             throw std::runtime_error("No Metal device");
         }
+        adapterName = device.name.UTF8String;
         queue = [device newCommandQueue];
 
         layer = (__bridge CAMetalLayer*)window.nativeHandle();
@@ -624,6 +625,16 @@ public:
         drawable = nil;
     }
 
+    std::string_view backendName() const override
+    {
+        return "Metal";
+    }
+
+    const std::string& deviceName() const override
+    {
+        return adapterName;
+    }
+
     uint64_t submittedFrames() const override
     {
         return submissions;
@@ -810,6 +821,7 @@ private:
     uint32_t width;
     uint32_t height;
     id<MTLDevice> device;
+    std::string adapterName;
     id<MTLCommandQueue> queue;
     id<MTLRenderPipelineState> uiPipeline;
     id<MTLSamplerState> sampler;

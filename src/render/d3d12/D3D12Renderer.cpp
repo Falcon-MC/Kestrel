@@ -438,6 +438,14 @@ public:
         if (!device) {
             throw std::runtime_error("No D3D12 device");
         }
+        DXGI_ADAPTER_DESC1 adapterDesc {};
+        if (SUCCEEDED(adapter->GetDesc1(&adapterDesc))) {
+            int length = WideCharToMultiByte(CP_UTF8, 0, adapterDesc.Description, -1, nullptr, 0, nullptr, nullptr);
+            if (length > 1) {
+                adapterName.resize(static_cast<size_t>(length - 1));
+                WideCharToMultiByte(CP_UTF8, 0, adapterDesc.Description, -1, adapterName.data(), length, nullptr, nullptr);
+            }
+        }
 
         D3D12_COMMAND_QUEUE_DESC queueDesc {};
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -996,6 +1004,16 @@ public:
         frameIndex = swapChain->GetCurrentBackBufferIndex();
     }
 
+    std::string_view backendName() const override
+    {
+        return "Direct3D 12";
+    }
+
+    const std::string& deviceName() const override
+    {
+        return adapterName;
+    }
+
     uint64_t submittedFrames() const override
     {
         return submissions;
@@ -1341,6 +1359,7 @@ private:
     uint32_t height;
     ComPtr<IDXGIFactory6> factory;
     ComPtr<ID3D12Device> device;
+    std::string adapterName;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<IDXGISwapChain3> swapChain;
     ComPtr<ID3D12DescriptorHeap> rtvHeap;

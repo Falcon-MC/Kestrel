@@ -622,6 +622,16 @@ public:
         vkCmdDrawIndexed(command, static_cast<uint32_t>(list.indices().size()), 1, 0, 0, 0);
     }
 
+    std::string_view backendName() const override
+    {
+        return "Vulkan";
+    }
+
+    const std::string& deviceName() const override
+    {
+        return adapterName;
+    }
+
     uint64_t submittedFrames() const override
     {
         return submissions;
@@ -1061,6 +1071,9 @@ private:
         if (physicalDevice == VK_NULL_HANDLE) {
             throw std::runtime_error("No Vulkan device can present to this window");
         }
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        adapterName = properties.deviceName;
     }
 
     void createDevice()
@@ -1500,6 +1513,7 @@ private:
     VkInstance instance = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    std::string adapterName;
     uint32_t queueFamily = 0;
     VkDevice device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;

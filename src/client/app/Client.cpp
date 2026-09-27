@@ -105,6 +105,7 @@ int Client::run()
         auto now = std::chrono::steady_clock::now();
         float deltaSeconds = std::min(std::chrono::duration<float>(now - lastFrame).count(), 0.1f);
         lastFrame = now;
+        countFrame(now);
 
         {
             Profiler::Section section(profiler, "account");
@@ -173,9 +174,6 @@ int Client::run()
                 camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
                 eyePosition = { camera.x(), camera.y(), camera.z() };
             }
-            char cameraText[96];
-            std::snprintf(cameraText, sizeof(cameraText), "Camera %.1f, %.1f, %.1f", camera.x(), camera.y(), camera.z());
-            menu.setCameraInfo(cameraText);
             session.setLookRay(eyePosition, camera.forward());
         }
         {
@@ -722,6 +720,9 @@ void Client::syncSession()
 {
     SessionSnapshot snapshot = session.snapshot();
     playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
+    if (menu.debugVisible()) {
+        menu.setDebugView(buildDebugView(snapshot));
+    }
     updateAudio(snapshot);
     applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : std::vector<std::shared_ptr<const world::PackFiles>> {});
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
@@ -859,12 +860,6 @@ void Client::syncSession()
     info.materials = snapshot.materials;
     info.diagnosticVisuals = snapshot.diagnosticVisuals;
     info.assetsError = std::move(snapshot.assetsError);
-    char registry[160];
-    std::snprintf(registry, sizeof(registry), "IDs %s \xC2\xB7 custom %zu (%zu states) \xC2\xB7 air %u \xC2\xB7 unknown %llu \xC2\xB7 at player: %s",
-        snapshot.hashedIds ? "hashed" : "sequential", snapshot.customBlocks, snapshot.customPermutations, snapshot.airSequential,
-        static_cast<unsigned long long>(snapshot.unresolvedLookups), snapshot.blockAtPlayer.c_str());
-    info.registryInfo = registry;
-    info.targetBlock = std::move(snapshot.targetBlock);
     info.packPrompt = snapshot.packPrompt;
     info.packCount = snapshot.packCount;
     info.packSkippable = snapshot.packSkippable;

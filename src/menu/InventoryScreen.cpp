@@ -77,9 +77,8 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
     const bool wide = showBook && creativeMode && wideCreative && !workbench;
     const float panelHeight = container && state.containerSize > 27 ? 220.0f : 166.0f;
     const float totalWidth = showBook ? 326.0f : 176.0f;
-    float physicalScale = std::max(1.0f, std::min(std::floor(width * ui.pixelScale() / 480.0f), std::floor(height * ui.pixelScale() / 360.0f)));
-    physicalScale = std::max(1.0f, std::min(physicalScale, std::floor(std::min(width * ui.pixelScale() / (totalWidth + 8), height * ui.pixelScale() / (panelHeight + 40)))));
-    float unit = physicalScale / ui.pixelScale();
+    float fit = std::min({ 1.0f, width / (totalWidth + 8), height / (panelHeight + 40) });
+    float unit = std::max(1.0f, std::floor(fit * ui.pixelScale())) / ui.pixelScale();
     Layout l { ui, std::floor((width - totalWidth * unit) * 0.5f * ui.pixelScale()) / ui.pixelScale(),
         std::floor((height - panelHeight * unit) * 0.5f * ui.pixelScale()) / ui.pixelScale(), unit };
     const float right = showBook ? 150.0f : 0.0f;
