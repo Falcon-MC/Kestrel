@@ -105,18 +105,7 @@ std::string BlockAssets::describe(uint32_t networkValue, bool hashed, const Sequ
     if (networkValue == 0xFFFFFFFFu) {
         return "implicit air";
     }
-    int32_t index = -1;
-    if (!hashed && sequential) {
-        if (networkValue < sequential->size()) {
-            index = (*sequential)[networkValue];
-        }
-    } else {
-        index = registry.resolve(networkValue, hashed);
-        if (index < 0) {
-            auto custom = customByHash.find(networkValue);
-            index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
-        }
-    }
+    int32_t index = indexOf(networkValue, hashed, sequential);
     if (index < 0) {
         return "unknown #" + std::to_string(networkValue);
     }
@@ -128,19 +117,37 @@ std::string BlockAssets::blockName(uint32_t networkValue, bool hashed, const Seq
     if (networkValue == 0xFFFFFFFFu) {
         return "minecraft:air";
     }
-    int32_t index = -1;
-    if (!hashed && sequential) {
-        if (networkValue < sequential->size()) {
-            index = (*sequential)[networkValue];
-        }
-    } else {
-        index = registry.resolve(networkValue, hashed);
-        if (index < 0) {
-            auto custom = customByHash.find(networkValue);
-            index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
-        }
-    }
+    int32_t index = indexOf(networkValue, hashed, sequential);
     return index < 0 ? std::string() : nameAt(static_cast<size_t>(index));
+}
+
+const Tag* BlockAssets::blockStates(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    if (networkValue == 0xFFFFFFFFu) {
+        return nullptr;
+    }
+    int32_t index = indexOf(networkValue, hashed, sequential);
+    if (index < 0) {
+        return nullptr;
+    }
+    size_t at = static_cast<size_t>(index);
+    if (at < registry.records().size()) {
+        return &registry.records()[at].states;
+    }
+    return &customStates[at - registry.records().size()].states;
+}
+
+int32_t BlockAssets::indexOf(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    if (!hashed && sequential) {
+        return networkValue < sequential->size() ? (*sequential)[networkValue] : -1;
+    }
+    int32_t index = registry.resolve(networkValue, hashed);
+    if (index < 0) {
+        auto custom = customByHash.find(networkValue);
+        index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
+    }
+    return index;
 }
 
 const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const

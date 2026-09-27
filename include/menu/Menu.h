@@ -219,6 +219,15 @@ enum class SessionStatus {
     Failed,
 };
 
+/**
+ * The F3 screen laid out like Java Edition's: lines pinned to the top left
+ * and lines pinned to the top right. Empty strings leave a gap.
+ */
+struct DebugView {
+    std::vector<std::string> left;
+    std::vector<std::string> right;
+};
+
 struct SessionInfo {
     SessionStatus status = SessionStatus::Idle;
     bool loadingTerrain = false;
@@ -246,8 +255,6 @@ struct SessionInfo {
     size_t materials = 0;
     size_t diagnosticVisuals = 0;
     std::string assetsError;
-    std::string registryInfo;
-    std::string targetBlock;
     std::string error;
     bool packPrompt = false;
     size_t packCount = 0;
@@ -367,9 +374,14 @@ public:
     void setAccount(AccountInfo info);
     void setSession(SessionInfo info);
 
-    void setCameraInfo(std::string text)
+    bool debugVisible() const
     {
-        cameraInfo = std::move(text);
+        return debugShown;
+    }
+
+    void setDebugView(DebugView view)
+    {
+        debugView = std::move(view);
     }
 
     void setServerStatus(std::map<std::string, ServerStatus> status)
@@ -641,7 +653,7 @@ private:
     float errorReasonScroll = 0.0f;
     float errorInfoScroll = 0.0f;
     std::string errorDiagnostics;
-    std::string cameraInfo;
+    DebugView debugView;
     bool debugShown = false;
     HudView hud;
     std::shared_ptr<const ui::JsonUi> hudUi;

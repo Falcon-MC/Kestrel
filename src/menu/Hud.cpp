@@ -15,7 +15,8 @@ constexpr uint8_t HotbarCapAlpha = 166;
 constexpr int32_t MaxHeartRows = 10;
 constexpr ui::Color White { 255, 255, 255, 255 };
 constexpr ui::Color TextShadow { 63, 63, 63, 255 };
-constexpr ui::Color LevelColor { 128, 255, 32, 255 };
+constexpr ui::Color LevelColor { 128, 255, 0, 255 };
+constexpr ui::Color LevelShadow { 32, 63, 0, 255 };
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
 
 const char* effectSprite(int32_t id)
@@ -295,13 +296,9 @@ void drawExperience(const Layout& layout)
         std::string value = std::to_string(view.level);
         float width = layout.ui.measure(value, ui::TextStyle::Pixel);
         float height = layout.ui.lineHeight(ui::TextStyle::Pixel);
-        ui::Rect bar = layout.rect(0.0f, layout.guiHeight - 31.0f, 0.0f, 0.0f);
+        ui::Rect bar = layout.rect(0.0f, top, 0.0f, 0.0f);
         float x = std::floor(layout.originX + (layout.guiWidth * layout.unit - width) * 0.5f);
-        float y = std::floor(bar.y - height * 0.5f - 2.0f);
-        for (const std::array<float, 2>& offset : { std::array<float, 2> { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f } }) {
-            layout.ui.text(value, ui::TextStyle::Pixel, x + offset[0], y + offset[1], { 0, 0, 0, 255 });
-        }
-        layout.ui.text(value, ui::TextStyle::Pixel, x, y, LevelColor);
+        layout.ui.textShadowed(value, ui::TextStyle::Pixel, x, std::floor(bar.y - height), LevelColor, LevelShadow);
     }
 }
 

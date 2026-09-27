@@ -11,6 +11,7 @@
 #include "world/Mesher.h"
 #include "menu/Menu.h"
 #include "menu/ServerStore.h"
+#include "platform/System.h"
 #include "ui/Context.h"
 #include "ui/DrawList.h"
 #include "ui/Font.h"
@@ -19,6 +20,7 @@
 #include "ui/Skin.h"
 
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -88,6 +90,8 @@ private:
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
+    void countFrame(std::chrono::steady_clock::time_point now);
+    menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
     void handleHotbarInput();
     bool terrainReady(const SessionSnapshot& snapshot);
     float guiScale() const;
@@ -183,6 +187,11 @@ private:
     std::string heldItemKey;
     std::vector<uint8_t> heldIcon;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
+    std::chrono::steady_clock::time_point fpsWindowStart;
+    int framesCounted = 0;
+    int framesPerSecond = 0;
+    platform::MemoryUsage memory;
+    std::string processor = platform::processorName();
 };
 
 }

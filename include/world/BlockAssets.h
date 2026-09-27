@@ -278,6 +278,7 @@ public:
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    const Tag* blockStates(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**
      * The block state hash of a network block value, or 0 for a value that
@@ -422,6 +423,7 @@ private:
     void buildBlockEntityTemplates(PackSource& pack, std::vector<std::vector<uint8_t>>& layers, std::vector<bool>& overlayLayers, std::map<std::string, uint32_t>& materialByKey,
         const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
+    int32_t indexOf(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**
      * The default state of the block an item places, with its carried

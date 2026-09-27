@@ -355,6 +355,11 @@ void Session::disconnect()
     }
 }
 
+std::string_view Session::gameVersion()
+{
+    return GameVersion;
+}
+
 SessionSnapshot Session::snapshot() const
 {
     std::lock_guard<std::mutex> guard(mutex);
@@ -535,13 +540,46 @@ double Session::boomFraction()
     return std::max(fraction * length - Epsilon, 0.0) / length;
 }
 
-std::string Session::traceTarget()
+std::optional<TargetBlock> Session::traceTarget()
 {
-    std::optional<BlockHit> hit = traceBlock(32.0);
+    std::optional<BlockHit> hit = traceBlock(20.0);
     if (!hit) {
-        return "nothing";
+        return std::nullopt;
     }
-    return hit->name + "  (" + std::to_string(hit->cell[0]) + ", " + std::to_string(hit->cell[1]) + ", " + std::to_string(hit->cell[2]) + ")";
+    TargetBlock target;
+    target.cell = hit->cell;
+    target.name = assets->blockName(hit->value, ids.hashed, ids.sequential.get());
+    if (target.name.empty()) {
+        target.name = hit->name;
+    }
+    const Tag* states = assets->blockStates(hit->value, ids.hashed, ids.sequential.get());
+    if (!states || !states->isCompound()) {
+        return target;
+    }
+    const std::vector<std::string>& keys = states->getKeys();
+    const std::vector<Tag>& values = states->getValues();
+    for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
+        const Tag& value = values[i];
+        std::string shown;
+        switch (value.getType()) {
+        case Tag::Type::Byte:
+            shown = value.asByte() ? "\xC2\xA7atrue" : "\xC2\xA7cfalse";
+            break;
+        case Tag::Type::Short:
+            shown = std::to_string(value.asShort());
+            break;
+        case Tag::Type::Int:
+            shown = std::to_string(value.asInt());
+            break;
+        case Tag::Type::String:
+            shown = value.asString();
+            break;
+        default:
+            continue;
+        }
+        target.states.push_back(keys[i] + ": " + shown);
+    }
+    return target;
 }
 
 void Session::handleWorldPacket(const std::string& payload)
