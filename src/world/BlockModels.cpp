@@ -803,6 +803,32 @@ std::vector<ModelQuad> rotateSign(std::vector<ModelQuad> quads, uint32_t rotatio
 
 }
 
+std::vector<ModelQuad> bamboo(uint32_t stem, uint32_t leaves, bool thick)
+{
+    int16_t size = thick ? 48 : 32;
+    int16_t low = static_cast<int16_t>((Full - size) / 2);
+    int16_t high = static_cast<int16_t>(low + size);
+    uint16_t width = static_cast<uint16_t>(thick ? 3 : 2);
+    std::vector<ModelQuad> quads;
+    Materials materials;
+    materials.fill(stem);
+    auto faces = cuboid(materials, { low, 0, low }, { high, Full, high });
+    for (uint32_t side = 0; side < 6; ++side) {
+        ModelQuad quad = faces[side];
+        if (side == Up || side == Down) {
+            rectUvs(quad, side, { static_cast<uint16_t>(16 - width), 0, 16, width });
+        } else {
+            rectUvs(quad, side, { 0, 0, width, 16 });
+        }
+        quads.push_back(quad);
+    }
+    if (leaves != DiagnosticMaterial) {
+        std::vector<ModelQuad> crossed = cross(leaves, leaves);
+        quads.insert(quads.end(), crossed.begin(), crossed.end());
+    }
+    return quads;
+}
+
 std::vector<ModelQuad> standingSign(uint32_t material, uint32_t rotation)
 {
     std::vector<ModelQuad> quads;

@@ -158,7 +158,7 @@ Family classify(const std::string& name)
         || isAquaticName(name) || name == "cocoa" || isCropName(name) || name == "wildflowers" || name == "pink_petals"
         || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
         || name == "cake" || name == "farmland" || isShelfName(name) || isCrossName(name) || contains(name, "shulker_box")
-        || name == "ladder" || name == "waterlily" || name == "lily_pad") {
+        || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo") {
         return Family::Model;
     }
     if (endsWith(name, "leaves") || endsWith(name, "leaves_flowered")) {
@@ -199,6 +199,7 @@ enum class ModelKind {
     Chest,
     Sign,
     SinkingCube,
+    Bamboo,
 };
 
 ModelKind modelKind(const std::string& name)
@@ -208,6 +209,9 @@ ModelKind modelKind(const std::string& name)
     }
     if (name == "soul_sand" || name == "mud") {
         return ModelKind::SinkingCube;
+    }
+    if (name == "bamboo") {
+        return ModelKind::Bamboo;
     }
     if (contains(name, "trapdoor")) {
         return ModelKind::Trapdoor;
@@ -1535,6 +1539,19 @@ bool BlockAssets::build(std::string& error)
                 }
                 modelTemplate = intern(keyOf("cross", uniform(face), {}), [&] {
                     pushTemplate(models::cross(material, material), 0);
+                });
+                break;
+            }
+            case ModelKind::Bamboo: {
+                uint32_t stem = materials[models::North];
+                if (stem == DiagnosticMaterial) {
+                    break;
+                }
+                std::string leafSize = stateString(record.states, "bamboo_leaf_size");
+                uint32_t leaves = leafSize == "large_leaves" ? materials[models::Up] : leafSize == "small_leaves" ? materials[models::South] : DiagnosticMaterial;
+                bool thick = stateString(record.states, "bamboo_stalk_thickness") == "thick";
+                modelTemplate = intern(keyOf("bamboo", { stem, leaves, 0, 0, 0, 0 }, { thick }), [&] {
+                    pushTemplate(models::bamboo(stem, leaves, thick), 0);
                 });
                 break;
             }
