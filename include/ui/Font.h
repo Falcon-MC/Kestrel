@@ -32,6 +32,8 @@ enum class TextStyle {
     Body,
     BodySmall,
     BodyBold,
+    ErrorBody,
+    ErrorTab,
     Count,
 };
 

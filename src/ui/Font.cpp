@@ -46,6 +46,8 @@ constexpr std::array<FaceSpec, static_cast<size_t>(TextStyle::Count)> Specs { {
     { Noto, 14.0f },
     { Noto, 12.0f },
     { NotoBold, 14.0f },
+    { Noto, 24.0f },
+    { Noto, 20.0f },
 } };
 
 constexpr uint32_t AtlasWidth = Skin::AtlasSize;

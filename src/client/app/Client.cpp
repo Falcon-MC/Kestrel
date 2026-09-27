@@ -185,6 +185,8 @@ int Client::run()
                     entry.checked = ping.state != PingState::Checking;
                     entry.online = ping.state == PingState::Online;
                     entry.motd = ping.motd;
+                    entry.players = ping.players;
+                    entry.latencyMs = ping.latencyMs;
                 }
                 menu.setServerStatus(std::move(status));
                 syncFeatured();

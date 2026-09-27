@@ -138,6 +138,7 @@ std::optional<ServerPing> pingOnce(const std::string& address)
     std::optional<ServerPing> result;
     std::array<uint8_t, 2048> buffer {};
     for (int attempt = 0; attempt < Attempts && !result; ++attempt) {
+        auto sentAt = std::chrono::steady_clock::now();
         sendto(socket, reinterpret_cast<const char*>(ping.data()), static_cast<int>(ping.size()), 0, resolved->ai_addr, static_cast<int>(resolved->ai_addrlen));
 #ifdef _WIN32
         WSAPOLLFD waiting { socket, POLLRDNORM, 0 };
@@ -159,6 +160,7 @@ std::optional<ServerPing> pingOnce(const std::string& address)
             continue;
         }
         result = parsePong(std::string(reinterpret_cast<const char*>(buffer.data() + Header), length));
+        result->latencyMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - sentAt).count());
     }
     closeSocket(socket);
     freeaddrinfo(resolved);

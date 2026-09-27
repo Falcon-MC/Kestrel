@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <random>
 
 namespace kestrel::menu {
@@ -166,7 +167,27 @@ void Menu::setSession(SessionInfo info)
         break;
     case SessionStatus::Failed:
     case SessionStatus::Disconnected:
+        errorDetailsShown = false;
+        errorReasonScroll = errorInfoScroll = 0.0f;
+        {
+            auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            std::tm utc {};
+#ifdef _WIN32
+            gmtime_s(&utc, &timestamp);
+#else
+            gmtime_r(&timestamp, &utc);
+#endif
+            char date[32] {};
+            std::strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%SZ", &utc);
+            errorDiagnostics = "Kestrel\nDate: " + std::string(date)
+                + "\nTransport: RakNet\nServer: " + session.name
+                + "\nWorldName: " + session.levelName
+                + "\nPackets received: " + std::to_string(session.packetsReceived)
+                + "\nDimension: " + std::to_string(session.dimension);
+        }
         dialog = Dialog::ConnectionError;
+        field = Field::None;
+        socialOpen = false;
         if (screen == Screen::Title) {
             navigate(gameReturnScreen);
         }
@@ -287,9 +308,11 @@ void Menu::frame(Context& ui, float width, float height)
         deathScreen(ui, width, height);
         break;
     case Dialog::Connecting:
-    case Dialog::ConnectionError:
     case Dialog::SignIn:
         progressDialog(ui, width, height);
+        break;
+    case Dialog::ConnectionError:
+        connectionError(ui, width, height);
         break;
     case Dialog::ConfirmDelete: {
         std::optional<ServerRow> row = selectedRow();
@@ -755,6 +778,85 @@ void Menu::deathScreen(Context& ui, float width, float height)
     }
 }
 
+void Menu::connectionError(Context& ui, float width, float height)
+{
+    const std::string& server = session.name.empty() ? session.levelName : session.name;
+    std::string reason = session.error.empty() ? tr("disconnect.closed", "The connection was closed.")
+        : Localization::shared().translateMessage(session.error);
+    auto textPanel = [&](const Rect& area, std::string_view text, float& scroll, bool centered) {
+        float contentHeight = ui.paragraphHeight(text, TextStyle::ErrorBody, area.w - 6.0f);
+        scrollArea(ui, area, scroll, contentHeight);
+        ui.setClip(area);
+        float y = area.y + (centered ? std::max(0.0f, (area.h - contentHeight) * 0.5f) : 0.0f);
+        ui.paragraph(text, TextStyle::ErrorBody, area.x, y - scroll, area.w - 6.0f, White);
+        ui.clearClip();
+    };
+    if (!errorDetailsShown) {
+        float panelWidth = std::min(524.0f, width - 24.0f);
+        Rect panel { std::floor((width - panelWidth) * 0.5f), std::floor((height - 108.0f) * 0.5f), panelWidth, 108.0f };
+        ui.fill(panel, { 24, 24, 24, 255 });
+        ui.fill(panel.inset(1.0f), { 48, 48, 48, 255 });
+        std::string title = session.status == SessionStatus::Failed
+            ? tr("disconnectionScreen.title.unableToConnect", "Unable to connect.")
+            : server.empty() ? tr("hbui.ConnectionErrorRoute.server.disconnectedFromServer", "Disconnected from server")
+            : trf("hbui.ConnectionErrorRoute.server.disconnectedFrom", "Disconnected from %1$s", { server });
+        ui.setClip({ panel.x + 9.0f, panel.y + 1.0f, panel.w - 18.0f, 26.0f });
+        ui.textCentered(title, TextStyle::Pixel, { panel.x + 9.0f, panel.y + 1.0f, panel.w - 18.0f, 26.0f }, White);
+        ui.clearClip();
+        Rect well { panel.x + 9.0f, panel.y + 27.0f, panel.w - 18.0f, 40.0f };
+        ui.fill(well, { 34, 34, 34, 255 });
+        textPanel(well.inset(8.0f), reason, errorReasonScroll, true);
+        float buttonWidth = std::min(126.0f, (panel.w - 26.0f) * 0.5f);
+        float x = panel.x + (panel.w - buttonWidth * 2.0f - 8.0f) * 0.5f;
+        if (ui.classicButton("error:menu", tr("hbui.ConnectionErrorRoute.server.backToMenu", "Back to menu"),
+                { x, panel.y + 75.0f, buttonWidth, 24.0f })) {
+            dialog = Dialog::None;
+        }
+        if (ui.classicButton("error:details", tr("hbui.ConnectionErrorRoute.server.showDetails", "Show details"),
+                { x + buttonWidth + 8.0f, panel.y + 75.0f, buttonWidth, 24.0f })) {
+            errorDetailsShown = true;
+            errorReasonScroll = 0.0f;
+        }
+        return;
+    }
+
+    ui.fill({ 0.0f, 0.0f, width, 24.0f }, HeaderEdge);
+    ui.fill({ 0.0f, 0.0f, width, 23.0f }, HeaderBar);
+    ui.textCentered(tr("hbui.ConnectionErrorRoute.details.header", "Error details"), TextStyle::Heading,
+        { 30.0f, 0.0f, width - 60.0f, 23.0f }, InkDark);
+    Interaction back = ui.interact("error:back", { 0.0f, 0.0f, 30.0f, 24.0f });
+    ui.sprite({ 10.0f, 6.0f, 6.0f, 12.0f }, "hbui/arrowBack", back.hovered ? Muted1 : InkDark);
+    if (back.clicked) {
+        errorDetailsShown = false;
+        errorReasonScroll = 0.0f;
+    }
+
+    float totalWidth = std::min(632.0f, width - 32.0f);
+    bool stacked = totalWidth < 460.0f;
+    float panelHeight = std::min(144.0f, stacked ? (height - 64.0f) * 0.5f : height - 56.0f);
+    float totalHeight = stacked ? panelHeight * 2.0f + 8.0f : panelHeight;
+    float x = std::floor((width - totalWidth) * 0.5f);
+    float y = std::floor(24.0f + (height - 24.0f - totalHeight) * 0.5f);
+    float leftWidth = stacked ? totalWidth : std::floor((totalWidth - 8.0f) * 0.416f);
+    Rect left { x, y + 10.0f, leftWidth, panelHeight - 10.0f };
+    Rect right { stacked ? x : left.right() + 8.0f, stacked ? y + panelHeight + 8.0f : y,
+        stacked ? totalWidth : totalWidth - leftWidth - 8.0f, panelHeight };
+    ui.fill(left, { 112, 112, 112, 255 });
+    ui.fill(left.inset(1.0f), { 48, 48, 48, 255 });
+    ui.fill(right, { 112, 112, 112, 255 });
+    ui.fill(right.inset(1.0f), { 48, 48, 48, 255 });
+    std::string source = server.empty() ? tr("hbui.ConnectionErrorRoute.details.fromServerNoName", "From server")
+        : trf("hbui.ConnectionErrorRoute.details.fromServer", "From %1$s", { server });
+    float tabWidth = std::min(left.w, ui.measure(source, TextStyle::ErrorTab) + 8.0f);
+    ui.fill({ left.x, y, tabWidth, 13.0f }, { 65, 120, 177, 255 });
+    ui.fill({ left.x, left.y, left.w, 2.0f }, { 101, 164, 226, 255 });
+    ui.setClip({ left.x, y, tabWidth, 13.0f });
+    ui.text(source, TextStyle::ErrorTab, left.x + 4.0f, y + 1.0f, White);
+    ui.clearClip();
+    textPanel({ left.x + 9.0f, left.y + 20.0f, left.w - 18.0f, left.h - 29.0f }, reason, errorReasonScroll, false);
+    textPanel(right.inset(9.0f), errorDiagnostics, errorInfoScroll, false);
+}
+
 void Menu::progressDialog(Context& ui, float width, float height)
 {
     constexpr float DialogWidth = 286.67f;
@@ -795,10 +897,6 @@ void Menu::progressDialog(Context& ui, float width, float height)
             progress = true;
             break;
         }
-    } else if (dialog == Dialog::ConnectionError) {
-        heading = session.status == SessionStatus::Disconnected ? tr("disconnectionScreen.disconnected", "Disconnected from Server") : tr("disconnectionScreen.title.unableToConnect", "Unable to connect to world");
-        body = session.error.empty() ? tr("disconnect.closed", "The connection was closed.") : Localization::shared().translateMessage(session.error);
-        button = tr("gui.ok", "OK");
     } else if (session.packPrompt) {
         heading = tr("progressScreen.dialog.title.resourcePack", "Download Resource Packs?");
         body = session.packSkippable ? tr("progressScreen.dialog.message.resourcePack.optional", "This world has optional Resource Packs applied to it. Would you like to download them before you join?") : tr("progressScreen.dialog.message.resourcePack.serverRequired", "The owner of this world requires players to download all Resource Packs applied to it. Would you like to download them and join?");
@@ -874,12 +972,6 @@ void Menu::progressDialog(Context& ui, float width, float height)
             if (account.status != AccountStatus::Failed) {
                 accountRequest = AccountRequest::Cancel;
             }
-            dialog = Dialog::None;
-        }
-        return;
-    }
-    if (dialog == Dialog::ConnectionError) {
-        if (ui.classicButton("error:ok", button, primary)) {
             dialog = Dialog::None;
         }
         return;
@@ -1070,6 +1162,9 @@ void Menu::handleKeys(Context& ui)
     } else if (dialog == Dialog::Connecting) {
         disconnectRequested = true;
         dialog = Dialog::None;
+    } else if (dialog == Dialog::ConnectionError && errorDetailsShown) {
+        errorDetailsShown = false;
+        errorReasonScroll = 0.0f;
     } else if (dialog != Dialog::None) {
         dialog = Dialog::None;
     } else if (field != Field::None) {

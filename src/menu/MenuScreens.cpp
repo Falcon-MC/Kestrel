@@ -401,6 +401,7 @@ void Menu::serversTab(Context& ui, const Rect& area)
             }
             if (state.clicked && !selected) {
                 selection = Selection { row.group, row.index };
+                serverAddressShown = false;
                 detailScroll = 0.0f;
                 showcaseIndex = 0;
                 showcaseShown = std::chrono::steady_clock::now();
@@ -442,28 +443,59 @@ void Menu::serversTab(Context& ui, const Rect& area)
     if (!row) {
         return;
     }
-    ui.fill(detail, PanelDark);
-    Rect top { detail.x, detail.y, detail.w, 32.0f };
-    ui.fill(top, Divider);
-    ui.fill(top.inset(1.0f), PanelDark);
-    std::string heading = row->group == ServerGroup::Featured ? tr("thirdPartyWorld.Featured", "Featured server")
-        : row->group == ServerGroup::Creator ? tr("hbui.PlayScreen.serverTab.creatorExperience", "Creator experience")
-                                             : tr("menu.servers", "Saved server");
-    ui.text(heading, TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0, top.w - 190.0f);
-    if (ui.pressableButton("server:play", "pressableElevatedPrimary", upperCase(tr("menu.play", "Play")), { top.right() - 13.33f - 157.33f, top.y + 5.0f, 157.33f, 20.0f }, TextStyle::HeadingSmall)) {
+    if (row->group != ServerGroup::Saved) {
+        featuredDetail(ui, detail, featured[row->index]);
+        return;
+    }
+    auto status = serverStatus.find(row->address);
+    bool online = status != serverStatus.end() && status->second.online;
+    int latency = online ? status->second.latencyMs : -1;
+    bool highPing = latency >= 300;
+    std::string warning = tr("hbui.PlayScreen.serverTab.ServerNotifications.highPingWarning", "You don't have a strong connection to the chosen server. Your experience may be impacted.");
+    float warningHeight = highPing ? ui.paragraphHeight(warning, TextStyle::Pixel, detail.w - 16.0f) + 6.0f : 0.0f;
+    float contentHeight = warningHeight + (highPing ? 4.0f : 0.0f) + 32.0f + 108.0f + 41.0f;
+    scrollArea(ui, detail, detailScroll, contentHeight);
+    ui.setClip(detail);
+    float topY = detail.y - detailScroll;
+    if (highPing) {
+        ui.fill({ detail.x, topY, detail.w, warningHeight }, { 255, 235, 99, 255 });
+        ui.paragraph(warning, TextStyle::Pixel, detail.x + 8.0f, topY + 3.0f, detail.w - 16.0f, InkDark);
+        topY += warningHeight + 4.0f;
+    }
+    Rect top { detail.x, topY, detail.w, 32.0f };
+    ui.fill(top, { 31, 31, 31, 255 });
+    float playWidth = std::min(157.33f, top.w * 0.42f);
+    Rect play { top.right() - 13.0f - playWidth, top.y + 5.0f, playWidth, 22.0f };
+    const char* pingKey = latency < 0 ? "unavailablePing" : latency < 150 ? "lowPing" : latency < 300 ? "mediumPing" : "highPing";
+    const char* pingFallback = latency < 0 ? "Unavailable ping" : latency < 150 ? "Low ping" : latency < 300 ? "Medium ping" : "High ping";
+    std::string ping = tr(std::string("hbui.PlayScreen.serverTab.ServerDescription.") + pingKey, pingFallback);
+    float statusX = top.x + 12.0f;
+    int bars = latency < 0 ? 0 : latency < 150 ? 3 : latency < 300 ? 2 : 1;
+    Color signal = latency < 150 ? Color { 126, 214, 50, 255 } : latency < 300 ? Color { 255, 224, 0, 255 } : Color { 255, 120, 140, 255 };
+    for (int i = 0; i < 3; ++i) {
+        float h = 2.0f + i * 2.0f;
+        ui.fill({ statusX + i * 3.0f, top.y + 19.0f - h, 2.0f, h }, i < bars ? signal : Muted0);
+    }
+    float pingWidth = std::min(ui.measure(ping, TextStyle::Pixel), std::max(1.0f, play.x - statusX - 52.0f));
+    ui.text(ping, TextStyle::Pixel, statusX + 11.0f, top.y + 12.0f, White, pingWidth);
+    float playersX = statusX + 11.0f + pingWidth + 12.0f;
+    ui.sprite({ playersX, top.y + 10.0f, 12.0f, 12.0f }, "ui/FriendsIcon");
+    ui.text(online ? std::to_string(status->second.players) : "--", TextStyle::Pixel, playersX + 14.0f, top.y + 12.0f, White, std::max(1.0f, play.x - playersX - 18.0f));
+    if (ui.pressableButton("server:play", "pressableElevatedPrimary", upperCase(tr("menu.play", "Play")), play, TextStyle::HeadingSmall)) {
         connect(*row);
     }
 
-    if (row->group != ServerGroup::Saved) {
-        featuredDetail(ui, { detail.x, top.bottom(), detail.w, detail.bottom() - top.bottom() }, featured[row->index]);
-        return;
-    }
-
     float rowY = top.bottom();
-    auto value = [&](std::string_view text, std::string_view label) {
+    auto value = [&](std::string_view text, std::string_view label, bool address = false) {
         Rect bounds { detail.x, rowY, detail.w, 36.0f };
-        ui.text(text, TextStyle::Ui, bounds.x + 8.0f, bounds.y + 8.0f, White, bounds.w - 16.0f);
-        ui.text(label, TextStyle::UiSmall, bounds.x + 8.0f, bounds.y + 21.0f, Muted0, bounds.w - 16.0f);
+        ui.fill(bounds, PanelDark);
+        float textWidth = bounds.w - 24.0f - (address ? 68.0f : 0.0f);
+        ui.text(text, TextStyle::Pixel, bounds.x + 12.0f, bounds.y + 8.0f, White, textWidth);
+        ui.text(label, TextStyle::Ui, bounds.x + 12.0f, bounds.y + 22.0f, Muted0, textWidth);
+        if (address && ui.classicButton("server:address", serverAddressShown ? tr("hbui.PlayScreen.serverTab.externalServerDetails.hideButton", "Hide") : tr("hbui.PlayScreen.serverTab.externalServerDetails.showButton", "Show"),
+                { bounds.right() - 71.0f, bounds.y + 6.0f, 59.0f, 24.0f })) {
+            serverAddressShown = !serverAddressShown;
+        }
         divider(ui, bounds.x, bounds.bottom() - css(2.0f), bounds.w);
         rowY = bounds.bottom();
     };
@@ -474,29 +506,29 @@ void Menu::serversTab(Context& ui, const Rect& area)
         port = host.substr(colon + 1);
         host.resize(colon);
     }
-    value(row->name, tr("addServer.enterName", "Server name"));
-    value(host, tr("addServer.enterIp", "Server address"));
-    value(port, tr("externalServerScreen.serverPortInput", "Server port"));
-    Rect bar { detail.x, rowY, detail.w, 36.0f };
-    ui.fill(bar, Panel);
-    float buttonsX = std::round(bar.x + bar.w * 0.5f - 159.0f);
-    if (ui.pressableButton("server:edit", "pressableElevatedSecondary", tr("accessibility.play.editServer", "Edit server"), { buttonsX, bar.y + 7.0f, 156.0f, ButtonHeight })) {
+    value(row->name, tr("hbui.PlayScreen.serverTab.externalServerDetails.name", "Server name"));
+    value(serverAddressShown ? host : tr("hbui.PlayScreen.serverTab.externalServerDetails.placeholder", "XX.XXX.XXX.XXX"), tr("hbui.PlayScreen.serverTab.externalServerDetails.address", "Server address"), true);
+    value(port, tr("hbui.PlayScreen.serverTab.externalServerDetails.port", "Server port"));
+    Rect bar { detail.x, rowY, detail.w, 41.0f };
+    ui.fill(bar, Divider);
+    ui.fill(bar.inset(1.0f), Panel);
+    float editWidth = std::min(160.0f, bar.w - 24.0f);
+    if (ui.classicButton("server:edit", tr("hbui.PlayScreen.serverTab.externalServerDetails.editButton", "Edit server"), { std::round(bar.x + (bar.w - editWidth) * 0.5f), bar.y + 8.0f, editWidth, 24.0f })) {
         openServerForm(row->index);
     }
-    if (ui.pressableButton("server:delete", "pressableElevatedDestructive", tr("selectServer.delete", "Delete server"), { buttonsX + 162.0f, bar.y + 7.0f, 156.0f, ButtonHeight })) {
-        dialog = Dialog::ConfirmDelete;
-    }
+    ui.clearClip();
 }
 
 void Menu::featuredDetail(Context& ui, const Rect& area, const FeaturedEntry& entry)
 {
     scrollArea(ui, area, detailScroll, detailContent);
     ui.setClip(area);
-    float x = area.x + 8.0f;
-    float width = area.w - 20.0f;
-    float y = area.y + 8.0f - detailScroll;
+    ui.fill(area, { 48, 48, 48, 255 });
+    float x = area.x + 12.0f;
+    float width = area.w - 24.0f;
+    float y = area.y - detailScroll;
 
-    Rect showcase { x, y, width, std::round(width * 9.0f / 16.0f) };
+    Rect showcase { area.x, y, area.w, std::round(area.w * 0.3f) };
     ui.fill(showcase, InkDark);
     if (!entry.showcase.empty()) {
         auto now = std::chrono::steady_clock::now();
@@ -505,8 +537,14 @@ void Menu::featuredDetail(Context& ui, const Rect& area, const FeaturedEntry& en
             showcaseShown = now;
         }
         showcaseIndex %= entry.showcase.size();
-        ui.sprite(showcase, entry.showcase[showcaseIndex]);
-        if (entry.showcase.size() > 1) {
+        const std::string& name = entry.showcase[showcaseIndex];
+        const Sprite& image = ui.skin().sprite(name);
+        if (image.valid && image.width > 0.0f && image.height > 0.0f) {
+            float fit = std::max(showcase.w / image.width, showcase.h / image.height);
+            float spanX = showcase.w / fit, spanY = showcase.h / fit;
+            ui.spriteRegion(showcase, name, { (image.width - spanX) * 0.5f, (image.height - spanY) * 0.5f, spanX, spanY });
+        }
+        if (entry.showcase.size() > 1 && ui.hovered(showcase)) {
             auto arrow = [&](const char* id, const char* icon, float arrowX, int step) {
                 Rect button { arrowX, std::round(showcase.y + (showcase.h - 20.0f) * 0.5f), 20.0f, 20.0f };
                 Interaction state = ui.interact(id, button);
@@ -531,19 +569,42 @@ void Menu::featuredDetail(Context& ui, const Rect& area, const FeaturedEntry& en
         float side = std::round(showcase.h * 0.5f);
         ui.sprite({ std::round(showcase.x + (showcase.w - side) * 0.5f), std::round(showcase.y + (showcase.h - side) * 0.5f), side, side }, entry.icon);
     }
-    y = showcase.bottom() + 10.0f;
+    Rect statusBar { showcase.x, showcase.bottom() - 30.0f, showcase.w, 30.0f };
+    ui.fill(statusBar, { 0, 0, 0, 166 });
+    auto status = serverStatus.find(entry.address);
+    bool online = status != serverStatus.end() && status->second.online;
+    int latency = online ? status->second.latencyMs : -1;
+    const char* pingKey = latency < 0 ? "unavailablePing" : latency < 150 ? "lowPing" : latency < 300 ? "mediumPing" : "highPing";
+    const char* pingFallback = latency < 0 ? "Unavailable ping" : latency < 150 ? "Low ping" : latency < 300 ? "Medium ping" : "High ping";
+    std::string pingText = tr(std::string("hbui.PlayScreen.serverTab.ServerDescription.") + pingKey, pingFallback);
+    Color signal = latency < 0 ? Muted0 : latency < 150 ? Color { 126, 214, 50, 255 } : latency < 300 ? Color { 255, 224, 0, 255 } : Color { 255, 80, 80, 255 };
+    int bars = latency < 0 ? 0 : latency < 150 ? 4 : latency < 300 ? 3 : 1;
+    for (int bar = 0; bar < 4; ++bar) {
+        float h = 2.0f + bar * 2.0f;
+        ui.fill({ x + bar * 3.0f, statusBar.y + 18.0f - h, 2.0f, h }, bar < bars ? signal : Color { 80, 80, 80, 255 });
+    }
+    float pingWidth = std::min(ui.measure(pingText, TextStyle::Pixel), std::max(0.0f, width - 77.0f));
+    ui.text(pingText, TextStyle::Pixel, x + 14.0f, statusBar.y + 11.0f, White, pingWidth);
+    float playersX = x + 14.0f + pingWidth + 12.0f;
+    ui.sprite({ playersX, statusBar.y + 9.0f, 12.0f, 12.0f }, "ui/FriendsIcon");
+    ui.text(online ? std::to_string(status->second.players) : "--", TextStyle::Pixel, playersX + 15.0f, statusBar.y + 11.0f, White, std::max(1.0f, area.right() - playersX - 23.0f));
 
-    ui.sprite({ x, y, 24.0f, 24.0f }, entry.icon.empty() ? "hbui/server" : entry.icon);
-    ui.text(entry.name, TextStyle::Ui, x + 31.0f, y + 2.0f, White, width - 31.0f);
-    ui.text(entry.creator, TextStyle::UiSmall, x + 31.0f, y + 15.0f, Muted0, width - 31.0f);
-    y += 32.0f;
+    y = showcase.bottom();
+    divider(ui, area.x, y, area.w);
+    float buttonWidth = std::min(157.33f, width * 0.42f);
+    Rect play { area.right() - 12.0f - buttonWidth, y + 6.0f, buttonWidth, 22.0f };
+    ui.text(entry.name, TextStyle::Pixel, x, y + 14.0f, White, std::max(1.0f, play.x - x - 8.0f));
+    if (ui.pressableButton("server:play", "pressableElevatedPrimary", upperCase(tr("menu.play", "Play")), play, TextStyle::HeadingSmall)) {
+        if (auto row = selectedRow()) connect(*row);
+    }
+    y += 36.0f;
 
     if (!entry.description.empty()) {
         divider(ui, area.x, y, area.w);
         y += 8.0f;
-        ui.text(tr("hbui.PlayScreen.serverTab.ServerDescription.title", "Description"), TextStyle::UiSmall, x, y, Muted0);
+        ui.text(tr("hbui.PlayScreen.serverTab.ServerDescription.title", "Description"), TextStyle::Pixel, x, y, White);
         y += 13.0f;
-        y += ui.paragraph(entry.description, TextStyle::Body, x, y, width, White) + 8.0f;
+        y += ui.paragraph(entry.description, TextStyle::Pixel, x, y, width, Muted0) + 8.0f;
     }
     if (!entry.games.empty()) {
         divider(ui, area.x, y, area.w);
