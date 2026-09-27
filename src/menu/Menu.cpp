@@ -657,7 +657,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
         std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
         body = "This server uses " + count + " (" + megabytes(session.packBytes) + "). Download them?";
         button = "Download";
-        twoButtons = true;
+        twoButtons = session.packSkippable;
     } else if (session.packDownloading) {
         heading = "Downloading packs (" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")";
         fraction = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
@@ -743,7 +743,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
         if (ui.classicButton("packs:download", button, primary)) {
             packAnswer = true;
         }
-        if (ui.classicButton("packs:skip", "Skip", secondary)) {
+        if (session.packSkippable && ui.classicButton("packs:skip", "Skip", secondary)) {
             packAnswer = false;
         }
         return;

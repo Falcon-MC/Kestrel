@@ -214,6 +214,7 @@ struct SessionSnapshot {
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
     bool packPrompt = false;
     size_t packCount = 0;
+    bool packSkippable = true;
     uint64_t packBytes = 0;
     bool packDownloading = false;
     uint64_t packReceived = 0;
