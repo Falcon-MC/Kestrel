@@ -318,6 +318,7 @@ private:
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
     void playerModel(ui::Context& ui, float centerX, float top, float pixel);
+    void screenContent(ui::Context& ui, float width, float height);
     void gameView(ui::Context& ui, float width, float height);
 
     // Screens drawn the way the HTML menus draw them.
@@ -360,7 +361,7 @@ private:
     ServerStore& store;
     Screen screen = Screen::Title;
     Screen returnScreen = Screen::Title;
-    PlayTab playTab = PlayTab::Servers;
+    PlayTab playTab = PlayTab::Worlds;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
     Field field = Field::None;
@@ -390,6 +391,7 @@ private:
     float listScroll = 0.0f;
     float detailScroll = 0.0f;
     float pageScroll = 0.0f;
+    float sidebarScroll = 0.0f;
     float pageContent = 0.0f;
     bool disconnectRequested = false;
     std::optional<bool> packAnswer;

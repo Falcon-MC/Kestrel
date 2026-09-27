@@ -541,17 +541,23 @@ void Menu::settings(Context& ui, float width, float height)
     Rect page { sidebar.right() + 17.33f, 53.33f, 408.0f, height - 53.33f - 8.0f };
 
     ui.fill(sidebar, PanelDark);
+    float listHeight = 0.0f;
+    for (const SettingsEntry& entry : SettingsEntries) {
+        listHeight += entry.group ? 48.0f : 24.0f;
+    }
+    scrollArea(ui, sidebar, sidebarScroll, listHeight);
     ui.setClip(sidebar);
-    float y = sidebar.y;
+    float y = sidebar.y - sidebarScroll;
     for (const SettingsEntry& entry : SettingsEntries) {
         if (entry.group) {
             ui.text(entry.group, TextStyle::UiSmall, sidebar.x + 8.0f, y + 9.0f, Muted0);
             y += 24.0f;
             divider(ui, sidebar.x, y - css(2.0f), sidebar.w);
         }
-        Rect row { sidebar.x, y, sidebar.w, 24.0f };
+        Rect row { sidebar.x, y, sidebar.w - 4.0f, 24.0f };
         bool active = settingsSection == entry.page;
-        Interaction state = ui.interact(std::string("settings:") + entry.label, row);
+        bool shown = row.bottom() > sidebar.y && row.y < sidebar.bottom();
+        Interaction state = shown ? ui.interact(std::string("settings:") + entry.label, row) : Interaction {};
         if (active || state.hovered) {
             ui.fill(row, active ? Panel : Color { 0x48, 0x49, 0x4a, 150 });
         }

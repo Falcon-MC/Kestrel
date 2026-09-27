@@ -162,25 +162,13 @@ void Menu::setSession(SessionInfo info)
     }
 }
 
-void Menu::frame(Context& ui, float width, float height)
+void Menu::screenContent(Context& ui, float width, float height)
 {
-    if (ui.input().mousePressed) {
-        field = Field::None;
-        rebinding.reset();
-    }
-
-    bool modal = dialog != Dialog::None || socialOpen;
-    ui.setBlocked(modal || capturesMouse());
-
-    if (!worldVisible()) {
-        panorama(ui, width, height);
-    }
-
     switch (screen) {
     case Screen::Title:
         if (inGame()) {
             gameView(ui, width, height);
-        } else if (dialog != Dialog::Connecting && dialog != Dialog::ConnectionError) {
+        } else {
             title(ui, width, height);
         }
         break;
@@ -203,9 +191,29 @@ void Menu::frame(Context& ui, float width, float height)
         todoScreen(ui, width, height, "Profile");
         break;
     }
+}
+
+void Menu::frame(Context& ui, float width, float height)
+{
+    if (ui.input().mousePressed) {
+        field = Field::None;
+        rebinding.reset();
+    }
+
+    bool modal = dialog != Dialog::None || socialOpen;
+    ui.setBlocked(modal || capturesMouse());
+
+    if (!worldVisible()) {
+        panorama(ui, width, height);
+    }
+
+    bool loading = !inGame() && (dialog == Dialog::Connecting || dialog == Dialog::ConnectionError || dialog == Dialog::SignIn);
+    if (!loading) {
+        screenContent(ui, width, height);
+    }
 
     ui.setBlocked(false);
-    if (socialOpen) {
+    if (socialOpen && !loading) {
         socialDrawer(ui, width, height);
     }
 
@@ -405,6 +413,7 @@ void Menu::title(Context& ui, float width, float height)
     float x = std::floor((width - TitleButtonWidth) * 0.5f);
     float y = std::round(height * 0.5f + 13.67f);
     if (ui.classicButton("title:play", "Play", { x, y, TitleButtonWidth, TitleButtonHeight })) {
+        playTab = PlayTab::Worlds;
         navigate(Screen::Play);
     }
     if (ui.classicButton("title:settings", "Settings", { x, y + TitleButtonStep, TitleButtonWidth, TitleButtonHeight })) {
@@ -544,13 +553,22 @@ void Menu::progressDialog(Context& ui, float width, float height)
     if (!body.empty()) {
         ui.paragraph(body, TextStyle::Pixel, well.x + 6.0f, well.y + 6.0f, well.w - 12.0f, White);
     }
+    bool generating = progress && dialog == Dialog::Connecting && session.status != SessionStatus::Resolving && session.loadingTerrain;
+    if (generating) {
+        constexpr std::string_view Waiting = "Loading server...";
+        float waitingWidth = ui.measure(Waiting, TextStyle::Pixel);
+        float buttonCenter = std::floor(well.x + (well.w - 64.0f) * 0.5f) + 32.0f;
+        ui.text(Waiting, TextStyle::Pixel, std::round(buttonCenter - waitingWidth * 0.5f), buttonY - 27.0f, White);
+    }
     if (progress) {
         const Sprite& bar = ui.skin().sprite("ui/loading_bar");
         if (bar.valid) {
             float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
             int frames = std::max(1, static_cast<int>(bar.width / 64.0f));
-            int current = static_cast<int>(seconds * 10.0f) % frames;
-            ui.spriteRegion({ std::floor(well.x + (well.w - 64.0f) * 0.5f), buttonY - 14.0f, 64.0f, 8.0f }, "ui/loading_bar", { current * 64.0f, 0.0f, 64.0f, bar.height });
+            int cycle = std::max(1, frames * 2 - 2);
+            int step = static_cast<int>(seconds * 10.0f) % cycle;
+            int current = step < frames ? step : cycle - step;
+            ui.spriteRegion({ std::floor(well.x + (well.w - 64.0f) * 0.5f), buttonY - 14.0f, 64.0f, 8.0f }, "ui/loading_bar", { current * 64.0f, 0.0f, 64.0f, bar.height }, { 178, 178, 178, 255 });
         }
     }
     if (fraction >= 0.0f) {
