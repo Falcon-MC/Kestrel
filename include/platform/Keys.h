@@ -41,6 +41,7 @@ struct KeyBindings {
     Key keys[Count] = { Key::W, Key::S, Key::A, Key::D, Key::Space, Key::Shift };
 
     static const char* label(size_t index);
+    static const char* translationKey(size_t index);
     static const char* id(size_t index);
 
     Key forward() const

@@ -1,6 +1,7 @@
 #include "menu/Menu.h"
 
 #include "ui/Context.h"
+#include "ui/Localization.h"
 #include "ui/Theme.h"
 
 #include <algorithm>
@@ -39,27 +40,37 @@ constexpr float ButtonHeight = 22.0f;
 
 struct SettingsEntry {
     SettingsPage page;
+    const char* key;
     const char* label;
     const char* icon;
+    const char* groupKey;
     const char* group;
 };
 
 constexpr SettingsEntry SettingsEntries[] = {
-    { SettingsPage::Accessibility, "Accessibility", "hbui/accessibility", nullptr },
-    { SettingsPage::Keyboard, "Keyboard & Mouse", "hbui/keyboard-mouse", "Controls" },
-    { SettingsPage::Controller, "Controller", "hbui/cursor_gamepad_brackets", nullptr },
-    { SettingsPage::Touch, "Touch", "hbui/touch", nullptr },
-    { SettingsPage::Party, "Party", "hbui/party", "Social" },
-    { SettingsPage::General, "General", "hbui/general-icon", "General" },
-    { SettingsPage::Video, "Video", "hbui/World", nullptr },
-    { SettingsPage::Audio, "Audio", "hbui/sound-block", nullptr },
-    { SettingsPage::Account, "Account", "hbui/account", nullptr },
-    { SettingsPage::Subscriptions, "Subscriptions", "hbui/subscriptions", nullptr },
-    { SettingsPage::GlobalResources, "Global Resources", "hbui/resource-packs-icon", nullptr },
-    { SettingsPage::Storage, "Storage", "hbui/storage", nullptr },
-    { SettingsPage::Language, "Language", "hbui/language", nullptr },
-    { SettingsPage::Creator, "Creator", "hbui/Settings", nullptr },
+    { SettingsPage::Accessibility, "menu.accessibility.tab.title", "Accessibility", "hbui/accessibility", nullptr, nullptr },
+    { SettingsPage::Keyboard, "menu.keyboardAndMouse.tab.title", "Keyboard & Mouse", "hbui/keyboard-mouse", "options.group.input", "Controls" },
+    { SettingsPage::Controller, "menu.controller.tab.title", "Controller", "hbui/cursor_gamepad_brackets", nullptr, nullptr },
+    { SettingsPage::Touch, "menu.touch.tab.title", "Touch", "hbui/touch", nullptr, nullptr },
+    { SettingsPage::Party, "options.party", "Party", "hbui/party", "options.social", "Social" },
+    { SettingsPage::General, "menu.general.tab.title", "General", "hbui/general-icon", "options.general", "General" },
+    { SettingsPage::Video, "menu.video.tab.title", "Video", "hbui/World", nullptr, nullptr },
+    { SettingsPage::Audio, "menu.audio.tab.title", "Audio", "hbui/sound-block", nullptr, nullptr },
+    { SettingsPage::Account, "menu.account.tab.title", "Account", "hbui/account", nullptr, nullptr },
+    { SettingsPage::Subscriptions, "options.viewSubscriptions", "Subscriptions", "hbui/subscriptions", nullptr, nullptr },
+    { SettingsPage::GlobalResources, "menu.globalpacks", "Global Resources", "hbui/resource-packs-icon", nullptr, nullptr },
+    { SettingsPage::Storage, "menu.storage.tab.title", "Storage", "hbui/storage", nullptr, nullptr },
+    { SettingsPage::Language, "menu.language.tab.title", "Language", "hbui/language", nullptr, nullptr },
+    { SettingsPage::Creator, "menu.creator.tab.title", "Creator", "hbui/Settings", nullptr, nullptr },
 };
+
+std::string upperCase(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return text;
+}
 
 Rect column(float width, float top, float bottom)
 {
@@ -133,7 +144,7 @@ float Menu::header(Context& ui, float width, std::string_view heading, bool soci
         if (state.hovered) {
             ui.fill(button, { 0, 0, 0, 20 });
         }
-        constexpr std::string_view Label = "Social (0)";
+        std::string Label = tr("options.social", "Social") + " (0)";
         float textWidth = ui.measure(Label, TextStyle::Ui);
         float x = std::round(button.x + (button.w - textWidth - 9.0f) * 0.5f);
         ui.sprite({ x - 3.0f, std::round((HeaderHeight - 2.0f - 11.0f) * 0.5f), 11.0f, 11.0f }, "hbui/friends");
@@ -237,7 +248,7 @@ bool Menu::slider(Context& ui, std::string_view id, const Rect& rect, float& fra
 
 void Menu::play(Context& ui, float width, float height)
 {
-    header(ui, width, "PLAY", true);
+    header(ui, width, upperCase(tr("menu.play", "Play")), true);
     Rect body = column(width, 52.0f, height);
 
     struct TabInfo {
@@ -246,15 +257,14 @@ void Menu::play(Context& ui, float width, float height)
         const char* icon;
     };
     TabInfo tabs[] = {
-        { PlayTab::Worlds, "Worlds (" + std::to_string(worldEntries.size()) + ")", "hbui/worlds" },
-        { PlayTab::Realms, "Realms", "hbui/Realms" },
-        { PlayTab::Servers, "Servers", "hbui/server" },
+        { PlayTab::Realms, tr("menu.realms", "Realms"), "hbui/Realms" },
+        { PlayTab::Servers, tr("menu.servers", "Servers"), "hbui/server" },
     };
-    float tabWidth = body.w / 3.0f;
+    float tabWidth = body.w / static_cast<float>(std::size(tabs));
     for (size_t i = 0; i < std::size(tabs); ++i) {
         Rect tab { std::round(body.x + tabWidth * static_cast<float>(i)), body.y, std::round(tabWidth), TabHeight };
         bool active = playTab == tabs[i].tab;
-        Interaction state = ui.pressable("tab:" + tabs[i].label, "tabBarNeutral", tab, true, active);
+        Interaction state = ui.pressable("tab:" + std::to_string(i), "tabBarNeutral", tab, true, active);
         float textWidth = ui.measure(tabs[i].label, TextStyle::Ui);
         constexpr float IconSize = 10.0f;
         float x = std::round(tab.x + (tab.w - textWidth - IconSize - 4.0f) * 0.5f);
@@ -273,9 +283,6 @@ void Menu::play(Context& ui, float width, float height)
 
     Rect area { body.x, body.y + TabHeight + 1.0f, body.w, height - body.y - TabHeight - 1.0f };
     switch (playTab) {
-    case PlayTab::Worlds:
-        worldsTab(ui, area);
-        break;
     case PlayTab::Realms:
         realmsTab(ui, area);
         break;
@@ -283,57 +290,6 @@ void Menu::play(Context& ui, float width, float height)
         serversTab(ui, area);
         break;
     }
-}
-
-void Menu::worldsTab(Context& ui, const Rect& area)
-{
-    Rect bar { area.x, area.y + 4.0f, area.w, 22.0f };
-    ui.pressableButton("worlds:layout", "pressableElevatedSecondary", "", { bar.x + 1.0f, bar.y, 22.0f, bar.h });
-    ui.sprite({ bar.x + 8.0f, bar.y + 6.0f, 8.0f, 8.0f }, "hbui/List", InkDark);
-    if (ui.pressableButton("worlds:create", "pressableElevatedPrimary", "Create new world", { bar.right() - 127.0f, bar.y, 127.0f, bar.h })) {
-        notify("TODO: Creating worlds");
-    }
-
-    Rect grid { area.x, bar.bottom() + 8.0f, area.w, area.bottom() - bar.bottom() - 8.0f };
-    constexpr float Gap = 10.0f;
-    constexpr size_t Columns = 4;
-    float cardWidth = std::floor((grid.w - 3.0f - Gap * static_cast<float>(Columns - 1)) / static_cast<float>(Columns));
-    float imageHeight = std::round(cardWidth * 0.566f);
-    float cardHeight = imageHeight + 32.0f;
-    size_t rows = (worldEntries.size() + Columns - 1) / Columns;
-    float content = rows == 0 ? 0.0f : static_cast<float>(rows) * (cardHeight + Gap) - Gap;
-    scrollArea(ui, grid, listScroll, content);
-
-    if (worldEntries.empty()) {
-        ui.textCentered("No worlds were found on this device", TextStyle::Ui, { grid.x, grid.y + 40.0f, grid.w, 20.0f }, Muted0);
-        return;
-    }
-    ui.setClip(grid);
-    for (size_t i = 0; i < worldEntries.size(); ++i) {
-        const WorldEntry& world = worldEntries[i];
-        Rect card {
-            grid.x + static_cast<float>(i % Columns) * (cardWidth + Gap),
-            grid.y - listScroll + static_cast<float>(i / Columns) * (cardHeight + Gap),
-            cardWidth,
-            cardHeight,
-        };
-        if (card.bottom() < grid.y || card.y > grid.bottom()) {
-            continue;
-        }
-        Interaction state = ui.interact("world:" + std::to_string(i), card);
-        ui.fill(card, state.hovered ? Color { 0x5a, 0x5b, 0x5c, 255 } : Panel);
-        ui.sprite({ card.x, card.y, card.w, imageHeight }, "hbui/world-preview-default");
-        ui.fill({ card.x, card.y + imageHeight, card.w, 32.0f }, PanelDark);
-        ui.text(world.name, TextStyle::Ui, card.x + 3.0f, card.y + imageHeight + 5.0f, White, card.w - 34.0f);
-        ui.text(world.detail, TextStyle::UiSmall, card.x + 3.0f, card.y + imageHeight + 17.0f, Muted0, card.w - 34.0f);
-        Rect edit { card.right() - 28.0f, card.y + imageHeight + 2.0f, 26.0f, 28.0f };
-        ui.pressable("world:edit:" + std::to_string(i), "pressableNeutral", edit);
-        ui.sprite({ edit.x + 9.0f, edit.y + 10.0f, 8.0f, 8.0f }, "hbui/Edit", White);
-        if (state.clicked) {
-            notify("TODO: Playing local worlds");
-        }
-    }
-    ui.clearClip();
 }
 
 void Menu::realmsTab(Context& ui, const Rect& area)
@@ -345,10 +301,10 @@ void Menu::realmsTab(Context& ui, const Rect& area)
 
     float y = banner.bottom() + 5.0f;
     float center = std::round(area.x + area.w * 0.5f);
-    if (ui.pressableButton("realms:invites", "pressableElevatedSecondary", "Invitations", { center - 128.0f, y, 126.0f, ButtonHeight })) {
+    if (ui.pressableButton("realms:invites", "pressableElevatedSecondary", tr("realmsInvitationScreen.title", "Invitations"), { center - 128.0f, y, 126.0f, ButtonHeight })) {
         notify("TODO: Realm invitations");
     }
-    if (ui.pressableButton("realms:join", "pressableElevatedSecondary", "Join a Realm", { center + 2.0f, y, 126.0f, ButtonHeight })) {
+    if (ui.pressableButton("realms:join", "pressableElevatedSecondary", tr("networkWorld.joinByCode", "Join a Realm"), { center + 2.0f, y, 126.0f, ButtonHeight })) {
         notify("TODO: Joining a Realm by code");
     }
     y += ButtonHeight + 8.0f;
@@ -356,7 +312,7 @@ void Menu::realmsTab(Context& ui, const Rect& area)
     Rect list { area.x, y, area.w - 5.0f, area.bottom() - y };
     if (!signedIn()) {
         ui.textCentered("Sign in with a Microsoft account to see your Realms", TextStyle::Ui, { list.x, list.y + 10.0f, list.w, 20.0f }, Muted0);
-        if (ui.pressableButton("realms:signin", "pressableElevatedPrimary", "Sign In", { center - 63.0f, list.y + 36.0f, 126.0f, ButtonHeight })) {
+        if (ui.pressableButton("realms:signin", "pressableElevatedPrimary", tr("gui.signIn", "Sign In"), { center - 63.0f, list.y + 36.0f, 126.0f, ButtonHeight })) {
             beginSignIn();
         }
         return;
@@ -377,10 +333,10 @@ void Menu::realmsTab(Context& ui, const Rect& area)
         ui.fill(row, Panel);
         ui.sprite({ row.x + 6.0f, row.y + 6.0f, 24.0f, 24.0f }, "hbui/Realms");
         ui.text(realm.name, TextStyle::Ui, row.x + 36.0f, row.y + 7.0f, White, row.w - 140.0f);
-        std::string state = realm.expired ? "Expired" : realm.open ? realm.detail : "Closed";
+        std::string state = realm.expired ? tr("playscreen.realmExpired", "Expired") : realm.open ? realm.detail : tr("realmsSettingsScreen.dropdown.closed.tts", "Closed");
         ui.text(state, TextStyle::UiSmall, row.x + 36.0f, row.y + 20.0f, Muted0, row.w - 140.0f);
         bool joinable = realm.open && !realm.expired;
-        if (ui.pressableButton("realm:" + std::to_string(realm.id), "pressableElevatedPrimary", "Play", { row.right() - 86.0f, row.y + 7.0f, 80.0f, ButtonHeight }, TextStyle::HeadingSmall, joinable)) {
+        if (ui.pressableButton("realm:" + std::to_string(realm.id), "pressableElevatedPrimary", tr("menu.play", "Play"), { row.right() - 86.0f, row.y + 7.0f, 80.0f, ButtonHeight }, TextStyle::HeadingSmall, joinable)) {
             pending = ConnectRequest { realm.name, "realm_id/" + std::to_string(realm.id) };
         }
     }
@@ -405,10 +361,11 @@ void Menu::serversTab(Context& ui, const Rect& area)
     ui.setClip(view);
     float y = view.y - listScroll;
 
-    if (ui.pressableButton("servers:add", "pressableElevatedSecondary", "Add server", { list.x + 8.67f, y + 5.0f, 174.67f, 20.67f })) {
+    std::string addLabel = tr("selectServer.add", "Add server");
+    if (ui.pressableButton("servers:add", "pressableElevatedSecondary", addLabel, { list.x + 8.67f, y + 5.0f, 174.67f, 20.67f })) {
         openServerForm(std::nullopt);
     }
-    ui.sprite({ list.x + 8.67f + 87.0f - ui.measure("Add server", TextStyle::Ui) * 0.5f - 9.0f, y + 11.0f, 6.0f, 6.0f }, "hbui/Plus", InkDark);
+    ui.sprite({ list.x + 8.67f + 87.0f - ui.measure(addLabel, TextStyle::Ui) * 0.5f - 9.0f, y + 11.0f, 6.0f, 6.0f }, "hbui/Plus", InkDark);
     y += 34.0f;
 
     auto section = [&](std::string_view label, const std::vector<ServerRow>& rows) {
@@ -441,7 +398,7 @@ void Menu::serversTab(Context& ui, const Rect& area)
             y += RowHeight;
         }
     };
-    section("Featured experiences (" + std::to_string(featured.size()) + ")", featured);
+    section(tr("thirdPartyWorld.Featured", "Featured experiences") + " (" + std::to_string(featured.size()) + ")", featured);
     y += 6.0f;
     divider(ui, list.x, y, list.w - 4.0f);
     y += 8.0f;
@@ -449,14 +406,14 @@ void Menu::serversTab(Context& ui, const Rect& area)
     for (ServerRow& row : savedWithDetail) {
         auto status = serverStatus.find(row.address);
         if (status == serverStatus.end() || !status->second.checked) {
-            row.detail = "Checking connection...";
+            row.detail = tr("connect.connecting", "Checking connection...");
         } else if (!status->second.online) {
-            row.detail = "\xC2\xA7" "cUnable to connect to world";
+            row.detail = "\xC2\xA7" "c" + tr("disconnectionScreen.title.unableToConnect", "Unable to connect to world");
         } else {
             row.detail = status->second.motd + "\xC2\xA7" "r (" + std::to_string(status->second.players) + "/" + std::to_string(status->second.maxPlayers) + ")";
         }
     }
-    section("Other Servers (" + std::to_string(saved.size()) + ")", savedWithDetail);
+    section(tr("thirdPartyWorld.Additional", "Other Servers") + " (" + std::to_string(saved.size()) + ")", savedWithDetail);
     ui.clearClip();
 
     std::optional<ServerRow> row = selectedRow();
@@ -467,8 +424,8 @@ void Menu::serversTab(Context& ui, const Rect& area)
     Rect top { detail.x, detail.y, detail.w, 32.0f };
     ui.fill(top, Divider);
     ui.fill(top.inset(1.0f), PanelDark);
-    ui.text(row->featured ? "Featured server" : "Saved server", TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0);
-    if (ui.pressableButton("server:play", "pressableElevatedPrimary", "PLAY", { top.right() - 13.33f - 157.33f, top.y + 5.0f, 157.33f, 20.0f }, TextStyle::HeadingSmall)) {
+    ui.text(row->featured ? tr("thirdPartyWorld.Featured", "Featured server") : tr("menu.servers", "Saved server"), TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0);
+    if (ui.pressableButton("server:play", "pressableElevatedPrimary", upperCase(tr("menu.play", "Play")), { top.right() - 13.33f - 157.33f, top.y + 5.0f, 157.33f, 20.0f }, TextStyle::HeadingSmall)) {
         connect(*row);
     }
 
@@ -487,20 +444,20 @@ void Menu::serversTab(Context& ui, const Rect& area)
         port = host.substr(colon + 1);
         host.resize(colon);
     }
-    value(row->name, "Server name");
+    value(row->name, tr("addServer.enterName", "Server name"));
     if (row->featured) {
-        value(row->detail, "Description");
+        value(row->detail, tr("store.mashup.description", "Description"));
         return;
     }
-    value(host, "Server address");
-    value(port, "Server port");
+    value(host, tr("addServer.enterIp", "Server address"));
+    value(port, tr("externalServerScreen.serverPortInput", "Server port"));
     Rect bar { detail.x, rowY, detail.w, 36.0f };
     ui.fill(bar, Panel);
     float buttonsX = std::round(bar.x + bar.w * 0.5f - 159.0f);
-    if (ui.pressableButton("server:edit", "pressableElevatedSecondary", "Edit server", { buttonsX, bar.y + 7.0f, 156.0f, ButtonHeight })) {
+    if (ui.pressableButton("server:edit", "pressableElevatedSecondary", tr("accessibility.play.editServer", "Edit server"), { buttonsX, bar.y + 7.0f, 156.0f, ButtonHeight })) {
         openServerForm(row->index);
     }
-    if (ui.pressableButton("server:delete", "pressableElevatedDestructive", "Delete server", { buttonsX + 162.0f, bar.y + 7.0f, 156.0f, ButtonHeight })) {
+    if (ui.pressableButton("server:delete", "pressableElevatedDestructive", tr("selectServer.delete", "Delete server"), { buttonsX + 162.0f, bar.y + 7.0f, 156.0f, ButtonHeight })) {
         dialog = Dialog::ConfirmDelete;
     }
 }
@@ -508,7 +465,7 @@ void Menu::serversTab(Context& ui, const Rect& area)
 void Menu::serverForm(Context& ui, float width, float height)
 {
     (void)height;
-    header(ui, width, editing ? "EDIT SERVER" : "ADD A NEW SERVER", false);
+    header(ui, width, upperCase(editing ? tr("accessibility.play.editServer", "Edit server") : tr("externalServerScreen.addServer", "Add a new server")), false);
     constexpr float PanelWidth = 522.67f;
     constexpr float RowStep = 50.0f;
     Rect panel { std::round((width - PanelWidth) * 0.5f), 53.33f, PanelWidth, 191.33f };
@@ -516,20 +473,21 @@ void Menu::serverForm(Context& ui, float width, float height)
 
     struct Entry {
         Field field;
-        const char* label;
-        const char* placeholder;
+        const char* id;
+        std::string label;
+        std::string placeholder;
         const std::string* value;
     };
     Entry entries[] = {
-        { Field::ServerName, "Server name", "Example server name", &editName },
-        { Field::ServerAddress, "Server address", "IP (1.0.0.1) or URL (www.example.com)", &editAddress },
-        { Field::ServerPort, "Port", "19132", &editPort },
+        { Field::ServerName, "name", tr("addServer.enterName", "Server name"), tr("addExternalServerScreen.nameTextBoxLabel", "Example server name"), &editName },
+        { Field::ServerAddress, "address", tr("addServer.enterIp", "Server address"), "IP (1.0.0.1) or URL (www.example.com)", &editAddress },
+        { Field::ServerPort, "port", tr("addExternalServerScreen.portTextBoxLabel", "Port"), "19132", &editPort },
     };
     float y = panel.y;
     for (const Entry& entry : entries) {
         ui.text(entry.label, TextStyle::Ui, panel.x + 12.0f, y + 6.0f, White);
         Rect input { panel.x + 12.0f, y + 18.67f, panel.w - 24.0f, 22.67f };
-        if (textField(ui, std::string("form:") + entry.label, entry.placeholder, *entry.value, input, field == entry.field)) {
+        if (textField(ui, std::string("form:") + entry.id, entry.placeholder, *entry.value, input, field == entry.field)) {
             field = entry.field;
         }
         y += RowStep;
@@ -539,18 +497,18 @@ void Menu::serverForm(Context& ui, float width, float height)
     Rect left { panel.x + 4.33f, panel.y + 159.33f, panel.w * 0.5f - 7.0f, ButtonHeight };
     Rect right { panel.x + panel.w * 0.5f + 2.67f, left.y, left.w, ButtonHeight };
     if (editing) {
-        if (ui.pressableButton("form:delete", "pressableElevatedDestructive", "Delete server", left)) {
+        if (ui.pressableButton("form:delete", "pressableElevatedDestructive", tr("selectServer.delete", "Delete server"), left)) {
             selection = Selection { false, *editing };
             dialog = Dialog::ConfirmDelete;
         }
-        if (ui.pressableButton("form:save", "pressableElevatedPrimary", "Save changes", right)) {
+        if (ui.pressableButton("form:save", "pressableElevatedPrimary", tr("addExternalServerScreen.saveButtonLabel", "Save changes"), right)) {
             saveServerForm(false);
         }
     } else {
-        if (ui.pressableButton("form:add", "pressableElevatedSecondary", "Add server", left)) {
+        if (ui.pressableButton("form:add", "pressableElevatedSecondary", tr("selectServer.add", "Add server"), left)) {
             saveServerForm(false);
         }
-        if (ui.pressableButton("form:play", "pressableElevatedPrimary", "Add and play", right)) {
+        if (ui.pressableButton("form:play", "pressableElevatedPrimary", tr("addExternalServerScreen.playButtonLabel", "Add and play"), right)) {
             saveServerForm(true);
         }
     }
@@ -558,7 +516,7 @@ void Menu::serverForm(Context& ui, float width, float height)
 
 void Menu::settings(Context& ui, float width, float height)
 {
-    header(ui, width, "SETTINGS", false);
+    header(ui, width, upperCase(tr("menu.settings", "Settings")), false);
     Rect sidebar { std::round(width * 0.5f - 314.67f), 53.33f, 196.0f, std::min(402.0f, height - 53.33f - 8.0f) };
     Rect page { sidebar.right() + 17.33f, 53.33f, 408.0f, height - 53.33f - 8.0f };
 
@@ -572,7 +530,7 @@ void Menu::settings(Context& ui, float width, float height)
     float y = sidebar.y - sidebarScroll;
     for (const SettingsEntry& entry : SettingsEntries) {
         if (entry.group) {
-            ui.text(entry.group, TextStyle::UiSmall, sidebar.x + 8.0f, y + 9.0f, Muted0);
+            ui.text(tr(entry.groupKey, entry.group), TextStyle::UiSmall, sidebar.x + 8.0f, y + 9.0f, Muted0);
             y += 24.0f;
             divider(ui, sidebar.x, y - css(2.0f), sidebar.w);
         }
@@ -584,7 +542,7 @@ void Menu::settings(Context& ui, float width, float height)
             ui.fill(row, active ? Panel : Color { 0x48, 0x49, 0x4a, 150 });
         }
         ui.sprite({ row.x + 8.67f, row.y + 8.33f, 7.5f, 7.5f }, entry.icon);
-        ui.text(entry.label, TextStyle::Ui, row.x + 20.0f, std::round(row.y + (row.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White, row.w - 24.0f);
+        ui.text(tr(entry.key, entry.label), TextStyle::Ui, row.x + 20.0f, std::round(row.y + (row.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White, row.w - 24.0f);
         divider(ui, row.x, row.bottom() - css(2.0f), row.w);
         if (state.clicked && !active) {
             settingsSection = entry.page;
@@ -602,10 +560,7 @@ void Menu::settings(Context& ui, float width, float height)
 void Menu::settingsHeading(Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail)
 {
     y += 14.0f;
-    std::string upper(heading);
-    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
-        return static_cast<char>(std::toupper(c));
-    });
+    std::string upper = upperCase(std::string(heading));
     ui.text(upper, TextStyle::HeadingSmall, x + 12.0f, y, White, width - 24.0f);
     y += std::max(10.0f, ui.lineHeight(TextStyle::HeadingSmall)) + 3.0f;
     if (!detail.empty()) {
@@ -652,30 +607,30 @@ void Menu::settingsPage(Context& ui, const Rect& area)
 
     switch (settingsSection) {
     case SettingsPage::Keyboard: {
-        settingsHeading(ui, x, y, w, "Keyboard & Mouse", "Input options and key mapping for keyboard and mouse");
-        settingsHeading(ui, x, y, w, "Keyboard & Mouse Mappings", "Click a key, then press the new one. Esc cancels.");
+        settingsHeading(ui, x, y, w, tr("menu.keyboardAndMouse.tab.title", "Keyboard & Mouse"), tr("menu.keyboardAndMouse.tab.description", "Input options and key mapping for keyboard and mouse"));
+        settingsHeading(ui, x, y, w, tr("menu.keyboardAndMouse.tab.mappings.title", "Keyboard & Mouse Mappings"), tr("menu.keyboardAndMouse.tab.mappings.description", "Click a key, then press the new one. Esc cancels."));
         for (size_t i = 0; i < KeyBindings::Count; ++i) {
             float rowY = y;
             bool waiting = rebinding && *rebinding == i;
-            settingsRow(ui, x, y, w, KeyBindings::label(i), {}, 31.33f);
-            std::string label = waiting ? std::string("Press a key...") : std::string(keyName(bindings.keys[i]));
+            settingsRow(ui, x, y, w, tr(KeyBindings::translationKey(i), KeyBindings::label(i)), {}, 31.33f);
+            std::string label = waiting ? tr("options.pressKey", "Press a key...") : std::string(keyName(bindings.keys[i]));
             if (ui.pressableButton(std::string("bind:") + KeyBindings::id(i), waiting ? "pressableElevatedPrimary" : "pressableElevatedSecondary", label, { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
                 rebinding = i;
             }
         }
         float rowY = y;
-        settingsRow(ui, x, y, w, "Reset settings to default", "Restore all the above keyboard & mouse actions to their original values", 31.33f);
-        if (ui.pressableButton("bind:reset", "pressableElevatedSecondary", "Reset", { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
+        settingsRow(ui, x, y, w, tr("options.keyboardAndMouse.resetSettings", "Reset settings to default"), tr("options.keyboardAndMouse.resetSettings.description", "Restore all the above keyboard & mouse actions to their original values"), 31.33f);
+        if (ui.pressableButton("bind:reset", "pressableElevatedSecondary", tr("options.keyboardAndMouse.resetSettings.buttonLabel", "Reset"), { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
             bindings = KeyBindings {};
             rebinding.reset();
         }
         break;
     }
     case SettingsPage::Video: {
-        settingsHeading(ui, x, y, w, "Video", "Adjust graphics and visual quality");
+        settingsHeading(ui, x, y, w, tr("menu.video.tab.title", "Video"), tr("menu.video.tab.description", "Adjust graphics and visual quality"));
         float rowY = y;
-        settingsRow(ui, x, y, w, "Render distance", "How far away chunks are drawn", 44.0f);
-        std::string distance = std::to_string(chunkDistance) + " chunks";
+        settingsRow(ui, x, y, w, tr("options.renderDistance", "Render distance"), tr("options.renderDistance.description", "How far away chunks are drawn"), 44.0f);
+        std::string distance = trf("options.raytracing.renderDistanceFormat", "%s chunks", { std::to_string(chunkDistance) });
         ui.text(distance, TextStyle::Ui, x + w - 12.0f - ui.measure(distance, TextStyle::Ui), rowY + 7.0f, White);
         float distanceFraction = float(chunkDistance - MinRenderDistance) / float(MaxRenderDistance - MinRenderDistance);
         if (slider(ui, "video:distance", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, distanceFraction)) {
@@ -683,8 +638,8 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
-        settingsRow(ui, x, y, w, "Field of view", "How wide the view is, in degrees", 44.0f);
-        std::string degrees = std::to_string(fieldOfView);
+        settingsRow(ui, x, y, w, tr("options.fov.name", "Field of view"), tr("options.fov.description", "How wide the view is, in degrees"), 44.0f);
+        std::string degrees = trf("options.fov.format", "%s", { std::to_string(fieldOfView) });
         ui.text(degrees, TextStyle::Ui, x + w - 12.0f - ui.measure(degrees, TextStyle::Ui), rowY + 7.0f, White);
         float fovFraction = float(fieldOfView - MinFov) / float(MaxFov - MinFov);
         if (slider(ui, "video:fov", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fovFraction)) {
@@ -692,10 +647,10 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
-        settingsRow(ui, x, y, w, "Max framerate", "Caps how many frames are drawn each second", 44.0f);
+        settingsRow(ui, x, y, w, tr("options.framerateLimit", "Max framerate"), "Caps how many frames are drawn each second", 44.0f);
         int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
         int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;
-        std::string fps = fpsLimit == UnlimitedFps ? std::string("Unlimited") : std::to_string(fpsLimit);
+        std::string fps = fpsLimit == UnlimitedFps ? tr("options.framerateLimit.max", "Unlimited") : std::to_string(fpsLimit);
         ui.text(fps, TextStyle::Ui, x + w - 12.0f - ui.measure(fps, TextStyle::Ui), rowY + 7.0f, White);
         float fpsFraction = float(fpsStep) / float(fpsSteps);
         if (slider(ui, "video:fps", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fpsFraction)) {
@@ -704,7 +659,7 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
-        settingsRow(ui, x, y, w, "GUI scale modifier", "Makes every menu larger on top of the automatic scale", 60.0f);
+        settingsRow(ui, x, y, w, tr("options.guiScale.optionName", "GUI scale modifier"), "Makes every menu larger on top of the automatic scale", 60.0f);
         float segment = std::floor((w - 24.0f) / static_cast<float>(std::size(InterfaceScales)));
         for (size_t i = 0; i < std::size(InterfaceScales); ++i) {
             Rect option { x + 12.0f + segment * static_cast<float>(i), rowY + 33.0f, segment, 20.0f };
@@ -713,26 +668,32 @@ void Menu::settingsPage(Context& ui, const Rect& area)
                 scale = InterfaceScales[i];
             }
         }
-        todoRow(ui, x, y, w, "Brightness");
+        todoRow(ui, x, y, w, tr("options.gamma", "Brightness"));
         break;
     }
     case SettingsPage::Audio: {
-        settingsHeading(ui, x, y, w, "Audio", "Adjust the volume of each kind of sound");
-        static constexpr std::pair<const char*, const char*> Channels[VolumeChannelCount] = {
-            { "Main volume", "Every sound" },
-            { "Music", "Menu and game music" },
-            { "Ambient & environment", "Caves, biomes and underwater" },
-            { "Weather", "Rain and thunder" },
-            { "Blocks", "Breaking, placing and using blocks" },
-            { "Hostile creatures", "Monsters" },
-            { "Friendly creatures", "Animals and villagers" },
-            { "Players", "Steps, hits and other players" },
-            { "Jukebox & note blocks", "Records and notes" },
-            { "Interface", "Buttons and menus" },
+        settingsHeading(ui, x, y, w, tr("menu.audio.tab.title", "Audio"), tr("menu.audio.tab.description", "Adjust the volume of each kind of sound"));
+        struct Channel {
+            const char* key;
+            const char* label;
+            const char* detail;
+        };
+        static constexpr Channel Channels[VolumeChannelCount] = {
+            { "soundCategory.main", "Main volume", "Every sound" },
+            { "soundCategory.music", "Music", "Menu and game music" },
+            { "soundCategory.ambient", "Ambient & environment", "Caves, biomes and underwater" },
+            { "soundCategory.weather", "Weather", "Rain and thunder" },
+            { "soundCategory.block", "Blocks", "Breaking, placing and using blocks" },
+            { "soundCategory.hostile", "Hostile creatures", "Monsters" },
+            { "soundCategory.neutral", "Friendly creatures", "Animals and villagers" },
+            { "soundCategory.player", "Players", "Steps, hits and other players" },
+            { "soundCategory.record", "Jukebox & note blocks", "Records and notes" },
+            { "soundCategory.ui", "Interface", "Buttons and menus" },
         };
         for (size_t i = 0; i < VolumeChannelCount; ++i) {
             float rowY = y;
-            settingsRow(ui, x, y, w, Channels[i].first, Channels[i].second, 44.0f);
+            std::string key = Channels[i].key;
+            settingsRow(ui, x, y, w, tr(key, Channels[i].label), tr(key + ".description", Channels[i].detail), 44.0f);
             std::string percent = std::to_string(volumes[i]) + "%";
             ui.text(percent, TextStyle::Ui, x + w - 12.0f - ui.measure(percent, TextStyle::Ui), rowY + 7.0f, White);
             float fraction = float(volumes[i]) / 100.0f;
@@ -743,32 +704,45 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         break;
     }
     case SettingsPage::Account: {
-        settingsHeading(ui, x, y, w, "Account", "Access your account information");
+        settingsHeading(ui, x, y, w, tr("menu.account.tab.title", "Account"), tr("menu.account.tab.description", "Access your account information"));
         float rowY = y;
-        settingsRow(ui, x, y, w, signedIn() ? "Gamertag: " + displayName : "Not signed in", {}, 27.33f);
+        settingsRow(ui, x, y, w, signedIn() ? tr("menu.account.gamertag.title", "Gamertag") + ": " + displayName : tr("authentication.signInRequired", "Not signed in"), {}, 27.33f);
         ui.sprite({ x + w - 12.0f - 16.0f, rowY + 6.0f, 16.0f, 16.0f }, ui.skin().sprite("dynamic/avatar").valid ? "dynamic/avatar" : "ui/profile_glyph_color");
         rowY = y;
         if (signedIn()) {
-            settingsRow(ui, x, y, w, "Sign out of your Microsoft account", {}, 36.0f);
-            if (ui.pressableButton("account:signout", "pressableElevatedSecondary", "Sign Out", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+            settingsRow(ui, x, y, w, tr("menu.account.signOutOfMicrosoft.title", "Sign out of your Microsoft account"), {}, 36.0f);
+            if (ui.pressableButton("account:signout", "pressableElevatedSecondary", tr("menu.account.signOutOfMicrosoft.buttonLabel", "Sign Out"), { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
                 accountRequest = AccountRequest::SignOut;
                 notify("Signed out");
             }
         } else {
-            settingsRow(ui, x, y, w, "Sign in with a Microsoft account", "Needed for online servers and Realms", 36.0f);
-            if (ui.pressableButton("account:signin", "pressableElevatedPrimary", "Sign In", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+            settingsRow(ui, x, y, w, tr("menu.account.signIn.title", "Sign in with a Microsoft account"), "Needed for online servers and Realms", 36.0f);
+            if (ui.pressableButton("account:signin", "pressableElevatedPrimary", tr("menu.account.signIn.buttonLabel", "Sign In"), { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
                 beginSignIn();
             }
         }
         rowY = y;
         settingsRow(ui, x, y, w, "Quit Kestrel", {}, 36.0f);
-        if (ui.pressableButton("account:quit", "pressableElevatedDestructive", "Quit", { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
+        if (ui.pressableButton("account:quit", "pressableElevatedDestructive", tr("globalPauseScreen.quit", "Quit"), { x + w - 12.0f - 68.0f, rowY + 8.0f, 68.0f, 20.0f })) {
             dialog = Dialog::ConfirmExit;
         }
         break;
     }
+    case SettingsPage::Language: {
+        settingsHeading(ui, x, y, w, tr("menu.language.tab.title", "Language"), tr("menu.language.tab.description", "Select your preferred language for Minecraft"));
+        for (const LanguageInfo& language : Localization::shared().languages()) {
+            Rect row { x + 12.0f, y + 3.0f, w - 24.0f, 22.0f };
+            bool active = language.code == languageCode;
+            if (ui.pressableButton("language:" + language.code, active ? "pressableElevatedPrimary" : "pressableElevatedSecondary", language.name, row)) {
+                languageCode = language.code;
+            }
+            y += 26.0f;
+        }
+        y += 6.0f;
+        break;
+    }
     default:
-        settingsHeading(ui, x, y, w, entry ? entry->label : "Settings", {});
+        settingsHeading(ui, x, y, w, entry ? tr(entry->key, entry->label) : tr("menu.settings", "Settings"), {});
         ui.textCentered("TODO", TextStyle::Heading, { x, y + 20.0f, w, 20.0f }, Muted0);
         y += 40.0f;
         break;
@@ -779,11 +753,7 @@ void Menu::settingsPage(Context& ui, const Rect& area)
 
 void Menu::todoScreen(Context& ui, float width, float height, std::string_view heading)
 {
-    std::string upper(heading);
-    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
-        return static_cast<char>(std::toupper(c));
-    });
-    header(ui, width, upper, heading != "Dressing Room");
+    header(ui, width, upperCase(std::string(heading)), heading != tr("profileScreen.header", "Dressing Room"));
     Rect panel = column(width, 53.33f, height - 8.0f);
     ui.fill(panel, PanelDark);
     ui.textCentered("TODO", TextStyle::HeadingLarge, { panel.x, panel.y + panel.h * 0.4f, panel.w, 20.0f }, White);
@@ -805,7 +775,7 @@ void Menu::socialDrawer(Context& ui, float width, float height)
     ui.fill(inner, PanelDark);
 
     Rect search { inner.x + 2.0f, inner.y + 2.0f, inner.w - 29.0f, 22.67f };
-    if (textField(ui, "social:search", "Search for people", socialSearch, search, field == Field::SocialSearch)) {
+    if (textField(ui, "social:search", tr("store.search.button", "Search for people"), socialSearch, search, field == Field::SocialSearch)) {
         field = Field::SocialSearch;
     }
     Rect close { search.right() + 2.0f, search.y, 23.0f, 22.67f };
@@ -828,7 +798,7 @@ void Menu::socialDrawer(Context& ui, float width, float height)
     tabUnderline(ui, socialParty ? partyTab : peopleTab);
 
     float y = tabs.bottom() + 4.0f;
-    ui.textCentered(socialParty ? "PARTY" : "PEOPLE", TextStyle::Heading, { inner.x, y, inner.w, 12.0f }, White);
+    ui.textCentered(upperCase(socialParty ? tr("options.party", "Party") : tr("networkWorld.friends_label", "People")), TextStyle::Heading, { inner.x, y, inner.w, 12.0f }, White);
     y += 16.0f;
     if (socialParty) {
         ui.textCentered("No parties available", TextStyle::Ui, { inner.x, inner.y + inner.h * 0.4f, inner.w, 12.0f }, White);
@@ -843,7 +813,7 @@ void Menu::socialDrawer(Context& ui, float width, float height)
     bool hasAvatar = ui.skin().sprite("dynamic/avatar").valid;
     ui.sprite({ you.x + 4.0f, you.y + 4.0f, 24.0f, 24.0f }, hasAvatar ? "dynamic/avatar" : "ui/profile_glyph_color");
     ui.text(displayName + " (You)", TextStyle::Ui, you.x + 32.0f, you.y + 7.0f, White, you.w - 36.0f);
-    ui.text(inGame() ? "Playing on a server" : "In the Minecraft Menus", TextStyle::UiSmall, you.x + 32.0f, you.y + 18.0f, Muted0, you.w - 36.0f);
+    ui.text(inGame() ? tr("menu.servers", "Playing on a server") : tr("accessibility.screenName.start", "In the Minecraft Menus"), TextStyle::UiSmall, you.x + 32.0f, you.y + 18.0f, Muted0, you.w - 36.0f);
     y = you.bottom() + 4.0f;
 
     if (ui.pressableButton("social:requests", "pressableElevatedSecondary", "Friend requests", { you.x, y, you.w, ButtonHeight })) {
@@ -851,7 +821,7 @@ void Menu::socialDrawer(Context& ui, float width, float height)
     }
     y += ButtonHeight + 6.0f;
     ui.fill({ you.x, y, you.w, 10.0f }, Primary);
-    ui.text("Online (0)", TextStyle::UiSmall, you.x + 3.0f, y + 1.0f, White);
+    ui.text(tr("invite.OnlineFriends", "Online") + " (0)", TextStyle::UiSmall, you.x + 3.0f, y + 1.0f, White);
     y += 12.0f;
     ui.textCentered("TODO: Friends list", TextStyle::Ui, { you.x, y + 4.0f, you.w, 12.0f }, Muted0);
 }

@@ -44,7 +44,6 @@ enum class Screen {
 };
 
 enum class PlayTab {
-    Worlds,
     Realms,
     Servers,
 };
@@ -116,11 +115,6 @@ struct RealmEntry {
     std::string detail;
     bool open = false;
     bool expired = false;
-};
-
-struct WorldEntry {
-    std::string name;
-    std::string detail;
 };
 
 struct AccountInfo {
@@ -253,6 +247,16 @@ public:
         }
     }
 
+    const std::string& language() const
+    {
+        return languageCode;
+    }
+
+    void setLanguage(std::string code)
+    {
+        languageCode = std::move(code);
+    }
+
     const std::string& playerName() const
     {
         return displayName;
@@ -316,11 +320,6 @@ public:
         return answer;
     }
 
-    void setWorlds(std::vector<WorldEntry> entries)
-    {
-        worldEntries = std::move(entries);
-    }
-
     void setInterfaceScale(float value)
     {
         scale = value;
@@ -374,7 +373,6 @@ private:
     // Screens drawn the way the HTML menus draw them.
     float header(ui::Context& ui, float width, std::string_view heading, bool social);
     void play(ui::Context& ui, float width, float height);
-    void worldsTab(ui::Context& ui, const ui::Rect& area);
     void realmsTab(ui::Context& ui, const ui::Rect& area);
     void serversTab(ui::Context& ui, const ui::Rect& area);
     void serverForm(ui::Context& ui, float width, float height);
@@ -411,7 +409,7 @@ private:
     ServerStore& store;
     Screen screen = Screen::Title;
     Screen returnScreen = Screen::Title;
-    PlayTab playTab = PlayTab::Worlds;
+    PlayTab playTab = PlayTab::Servers;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
     Field field = Field::None;
@@ -446,7 +444,6 @@ private:
     ChromeAction chromeAction = ChromeAction::None;
     AccountInfo account;
     AccountRequest accountRequest = AccountRequest::None;
-    std::vector<WorldEntry> worldEntries;
     SessionInfo session;
     std::string cameraInfo;
     HudView hud;
@@ -463,6 +460,7 @@ private:
     int chunkDistance = DefaultRenderDistance;
     int fpsLimit = DefaultMaxFps;
     int fieldOfView = DefaultFov;
+    std::string languageCode = "en_US";
     std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;
 };

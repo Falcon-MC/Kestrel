@@ -2,6 +2,7 @@
 
 #include "platform/Shell.h"
 #include "ui/Context.h"
+#include "ui/Localization.h"
 #include "ui/Theme.h"
 #include "ui/Utf8.h"
 
@@ -192,13 +193,13 @@ void Menu::screenContent(Context& ui, float width, float height)
         serverForm(ui, width, height);
         break;
     case Screen::Marketplace:
-        todoScreen(ui, width, height, "Marketplace");
+        todoScreen(ui, width, height, tr("menu.store", "Marketplace"));
         break;
     case Screen::DressingRoom:
-        todoScreen(ui, width, height, "Dressing Room");
+        todoScreen(ui, width, height, tr("profileScreen.header", "Dressing Room"));
         break;
     case Screen::Profile:
-        todoScreen(ui, width, height, "Profile");
+        todoScreen(ui, width, height, tr("menu.profile", "Profile"));
         break;
     }
 }
@@ -264,7 +265,7 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     case Dialog::ConfirmDelete: {
         std::optional<ServerRow> row = selectedRow();
-        messageDialog(ui, width, height, "Delete Server", "Are you sure you want to delete " + (row ? "\"" + row->name + "\"" : std::string("this server")) + "?", "Delete", "Cancel", confirmed, cancelled);
+        messageDialog(ui, width, height, tr("selectServer.delete", "Delete Server"), tr("selectServer.deleteQuestion", "Are you sure you want to remove this server?"), tr("selectServer.deleteButton", "Delete"), tr("gui.cancel", "Cancel"), confirmed, cancelled);
         if (confirmed && row && !row->featured) {
             store.remove(row->index);
             selection.reset();
@@ -273,7 +274,7 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     }
     case Dialog::ConfirmExit:
-        messageDialog(ui, width, height, "Quit Game", "Are you sure you want to quit Kestrel?", "Quit", "Cancel", confirmed, cancelled);
+        messageDialog(ui, width, height, tr("globalPauseScreen.quit", "Quit Game"), tr("deathScreen.quit.confirm", "Are you sure you want to quit?"), tr("globalPauseScreen.quit", "Quit"), tr("gui.cancel", "Cancel"), confirmed, cancelled);
         if (confirmed) {
             quit = true;
         }
@@ -529,19 +530,19 @@ void Menu::title(Context& ui, float width, float height)
 
     float x = std::floor((width - TitleButtonWidth) * 0.5f);
     float y = std::round(height * 0.5f + 13.67f);
-    if (ui.classicButton("title:play", "Play", { x, y, TitleButtonWidth, TitleButtonHeight })) {
-        playTab = PlayTab::Worlds;
+    if (ui.classicButton("title:play", tr("menu.play", "Play"), { x, y, TitleButtonWidth, TitleButtonHeight })) {
+        playTab = PlayTab::Servers;
         navigate(Screen::Play);
     }
-    if (ui.classicButton("title:settings", "Settings", { x, y + TitleButtonStep, TitleButtonWidth, TitleButtonHeight })) {
+    if (ui.classicButton("title:settings", tr("menu.settings", "Settings"), { x, y + TitleButtonStep, TitleButtonWidth, TitleButtonHeight })) {
         returnScreen = Screen::Title;
         navigate(Screen::Settings);
     }
-    if (ui.classicButton("title:marketplace", "Marketplace", { x, y + TitleButtonStep * 2.0f, TitleButtonWidth, TitleButtonHeight })) {
+    if (ui.classicButton("title:marketplace", tr("menu.store", "Marketplace"), { x, y + TitleButtonStep * 2.0f, TitleButtonWidth, TitleButtonHeight })) {
         navigate(Screen::Marketplace);
     }
 
-    if (iconButton(ui, "title:social", "Social (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "title:social", tr("options.social", "Social") + " (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
         socialParty = false;
     }
@@ -554,13 +555,13 @@ void Menu::title(Context& ui, float width, float height)
         notify("TODO: Inbox");
     }
     const Sprite& avatar = ui.skin().sprite("dynamic/avatar");
-    if (iconButton(ui, "title:profile", "Profile", avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { cornerLeft + 31.0f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
+    if (iconButton(ui, "title:profile", tr("menu.profile", "Profile"), avatar.valid ? "dynamic/avatar" : "ui/profile_glyph_color", { cornerLeft + 31.0f, bottom, 63.0f, CornerButtonHeight }, 18.0f)) {
         navigate(Screen::Profile);
     }
 
     float dressingX = width - 158.0f;
     float dressingY = height - 96.33f;
-    if (ui.classicButton("title:dressing", "Dressing Room", { dressingX, dressingY, 82.0f, CornerButtonHeight })) {
+    if (ui.classicButton("title:dressing", tr("profileScreen.header", "Dressing Room"), { dressingX, dressingY, 82.0f, CornerButtonHeight })) {
         navigate(Screen::DressingRoom);
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
@@ -583,24 +584,24 @@ void Menu::pause(Context& ui, float width, float height)
 
     logo(ui, x + ButtonWidth * 0.5f, y - 59.0f, ButtonWidth);
 
-    if (ui.classicButton("pause:resume", "Resume Game", { x, y, ButtonWidth, ButtonHeight })) {
+    if (ui.classicButton("pause:resume", tr("menu.returnToGame", "Resume Game"), { x, y, ButtonWidth, ButtonHeight })) {
         dialog = Dialog::None;
     }
-    if (ui.classicButton("pause:settings", "Settings", { x, y + Step, ButtonWidth, ButtonHeight })) {
+    if (ui.classicButton("pause:settings", tr("menu.settings", "Settings"), { x, y + Step, ButtonWidth, ButtonHeight })) {
         dialog = Dialog::None;
         returnScreen = Screen::Title;
         navigate(Screen::Settings);
     }
-    if (ui.classicButton("pause:quit", "Save & Quit", { x, y + Step * 2.0f, ButtonWidth, ButtonHeight })) {
+    if (ui.classicButton("pause:quit", tr("menu.quit", "Save & Quit"), { x, y + Step * 2.0f, ButtonWidth, ButtonHeight })) {
         dialog = Dialog::None;
         disconnectRequested = true;
     }
 
-    if (iconButton(ui, "pause:social", "Social (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "pause:social", tr("options.social", "Social") + " (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
     }
     float dressingX = width - 158.0f;
-    if (ui.classicButton("pause:dressing", "Dressing Room", { dressingX, y + 119.0f, 82.0f, CornerButtonHeight })) {
+    if (ui.classicButton("pause:dressing", tr("profileScreen.header", "Dressing Room"), { dressingX, y + 119.0f, 82.0f, CornerButtonHeight })) {
         notify("TODO: Dressing Room");
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
@@ -625,7 +626,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
 
     std::string heading;
     std::string body;
-    std::string button = "Cancel";
+    std::string button = tr("gui.cancel", "Cancel");
     bool progress = false;
     float fraction = -1.0f;
     bool twoButtons = false;
@@ -633,36 +634,36 @@ void Menu::progressDialog(Context& ui, float width, float height)
     if (dialog == Dialog::SignIn) {
         switch (account.status) {
         case AccountStatus::AwaitingCode:
-            heading = "Sign in with a Microsoft account";
+            heading = tr("menu.account.signIn.title", "Sign in with a Microsoft account");
             body = "Go to " + account.verificationUri + " and enter the code " + account.userCode;
             twoButtons = true;
             break;
         case AccountStatus::Failed:
             heading = "Sign-in failed";
             body = account.error;
-            button = "Try Again";
+            button = tr("gui.tryAgain", "Try Again");
             twoButtons = true;
             break;
         default:
-            heading = "Signing in";
+            heading = tr("authentication.loggingin", "Signing in...");
             progress = true;
             break;
         }
     } else if (dialog == Dialog::ConnectionError) {
-        heading = session.status == SessionStatus::Disconnected ? "Disconnected from Server" : "Unable to connect to world";
-        body = session.error.empty() ? "The connection was closed." : session.error;
-        button = "OK";
+        heading = session.status == SessionStatus::Disconnected ? tr("disconnectionScreen.disconnected", "Disconnected from Server") : tr("disconnectionScreen.title.unableToConnect", "Unable to connect to world");
+        body = session.error.empty() ? tr("disconnect.closed", "The connection was closed.") : Localization::shared().translateMessage(session.error);
+        button = tr("gui.ok", "OK");
     } else if (session.packPrompt) {
         heading = "Resource Packs Required";
         std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
         body = "This server uses " + count + " (" + megabytes(session.packBytes) + "). Download them?";
-        button = "Download";
+        button = tr("selectTemplate.download", "Download");
         twoButtons = session.packSkippable;
     } else if (session.packDownloading) {
         heading = "Downloading packs (" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")";
         fraction = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
     } else {
-        heading = session.status == SessionStatus::Resolving ? "Locating server" : session.loadingTerrain ? "Generating world" : "Connecting to online experience";
+        heading = session.status == SessionStatus::Resolving ? tr("progressScreen.message.locating", "Locating server") : session.loadingTerrain ? tr("menu.generatingLevel", "Generating world") : tr("progressScreen.title.connectingCOM", "Connecting to online experience");
         progress = true;
     }
 
@@ -680,7 +681,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
     }
     bool generating = progress && dialog == Dialog::Connecting && session.status != SessionStatus::Resolving && session.loadingTerrain;
     if (generating) {
-        constexpr std::string_view Waiting = "Loading server...";
+        std::string Waiting = tr("menu.loadingLevel", "Loading server...");
         float waitingWidth = ui.measure(Waiting, TextStyle::Pixel);
         float buttonCenter = std::floor(well.x + (well.w - 64.0f) * 0.5f) + 32.0f;
         ui.text(Waiting, TextStyle::Pixel, std::round(buttonCenter - waitingWidth * 0.5f), buttonY - 33.0f, White);
@@ -725,7 +726,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
             }
         }
         Rect cancel = twoButtons ? secondary : primary;
-        if (ui.classicButton("signin:cancel", "Cancel", cancel)) {
+        if (ui.classicButton("signin:cancel", tr("gui.cancel", "Cancel"), cancel)) {
             if (account.status != AccountStatus::Failed) {
                 accountRequest = AccountRequest::Cancel;
             }
@@ -743,7 +744,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
         if (ui.classicButton("packs:download", button, primary)) {
             packAnswer = true;
         }
-        if (session.packSkippable && ui.classicButton("packs:skip", "Skip", secondary)) {
+        if (session.packSkippable && ui.classicButton("packs:skip", tr("gui.skip", "Skip"), secondary)) {
             packAnswer = false;
         }
         return;

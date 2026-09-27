@@ -1,5 +1,7 @@
 #include "world/ItemInfo.h"
 
+#include "ui/Localization.h"
+
 #include <array>
 #include <cctype>
 #include <utility>
@@ -111,6 +113,12 @@ int32_t itemArmorPoints(const std::string& identifier)
 std::string itemDisplayName(const std::string& identifier)
 {
     std::string name = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
+    const ui::Localization& texts = ui::Localization::shared();
+    for (const std::string& key : { "item." + name + ".name", "tile." + name + ".name", "item." + identifier + ".name", "tile." + identifier + ".name" }) {
+        if (texts.has(key)) {
+            return texts.text(key, name);
+        }
+    }
     bool capital = true;
     for (char& c : name) {
         if (c == '_') {

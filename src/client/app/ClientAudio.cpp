@@ -1,6 +1,7 @@
 #include "client/Client.h"
 
 #include "client/DebugLog.h"
+#include "ui/Localization.h"
 #include "world/PackSource.h"
 
 #include <algorithm>
@@ -16,10 +17,11 @@ namespace kestrel {
  */
 void Client::updateAudio(const SessionSnapshot& snapshot)
 {
+    std::vector<std::shared_ptr<const world::PackFiles>> packs = snapshot.state == SessionState::Joined ? snapshot.packs : std::vector<std::shared_ptr<const world::PackFiles>> {};
+    ui::Localization::shared().setServerPacks(packs);
     if (!soundEngine || !soundEngine->ready()) {
         return;
     }
-    std::vector<std::shared_ptr<const world::PackFiles>> packs = snapshot.state == SessionState::Joined ? snapshot.packs : std::vector<std::shared_ptr<const world::PackFiles>> {};
     if (!soundLibraryBuilt || packs != soundPacks) {
         soundPacks = packs;
         soundLibraryBuilt = true;
