@@ -6,6 +6,7 @@
 #include "ui/Utf8.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <optional>
 
@@ -57,6 +58,32 @@ std::string_view visibleTail(Context& ui, std::string_view text, float width)
         nextCodepoint(text, start);
     }
     return text.substr(start);
+}
+
+CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand>>& commands,
+    const std::vector<std::string>& players, std::string_view draft)
+{
+    if (!draft.empty() && draft.front() == '/') {
+        return commands ? commandHints(*commands, players, draft) : CommandHints {};
+    }
+
+    CommandHints hints;
+    size_t separator = draft.find_last_of(" \t\r\n");
+    size_t tokenStart = separator == std::string_view::npos ? 0 : separator + 1;
+    if (tokenStart >= draft.size() || draft[tokenStart] != '@') {
+        return hints;
+    }
+    std::string query(draft.substr(tokenStart + 1));
+    std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    hints.replaceFrom = tokenStart;
+    for (const std::string& name : players) {
+        std::string folded = name;
+        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (folded.starts_with(query)) {
+            hints.suggestions.push_back({ "@" + name + " ", {} });
+        }
+    }
+    return hints;
 }
 
 }
@@ -145,7 +172,7 @@ void Menu::recallChat(int step)
 void Menu::completeChat(bool backwards)
 {
     if (chatCycle.empty() || chatDraft != chatCycleDraft) {
-        CommandHints hints = commands ? commandHints(*commands, players, chatDraft) : CommandHints {};
+        CommandHints hints = chatCompletions(commands, players, chatDraft);
         if (hints.suggestions.empty()) {
             chatCycle.clear();
             return;
@@ -251,14 +278,14 @@ void Menu::chatFeed(Context& ui, float top, float width, float height)
  */
 void Menu::commandPanel(Context& ui, float width, float bottom, float top)
 {
-    if (!commands || chatDraft.empty() || chatDraft.front() != '/') {
+    if (chatDraft.empty()) {
         return;
     }
     bool cycling = !chatCycle.empty() && chatDraft == chatCycleDraft;
-    CommandHints hints = commandHints(*commands, players, chatDraft);
+    CommandHints hints = chatCompletions(commands, players, chatDraft);
     const std::vector<CommandSuggestion>& suggestions = cycling ? chatCycle : hints.suggestions;
     std::string base = cycling ? chatCycleBase : chatDraft.substr(0, hints.replaceFrom);
-    bool commandNames = base == "/";
+    bool commandNames = chatDraft.front() == '/' && base == "/";
 
     size_t capacity = static_cast<size_t>(std::max(0.0f, std::floor((bottom - top) / HintRowHeight)));
     size_t usageRows = std::min(hints.usage.size(), capacity);

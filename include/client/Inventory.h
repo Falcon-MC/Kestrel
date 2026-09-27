@@ -21,6 +21,7 @@ struct HudItem {
     std::string icon;
     std::vector<std::string> lore;
     bool enchanted = false;
+    bool handEquipped = false;
     bool empty() const { return identifier.empty() || count <= 0; }
     bool operator==(const HudItem&) const = default;
 };

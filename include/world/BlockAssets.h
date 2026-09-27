@@ -365,6 +365,7 @@ public:
      * drawn as a full cube; null for other items.
      */
     const BlockVisual* itemCube(const std::string& identifier) const;
+    std::vector<ModelQuad> itemGeometry(const std::string& identifier) const;
 
     size_t itemTextureCount() const
     {

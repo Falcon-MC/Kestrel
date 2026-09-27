@@ -43,6 +43,7 @@ public:
     }
 
     Mat4 viewProjection(float aspect) const;
+    void setHurtProgress(float remaining) { hurtProgress = remaining; }
 
     /**
      * Tangent of half the vertical field of view for a width to height ratio.
@@ -74,6 +75,7 @@ private:
     float fovScale = 1.0f;
     float baseFov = HorizontalFovDegrees;
     bool facingSubject = false;
+    float hurtProgress = 0.0f;
 };
 
 }

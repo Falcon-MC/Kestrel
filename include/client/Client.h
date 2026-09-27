@@ -85,7 +85,7 @@ private:
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
     float swingProgress();
-    void appendHeldItem(const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
+    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
     void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out);
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
@@ -168,6 +168,7 @@ private:
     bool featuredDirty = false;
     uint64_t actorFrame = 0;
     world::EntityAnimator handAnimator;
+    world::EntityAnimator handRestAnimator;
     std::unordered_map<uint64_t, float> swimAmounts;
     double lastActorTime = 0.0;
     static constexpr int PerspectiveFirst = 0;
@@ -183,9 +184,19 @@ private:
     bool localSlim = false;
     double swingStart = -1.0;
     std::string lastHeldIdentity;
-    double heldChangedAt = 0.0;
+    double handUpdatedAt = 0.0;
+    float handEquip = 0.0f;
+    HudItem handItem;
     std::string heldItemKey;
     std::vector<uint8_t> heldIcon;
+    struct HeldItemFace {
+        std::array<std::array<float, 3>, 4> corners;
+        std::array<std::array<uint16_t, 2>, 4> uvs;
+        uint32_t material;
+        uint32_t shade;
+    };
+    std::vector<HeldItemFace> heldItemMesh;
+    bool heldItemBlock = false;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;
     int framesCounted = 0;

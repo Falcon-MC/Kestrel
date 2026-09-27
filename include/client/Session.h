@@ -67,6 +67,7 @@ struct TargetBlock {
 };
 
 struct ActorView {
+    double lastHurt = 0.0;
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
@@ -143,6 +144,7 @@ struct HudState {
     int32_t air = 300;
     int32_t maxAir = 300;
     double lastHealthDrop = 0.0;
+    double lastHurt = 0.0;
     std::vector<HudEffect> effects;
 };
 
@@ -152,6 +154,7 @@ struct HudState {
  */
 struct PlayerView {
     bool active = false;
+    bool onGround = true;
     std::array<double, 3> previous {};
     std::array<double, 3> current {};
     double tickTime = 0.0;
@@ -390,7 +393,7 @@ private:
     void finishDimensionChange();
     void collectMeshes();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
-    void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround);
+    void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition = false);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);

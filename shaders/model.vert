@@ -62,5 +62,5 @@ void main()
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
     outLight = cornerLight(inD.x, inD.y, corner);
-    outEntity = (words[11] >> 5) & 3u;
+    outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
 }

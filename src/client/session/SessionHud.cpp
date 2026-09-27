@@ -62,6 +62,18 @@ std::string componentIcon(const Tag& tag, int depth = 0)
     return {};
 }
 
+const Tag* itemComponent(const Tag& tag, const std::string& name, int depth = 0)
+{
+    if (tag.getType() != Tag::Type::Compound || depth > 6) return nullptr;
+    if (const Tag* found = tag.get(name)) return found;
+    for (const char* key : { "components", "item_properties" }) {
+        if (const Tag* child = tag.get(key)) {
+            if (const Tag* found = itemComponent(*child, name, depth + 1)) return found;
+        }
+    }
+    return nullptr;
+}
+
 /**
  * The HUD view of a network stack: identifier, count, aux, the Damage tag of
  * tools and armor and the custom name under display.Name.
@@ -78,6 +90,15 @@ HudItem hudItemOf(const ItemStack& stack)
     item.count = stack.mCount;
     item.aux = stack.mDamage;
     item.icon = componentIcon(stack.mDefinition->getComponentData());
+    const std::string& id = item.identifier;
+    item.handEquipped = id.ends_with("_sword") || id.ends_with("_pickaxe") || id.ends_with("_axe")
+        || id.ends_with("_shovel") || id.ends_with("_hoe") || id == "minecraft:trident"
+        || id == "minecraft:fishing_rod" || id == "minecraft:carrot_on_a_stick" || id == "minecraft:warped_fungus_on_a_stick";
+    const Tag& components = stack.mDefinition->getComponentData();
+    const Tag* hand = itemComponent(components, "minecraft:hand_equipped");
+    if (!hand) hand = itemComponent(components, "hand_equipped");
+    if (hand && hand->getType() == Tag::Type::Compound) hand = hand->get("value");
+    if (hand && hand->getType() == Tag::Type::Byte) item.handEquipped = hand->asByte() != 0;
     if (stack.mTag.getType() != Tag::Type::Compound) {
         return item;
     }
@@ -127,6 +148,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
             if (attribute.mName == "minecraft:health") {
                 if (hud.statsKnown && attribute.mValue < hud.health) {
                     hud.lastHealthDrop = now;
+                    if (now - hud.lastHurt > 0.1) hud.lastHurt = now;
                 }
                 hud.health = attribute.mValue;
                 hud.maxHealth = std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f ? attribute.mMaximum : 20.0f;
@@ -148,6 +170,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
         std::lock_guard<std::mutex> guard(mutex);
         if (float(health->mHealth) < current.hud.health) {
             current.hud.lastHealthDrop = now;
+            if (now - current.hud.lastHurt > 0.1) current.hud.lastHurt = now;
         }
         current.hud.health = float(health->mHealth);
         current.hud.statsKnown = true;

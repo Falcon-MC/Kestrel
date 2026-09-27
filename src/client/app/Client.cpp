@@ -175,6 +175,8 @@ int Client::run()
                 eyePosition = { camera.x(), camera.y(), camera.z() };
             }
             session.setLookRay(eyePosition, camera.forward());
+            camera.setHurtProgress(playerView.active && hudState.lastHurt > 0.0
+                ? static_cast<float>(std::clamp(1.0 - (secondsNow() - hudState.lastHurt) / 0.5, 0.0, 1.0)) : 0.0f);
         }
         {
             Profiler::Section section(profiler, "hud");
@@ -761,6 +763,12 @@ void Client::syncSession()
         entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
         renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots + 1);
         heldItemKey.clear();
+        heldItemMesh.clear();
+        lastHeldIdentity.clear();
+        handItem = {};
+        handUpdatedAt = 0.0;
+        handEquip = 0.0f;
+        handRestAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
         for (const auto& [slot, pixels] : skinPixels) {
             renderer->updateEntityTexture(assets->skinLayerBase() + slot, pixels.data());

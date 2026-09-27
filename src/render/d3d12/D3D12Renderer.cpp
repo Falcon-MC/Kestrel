@@ -234,7 +234,7 @@ WorldOut vs_model(ModelIn input)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, input.d.y, corner);
-    output.entity = (words[11] >> 5) & 3;
+    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 15 : 0;
     return output;
 }
 
@@ -286,7 +286,10 @@ float4 applyTint(float4 texel, uint tint)
 float4 surfaceTexel(WorldOut input)
 {
     if (input.entity != 0) {
-        return entities.Sample(blockSampler, float3(input.uv, input.material & 0xfff));
+        float4 texel = entities.Sample(blockSampler, float3(input.uv, input.material & 0xfff));
+        if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
+        if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
+        return texel;
     }
     return applyTint(sampleMaterial(input.material, input.uv), input.tint);
 }

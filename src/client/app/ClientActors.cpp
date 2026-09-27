@@ -258,6 +258,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.headYaw = actor.headYaw;
         input.pitch = actor.pitch;
         input.now = now;
+        input.hurtTime = actor.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - actor.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
         input.worldTime = worldTime;
         input.flags = actor.flags;
         input.variant = actor.variant;
@@ -415,6 +416,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
             }
             uint32_t shadeWord = (quad.flags & world::QuadFaceMask) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
+            if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, blend == world::EntityBlend::Opaque ? out : blended);
         };
         if (combined) {
@@ -539,6 +541,7 @@ ActorView Client::localActorView(float deltaSeconds)
 {
     ActorView self;
     self.runtimeId = LocalActorId;
+    self.lastHurt = hudState.lastHurt;
     self.identifier = "minecraft:player";
     self.x = eyePosition[0];
     self.y = eyePosition[1] - playerView.eyeHeight();

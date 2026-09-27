@@ -156,6 +156,7 @@ struct AnimationInput {
     int skinId = 0;
     float health = 20.0f;
     float maxHealth = 20.0f;
+    float hurtTime = 0.0f;
     bool onGround = true;
     double cameraX = 0.0;
     double cameraY = 0.0;

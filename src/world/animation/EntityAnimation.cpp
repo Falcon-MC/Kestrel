@@ -1117,6 +1117,9 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "is_on_ground") {
         return current.onGround ? 1.0 : 0.0;
     }
+    if (name == "hurt_time") {
+        return current.hurtTime;
+    }
     if (name == "is_alive" || name == "has_collision" || name == "has_gravity") {
         return 1.0;
     }
