@@ -230,6 +230,7 @@ const Bitmap* Skin::bitmap(std::string_view name)
 void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
 {
     Entry& entry = entries[name];
+    reclaimable = reclaimable || entry.placed;
     entry.bitmap = std::move(bitmap);
     entry.sprite = {};
     entry.sprite.slice = slice;
@@ -241,7 +242,10 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
 
 void Skin::clearDynamic(const std::string& name)
 {
-    if (entries.erase(name) > 0) {
+    auto found = entries.find(name);
+    if (found != entries.end()) {
+        reclaimable = reclaimable || found->second.placed;
+        entries.erase(found);
         changed = true;
     }
 }
@@ -291,7 +295,8 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
             break;
         }
     }
-    if (full) {
+    if (full && reclaimable) {
+        reclaimable = false;
         cursorX = 0;
         cursorY = ImageTop;
         shelfHeight = 0;
