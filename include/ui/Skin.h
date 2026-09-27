@@ -80,6 +80,7 @@ private:
     uint32_t cursorX = 0;
     uint32_t cursorY = ImageTop;
     uint32_t shelfHeight = 0;
+    bool reclaimable = false;
 };
 
 }

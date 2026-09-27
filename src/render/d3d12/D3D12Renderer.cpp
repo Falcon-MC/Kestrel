@@ -987,7 +987,7 @@ public:
 
         ID3D12CommandList* lists[] = { commandList.Get() };
         queue->ExecuteCommandLists(1, lists);
-        swapChain->Present(0, 0);
+        swapChain->Present(1, 0);
 
         fenceValues[frameIndex] = ++fenceCounter;
         queue->Signal(fence.Get(), fenceCounter);
