@@ -51,6 +51,7 @@ struct GeometryBone {
 struct Geometry {
     float textureWidth = 16.0f;
     float textureHeight = 16.0f;
+    bool textureSizeSet = false;
     std::vector<GeometryBone> bones;
 };
 

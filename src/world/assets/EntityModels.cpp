@@ -207,7 +207,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
                 }
                 float left = region[0] / width;
                 float right = (region[0] + region[2]) / width;
-                if (mirror) {
+                if (mirror && cube.boxUv) {
                     std::swap(left, right);
                 }
                 float top = region[1] / height;

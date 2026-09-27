@@ -234,9 +234,11 @@ void GeometryLibrary::parse(const std::string& text)
             Geometry geometry;
             if (const json::Value* width = description->get("texture_width")) {
                 geometry.textureWidth = static_cast<float>(width->number(16.0));
+                geometry.textureSizeSet = true;
             }
             if (const json::Value* height = description->get("texture_height")) {
                 geometry.textureHeight = static_cast<float>(height->number(16.0));
+                geometry.textureSizeSet = true;
             }
             parseBones(entry->get("bones"), geometry);
             byIdentifier[identifier->string()] = std::move(geometry);
@@ -251,12 +253,17 @@ void GeometryLibrary::parse(const std::string& text)
         if (!entry || !entry->isObject()) {
             continue;
         }
+        // The legacy format only ever described entities, which default to a 64 pixel texture.
         Geometry geometry;
+        geometry.textureWidth = 64.0f;
+        geometry.textureHeight = 64.0f;
         if (const json::Value* width = entry->get("texturewidth")) {
-            geometry.textureWidth = static_cast<float>(width->number(16.0));
+            geometry.textureWidth = static_cast<float>(width->number(64.0));
+            geometry.textureSizeSet = true;
         }
         if (const json::Value* height = entry->get("textureheight")) {
-            geometry.textureHeight = static_cast<float>(height->number(16.0));
+            geometry.textureHeight = static_cast<float>(height->number(64.0));
+            geometry.textureSizeSet = true;
         }
         parseBones(entry->get("bones"), geometry);
         size_t separator = key.find(':');
@@ -270,7 +277,8 @@ void GeometryLibrary::parse(const std::string& text)
 
 /**
  * Applies legacy geometry inheritance (geometry.child:geometry.parent): the
- * child keeps its own bones and takes every parent bone it does not redefine.
+ * child keeps its own bones and takes every parent bone it does not redefine,
+ * and the parent's texture size when it gives none.
  */
 void GeometryLibrary::resolveInheritance()
 {
@@ -299,6 +307,11 @@ void GeometryLibrary::resolveInheritance()
             }
         }
         child->second.bones = std::move(merged);
+        if (!child->second.textureSizeSet && base->second.textureSizeSet) {
+            child->second.textureWidth = base->second.textureWidth;
+            child->second.textureHeight = base->second.textureHeight;
+            child->second.textureSizeSet = true;
+        }
     };
     while (!parents.empty()) {
         resolve(parents.begin()->first, 0);
