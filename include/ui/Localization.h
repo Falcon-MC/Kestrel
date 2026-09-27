@@ -31,6 +31,11 @@ public:
     void load(std::shared_ptr<world::PackSource> vanilla, const std::string& code);
     void setServerPacks(std::vector<std::shared_ptr<const world::PackFiles>> packs);
 
+    /**
+     * The oreui pack, where the texts of the HTML menus live under hbui keys.
+     */
+    void setInterfacePack(std::shared_ptr<world::PackSource> interface);
+
     const std::string& code() const
     {
         return current;
@@ -67,6 +72,7 @@ private:
     static std::string fill(std::string_view pattern, const std::vector<std::string>& arguments);
 
     std::shared_ptr<world::PackSource> pack;
+    std::shared_ptr<world::PackSource> interfacePack;
     std::vector<std::shared_ptr<const world::PackFiles>> serverPacks;
     std::string current = "en_US";
     std::vector<LanguageInfo> available;

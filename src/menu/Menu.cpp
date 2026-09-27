@@ -266,7 +266,7 @@ void Menu::frame(Context& ui, float width, float height)
     case Dialog::ConfirmDelete: {
         std::optional<ServerRow> row = selectedRow();
         messageDialog(ui, width, height, tr("selectServer.delete", "Delete Server"), tr("selectServer.deleteQuestion", "Are you sure you want to remove this server?"), tr("selectServer.deleteButton", "Delete"), tr("gui.cancel", "Cancel"), confirmed, cancelled);
-        if (confirmed && row && !row->featured) {
+        if (confirmed && row && row->group == ServerGroup::Saved) {
             store.remove(row->index);
             selection.reset();
             navigate(Screen::Play);
@@ -998,7 +998,7 @@ void Menu::goBack()
 
 void Menu::connect(const ServerRow& row)
 {
-    if (!row.featured) {
+    if (row.group == ServerGroup::Saved) {
         store.markJoined(row.index);
     }
     pending = ConnectRequest { row.name, row.address };
@@ -1045,12 +1045,12 @@ bool Menu::saveServerForm(bool andPlay)
     } else {
         index = store.add(name, address);
     }
-    selection = Selection { false, index };
+    selection = Selection { ServerGroup::Saved, index };
     playTab = PlayTab::Servers;
     navigate(Screen::Play);
     if (andPlay) {
         const SavedServer& server = store.servers()[index];
-        connect({ false, index, server.name, server.address, {} });
+        connect({ ServerGroup::Saved, index, server.name, server.address, {}, {} });
     }
     return true;
 }

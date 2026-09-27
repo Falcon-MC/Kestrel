@@ -28,6 +28,7 @@ namespace kestrel {
 namespace {
 
 constexpr size_t MinVisibleTerrain = 1024;
+constexpr const char* FeaturedSpritePrefix = "dynamic/featured/";
 
 }
 
@@ -40,6 +41,7 @@ Client::Client()
     store.load();
     loadSettings();
     account.restore();
+    featured = std::make_unique<FeaturedServers>(menu.language());
     if (!font.load(assets, skin)) {
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
@@ -57,6 +59,10 @@ Client::Client()
         }
     }
     ui::Localization::shared().load(vanillaSounds, menu.language());
+    std::error_code oreuiError;
+    if (!vanilla.empty() && std::filesystem::is_directory(vanilla.parent_path() / "oreui", oreuiError)) {
+        ui::Localization::shared().setInterfacePack(std::make_shared<world::PackSource>(vanilla.parent_path() / "oreui"));
+    }
 }
 
 Client::~Client()
@@ -164,6 +170,7 @@ int Client::run()
                     entry.motd = ping.motd;
                 }
                 menu.setServerStatus(std::move(status));
+                syncFeatured();
             }
         }
 
@@ -310,6 +317,69 @@ int Client::run()
         profiler.endFrame();
     }
     return 0;
+}
+
+void Client::syncFeatured()
+{
+    if (!featuredListed && !featured->loading()) {
+        featuredList = featured->servers();
+        featuredListed = true;
+        featuredDirty = true;
+        for (const FeaturedServer& server : featuredList) {
+            featured->requestImage(server.iconUrl, false);
+        }
+    }
+    for (const FeaturedServer& server : featuredList) {
+        if (!server.creatorExperience()) {
+            pinger.request(server.address);
+        }
+    }
+
+    std::optional<std::string> focus = menu.focusedFeatured();
+    if (focus != featuredFocus) {
+        featuredFocus = focus;
+        for (const FeaturedServer& server : featuredList) {
+            if (focus && server.id == *focus) {
+                for (const std::string& url : server.showcaseUrls) {
+                    featured->requestImage(url, true);
+                }
+            }
+        }
+    }
+
+    for (auto& [url, bitmap] : featured->takeImages()) {
+        skin.setDynamic(FeaturedSpritePrefix + url, std::move(bitmap));
+        featuredImages.insert(url);
+        featuredDirty = true;
+    }
+    if (!featuredDirty) {
+        return;
+    }
+    featuredDirty = false;
+
+    auto sprite = [this](const std::string& url) {
+        return featuredImages.count(url) > 0 ? FeaturedSpritePrefix + url : std::string();
+    };
+    std::vector<menu::FeaturedEntry> entries;
+    entries.reserve(featuredList.size());
+    for (const FeaturedServer& server : featuredList) {
+        menu::FeaturedEntry& entry = entries.emplace_back();
+        entry.id = server.id;
+        entry.name = server.name;
+        entry.creator = server.creator;
+        entry.description = server.description;
+        entry.newsTitle = server.newsTitle;
+        entry.news = server.news;
+        entry.address = server.address;
+        entry.icon = sprite(server.iconUrl);
+        entry.showcaseCount = server.showcaseUrls.size();
+        for (const std::string& url : server.showcaseUrls) {
+            if (std::string name = sprite(url); !name.empty()) {
+                entry.showcase.push_back(std::move(name));
+            }
+        }
+    }
+    menu.setFeatured(std::move(entries), !featuredListed);
 }
 
 void Client::syncAccount()
