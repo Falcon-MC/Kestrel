@@ -203,6 +203,14 @@ const char* legacyAlias(const std::string& name)
         { "oak_pressure_plate", "wooden_pressure_plate" },
         { "iron_chain", "chain" },
         { "lily_pad", "waterlily" },
+        { "short_grass", "tallgrass" },
+        { "fern", "tallgrass" },
+        { "sunflower", "double_plant" },
+        { "lilac", "double_plant" },
+        { "tall_grass", "double_plant" },
+        { "large_fern", "double_plant" },
+        { "rose_bush", "double_plant" },
+        { "peony", "double_plant" },
     };
     auto found = aliases.find(name);
     return found == aliases.end() ? nullptr : found->second;

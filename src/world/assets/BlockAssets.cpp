@@ -405,6 +405,20 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             }
             return 0;
         }
+        if (startsWith(textureKey, "double_plant_")) {
+            static const std::pair<const char*, size_t> plants[] = {
+                { "sunflower", 0 }, { "lilac", 1 }, { "tall_grass", 2 }, { "large_fern", 3 }, { "rose_bush", 4 }, { "peony", 5 },
+            };
+            for (const auto& [plant, index] : plants) {
+                if (name == plant) {
+                    return std::min(index, count - 1);
+                }
+            }
+            return 0;
+        }
+        if (textureKey == "tallgrass" || textureKey == "tallgrass_carried") {
+            return name == "fern" ? std::min<size_t>(2, count - 1) : 0;
+        }
         std::optional<int32_t> growth = stateInt(states, "growth");
         if (!growth) {
             growth = stateInt(states, "growth_stage");
