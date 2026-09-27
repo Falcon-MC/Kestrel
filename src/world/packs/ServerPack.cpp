@@ -1,6 +1,7 @@
 #include "world/ServerPack.h"
 
 #include "Core/Json/Json.h"
+#include "util/Bytes.h"
 
 #include <openssl/evp.h>
 #include <zlib.h>
@@ -16,17 +17,8 @@ namespace {
 constexpr uint32_t EncryptedMagic = 0x9BCFB9FCu;
 constexpr size_t EncryptedHeaderSize = 0x100;
 
-uint16_t readLe16(const std::string& data, size_t offset)
-{
-    const auto* bytes = reinterpret_cast<const unsigned char*>(data.data() + offset);
-    return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
-}
-
-uint32_t readLe32(const std::string& data, size_t offset)
-{
-    const auto* bytes = reinterpret_cast<const unsigned char*>(data.data() + offset);
-    return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) | (uint32_t(bytes[3]) << 24);
-}
+using util::readLe16;
+using util::readLe32;
 
 bool inflateRaw(const char* data, size_t size, size_t expected, std::string& out)
 {

@@ -1,6 +1,7 @@
 #include "world/EntityAnimation.h"
 
 #include "Core/Json/Json.h"
+#include "util/Text.h"
 
 #include <algorithm>
 #include <cctype>
@@ -14,13 +15,7 @@ namespace {
 constexpr double Pi = 3.14159265358979323846;
 constexpr int MaxDepth = 8;
 
-std::string lowered(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return text;
-}
+using util::lowercase;
 
 double wrapDegrees(double degrees)
 {
@@ -111,7 +106,7 @@ AnimationKey keyOf(float time, const json::Value& value, double fallback)
         key.pre = vectorOf(pre ? pre : post, fallback);
         key.post = vectorOf(post ? post : pre, fallback);
         if (const json::Value* mode = value.get("lerp_mode"); mode && mode->isString()) {
-            std::string name = lowered(mode->mString);
+            std::string name = lowercase(mode->mString);
             key.lerp = name == "step" ? LerpMode::Step : name == "catmullrom" ? LerpMode::CatmullRom : LerpMode::Linear;
         }
         return key;
@@ -257,13 +252,13 @@ AnimationClip clipOf(const json::Value& value)
                 continue;
             }
             AnimationBone track;
-            track.bone = lowered(name);
+            track.bone = lowercase(name);
             track.rotation = channelOf(bone->get("rotation"), 0.0);
             track.position = channelOf(bone->get("position"), 0.0);
             track.scale = channelOf(bone->get("scale"), 1.0);
             if (const json::Value* relative = bone->get("relative_to"); relative && relative->isObject()) {
                 const json::Value* rotation = relative->get("rotation");
-                track.rotationRelativeToEntity = rotation && rotation->isString() && lowered(rotation->mString) == "entity";
+                track.rotationRelativeToEntity = rotation && rotation->isString() && lowercase(rotation->mString) == "entity";
             }
             for (const AnimationChannel* channel : { &track.rotation, &track.position, &track.scale }) {
                 if (!channel->keys.empty()) {
@@ -298,10 +293,10 @@ std::vector<std::pair<std::string, molang::Script>> namedScripts(const json::Val
     }
     for (const auto& entry : value->mArray) {
         if (entry->isString()) {
-            list.emplace_back(lowered(entry->mString), molang::Script {});
+            list.emplace_back(lowercase(entry->mString), molang::Script {});
         } else if (entry->isObject()) {
             for (const std::string& name : entry->mKeys) {
-                list.emplace_back(lowered(name), scriptOf(entry->get(name), 1.0));
+                list.emplace_back(lowercase(name), scriptOf(entry->get(name), 1.0));
             }
         }
     }
@@ -312,7 +307,7 @@ AnimationController controllerOf(const json::Value& value)
 {
     AnimationController controller;
     if (const json::Value* initial = value.get("initial_state"); initial && initial->isString()) {
-        controller.initialState = lowered(initial->mString);
+        controller.initialState = lowercase(initial->mString);
     }
     const json::Value* states = value.get("states");
     if (!states || !states->isObject()) {
@@ -343,7 +338,7 @@ AnimationController controllerOf(const json::Value& value)
                     continue;
                 }
                 ControllerVariable variable;
-                std::string variableName = lowered(key);
+                std::string variableName = lowercase(key);
                 if (variableName.rfind("variable.", 0) == 0) {
                     variableName = variableName.substr(9);
                 } else if (variableName.rfind("v.", 0) == 0) {
@@ -368,7 +363,7 @@ AnimationController controllerOf(const json::Value& value)
         if (const json::Value* shortest = state->get("blend_via_shortest_path"); shortest && shortest->mType == json::Value::Type::Boolean) {
             parsed.blendShortestPath = shortest->mBoolean;
         }
-        controller.states[lowered(name)] = std::move(parsed);
+        controller.states[lowercase(name)] = std::move(parsed);
     }
     if (!controller.states.count(controller.initialState) && !controller.states.empty()) {
         controller.initialState = controller.states.count("default") ? "default" : controller.states.begin()->first;
@@ -435,7 +430,7 @@ void AnimationLibrary::parse(const json::Value& document)
         for (const std::string& name : animations->mKeys) {
             const json::Value* clip = animations->get(name);
             if (clip && clip->isObject()) {
-                clips[lowered(name)] = clipOf(*clip);
+                clips[lowercase(name)] = clipOf(*clip);
             }
         }
     }
@@ -443,7 +438,7 @@ void AnimationLibrary::parse(const json::Value& document)
         for (const std::string& name : controllersValue->mKeys) {
             const json::Value* controller = controllersValue->get(name);
             if (controller && controller->isObject()) {
-                controllers[lowered(name)] = controllerOf(*controller);
+                controllers[lowercase(name)] = controllerOf(*controller);
             }
         }
     }
@@ -468,7 +463,7 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
         for (const std::string& alias : animations->mKeys) {
             const json::Value* target = animations->get(alias);
             if (target && target->isString()) {
-                scripts->aliases[lowered(alias)] = lowered(target->mString);
+                scripts->aliases[lowercase(alias)] = lowercase(target->mString);
             }
         }
     }
@@ -481,8 +476,8 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
             for (const std::string& alias : entry->mKeys) {
                 const json::Value* target = entry->get(alias);
                 if (target && target->isString()) {
-                    scripts->aliases[lowered(alias)] = lowered(target->mString);
-                    controllerAliases.push_back(lowered(alias));
+                    scripts->aliases[lowercase(alias)] = lowercase(target->mString);
+                    controllerAliases.push_back(lowercase(alias));
                 }
             }
         }
@@ -863,7 +858,7 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     if (rigChanged || boneIndex.size() != bones.size()) {
         boneIndex.clear();
         for (size_t index = 0; index < bones.size(); ++index) {
-            boneIndex.emplace(lowered(bones[index].name), static_cast<int32_t>(index));
+            boneIndex.emplace(lowercase(bones[index].name), static_cast<int32_t>(index));
         }
     }
     deltaTime = std::clamp(input.now - lastUpdate, 0.0, 0.25);

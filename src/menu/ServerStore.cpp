@@ -1,5 +1,7 @@
 #include "menu/ServerStore.h"
 
+#include "util/Text.h"
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -17,15 +19,7 @@ std::string sanitize(std::string value)
     return value;
 }
 
-std::string trim(std::string value)
-{
-    size_t begin = value.find_first_not_of(' ');
-    if (begin == std::string::npos) {
-        return {};
-    }
-    size_t end = value.find_last_not_of(' ');
-    return value.substr(begin, end - begin + 1);
-}
+using util::trim;
 
 int64_t now()
 {

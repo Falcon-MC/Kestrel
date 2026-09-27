@@ -1,5 +1,8 @@
 #include "world/PackSource.h"
 
+#include "util/Bytes.h"
+#include "util/Text.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -29,36 +32,8 @@ bool readFile(const fs::path& path, std::string& out)
     return true;
 }
 
-uint32_t readLe32(const std::string& data, size_t offset)
-{
-    const auto* bytes = reinterpret_cast<const unsigned char*>(data.data() + offset);
-    return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) | (uint32_t(bytes[3]) << 24);
-}
-
-/**
- * The numbers of a version folder name such as 1.26.51.1, so versions sort
- * by value: 1.26 is newer than 1.9.
- */
-std::vector<uint64_t> versionNumbers(const std::string& name)
-{
-    std::vector<uint64_t> numbers;
-    uint64_t current = 0;
-    bool inNumber = false;
-    for (char c : name) {
-        if (c >= '0' && c <= '9') {
-            current = current * 10 + uint64_t(c - '0');
-            inNumber = true;
-        } else if (inNumber) {
-            numbers.push_back(current);
-            current = 0;
-            inNumber = false;
-        }
-    }
-    if (inNumber) {
-        numbers.push_back(current);
-    }
-    return numbers;
-}
+using util::readLe32;
+using util::versionNumbers;
 
 }
 

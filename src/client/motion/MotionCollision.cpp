@@ -1,0 +1,138 @@
+#include "MotionMath.h"
+
+#include <cmath>
+
+namespace kestrel {
+
+using namespace motion;
+
+void PlayerMotion::move()
+{
+    MotionVector requested = velocity;
+    if (isSneaking && onGround && requested.y <= 0.0f) {
+        requested = avoidEdge(boundingBox(), requested);
+        velocity = requested;
+    }
+
+    world::CollisionBox original = boundingBox();
+    std::vector<world::CollisionBox> nearby = collisionBoxes(extend(original, requested));
+
+    auto resolve = [&](bool oneWay) {
+        Resolution resolution;
+        world::CollisionBox box = original;
+        float penetration[3] = {};
+        MotionVector yMovement = clipAll(nearby, box, { 0.0f, requested.y, 0.0f }, oneWay, penetration);
+        box = offset(box, yMovement);
+        MotionVector xMovement = clipAll(nearby, box, { requested.x, 0.0f, 0.0f }, oneWay, penetration);
+        box = offset(box, xMovement);
+        MotionVector zMovement = clipAll(nearby, box, { 0.0f, 0.0f, requested.z }, oneWay, penetration);
+        box = offset(box, zMovement);
+        resolution.box = box;
+        resolution.movement = (yMovement + xMovement) + zMovement;
+        float squared = penetration[0] * penetration[0] + penetration[1] * penetration[1] + penetration[2] * penetration[2];
+        resolution.penetrated = squared >= PenetrationEpsilonSquared;
+        return resolution;
+    };
+
+    auto autoStep = [&](bool oneWay) {
+        std::vector<world::CollisionBox> filtered;
+        filtered.reserve(nearby.size());
+        for (const world::CollisionBox& box : nearby) {
+            if (box.minY < original.maxY) {
+                filtered.push_back(box);
+            }
+        }
+        Resolution resolution;
+        world::CollisionBox box = original;
+        MotionVector up = clipAll(filtered, box, { 0.0f, StepHeight, 0.0f }, oneWay, nullptr);
+        box = offset(box, up);
+        MotionVector x = clipAll(filtered, box, { requested.x, 0.0f, 0.0f }, oneWay, nullptr);
+        box = offset(box, x);
+        MotionVector z = clipAll(filtered, box, { 0.0f, 0.0f, requested.z }, oneWay, nullptr);
+        box = offset(box, z);
+        MotionVector down = clipAll(filtered, box, up.scaled(-1.0f), oneWay, nullptr);
+        box = offset(box, down);
+        resolution.box = box;
+        resolution.movement = ((up + x) + z) + down;
+        return resolution;
+    };
+
+    Resolution collision = resolve(stuckInCollider);
+    MotionVector resolved = collision.movement;
+    bool penetrated = collision.penetrated;
+    stuckInCollider = penetratedLastFrame && penetrated;
+    penetratedLastFrame = penetrated;
+
+    bool xCollision = requested.x != resolved.x;
+    bool yCollision = requested.y != resolved.y;
+    bool zCollision = requested.z != resolved.z;
+    bool mayStep = onGround || (yCollision && requested.y < 0.0f);
+    if (mayStep && (xCollision || zCollision)) {
+        Resolution stepped = autoStep(stuckInCollider);
+        bool stepBlocked = !collisionBoxes(stepped.box).empty();
+        if (!stepBlocked && resolved.horizontalLengthSquared() < stepped.movement.horizontalLengthSquared()) {
+            collision = stepped;
+            resolved = stepped.movement;
+        }
+    }
+
+    feet = feetOf(collision.box);
+    xCollision = std::abs(requested.x - resolved.x) >= CollisionEpsilon;
+    yCollision = std::abs(requested.y - resolved.y) >= CollisionEpsilon;
+    zCollision = std::abs(requested.z - resolved.z) >= CollisionEpsilon;
+    collideX = xCollision;
+    collideY = yCollision;
+    collideZ = zCollision;
+    onGround = (yCollision && requested.y < 0.0f) || (onGround && !yCollision && std::abs(requested.y) <= CollisionEpsilon);
+    velocity = resolved;
+    updateSupportingBlock(requested);
+}
+
+MotionVector PlayerMotion::avoidEdge(const world::CollisionBox& box, MotionVector movement) const
+{
+    world::CollisionBox support { box.minX + EdgeInset, box.minY, box.minZ + EdgeInset, box.maxX - EdgeInset, box.maxY, box.maxZ - EdgeInset };
+    auto supported = [&](float x, float z) {
+        world::CollisionBox moved = offset(support, { x, -StepHeight * 1.01f, z });
+        return !collisionBoxes(moved).empty();
+    };
+    auto reduce = [](float value) {
+        if (value < EdgeStep && value >= -EdgeStep) {
+            return 0.0f;
+        }
+        return value > 0.0f ? value - EdgeStep : value + EdgeStep;
+    };
+    float x = movement.x;
+    float z = movement.z;
+    while (x != 0.0f && !supported(x, 0.0f)) {
+        x = reduce(x);
+    }
+    while (z != 0.0f && !supported(0.0f, z)) {
+        z = reduce(z);
+    }
+    while (x != 0.0f && z != 0.0f && !supported(x, z)) {
+        x = reduce(x);
+        z = reduce(z);
+    }
+    return { x, movement.y, z };
+}
+
+void PlayerMotion::updateSupportingBlock(const MotionVector& requested)
+{
+    if (!onGround) {
+        hasSupportingBlock = false;
+        return;
+    }
+    world::CollisionBox probe = extend(boundingBox(), { 0.0f, -1.0E-3f, 0.0f });
+    std::array<int32_t, 3> found {};
+    bool any = findSupportingBlock(probe, found);
+    if (!any) {
+        probe = offset(probe, { -requested.x, 0.0f, -requested.z });
+        any = findSupportingBlock(probe, found);
+    }
+    hasSupportingBlock = any;
+    if (any) {
+        supportingBlock = found;
+    }
+}
+
+}
