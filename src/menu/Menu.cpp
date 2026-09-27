@@ -113,6 +113,7 @@ void Menu::setSession(SessionInfo info)
         if (sheet == Sheet::Connecting) {
             sheet = Sheet::None;
         }
+        navigate(Screen::Home);
         notify("Joined " + session.name);
         break;
     case SessionStatus::Failed:
