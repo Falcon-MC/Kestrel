@@ -42,6 +42,44 @@ std::shared_ptr<const PalettedStorage> ChunkStore::biomes(const SubChunkKey& key
     return column->second.biomes[size_t(offset)];
 }
 
+std::shared_ptr<const BlockEntityMap> ChunkStore::blockEntities(const SubChunkKey& key) const
+{
+    auto column = columnsByKey.find(key.chunk());
+    if (column == columnsByKey.end()) {
+        return nullptr;
+    }
+    auto entry = column->second.blockEntities.find(key.y);
+    return entry == column->second.blockEntities.end() ? nullptr : entry->second;
+}
+
+void ChunkStore::setBlockEntity(int32_t dimension, int32_t x, int32_t y, int32_t z, Tag data)
+{
+    SubChunkKey key { dimension, x >> 4, y >> 4, z >> 4 };
+    auto column = columnsByKey.find(key.chunk());
+    if (column == columnsByKey.end()) {
+        return;
+    }
+    std::shared_ptr<const BlockEntityMap>& slot = column->second.blockEntities[key.y];
+    BlockEntityMap updated = slot ? *slot : BlockEntityMap {};
+    updated[static_cast<uint16_t>(linearIndex(uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15)))] = std::move(data);
+    slot = std::make_shared<const BlockEntityMap>(std::move(updated));
+    dirty.insert(key);
+}
+
+void ChunkStore::replaceBlockEntities(const SubChunkKey& key, BlockEntityMap entities)
+{
+    auto column = columnsByKey.find(key.chunk());
+    if (column == columnsByKey.end()) {
+        return;
+    }
+    if (entities.empty()) {
+        column->second.blockEntities.erase(key.y);
+    } else {
+        column->second.blockEntities[key.y] = std::make_shared<const BlockEntityMap>(std::move(entities));
+    }
+    dirty.insert(key);
+}
+
 void ChunkStore::setBiomes(const ChunkKey& key, int32_t baseY, std::vector<std::shared_ptr<const PalettedStorage>> storages)
 {
     Column& column = columnsByKey[key];

@@ -222,16 +222,23 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     return out;
 }
 
-float4 sampleMaterial(texture2d_array<float> blocks, sampler blockSampler, constant DrawData& draw, uint material, float2 uv)
+float4 sampleLayer(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, float2 uv, uint layer)
+{
+    float4 low = blocks.sample(blockSampler, uv, min(layer, 2047u));
+    float4 high = blocksHigh.sample(blockSampler, uv, layer >= 2048u ? layer - 2048u : 0u);
+    return layer >= 2048u ? high : low;
+}
+
+float4 sampleMaterial(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, constant DrawData& draw, uint material, float2 uv)
 {
     uint layer = material & 0xfff;
     uint count = ((material >> 14) & 0x7f) + 1;
     uint ticksPerFrame = ((material >> 21) & 0x7ff) + 1;
     float timeline = draw.origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
-    float4 texel = blocks.sample(blockSampler, uv, layer + frame);
+    float4 texel = sampleLayer(blocks, blocksHigh, blockSampler, uv, layer + frame);
     if (count > 1 && ((material >> 13) & 1) != 0) {
-        float4 next = blocks.sample(blockSampler, uv, layer + (frame + 1) % count);
+        float4 next = sampleLayer(blocks, blocksHigh, blockSampler, uv, layer + (frame + 1) % count);
         texel = mix(texel, next, fract(timeline));
     }
     return texel;
@@ -247,9 +254,9 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
     return mix(color, draw.fog.rgb, amount);
 }
 
-fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = applyTint(sampleMaterial(blocks, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.004) {
         discard_fragment();
     }
@@ -302,9 +309,9 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
     return float4(color.rgb * color.a, color.a);
 }
 
-fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = applyTint(sampleMaterial(blocks, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.5) {
         discard_fragment();
     }
@@ -355,20 +362,24 @@ public:
         if (textures.layers == 0) {
             return;
         }
-        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor new];
-        descriptor.textureType = MTLTextureType2DArray;
-        descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm;
-        descriptor.width = textures.size;
-        descriptor.height = textures.size;
-        descriptor.arrayLength = textures.layers;
-        descriptor.mipmapLevelCount = textures.mipLevels;
-        descriptor.usage = MTLTextureUsageShaderRead;
-        blockTextures = [device newTextureWithDescriptor:descriptor];
-        for (uint32_t layerIndex = 0; layerIndex < textures.layers; ++layerIndex) {
-            for (uint32_t mip = 0; mip < textures.mipLevels; ++mip) {
-                uint32_t side = std::max<uint32_t>(textures.size >> mip, 1);
-                const uint8_t* source = textures.mips[mip] + static_cast<size_t>(layerIndex) * side * side * 4;
-                [blockTextures replaceRegion:MTLRegionMake2D(0, 0, side, side) mipmapLevel:mip slice:layerIndex withBytes:source bytesPerRow:side * 4 bytesPerImage:side * side * 4];
+        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
+            uint32_t first = page * BlockTexturePageLayers;
+            uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
+            MTLTextureDescriptor* descriptor = [MTLTextureDescriptor new];
+            descriptor.textureType = MTLTextureType2DArray;
+            descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm;
+            descriptor.width = textures.size;
+            descriptor.height = textures.size;
+            descriptor.arrayLength = std::max(count, 1u);
+            descriptor.mipmapLevelCount = textures.mipLevels;
+            descriptor.usage = MTLTextureUsageShaderRead;
+            blockTextures[page] = [device newTextureWithDescriptor:descriptor];
+            for (uint32_t layerIndex = 0; layerIndex < count; ++layerIndex) {
+                for (uint32_t mip = 0; mip < textures.mipLevels; ++mip) {
+                    uint32_t side = std::max<uint32_t>(textures.size >> mip, 1);
+                    const uint8_t* source = textures.mips[mip] + static_cast<size_t>(first + layerIndex) * side * side * 4;
+                    [blockTextures[page] replaceRegion:MTLRegionMake2D(0, 0, side, side) mipmapLevel:mip slice:layerIndex withBytes:source bytesPerRow:side * 4 bytesPerImage:side * side * 4];
+                }
             }
         }
     }
@@ -404,10 +415,11 @@ public:
 
     void drawWorld(const WorldView& view) override
     {
-        if (!encoder || !blockTextures) {
+        if (!encoder || !blockTextures[0]) {
             return;
         }
-        [encoder setFragmentTexture:blockTextures atIndex:0];
+        [encoder setFragmentTexture:blockTextures[0] atIndex:0];
+        [encoder setFragmentTexture:blockTextures[1] atIndex:1];
         [encoder setFragmentSamplerState:blockSampler atIndex:0];
 
         WorldConstants constants(view);
@@ -738,7 +750,7 @@ private:
     id<MTLDepthStencilState> worldDepth;
     id<MTLDepthStencilState> uiDepth;
     id<MTLSamplerState> blockSampler;
-    id<MTLTexture> blockTextures;
+    std::array<id<MTLTexture>, BlockTexturePages> blockTextures;
     id<MTLTexture> depthTexture;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
 };

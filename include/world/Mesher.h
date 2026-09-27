@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/BlockAssets.h"
+#include "world/ChunkStore.h"
 #include "world/SubChunk.h"
 
 #include <array>
@@ -100,6 +101,8 @@ struct MeshInput {
     std::array<std::shared_ptr<const PalettedStorage>, 9> biomes;
     std::array<std::shared_ptr<const SubChunk>, 27> around;
     std::array<std::vector<std::shared_ptr<const SubChunk>>, 9> above;
+    std::shared_ptr<const BlockEntityMap> blockEntities;
+    std::array<int32_t, 3> origin {};
     bool skyLight = true;
 };
 
