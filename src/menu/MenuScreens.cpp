@@ -54,14 +54,6 @@ constexpr SettingsEntry SettingsEntries[] = {
     { SettingsPage::Creator, "menu.creator.tab.title", "Creator", "hbui/Settings", nullptr, nullptr },
 };
 
-std::string upperCase(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::toupper(c));
-    });
-    return text;
-}
-
 Rect column(float width, float top, float bottom)
 {
     float w = std::min(ColumnWidth, width - 16.0f);

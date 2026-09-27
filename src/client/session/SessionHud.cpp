@@ -1,7 +1,10 @@
 #include "SessionData.h"
 
 #include "Network/BedrockConnection.h"
+#include "Protocol/Packets/DeathInfoPacket.h"
 #include "Protocol/Packets/InventoryContentPacket.h"
+#include "Protocol/Packets/PlayerActionPacket.h"
+#include "Protocol/Packets/RespawnPacket.h"
 #include "Protocol/Packets/InventorySlotPacket.h"
 #include "Protocol/Packets/MobEffectPacket.h"
 #include "Protocol/Packets/MobEquipmentPacket.h"
@@ -160,6 +163,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
                 hud.health = attribute.mValue;
                 hud.maxHealth = std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f ? attribute.mMaximum : 20.0f;
                 hud.statsKnown = true;
+                current.dead = hud.health <= 0.0f;
             } else if (attribute.mName == "minecraft:player.hunger") {
                 hud.hunger = attribute.mValue;
             } else if (attribute.mName == "minecraft:player.saturation") {
@@ -179,6 +183,21 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
         }
         current.hud.health = float(health->mHealth);
         current.hud.statsKnown = true;
+        current.dead = current.hud.health <= 0.0f;
+    } else if (auto death = std::dynamic_pointer_cast<DeathInfoPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.dead = true;
+        current.deathCause = death->mCauseAttackName;
+        current.deathParameters = death->mMessageList;
+    } else if (auto respawn = std::dynamic_pointer_cast<RespawnPacket>(packet)) {
+        if (respawn->mState == RespawnPacket::State::ServerReady && respawnPending && connection) {
+            respawnPending = false;
+            PlayerActionPacket action;
+            action.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
+            action.mAction = PlayerActionType::Respawn;
+            action.mFace = -1;
+            connection->send(action);
+        }
     } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.gameType = mode->mGamemode;
@@ -238,6 +257,28 @@ void Session::selectHotbarSlot(int slot)
  * Tells the server which hotbar slot the local player now holds, carrying the
  * stack in that slot.
  */
+void Session::requestRespawn()
+{
+    respawnRequested = true;
+}
+
+/**
+ * Tells the server the client is ready to respawn; the server answers with the
+ * spawn point, and the respawn action follows once it is ready.
+ */
+void Session::sendRespawnRequest()
+{
+    if (!connection) {
+        return;
+    }
+    RespawnPacket packet;
+    packet.mPosition = { 0.0f, 0.0f, 0.0f };
+    packet.mState = RespawnPacket::State::ClientReady;
+    packet.mRuntimeActorId = localRuntimeId;
+    connection->send(packet);
+    respawnPending = true;
+}
+
 void Session::sendSelectedSlot(int slot)
 {
     if (!connection || slot < 0 || slot > 8) {

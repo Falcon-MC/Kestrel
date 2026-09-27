@@ -262,6 +262,9 @@ int Client::run()
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
             session.connect(request->name, request->address, account.signedInAuthentication(), menu.playerName());
         }
+        if (menu.takeRespawnRequest()) {
+            session.requestRespawn();
+        }
         if (menu.takeDisconnectRequest()) {
             session.disconnect();
         }
@@ -816,6 +819,10 @@ void Client::syncSession()
     info.packReceived = snapshot.packReceived;
     info.packTotal = snapshot.packTotal;
     info.error = std::move(snapshot.error);
+    info.dead = snapshot.dead && snapshot.state == SessionState::Joined;
+    if (info.dead && !snapshot.deathCause.empty()) {
+        info.deathMessage = ui::Localization::shared().translateMessage(snapshot.deathCause, snapshot.deathParameters);
+    }
     menu.setSession(std::move(info));
 }
 

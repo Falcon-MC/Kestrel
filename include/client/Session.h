@@ -245,6 +245,9 @@ struct SessionSnapshot {
     size_t customPermutations = 0;
     std::string blockAtPlayer;
     double boomFraction = 0.0;
+    bool dead = false;
+    std::string deathCause;
+    std::vector<std::string> deathParameters;
     uint32_t localSkinSlot = NoSkin;
     bool localSlim = false;
     uint32_t airSequential = 0;
@@ -308,6 +311,7 @@ public:
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
+    void requestRespawn();
     void setMotionInput(const MotionInput& input);
 
 private:
@@ -325,6 +329,7 @@ private:
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
     void sendSelectedSlot(int slot);
+    void sendRespawnRequest();
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
     void fail(const std::string& error);
     void handleWorldPacket(const std::string& payload);
@@ -391,6 +396,8 @@ private:
     std::unique_ptr<PacketCodecContext> codecContext;
     std::array<ItemStack, 36> inventoryStacks {};
     std::atomic<int> requestedSlot { -1 };
+    std::atomic<bool> respawnRequested { false };
+    bool respawnPending = false;
     PlayerMotion motion;
     MotionInput motionInput;
     MotionInput lastMotionInput;
