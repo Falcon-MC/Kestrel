@@ -52,14 +52,29 @@ fs::path PackSource::locateVanilla()
     }
 #else
     if (const char* home = std::getenv("HOME")) {
-        fs::path candidate = fs::path(home) / ".local/share/mcpelauncher/versions";
-        if (fs::is_directory(candidate, error)) {
-            for (const fs::directory_entry& version : fs::directory_iterator(candidate, error)) {
-                fs::path pack = version.path() / "assets/resource_packs/vanilla";
-                if (fs::exists(pack / "blocks.json", error)) {
-                    return pack;
+        // The Flatpak launcher keeps its data under ~/.var/app and extracts the APK one level deeper.
+        const fs::path launcherRoots[] = {
+            fs::path(home) / ".local/share/mcpelauncher/versions",
+            fs::path(home) / ".var/app/io.mrarm.mcpelauncher/data/mcpelauncher/versions",
+        };
+        fs::path newest;
+        fs::path newestVersion;
+        for (const fs::path& root : launcherRoots) {
+            if (!fs::is_directory(root, error)) {
+                continue;
+            }
+            for (const fs::directory_entry& version : fs::directory_iterator(root, error)) {
+                for (const char* layout : { "assets/resource_packs/vanilla", "assets/assets/resource_packs/vanilla" }) {
+                    fs::path pack = version.path() / layout;
+                    if (fs::exists(pack / "blocks.json", error) && (newest.empty() || version.path().filename() > newestVersion)) {
+                        newest = pack;
+                        newestVersion = version.path().filename();
+                    }
                 }
             }
+        }
+        if (!newest.empty()) {
+            return newest;
         }
     }
 #endif
