@@ -275,6 +275,8 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
         current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 ? SessionState::Resolving : SessionState::Connecting;
         current.name = std::move(name);
         current.target = target;
+        pendingChat.clear();
+        outgoingChat.clear();
     }
     worker = std::thread([this, target = std::move(target), authentication, offlineName = std::move(offlineName)]() mutable {
         run(std::move(target), authentication, std::move(offlineName));
@@ -545,6 +547,11 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::CorrectPlayerMovePrediction:
     case MinecraftPacketIds::SetActorMotion:
     case MinecraftPacketIds::UpdateAbilities:
+    case MinecraftPacketIds::Text:
+    case MinecraftPacketIds::AvailableCommands:
+    case MinecraftPacketIds::SetDisplayObjective:
+    case MinecraftPacketIds::SetScore:
+    case MinecraftPacketIds::RemoveObjective:
         break;
     default:
         return;
@@ -557,6 +564,8 @@ void Session::handleWorldPacket(const std::string& payload)
     handleHudPacket(packet);
     handleMotionPacket(packet);
     handleSoundPacket(packet);
+    handleChatPacket(packet);
+    handleScorePacket(packet);
 
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         world.handle(*levelChunk);
@@ -592,6 +601,7 @@ void Session::handleWorldPacket(const std::string& payload)
             ActorView actor;
             actor.runtimeId = runtime;
             actor.identifier = "minecraft:player";
+            actor.name = player->mUsername;
             std::string uuid = player->mUuid.toString();
             uuidByRuntime[runtime] = uuid;
             if (auto skin = skinByUuid.find(uuid); skin != skinByUuid.end()) {
@@ -641,9 +651,12 @@ void Session::handleWorldPacket(const std::string& payload)
             std::string uuid = entry.mUuid.toString();
             if (entry.mAction == PlayerListPacket::Action::Remove) {
                 releaseSkin(uuid);
+                playerNames.erase(uuid);
                 continue;
             }
             storeSkin(uuid, entry.mSkin);
+            playerNames[uuid] = entry.mName;
+            playerNamesByActor[entry.mActorId] = entry.mName;
             if (entry.mActorId == localUniqueId) {
                 localUuid = uuid;
             }
@@ -653,6 +666,14 @@ void Session::handleWorldPacket(const std::string& payload)
             current.localSkinSlot = skin->second.first;
             current.localSlim = skin->second.second;
         }
+        std::vector<std::string> names;
+        names.reserve(playerNames.size());
+        for (const auto& [uuid, name] : playerNames) {
+            names.push_back(name);
+        }
+        std::sort(names.begin(), names.end());
+        std::lock_guard<std::mutex> guard(mutex);
+        current.players = std::move(names);
     } else if (auto time = std::dynamic_pointer_cast<SetTimePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         current.worldTime = time->mTime;
@@ -946,6 +967,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         connection = std::move(result.mConnection);
         current.state = SessionState::Joined;
         current.displayName = result.mIdentity.mDisplayName;
+        localXuid = result.mIdentity.mXuid;
         current.chunkRadius = connection->getChunkRadius();
         current.joinCount = ++joins;
         pendingUpdates.clear();
@@ -954,6 +976,11 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         runtimeByUnique.clear();
         uuidByRuntime.clear();
         skinByUuid.clear();
+        playerNames.clear();
+        playerNamesByActor.clear();
+        objectives.clear();
+        displaySlots.clear();
+        scores.clear();
         slotOwners = {};
         if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
             current.spawnX = startGame->mPlayerPosition.x;
@@ -1095,6 +1122,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         if (int slot = requestedSlot.exchange(-1); slot >= 0) {
             sendSelectedSlot(slot);
         }
+        flushChat();
         tickMotion();
         scheduleMeshes();
         collectMeshes();

@@ -106,6 +106,7 @@ int Client::run()
             Profiler::Section section(profiler, "session sync");
             session.setRenderDistance(menu.renderDistance());
             syncSession();
+            syncChat();
         }
         {
             Profiler::Section section(profiler, "mesh upload");
@@ -670,6 +671,7 @@ void Client::syncSession()
     SessionSnapshot snapshot = session.snapshot();
     playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
     updateAudio(snapshot);
+    applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : std::vector<std::shared_ptr<const world::PackFiles>> {});
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
         shownTitle = snapshot.titleImage;
@@ -682,6 +684,7 @@ void Client::syncSession()
     if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
         seenJoin = snapshot.joinCount;
         seenTeleport = snapshot.teleportCount;
+        menu.clearChat();
         renderer->clearChunkMeshes();
         opaqueChunks.clear();
         terrainReleased = false;
@@ -742,7 +745,10 @@ void Client::syncSession()
     localSkinSlot = snapshot.localSkinSlot;
     boomFraction = snapshot.boomFraction;
     localSlim = snapshot.localSlim;
+    menu.setCommands(std::move(snapshot.commands));
+    menu.setPlayers(std::move(snapshot.players));
     hudState = std::move(snapshot.hud);
+    sidebarView = std::move(snapshot.sidebar);
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {
             renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());

@@ -78,6 +78,12 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
         case 4:
             actor.name = entry.mStringValue;
             break;
+        case 54:
+            actor.height = entry.mFloatValue;
+            break;
+        case 81:
+            actor.alwaysShowName = entry.mByteValue != 0;
+            break;
         default:
             break;
         }

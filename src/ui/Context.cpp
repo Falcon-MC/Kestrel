@@ -217,9 +217,14 @@ void Context::text(std::string_view value, TextStyle style, float x, float y, Co
     font.draw(drawList, value, style, x, y, color, maxWidth);
 }
 
+float Context::shadowOffset(TextStyle style) const
+{
+    return style == TextStyle::Pixel ? 1.0f : 1.0f / scale * std::max(1.0f, std::round(scale * theme::css(2.0f)));
+}
+
 void Context::textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth)
 {
-    float offset = style == TextStyle::Pixel ? 1.0f : 1.0f / scale * std::max(1.0f, std::round(scale * theme::css(2.0f)));
+    float offset = shadowOffset(style);
     font.draw(drawList, value, style, x + offset, y + offset, shadow, maxWidth);
     font.draw(drawList, value, style, x, y, color, maxWidth);
 }
@@ -235,6 +240,16 @@ void Context::textCentered(std::string_view value, TextStyle style, const Rect& 
 float Context::paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color)
 {
     return font.drawWrapped(drawList, value, style, x, y, width, color);
+}
+
+void Context::pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color)
+{
+    font.drawPixelScaled(drawList, value, x, y, magnify, color);
+}
+
+float Context::paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color)
+{
+    return font.drawWrappedShadowed(drawList, value, style, x, y, width, color, shadowOffset(style));
 }
 
 float Context::paragraphHeight(std::string_view value, TextStyle style, float width) const

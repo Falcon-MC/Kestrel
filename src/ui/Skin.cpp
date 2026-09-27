@@ -57,6 +57,15 @@ Bitmap shrink(const Bitmap& source, uint32_t width)
     return out;
 }
 
+}
+
+Bitmap shrinkBitmap(const Bitmap& source, uint32_t width)
+{
+    return shrink(source, width);
+}
+
+namespace {
+
 // Reads every "--name:value" custom property, which is all the menu theme stylesheet holds.
 void parseTheme(const std::string& css, std::unordered_map<std::string, std::string>& out)
 {
@@ -218,11 +227,12 @@ const Bitmap* Skin::bitmap(std::string_view name)
     return entry.bitmap.rgba.empty() ? nullptr : &entry.bitmap;
 }
 
-void Skin::setDynamic(const std::string& name, Bitmap bitmap)
+void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
 {
     Entry& entry = entries[name];
     entry.bitmap = std::move(bitmap);
     entry.sprite = {};
+    entry.sprite.slice = slice;
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     entry.placed = false;

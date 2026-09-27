@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <optional>
 #include <unordered_set>
 
 namespace kestrel {
@@ -15,10 +16,32 @@ namespace {
 constexpr double MaxActorDistance = 120.0;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
+constexpr double MaxNameTagDistance = 64.0;
+constexpr double NameTagLift = 0.5;
+constexpr double NameTagPixel = 0.025;
+constexpr uint64_t InvisibleFlag = 1ull << 5;
+constexpr uint64_t CanShowNameFlag = 1ull << 14;
+constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
 
 int16_t roundToShort(float value)
 {
     return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
+}
+
+/**
+ * Clip space of a point relative to the camera, x and y in normalized device
+ * coordinates with y up and w the depth, or nothing behind the camera.
+ */
+std::optional<std::array<double, 3>> project(const Mat4& matrix, double x, double y, double z)
+{
+    auto row = [&](size_t r) {
+        return double(matrix[r]) * x + double(matrix[4 + r]) * y + double(matrix[8 + r]) * z + double(matrix[12 + r]);
+    };
+    double w = row(3);
+    if (w <= 0.05) {
+        return std::nullopt;
+    }
+    return std::array<double, 3> { row(0) / w, row(1) / w, w };
 }
 
 float wrapDegrees(float degrees)
@@ -276,6 +299,65 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
  * take the shortest way round. New entities, teleports and jumps longer than
  * eight blocks snap.
  */
+/**
+ * Names over entities the way the game floats them: players whose name may
+ * show, and anything flagged to always show its name, which is how servers
+ * put floating text in the world. Each sits half a block over the entity's
+ * box, one font pixel being 0.025 blocks, farthest first so nearer ones cover
+ * them.
+ */
+std::vector<menu::NameTag> Client::buildNameTags() const
+{
+    std::vector<std::pair<double, menu::NameTag>> placed;
+    float scale = guiScale();
+    float width = static_cast<float>(window->width());
+    float height = static_cast<float>(window->height());
+    Mat4 matrix = camera.viewProjection(width / std::max(height, 1.0f));
+    for (const ActorView& actor : actorViews) {
+        if (actor.name.empty()) {
+            continue;
+        }
+        bool player = actor.identifier == "minecraft:player";
+        bool always = actor.alwaysShowName || (actor.flags[0] & AlwaysShowNameFlag) != 0;
+        if (!always && (!player || (actor.flags[0] & CanShowNameFlag) == 0 || (actor.flags[0] & InvisibleFlag) != 0)) {
+            continue;
+        }
+        std::array<double, 3> feet { actor.x, actor.y, actor.z };
+        if (auto motion = motions.find(actor.runtimeId); motion != motions.end()) {
+            feet = motion->second.shown;
+        }
+        double box = actor.height > 0.0f ? actor.height : player ? 1.8 * actor.scale : 0.0;
+        double dx = feet[0] - camera.x();
+        double dy = feet[1] + box + NameTagLift - camera.y();
+        double dz = feet[2] - camera.z();
+        double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance > MaxNameTagDistance) {
+            continue;
+        }
+        std::optional<std::array<double, 3>> anchor = project(matrix, dx, dy, dz);
+        std::optional<std::array<double, 3>> above = project(matrix, dx, dy + NameTagPixel, dz);
+        if (!anchor || !above || std::abs((*anchor)[0]) > 1.5 || std::abs((*anchor)[1]) > 1.5) {
+            continue;
+        }
+        menu::NameTag tag;
+        tag.text = actor.name;
+        tag.x = static_cast<float>(((*anchor)[0] + 1.0) * 0.5 * width) / scale;
+        tag.y = static_cast<float>((1.0 - (*anchor)[1]) * 0.5 * height) / scale;
+        tag.magnify = static_cast<float>(((*above)[1] - (*anchor)[1]) * 0.5 * height) / scale;
+        if (tag.magnify < 0.05f) {
+            continue;
+        }
+        placed.emplace_back(distance, std::move(tag));
+    }
+    std::sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<menu::NameTag> tags;
+    tags.reserve(placed.size());
+    for (auto& [distance, tag] : placed) {
+        tags.push_back(std::move(tag));
+    }
+    return tags;
+}
+
 void Client::interpolateActors(double now)
 {
     constexpr double MinGlide = 0.05;

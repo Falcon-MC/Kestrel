@@ -15,6 +15,7 @@
 #include "ui/DrawList.h"
 #include "ui/Font.h"
 #include "ui/GameAssets.h"
+#include "ui/JsonUi.h"
 #include "ui/Skin.h"
 
 #include <array>
@@ -60,6 +61,11 @@ private:
     void syncAccount();
     void syncSession();
     void syncFeatured();
+    void syncChat();
+    void applyServerPacks(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    void loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    void loadHudUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    ui::UiData sidebarData() const;
     float nightVisionStrength() const;
     void updateAudio(const SessionSnapshot& snapshot);
     void playSoundRequest(const SoundRequest& request);
@@ -71,6 +77,7 @@ private:
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
     menu::HudView buildHudView();
+    std::vector<menu::NameTag> buildNameTags() const;
     void handleHotbarInput();
     bool terrainReady(const SessionSnapshot& snapshot);
     float guiScale() const;
@@ -131,6 +138,10 @@ private:
     std::unordered_map<uint64_t, ActorMotion> motions;
     HudState hudState;
     std::map<std::string, bool> itemIcons;
+    std::vector<std::shared_ptr<const world::PackFiles>> artPacks;
+    std::vector<std::string> packSprites;
+    bool hudUiLoaded = false;
+    SidebarView sidebarView;
     Profiler profiler;
     ServerPinger pinger;
     std::unique_ptr<FeaturedServers> featured;

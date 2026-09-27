@@ -76,6 +76,11 @@ menu::HudView Client::buildHudView()
     double now = secondsNow();
     const HudState& state = hudState;
     view.visible = true;
+    view.nameTags = buildNameTags();
+    view.sidebarVisible = sidebarView.visible;
+    if (sidebarView.visible) {
+        view.sidebar = sidebarData();
+    }
     view.showHotbar = state.gameType != 6;
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);

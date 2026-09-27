@@ -2,6 +2,7 @@
 
 #include "ui/Context.h"
 #include "ui/Image.h"
+#include "ui/JsonUi.h"
 
 #include <array>
 #include <cstdint>
@@ -27,6 +28,18 @@ struct HudEffectView {
     int32_t id = 0;
     bool ambient = false;
     float alpha = 1.0f;
+};
+
+/**
+ * A name floating over an entity, already projected: x and y are where the
+ * bottom center of its last line sits on screen, and magnify how many menu
+ * units one font pixel takes at that distance.
+ */
+struct NameTag {
+    std::string text;
+    float x = 0.0f;
+    float y = 0.0f;
+    float magnify = 1.0f;
 };
 
 enum class HeartKind {
@@ -61,6 +74,9 @@ struct HudView {
     bool heartFlash = false;
     bool hungerEffect = false;
     std::vector<HudEffectView> effects;
+    std::vector<NameTag> nameTags;
+    bool sidebarVisible = false;
+    ui::UiData sidebar;
 };
 
 /**
@@ -69,5 +85,11 @@ struct HudView {
  * out in GUI pixels scaled by the classic GUI scale rule.
  */
 void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width, float height);
+
+/**
+ * Draws the name tags in the order given, each line centered on a
+ * translucent strip, lines of one tag stacking upward.
+ */
+void drawNameTags(ui::Context& ui, const std::vector<NameTag>& tags);
 
 }

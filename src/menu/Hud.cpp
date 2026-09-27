@@ -341,6 +341,35 @@ void drawEffects(const Layout& layout)
 
 }
 
+void drawNameTags(ui::Context& ui, const std::vector<NameTag>& tags)
+{
+    constexpr ui::Color TagBackground { 0, 0, 0, 64 };
+    std::vector<std::string_view> lines;
+    for (const NameTag& tag : tags) {
+        lines.clear();
+        std::string_view rest = tag.text;
+        while (true) {
+            size_t end = rest.find('\n');
+            lines.push_back(rest.substr(0, end));
+            if (end == std::string_view::npos) {
+                break;
+            }
+            rest.remove_prefix(end + 1);
+        }
+        float widest = 0.0f;
+        for (std::string_view line : lines) {
+            widest = std::max(widest, ui.measure(line, ui::TextStyle::Pixel));
+        }
+        float lineHeight = 9.0f * tag.magnify;
+        float top = tag.y - static_cast<float>(lines.size()) * lineHeight;
+        ui.fill({ tag.x - (widest * 0.5f + 1.0f) * tag.magnify, top - tag.magnify, (widest + 2.0f) * tag.magnify, static_cast<float>(lines.size()) * lineHeight + tag.magnify }, TagBackground);
+        for (size_t i = 0; i < lines.size(); ++i) {
+            float width = ui.measure(lines[i], ui::TextStyle::Pixel) * tag.magnify;
+            ui.pixelTextScaled(lines[i], tag.x - width * 0.5f, top + static_cast<float>(i) * lineHeight, tag.magnify, White);
+        }
+    }
+}
+
 void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width, float height)
 {
     if (!view.visible || width <= 0.0f || height <= 0.0f) {

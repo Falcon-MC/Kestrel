@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <string>
 
@@ -51,7 +52,6 @@ constexpr uint32_t AtlasWidth = Skin::AtlasSize;
 constexpr uint32_t FontRows = Skin::ImageTop;
 constexpr float PixelLineHeight = 10.0f;
 constexpr float PixelSpace = 4.0f;
-constexpr const char* PixelPages[] = { "font/default8", "font/glyph_00", "font/glyph_01" };
 
 std::vector<char32_t> coveredCodepoints()
 {
@@ -269,6 +269,11 @@ std::string activeFormatting(std::string_view text)
     return prefix;
 }
 
+Color shaded(Color color)
+{
+    return { static_cast<uint8_t>(color.r / 4), static_cast<uint8_t>(color.g / 4), static_cast<uint8_t>(color.b / 4), color.a };
+}
+
 uint32_t obfuscationTick()
 {
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 50);
@@ -296,20 +301,52 @@ bool Font::load(GameAssets& assets, Skin& target)
     if (sources[NotoBold].empty()) {
         sources[NotoBold] = sources[Noto];
     }
-    for (size_t i = 0; i < pages.size(); ++i) {
-        readPixelPage(i);
-    }
+    readPixelPage(0);
     return !sources[Seven].empty() && !sources[Noto].empty() && pages[0].loaded;
 }
 
-void Font::readPixelPage(size_t index)
+std::string Font::pixelPageName(size_t index)
 {
-    const Bitmap* bitmap = skin->bitmap(PixelPages[index]);
+    if (index == 0) {
+        return "font/default8";
+    }
+    char name[16];
+    std::snprintf(name, sizeof(name), "font/glyph_%02X", static_cast<unsigned>(index - 1));
+    return name;
+}
+
+void Font::reloadPixelPages()
+{
+    for (BitmapPage& page : pages) {
+        page = BitmapPage {};
+    }
+    readPixelPage(0);
+}
+
+void Font::setPixelPageSourceWidth(size_t index, uint32_t width)
+{
+    if (index < sourceWidths.size()) {
+        sourceWidths[index] = width;
+    }
+}
+
+/**
+ * Measures a sheet. default8 cells are drawn 8 units tall; glyph sheets are
+ * drawn at half a unit per source pixel, so a 256 wide sheet matches the
+ * text and bigger sheets give bigger glyphs, the way the game sizes them.
+ */
+void Font::readPixelPage(size_t index) const
+{
+    BitmapPage& page = pages[index];
+    page.tried = true;
+    page.sprite = pixelPageName(index);
+    const Bitmap* bitmap = skin->bitmap(page.sprite);
     if (!bitmap || bitmap->width != bitmap->height || bitmap->width % 16 != 0) {
         return;
     }
-    BitmapPage& page = pages[index];
     page.cell = bitmap->width / 16;
+    uint32_t source = sourceWidths[index] ? sourceWidths[index] : bitmap->width;
+    page.height = index == 0 ? 8.0f : static_cast<float>(source) / 16.0f * 0.5f;
     for (uint32_t code = 0; code < 256; ++code) {
         uint32_t cellX = (code % 16) * page.cell;
         uint32_t cellY = (code / 16) * page.cell;
@@ -433,13 +470,27 @@ const Font::Glyph* Font::glyph(const Face& face, char32_t cp) const
     return found != face.codepoints.end() ? &face.glyphs[static_cast<size_t>(found - face.codepoints.begin())] : nullptr;
 }
 
-const Font::BitmapPage* Font::pixelPage(char32_t cp) const
+/**
+ * The sheet a code point is drawn from, read the first time it is needed.
+ * Characters without a sheet fall back to default8 below U+0100 and are
+ * skipped beyond it.
+ */
+const Font::BitmapPage* Font::pixelPage(char32_t cp, size_t* index) const
 {
-    size_t index = cp < 0x80 ? 0 : cp < 0x100 ? 1 : cp < 0x200 ? 2 : 0;
-    if (!pages[index].loaded) {
-        index = 0;
+    size_t chosen = cp < 0x80 || cp > 0xFFFF ? 0 : 1 + (cp >> 8);
+    if (!pages[chosen].tried) {
+        readPixelPage(chosen);
     }
-    return &pages[index];
+    if (!pages[chosen].loaded) {
+        if (cp >= 0x100) {
+            return nullptr;
+        }
+        chosen = 0;
+    }
+    if (index) {
+        *index = chosen;
+    }
+    return &pages[chosen];
 }
 
 float Font::pixelAdvance(char32_t cp) const
@@ -448,8 +499,11 @@ float Font::pixelAdvance(char32_t cp) const
         return PixelSpace;
     }
     const BitmapPage* page = pixelPage(cp);
+    if (!page) {
+        return 0.0f;
+    }
     uint32_t code = static_cast<uint32_t>(cp & 0xFF);
-    float texel = 8.0f / static_cast<float>(page->cell);
+    float texel = page->height / static_cast<float>(page->cell);
     float width = page == &pages[0] ? page->end[code] : page->end[code] - page->start[code];
     return std::round(width * texel) + 1.0f;
 }
@@ -506,8 +560,9 @@ float Font::lineHeight(TextStyle style) const
     return faces[static_cast<size_t>(style)].lineHeight / scale;
 }
 
-void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Color color) const
+void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const
 {
+    float unit = scale * magnify;
     float pen = std::round(x * scale);
     float top = std::round(y * scale);
     uint32_t tick = obfuscationTick();
@@ -519,40 +574,41 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
     while (nextVisible(text, i, state, color, visible)) {
         char32_t cp = state.obfuscated ? scrambled(TextStyle::Pixel, visible, tick * 2654435761u ^ index * 40503u) : visible;
         ++index;
-        uint32_t packed = state.color.packed();
-        const BitmapPage* page = pixelPage(cp);
-        size_t pageIndex = static_cast<size_t>(page - pages.data());
-        const Sprite& sheet = skin->sprite(PixelPages[pageIndex]);
-        float bold = state.bold ? scale : 0.0f;
-        float step = pixelAdvance(cp) * scale + bold;
-        if (cp != U' ' && sheet.valid) {
+        uint32_t packed = (shadow ? shaded(state.color) : state.color).packed();
+        size_t pageIndex = 0;
+        const BitmapPage* page = pixelPage(cp, &pageIndex);
+        float bold = state.bold ? unit : 0.0f;
+        float step = pixelAdvance(cp) * unit + bold;
+        const Sprite* sheet = page ? &skin->sprite(page->sprite) : nullptr;
+        if (cp != U' ' && sheet && sheet->valid) {
             uint32_t code = static_cast<uint32_t>(cp & 0xFF);
-            float texel = 8.0f / static_cast<float>(page->cell) * scale;
+            float texel = page->height / static_cast<float>(page->cell) * unit;
             float first = pageIndex == 0 ? 0.0f : page->start[code];
             float last = page->end[code];
-            float du = (sheet.image.u1 - sheet.image.u0) / sheet.width;
-            float dv = (sheet.image.v1 - sheet.image.v0) / sheet.height;
+            float du = (sheet->image.u1 - sheet->image.u0) / sheet->width;
+            float dv = (sheet->image.v1 - sheet->image.v0) / sheet->height;
             float cellX = static_cast<float>((code % 16) * page->cell);
             float cellY = static_cast<float>((code / 16) * page->cell);
-            float u0 = sheet.image.u0 + (cellX + first) * du;
-            float u1 = sheet.image.u0 + (cellX + last) * du;
-            float v0 = sheet.image.v0 + cellY * dv;
-            float v1 = sheet.image.v0 + (cellY + page->cell) * dv;
+            float u0 = sheet->image.u0 + (cellX + first) * du;
+            float u1 = sheet->image.u0 + (cellX + last) * du;
+            float v0 = sheet->image.v0 + cellY * dv;
+            float v1 = sheet->image.v0 + (cellY + page->cell) * dv;
             float height = page->cell * texel;
             float slant = state.italic ? height * ItalicSlant : 0.0f;
-            list.quad(pen, top, pen + (last - first) * texel, top + height, u0, v0, u1, v1, packed, slant, 0.0f);
+            float glyphTop = top + std::round((8.0f - page->height) * 0.5f * unit);
+            list.quad(pen, glyphTop, pen + (last - first) * texel, glyphTop + height, u0, v0, u1, v1, packed, slant, 0.0f);
             if (state.bold) {
-                list.quad(pen + bold, top, pen + bold + (last - first) * texel, top + height, u0, v0, u1, v1, packed, slant, 0.0f);
+                list.quad(pen + bold, glyphTop, pen + bold + (last - first) * texel, glyphTop + height, u0, v0, u1, v1, packed, slant, 0.0f);
             }
         }
         pen += step;
     }
 }
 
-void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color) const
+void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow) const
 {
     if (style == TextStyle::Pixel) {
-        emitPixel(list, text, x, y, color);
+        emitPixel(list, text, x, y, color, shadow);
         return;
     }
     const Face& source = faces[static_cast<size_t>(style)];
@@ -573,7 +629,7 @@ void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x,
         }
         float bold = state.bold ? std::max(1.0f, std::round(scale)) : 0.0f;
         if (g->x1 > g->x0) {
-            uint32_t packed = state.color.packed();
+            uint32_t packed = (shadow ? shaded(state.color) : state.color).packed();
             float topShift = state.italic ? -g->y0 * ItalicSlant : 0.0f;
             float bottomShift = state.italic ? -g->y1 * ItalicSlant : 0.0f;
             list.quad(pen + g->x0, baseline + g->y0, pen + g->x1, baseline + g->y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
@@ -657,6 +713,27 @@ float Font::drawWrapped(DrawList& list, std::string_view text, TextStyle style, 
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string line = carried + std::string(lines[i]);
         emit(list, line, style, x, y + static_cast<float>(i) * height, color);
+        carried = activeFormatting(line);
+    }
+    return static_cast<float>(lines.size()) * height;
+}
+
+void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color) const
+{
+    emitPixel(list, text, x, y, color, false, magnify);
+}
+
+float Font::drawWrappedShadowed(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color, float shadowOffset) const
+{
+    std::vector<std::string_view> lines;
+    wrap(text, style, width, lines);
+    float height = lineHeight(style);
+    std::string carried;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::string line = carried + std::string(lines[i]);
+        float top = y + static_cast<float>(i) * height;
+        emit(list, line, style, x + shadowOffset, top + shadowOffset, color, true);
+        emit(list, line, style, x, top, color);
         carried = activeFormatting(line);
     }
     return static_cast<float>(lines.size()) * height;

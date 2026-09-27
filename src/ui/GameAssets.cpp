@@ -54,6 +54,11 @@ void readSlice(const std::string& text, NineSlice& slice)
 
 }
 
+void readNineSlice(const std::string& json, NineSlice& slice)
+{
+    readSlice(json, slice);
+}
+
 bool decodeBitmap(const std::string& encoded, Bitmap& out)
 {
     return decodeImage(encoded, out.width, out.height, out.rgba);
