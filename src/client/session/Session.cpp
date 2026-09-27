@@ -62,6 +62,7 @@
 #include "world/ServerPack.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -91,6 +92,8 @@ constexpr int ProtocolVersion = 2193;
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr const char* ExperiencePrefix = "experience_id/";
+constexpr const char* RealmsUrl = "https://bedrock.frontendlegacy.realms.minecraft-services.net";
+constexpr const char* RealmsRelyingParty = "https://pocket.realms.minecraft.net/";
 constexpr unsigned int TimeoutMs = 30000;
 
 /**
@@ -243,6 +246,59 @@ bool resolveExperience(MinecraftAuthentication& authentication, const std::strin
     return true;
 }
 
+/**
+ * The code of a Realm invite link typed as a server address, such as
+ * realms.gg/AbCdEf, with or without its scheme; empty for anything else.
+ */
+std::string realmInviteCode(std::string target)
+{
+    for (const char* prefix : { "https://", "http://", "www." }) {
+        if (target.rfind(prefix, 0) == 0) {
+            target.erase(0, std::char_traits<char>::length(prefix));
+        }
+    }
+    constexpr std::string_view InviteHost = "realms.gg/";
+    if (target.rfind(InviteHost, 0) != 0) {
+        return {};
+    }
+    std::string code = target.substr(InviteHost.size());
+    while (!code.empty() && code.back() == '/') {
+        code.pop_back();
+    }
+    bool valid = !code.empty() && std::all_of(code.begin(), code.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0; });
+    return valid ? code : std::string();
+}
+
+/**
+ * Accepts a Realm invite code the way the game does when joining through a
+ * link, which makes the player a member, and gives the Realm's id.
+ */
+bool acceptRealmInvite(MinecraftAuthentication& authentication, const std::string& code, long long& realmId, std::string& error)
+{
+    XboxLiveToken token;
+    if (!authentication.getXboxLiveAuthentication().requestToken(RealmsRelyingParty, token, error)) {
+        error = "request realms token: " + error;
+        return false;
+    }
+    HttpClient::Headers headers {
+        { "User-Agent", "MCPE/UWP" },
+        { "Client-Version", authentication.getGameVersion() },
+        { "Authorization", token.getAuthorizationHeader() },
+    };
+    HttpResponse response;
+    if (!HttpClient::post(std::string(RealmsUrl) + "/invites/v1/link/accept/" + code, headers, "", response, error, TimeoutMs)) {
+        return false;
+    }
+    std::unique_ptr<json::Value> root = json::parse(response.mBody);
+    const json::Value* id = root ? root->get("id") : nullptr;
+    if (response.mStatus != 200 || !id) {
+        error = response.mStatus == 404 ? "This Realm invite link is not valid" : "Could not join the Realm (status " + std::to_string(response.mStatus) + ")";
+        return false;
+    }
+    realmId = static_cast<long long>(id->number());
+    return true;
+}
+
 bool parseHostPort(const std::string& address, std::string& host, unsigned short& port)
 {
     size_t colon = address.rfind(':');
@@ -274,7 +330,7 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
     {
         std::lock_guard<std::mutex> guard(mutex);
         current = SessionSnapshot {};
-        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 || !RealmsService::inviteCode(target).empty() ? SessionState::Resolving : SessionState::Connecting;
+        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 || !realmInviteCode(target).empty() ? SessionState::Resolving : SessionState::Connecting;
         current.name = std::move(name);
         current.target = target;
         pendingChat.clear();
@@ -943,23 +999,20 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.packTotal = total;
     };
 
-    std::string inviteCode = RealmsService::inviteCode(target);
+    std::string inviteCode = realmInviteCode(target);
     if (target.rfind(RealmPrefix, 0) == 0 || !inviteCode.empty()) {
         if (!authentication) {
             fail("Sign in with Microsoft to join Realms");
             return;
         }
         RealmsService realms(*authentication);
-        realms.setCancelFlag(&cancelled);
         long long realmId = 0;
         if (!inviteCode.empty()) {
-            RealmDescription realm;
             std::string error;
-            if (!realms.requestRealmByCode(inviteCode, realm, error)) {
+            if (!acceptRealmInvite(*authentication, inviteCode, realmId, error)) {
                 fail(error);
                 return;
             }
-            realmId = realm.mId;
         } else {
             realmId = std::strtoll(target.c_str() + std::char_traits<char>::length(RealmPrefix), nullptr, 10);
         }
