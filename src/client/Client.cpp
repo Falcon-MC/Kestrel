@@ -286,7 +286,42 @@ int Client::run()
             Profiler::Section section(profiler, "camera");
             bool captured = menu.capturesMouse();
             window->setMouseCaptured(captured);
-            camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
+            if (playerView.active) {
+                const InputState& keys = window->input();
+                const KeyBindings& bindings = menu.keyBindings();
+                camera.look(keys, captured);
+                MotionInput input;
+                if (captured) {
+                    input.forward = float(keys.isHeld(bindings.forward())) - float(keys.isHeld(bindings.back()));
+                    input.sideways = float(keys.isHeld(bindings.left())) - float(keys.isHeld(bindings.right()));
+                    if (input.forward != 0.0f && input.sideways != 0.0f) {
+                        input.forward *= 0.70710677f;
+                        input.sideways *= 0.70710677f;
+                    }
+                    input.jump = keys.isHeld(bindings.up());
+                    input.sneak = keys.isHeld(bindings.down());
+                    input.sprint = keys.isHeld(Key::Control);
+                }
+                input.yaw = camera.minecraftYaw();
+                input.pitch = camera.minecraftPitch();
+                session.setMotionInput(input);
+                float fovTarget = 1.0f;
+                if (playerView.flying) {
+                    fovTarget *= 1.1f;
+                }
+                if (playerView.sprinting) {
+                    fovTarget *= 1.15f;
+                }
+                camera.easeFov(fovTarget, deltaSeconds);
+                double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
+                double eye = playerView.sneaking ? 1.54 : 1.62;
+                camera.setPosition(playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
+                    playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
+                    playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend);
+            } else {
+                camera.easeFov(1.0f, deltaSeconds);
+                camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
+            }
             char cameraText[96];
             std::snprintf(cameraText, sizeof(cameraText), "Camera %.1f, %.1f, %.1f", camera.x(), camera.y(), camera.z());
             menu.setCameraInfo(cameraText);
@@ -1018,6 +1053,7 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
 void Client::syncSession()
 {
     SessionSnapshot snapshot = session.snapshot();
+    playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
         shownTitle = snapshot.titleImage;

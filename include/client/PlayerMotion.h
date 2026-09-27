@@ -1,0 +1,239 @@
+#pragma once
+
+#include "world/BlockCollisions.h"
+
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <vector>
+
+namespace kestrel {
+
+struct MotionVector {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+
+    MotionVector operator+(const MotionVector& other) const
+    {
+        return { x + other.x, y + other.y, z + other.z };
+    }
+
+    MotionVector operator-(const MotionVector& other) const
+    {
+        return { x - other.x, y - other.y, z - other.z };
+    }
+
+    MotionVector scaled(float factor) const
+    {
+        return { x * factor, y * factor, z * factor };
+    }
+
+    float lengthSquared() const
+    {
+        return x * x + y * y + z * z;
+    }
+
+    float horizontalLengthSquared() const
+    {
+        return x * x + z * z;
+    }
+};
+
+/**
+ * The two block layers of one position, as collision states; a null state is
+ * air.
+ */
+struct MotionCell {
+    const world::CollisionState* primary = nullptr;
+    const world::CollisionState* extra = nullptr;
+};
+
+/**
+ * What the player asks for during one tick: the movement keys as a vector
+ * (x sideways with left positive, y forward), the held keys and where they
+ * look, in degrees.
+ */
+struct MotionInput {
+    float sideways = 0.0f;
+    float forward = 0.0f;
+    bool jump = false;
+    bool sneak = false;
+    bool sprint = false;
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+};
+
+/**
+ * Everything the server needs to replay one tick, read back after the tick
+ * ran.
+ */
+struct MotionTick {
+    MotionVector position;
+    MotionVector velocity;
+    bool onGround = false;
+    bool horizontalCollision = false;
+    bool verticalCollision = false;
+    bool startedJump = false;
+    bool startSprinting = false;
+    bool stopSprinting = false;
+    bool startSneaking = false;
+    bool stopSneaking = false;
+    bool startFlying = false;
+    bool stopFlying = false;
+    bool sneaking = false;
+    bool sprinting = false;
+    bool flying = false;
+};
+
+/**
+ * The local player's movement, simulated one tick at a time in single
+ * precision with the same rules, the same constants and the same order of
+ * operations the server replays each input with, so a tick the client sends
+ * is always the tick the server predicts.
+ */
+class PlayerMotion {
+public:
+    using CellLookup = std::function<MotionCell(int32_t x, int32_t y, int32_t z)>;
+
+    PlayerMotion();
+
+    void reset(const MotionVector& feet);
+    void teleport(const MotionVector& feet);
+    void knockback(const MotionVector& motion);
+
+    /**
+     * Moves the feet to where the server reads them back from the sent eye
+     * position, so both sides start the next tick from the same float.
+     */
+    void anchor(const MotionVector& position);
+    void correct(const MotionVector& position, const MotionVector& motion, bool grounded);
+
+    void setMovementSpeed(float current, float base);
+    void setServerSprint(bool sprinting);
+    void setGravity(bool affected);
+    void setImmobile(bool value);
+    void setScale(float value);
+    void setAbilities(bool mayFly, bool flying, bool noClip, float flySpeed, float verticalFlySpeed);
+    void setGameType(int32_t gameType);
+    void setEffects(int32_t jumpBoost, int32_t levitation, bool slowFalling);
+    void setHunger(float hunger);
+
+    MotionTick step(const MotionInput& input, const CellLookup& lookup);
+
+    const MotionVector& position() const
+    {
+        return feet;
+    }
+
+    bool sneaking() const
+    {
+        return isSneaking;
+    }
+
+    bool initialized() const
+    {
+        return ready;
+    }
+
+private:
+    struct Fluid {
+        bool water = false;
+        bool lava = false;
+        int bubbleDirection = 0;
+        bool bubbleSurface = false;
+    };
+
+    struct Resolution {
+        world::CollisionBox box;
+        MotionVector movement;
+        bool penetrated = false;
+    };
+
+    world::CollisionBox boundingBox() const;
+    std::vector<world::CollisionBox> collisionBoxes(const world::CollisionBox& area) const;
+    const world::CollisionState* cellState(int32_t x, int32_t y, int32_t z) const;
+    MotionCell cell(int32_t x, int32_t y, int32_t z) const;
+    const world::CollisionState* blockView(int32_t x, int32_t y, int32_t z) const;
+    bool named(const world::CollisionState* state, std::string_view name) const;
+    float friction(const world::CollisionState* state) const;
+    bool climbable(int32_t x, int32_t y, int32_t z) const;
+    Fluid fluidState(const world::CollisionBox& area) const;
+    bool insideBlockNamed(std::string_view name) const;
+    const world::CollisionState* blockUnder(float distance) const;
+    float jumpPreventionMultiplier() const;
+    bool canClimbOut(float boxBottom) const;
+    bool findSupportingBlock(const world::CollisionBox& area, std::array<int32_t, 3>& found) const;
+
+    void updateInput(const MotionInput& input, MotionTick& tick);
+    void simulate();
+    void runGroundAndAir();
+    void runWater(const Fluid& fluid);
+    void runLava();
+    void runFlight(const MotionInput& input);
+    void moveRelative(float speed);
+    void applyKnockback();
+    void applyJump();
+    void applyClimbable();
+    void applyPowderSnowTraversal();
+    void applyHoneyWallSlide();
+    void walkOnBlock(const world::CollisionState* block);
+    void postCollisionMotion(const MotionVector& oldVelocity, bool oldOnGround, const world::CollisionState* blockUnderFeet);
+    void move();
+    MotionVector avoidEdge(const world::CollisionBox& box, MotionVector movement) const;
+    void updateSupportingBlock(const MotionVector& requested);
+
+    const world::BlockCollisions* table = nullptr;
+    const CellLookup* lookup = nullptr;
+
+    MotionVector feet;
+    MotionVector velocity;
+    MotionVector pendingKnockback;
+    bool hasKnockback = false;
+    float yaw = 0.0f;
+    float impulseSideways = 0.0f;
+    float impulseForward = 0.0f;
+    float width = 0.6f;
+    float height = 1.8f;
+    float scale = 1.0f;
+    float gravity = 0.08f;
+    float jumpHeight = 0.42f;
+    float movementSpeed = 0.1f;
+    float defaultMovementSpeed = 0.1f;
+    float airSpeed = 0.02f;
+    float flySpeed = 0.05f;
+    float verticalFlySpeed = 1.0f;
+    float hunger = 20.0f;
+    int32_t jumpDelay = 0;
+    int32_t jumpBoostLevel = 0;
+    int32_t levitationLevel = 0;
+    int32_t gameType = 0;
+    bool slowFalling = false;
+    bool isSprinting = false;
+    bool isSneaking = false;
+    bool pressingSneak = false;
+    bool pressingJump = false;
+    bool jumping = false;
+    bool serverSprint = false;
+    bool serverSprintApplied = true;
+    bool collideX = false;
+    bool collideY = false;
+    bool collideZ = false;
+    bool onGround = false;
+    bool penetratedLastFrame = false;
+    bool stuckInCollider = false;
+    bool affectedByGravity = true;
+    bool immobile = false;
+    bool mayFly = false;
+    bool isFlying = false;
+    bool noClip = false;
+    bool hasSupportingBlock = false;
+    std::array<int32_t, 3> supportingBlock {};
+    bool teleported = false;
+    bool ready = false;
+    bool jumpWasHeld = false;
+    bool jumped = false;
+    int32_t flyToggleTicks = 0;
+};
+
+}

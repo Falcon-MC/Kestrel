@@ -2,6 +2,7 @@
 
 #include "Protocol/PacketCodecContext.h"
 #include "Protocol/Types/ItemStack.h"
+#include "client/PlayerMotion.h"
 #include "world/BlockAssets.h"
 #include "world/MeshScheduler.h"
 #include "world/WorldStream.h"
@@ -128,6 +129,21 @@ struct HudState {
     std::vector<HudEffect> effects;
 };
 
+/**
+ * Where the local player's feet were at the last two ticks, and when the last
+ * tick ran, so the camera can glide between them.
+ */
+struct PlayerView {
+    bool active = false;
+    std::array<double, 3> previous {};
+    std::array<double, 3> current {};
+    double tickTime = 0.0;
+    bool sneaking = false;
+    bool sprinting = false;
+    bool flying = false;
+    uint64_t teleports = 0;
+};
+
 struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
@@ -187,6 +203,7 @@ struct SessionSnapshot {
     bool updatesPending = false;
     std::vector<ActorView> actors;
     HudState hud;
+    PlayerView player;
 };
 
 double secondsNow();
@@ -210,8 +227,13 @@ public:
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
+    void setMotionInput(const MotionInput& input);
 
 private:
+    void handleMotionPacket(const std::shared_ptr<Packet>& packet);
+    void tickMotion();
+    MotionCell motionCell(int32_t x, int32_t y, int32_t z);
+    bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
     void sendSelectedSlot(int slot);
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
@@ -261,6 +283,14 @@ private:
     std::unique_ptr<PacketCodecContext> codecContext;
     std::array<ItemStack, 36> inventoryStacks {};
     std::atomic<int> requestedSlot { -1 };
+    PlayerMotion motion;
+    MotionInput motionInput;
+    MotionInput lastMotionInput;
+    bool motionStarted = false;
+    bool teleportHandled = false;
+    uint64_t clientTick = 0;
+    double nextMotionTick = 0.0;
+    int32_t motionDimension = 0;
 };
 
 }

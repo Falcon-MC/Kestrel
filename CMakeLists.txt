@@ -42,6 +42,16 @@ falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlo
 falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLightData
         SYMBOL kBlockLightJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockLightJson.h")
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt" kestrelCollisionHex HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," FALCON_BEDROCK_DATA_BYTES "${kestrelCollisionHex}")
+string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n"
+        FALCON_BEDROCK_DATA_BYTES "${FALCON_BEDROCK_DATA_BYTES}")
+set(FALCON_BEDROCK_DATA_NAMESPACE KestrelBlockCollisionData)
+set(FALCON_BEDROCK_DATA_SYMBOL kBlockCollisions)
+configure_file("${FALCON_BEDROCK_DATA_CMAKE_DIR}/EmbeddedBinary.h.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockCollisionTable.h" @ONLY)
+
 find_package(ZLIB REQUIRED)
 
 file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
@@ -85,6 +95,11 @@ add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(Kestrel PRIVATE FalconNetwork ZLIB::ZLIB)
+if(MSVC)
+    set_source_files_properties(src/client/PlayerMotion.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
+else()
+    set_source_files_properties(src/client/PlayerMotion.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
+endif()
 
 if(WIN32)
     target_compile_definitions(Kestrel PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
