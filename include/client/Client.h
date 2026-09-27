@@ -56,6 +56,7 @@ public:
 private:
     void syncAccount();
     void syncSession();
+    float nightVisionStrength() const;
     void applyMeshUpdates();
     size_t visibleTerrain() const;
     std::vector<world::ModelQuadGpu> buildActorQuads(const std::array<int32_t, 3>& origin);

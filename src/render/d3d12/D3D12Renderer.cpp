@@ -263,6 +263,7 @@ float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
 {
     float daylight = max(saturate(params.y), 0.2);
     float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    channel = lerp(channel, 1.0, saturate(params.z));
     float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(fog.w, params.x, length(relative));

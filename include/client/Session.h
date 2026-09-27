@@ -141,6 +141,7 @@ struct PlayerView {
     bool sneaking = false;
     bool sprinting = false;
     bool flying = false;
+    float movementSpeed = 0.1f;
     uint64_t teleports = 0;
 };
 
