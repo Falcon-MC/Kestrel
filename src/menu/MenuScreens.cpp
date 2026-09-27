@@ -15,19 +15,8 @@ using namespace ui::theme;
 
 namespace {
 
-struct FeaturedServer {
-    const char* name;
-    const char* genre;
-    const char* address;
-};
-
-constexpr FeaturedServer Featured[] = {
-    { "The Hive", "Minigames", "geo.hivebedrock.network:19132" },
-    { "CubeCraft", "Minigames", "mco.cubecraft.net:19132" },
-    { "Lifeboat", "Survival & minigames", "mco.lbsg.net:19132" },
-    { "Mineville", "Roleplay & minigames", "play.inpvp.net:19132" },
-    { "Galaxite", "Minigames", "play.galaxite.net:19132" },
-};
+constexpr const char* ExperiencePrefix = "experience_id/";
+constexpr auto ShowcaseInterval = std::chrono::seconds(6);
 
 constexpr float InterfaceScales[] = { 1.0f, 1.25f, 1.5f, 2.0f };
 constexpr const char* InterfaceScaleLabels[] = { "100%", "125%", "150%", "200%" };
@@ -37,6 +26,7 @@ constexpr float ColumnWidth = 631.0f;
 constexpr float TabHeight = 37.0f;
 constexpr float RowHeight = 23.33f;
 constexpr float ButtonHeight = 22.0f;
+constexpr float SectionGap = 10.0f;
 
 struct SettingsEntry {
     SettingsPage page;
@@ -91,11 +81,21 @@ void tabUnderline(Context& ui, const Rect& tab)
 
 }
 
-std::vector<Menu::ServerRow> Menu::featuredRows() const
+std::vector<Menu::ServerRow> Menu::featuredRows(ServerGroup group) const
 {
     std::vector<ServerRow> rows;
-    for (size_t i = 0; i < std::size(Featured); ++i) {
-        rows.push_back({ true, i, Featured[i].name, Featured[i].address, Featured[i].genre });
+    for (size_t i = 0; i < featured.size(); ++i) {
+        const FeaturedEntry& entry = featured[i];
+        bool creator = entry.address.empty();
+        if (creator != (group == ServerGroup::Creator)) {
+            continue;
+        }
+        std::string detail = entry.creator;
+        auto status = serverStatus.find(entry.address);
+        if (!creator && status != serverStatus.end() && status->second.online && !status->second.motd.empty()) {
+            detail = status->second.motd;
+        }
+        rows.push_back({ group, i, entry.name, creator ? ExperiencePrefix + entry.id : entry.address, std::move(detail), entry.icon });
     }
     return rows;
 }
@@ -105,7 +105,7 @@ std::vector<Menu::ServerRow> Menu::savedRows() const
     std::vector<ServerRow> rows;
     const std::vector<SavedServer>& saved = store.servers();
     for (size_t i = 0; i < saved.size(); ++i) {
-        rows.push_back({ false, i, saved[i].name, saved[i].address, {} });
+        rows.push_back({ ServerGroup::Saved, i, saved[i].name, saved[i].address, {}, {} });
     }
     return rows;
 }
@@ -115,11 +115,21 @@ std::optional<Menu::ServerRow> Menu::selectedRow() const
     if (!selection) {
         return std::nullopt;
     }
-    std::vector<ServerRow> rows = selection->featured ? featuredRows() : savedRows();
-    if (selection->index >= rows.size()) {
+    std::vector<ServerRow> rows = selection->group == ServerGroup::Saved ? savedRows() : featuredRows(selection->group);
+    for (ServerRow& row : rows) {
+        if (row.index == selection->index) {
+            return std::move(row);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> Menu::focusedFeatured() const
+{
+    if (screen != Screen::Play || playTab != PlayTab::Servers || !selection || selection->group == ServerGroup::Saved || selection->index >= featured.size()) {
         return std::nullopt;
     }
-    return rows[selection->index];
+    return featured[selection->index].id;
 }
 
 float Menu::header(Context& ui, float width, std::string_view heading, bool social)
@@ -349,13 +359,19 @@ void Menu::serversTab(Context& ui, const Rect& area)
     Rect detail { list.right() + 13.0f, area.y, area.right() - list.right() - 20.0f, area.h };
     ui.fill(list, { 0, 0, 0, 220 });
 
-    std::vector<ServerRow> featured = featuredRows();
+    std::vector<ServerRow> featuredList = featuredRows(ServerGroup::Featured);
+    std::vector<ServerRow> creatorList = featuredRows(ServerGroup::Creator);
     std::vector<ServerRow> saved = savedRows();
-    if (!selection) {
-        selection = saved.empty() ? Selection { true, 0 } : Selection { false, 0 };
+    if (!selectedRow()) {
+        const std::vector<ServerRow>& first = !saved.empty() ? saved : !featuredList.empty() ? featuredList : creatorList;
+        selection = first.empty() ? std::nullopt : std::optional<Selection>(Selection { first.front().group, first.front().index });
     }
 
-    float content = 34.0f + 12.0f + RowHeight * static_cast<float>(featured.size()) + 14.0f + 12.0f + RowHeight * static_cast<float>(saved.size());
+    bool fetching = featuredLoading && featured.empty();
+    float partnerRows = fetching ? 1.0f : static_cast<float>(featuredList.size() + creatorList.size());
+    bool bothPartnerSections = (fetching || !featuredList.empty()) && !creatorList.empty();
+    float sections = (fetching || !featuredList.empty() ? 12.0f : 0.0f) + (!creatorList.empty() ? 12.0f : 0.0f) + (bothPartnerSections ? SectionGap : 0.0f);
+    float content = 34.0f + sections + RowHeight * partnerRows + 14.0f + 12.0f + RowHeight * static_cast<float>(saved.size());
     Rect view { list.x, list.y + 4.0f, list.w, list.h - 4.0f };
     scrollArea(ui, view, listScroll, content);
     ui.setClip(view);
@@ -373,17 +389,17 @@ void Menu::serversTab(Context& ui, const Rect& area)
         y += 12.0f;
         for (const ServerRow& row : rows) {
             Rect bounds { list.x, y, list.w - 4.0f, RowHeight };
-            bool selected = selection && selection->featured == row.featured && selection->index == row.index;
-            Interaction state = ui.interact(std::string(row.featured ? "server:f:" : "server:s:") + std::to_string(row.index), bounds);
+            bool selected = selection && selection->group == row.group && selection->index == row.index;
+            Interaction state = ui.interact("server:" + std::to_string(static_cast<int>(row.group)) + ":" + std::to_string(row.index), bounds);
             if (selected) {
                 ui.fill(bounds, Panel);
             } else if (state.hovered) {
                 ui.fill(bounds, { 0x48, 0x49, 0x4a, 140 });
             }
             float textX = bounds.x + 7.33f;
-            if (row.featured) {
-                ui.sprite({ bounds.x + 8.67f, bounds.y + 5.67f, 12.0f, 12.0f }, "hbui/server");
-                textX = bounds.x + 25.0f;
+            if (row.group != ServerGroup::Saved) {
+                ui.sprite({ bounds.x + 6.0f, bounds.y + 3.67f, 16.0f, 16.0f }, row.icon.empty() ? "hbui/server" : row.icon);
+                textX = bounds.x + 27.0f;
             }
             if (row.detail.empty()) {
                 ui.text(row.name, TextStyle::Ui, textX, std::round(bounds.y + (bounds.h - ui.lineHeight(TextStyle::Ui)) * 0.5f), White, bounds.right() - textX - 4.0f);
@@ -391,19 +407,33 @@ void Menu::serversTab(Context& ui, const Rect& area)
                 ui.text(row.name, TextStyle::Ui, textX, bounds.y + 3.0f, White, bounds.right() - textX - 4.0f);
                 ui.text(row.detail, TextStyle::UiSmall, textX, bounds.y + 12.67f, Muted0, bounds.right() - textX - 4.0f);
             }
-            if (state.clicked) {
-                selection = Selection { row.featured, row.index };
+            if (state.clicked && !selected) {
+                selection = Selection { row.group, row.index };
                 detailScroll = 0.0f;
+                showcaseIndex = 0;
+                showcaseShown = std::chrono::steady_clock::now();
             }
             y += RowHeight;
         }
     };
-    section(tr("thirdPartyWorld.Featured", "Featured experiences") + " (" + std::to_string(featured.size()) + ")", featured);
+    if (fetching) {
+        ui.text(trf("hbui.PlayScreen.serverTab.featuredServer", "Featured experiences (%1$s)", { "0" }), TextStyle::UiSmall, list.x + 7.33f, y, Muted0);
+        ui.text(tr("thirdPartyWorld.loadingFeaturedServers", "Fetching Servers..."), TextStyle::Ui, list.x + 7.33f, y + 12.0f + 6.0f, Muted1);
+        y += 12.0f + RowHeight;
+    }
+    if (!featuredList.empty()) {
+        section(trf("hbui.PlayScreen.serverTab.featuredServer", "Featured experiences (%1$s)", { std::to_string(featuredList.size()) }), featuredList);
+    }
+    if (bothPartnerSections) {
+        y += SectionGap;
+    }
+    if (!creatorList.empty()) {
+        section(trf("hbui.PlayScreen.serverTab.creatorServer", "Creator experiences (%1$s)", { std::to_string(creatorList.size()) }), creatorList);
+    }
     y += 6.0f;
     divider(ui, list.x, y, list.w - 4.0f);
     y += 8.0f;
-    std::vector<ServerRow> savedWithDetail = saved;
-    for (ServerRow& row : savedWithDetail) {
+    for (ServerRow& row : saved) {
         auto status = serverStatus.find(row.address);
         if (status == serverStatus.end() || !status->second.checked) {
             row.detail = tr("connect.connecting", "Checking connection...");
@@ -413,7 +443,7 @@ void Menu::serversTab(Context& ui, const Rect& area)
             row.detail = status->second.motd;
         }
     }
-    section(tr("thirdPartyWorld.Additional", "Other Servers") + " (" + std::to_string(saved.size()) + ")", savedWithDetail);
+    section(tr("thirdPartyWorld.Additional", "Other Servers") + " (" + std::to_string(saved.size()) + ")", saved);
     ui.clearClip();
 
     std::optional<ServerRow> row = selectedRow();
@@ -424,9 +454,17 @@ void Menu::serversTab(Context& ui, const Rect& area)
     Rect top { detail.x, detail.y, detail.w, 32.0f };
     ui.fill(top, Divider);
     ui.fill(top.inset(1.0f), PanelDark);
-    ui.text(row->featured ? tr("thirdPartyWorld.Featured", "Featured server") : tr("menu.servers", "Saved server"), TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0);
+    std::string heading = row->group == ServerGroup::Featured ? tr("thirdPartyWorld.Featured", "Featured server")
+        : row->group == ServerGroup::Creator ? tr("hbui.PlayScreen.serverTab.creatorExperience", "Creator experience")
+                                             : tr("menu.servers", "Saved server");
+    ui.text(heading, TextStyle::UiSmall, top.x + 8.0f, top.y + 12.0f, Muted0, top.w - 190.0f);
     if (ui.pressableButton("server:play", "pressableElevatedPrimary", upperCase(tr("menu.play", "Play")), { top.right() - 13.33f - 157.33f, top.y + 5.0f, 157.33f, 20.0f }, TextStyle::HeadingSmall)) {
         connect(*row);
+    }
+
+    if (row->group != ServerGroup::Saved) {
+        featuredDetail(ui, { detail.x, top.bottom(), detail.w, detail.bottom() - top.bottom() }, featured[row->index]);
+        return;
     }
 
     float rowY = top.bottom();
@@ -445,10 +483,6 @@ void Menu::serversTab(Context& ui, const Rect& area)
         host.resize(colon);
     }
     value(row->name, tr("addServer.enterName", "Server name"));
-    if (row->featured) {
-        value(row->detail, tr("store.mashup.description", "Description"));
-        return;
-    }
     value(host, tr("addServer.enterIp", "Server address"));
     value(port, tr("externalServerScreen.serverPortInput", "Server port"));
     Rect bar { detail.x, rowY, detail.w, 36.0f };
@@ -460,6 +494,80 @@ void Menu::serversTab(Context& ui, const Rect& area)
     if (ui.pressableButton("server:delete", "pressableElevatedDestructive", tr("selectServer.delete", "Delete server"), { buttonsX + 162.0f, bar.y + 7.0f, 156.0f, ButtonHeight })) {
         dialog = Dialog::ConfirmDelete;
     }
+}
+
+void Menu::featuredDetail(Context& ui, const Rect& area, const FeaturedEntry& entry)
+{
+    scrollArea(ui, area, detailScroll, detailContent);
+    ui.setClip(area);
+    float x = area.x + 8.0f;
+    float width = area.w - 20.0f;
+    float y = area.y + 8.0f - detailScroll;
+
+    Rect showcase { x, y, width, std::round(width * 9.0f / 16.0f) };
+    ui.fill(showcase, InkDark);
+    if (!entry.showcase.empty()) {
+        auto now = std::chrono::steady_clock::now();
+        if (now - showcaseShown >= ShowcaseInterval) {
+            showcaseIndex = (showcaseIndex + 1) % entry.showcase.size();
+            showcaseShown = now;
+        }
+        showcaseIndex %= entry.showcase.size();
+        ui.sprite(showcase, entry.showcase[showcaseIndex]);
+        if (entry.showcase.size() > 1) {
+            auto arrow = [&](const char* id, const char* icon, float arrowX, int step) {
+                Rect button { arrowX, std::round(showcase.y + (showcase.h - 20.0f) * 0.5f), 20.0f, 20.0f };
+                Interaction state = ui.interact(id, button);
+                ui.fill(button, { 0, 0, 0, static_cast<uint8_t>(state.hovered ? 200 : 130) });
+                ui.sprite(button.inset(5.0f), icon);
+                if (state.clicked) {
+                    size_t count = entry.showcase.size();
+                    showcaseIndex = (showcaseIndex + count + static_cast<size_t>(step + static_cast<int>(count))) % count;
+                    showcaseShown = std::chrono::steady_clock::now();
+                }
+            };
+            arrow("showcase:previous", "hbui/ArrowLeft", showcase.x + 4.0f, -1);
+            arrow("showcase:next", "hbui/ArrowRight", showcase.right() - 24.0f, 1);
+            float dotsX = std::round(showcase.x + (showcase.w - static_cast<float>(entry.showcase.size()) * 7.0f) * 0.5f);
+            for (size_t i = 0; i < entry.showcase.size(); ++i) {
+                ui.fill({ dotsX + static_cast<float>(i) * 7.0f, showcase.bottom() - 8.0f, 4.0f, 4.0f }, i == showcaseIndex ? White : Color { 255, 255, 255, 110 });
+            }
+        }
+    } else if (entry.showcaseCount > 0) {
+        ui.textCentered(tr("thirdPartyWorld.loadingFeaturedServers", "Fetching Servers..."), TextStyle::Ui, showcase, Muted1);
+    } else if (!entry.icon.empty()) {
+        float side = std::round(showcase.h * 0.5f);
+        ui.sprite({ std::round(showcase.x + (showcase.w - side) * 0.5f), std::round(showcase.y + (showcase.h - side) * 0.5f), side, side }, entry.icon);
+    }
+    y = showcase.bottom() + 10.0f;
+
+    ui.sprite({ x, y, 24.0f, 24.0f }, entry.icon.empty() ? "hbui/server" : entry.icon);
+    ui.text(entry.name, TextStyle::Ui, x + 31.0f, y + 2.0f, White, width - 31.0f);
+    ui.text(entry.creator, TextStyle::UiSmall, x + 31.0f, y + 15.0f, Muted0, width - 31.0f);
+    y += 32.0f;
+
+    if (!entry.description.empty()) {
+        divider(ui, area.x, y, area.w);
+        y += 8.0f;
+        ui.text(tr("hbui.PlayScreen.serverTab.ServerDescription.title", "Description"), TextStyle::UiSmall, x, y, Muted0);
+        y += 13.0f;
+        y += ui.paragraph(entry.description, TextStyle::Body, x, y, width, White) + 8.0f;
+    }
+    if (!entry.newsTitle.empty() || !entry.news.empty()) {
+        divider(ui, area.x, y, area.w);
+        y += 8.0f;
+        ui.text(tr("hbui.PlayScreen.serverTab.newsTitle", "News"), TextStyle::UiSmall, x, y, Muted0);
+        y += 13.0f;
+        if (!entry.newsTitle.empty()) {
+            y += ui.paragraph(entry.newsTitle, TextStyle::BodyBold, x, y, width, White) + 2.0f;
+        }
+        if (!entry.news.empty()) {
+            y += ui.paragraph(entry.news, TextStyle::Body, x, y, width, Muted0);
+        }
+        y += 8.0f;
+    }
+    ui.clearClip();
+    detailContent = y + detailScroll - area.y;
 }
 
 void Menu::serverForm(Context& ui, float width, float height)
@@ -498,7 +606,7 @@ void Menu::serverForm(Context& ui, float width, float height)
     Rect right { panel.x + panel.w * 0.5f + 2.67f, left.y, left.w, ButtonHeight };
     if (editing) {
         if (ui.pressableButton("form:delete", "pressableElevatedDestructive", tr("selectServer.delete", "Delete server"), left)) {
-            selection = Selection { false, *editing };
+            selection = Selection { ServerGroup::Saved, *editing };
             dialog = Dialog::ConfirmDelete;
         }
         if (ui.pressableButton("form:save", "pressableElevatedPrimary", tr("addExternalServerScreen.saveButtonLabel", "Save changes"), right)) {

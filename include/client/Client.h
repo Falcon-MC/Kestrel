@@ -3,6 +3,7 @@
 #include "audio/SoundEngine.h"
 #include "client/Account.h"
 #include "client/Camera.h"
+#include "client/FeaturedServers.h"
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
 #include "client/Session.h"
@@ -21,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <unordered_map>
 
 namespace kestrel {
@@ -57,6 +59,7 @@ public:
 private:
     void syncAccount();
     void syncSession();
+    void syncFeatured();
     float nightVisionStrength() const;
     void updateAudio(const SessionSnapshot& snapshot);
     void playSoundRequest(const SoundRequest& request);
@@ -125,6 +128,12 @@ private:
     std::map<std::string, bool> itemIcons;
     Profiler profiler;
     ServerPinger pinger;
+    std::unique_ptr<FeaturedServers> featured;
+    std::vector<FeaturedServer> featuredList;
+    std::set<std::string> featuredImages;
+    std::optional<std::string> featuredFocus;
+    bool featuredListed = false;
+    bool featuredDirty = false;
     uint64_t actorFrame = 0;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
 };

@@ -1,6 +1,9 @@
 #include "SessionData.h"
 
+#include "Core/Json/Json.h"
+#include "Network/Auth/MinecraftAuthentication.h"
 #include "Network/BedrockConnection.h"
+#include "Network/Http/HttpClient.h"
 #include "Network/Client/ClientNetworkSystem.h"
 #include "Network/Session/RealmsService.h"
 #include "client/DebugLog.h"
@@ -82,6 +85,7 @@ namespace {
 constexpr int ProtocolVersion = 2193;
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
+constexpr const char* ExperiencePrefix = "experience_id/";
 constexpr unsigned int TimeoutMs = 30000;
 
 using session::applyActorMetadata;
@@ -180,6 +184,35 @@ std::shared_ptr<const std::vector<uint8_t>> packTitle(const world::PackFiles& pa
     return slot;
 }
 
+/**
+ * Creator experiences have no fixed address; the gatherings service hands
+ * out a server for them on every join.
+ */
+bool resolveExperience(MinecraftAuthentication& authentication, const std::string& experienceId, std::string& host, unsigned short& port, std::string& error)
+{
+    std::string serviceUri;
+    std::string authorization;
+    if (!authentication.requestServiceUri("gatherings", serviceUri, error) || !authentication.requestServiceToken(authorization, error)) {
+        return false;
+    }
+    HttpClient::Headers headers { { "Content-Type", "application/json" }, { "Accept", "application/json" }, { "Authorization", authorization } };
+    HttpResponse response;
+    if (!HttpClient::post(serviceUri + "/api/v2.0/join/experience", headers, "{\"experienceId\":\"" + json::escape(experienceId) + "\"}", response, error, TimeoutMs)) {
+        return false;
+    }
+    std::unique_ptr<json::Value> root = json::parse(response.mBody);
+    const json::Value* result = root ? root->get("result") : nullptr;
+    const json::Value* address = result ? result->get("ipV4Address") : nullptr;
+    const json::Value* joinPort = result ? result->get("port") : nullptr;
+    if (response.mStatus != 200 || !address || address->string().empty() || !joinPort) {
+        error = "Could not join the experience (status " + std::to_string(response.mStatus) + ")";
+        return false;
+    }
+    host = address->string();
+    port = static_cast<unsigned short>(joinPort->number());
+    return true;
+}
+
 bool parseHostPort(const std::string& address, std::string& host, unsigned short& port)
 {
     size_t colon = address.rfind(':');
@@ -211,7 +244,7 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
     {
         std::lock_guard<std::mutex> guard(mutex);
         current = SessionSnapshot {};
-        current.state = target.rfind(RealmPrefix, 0) == 0 ? SessionState::Resolving : SessionState::Connecting;
+        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 ? SessionState::Resolving : SessionState::Connecting;
         current.name = std::move(name);
         current.target = target;
     }
@@ -737,6 +770,18 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             return;
         }
         resolved.applyTo(settings);
+        std::lock_guard<std::mutex> guard(mutex);
+        current.state = SessionState::Connecting;
+    } else if (target.rfind(ExperiencePrefix, 0) == 0) {
+        if (!authentication) {
+            fail("Sign in with Microsoft to join creator experiences");
+            return;
+        }
+        std::string error;
+        if (!resolveExperience(*authentication, target.substr(std::char_traits<char>::length(ExperiencePrefix)), settings.mHost, settings.mPort, error)) {
+            fail(error);
+            return;
+        }
         std::lock_guard<std::mutex> guard(mutex);
         current.state = SessionState::Connecting;
     } else if (!parseHostPort(target, settings.mHost, settings.mPort)) {

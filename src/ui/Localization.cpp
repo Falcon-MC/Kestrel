@@ -53,13 +53,22 @@ void Localization::setServerPacks(std::vector<std::shared_ptr<const world::PackF
     rebuild();
 }
 
+void Localization::setInterfacePack(std::shared_ptr<world::PackSource> interface)
+{
+    interfacePack = std::move(interface);
+    rebuild();
+}
+
 void Localization::rebuild()
 {
     texts.clear();
     auto loadLanguage = [&](const std::string& code) {
         std::string path = "texts/" + code + ".lang";
-        if (pack) {
-            std::vector<std::string> layers = pack->readTextLayers(path);
+        for (const std::shared_ptr<world::PackSource>& source : { pack, interfacePack }) {
+            if (!source) {
+                continue;
+            }
+            std::vector<std::string> layers = source->readTextLayers(path);
             for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer) {
                 parseLang(*layer, texts);
             }

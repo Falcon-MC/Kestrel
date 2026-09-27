@@ -94,6 +94,23 @@ struct ServerStatus {
     std::string motd;
 };
 
+/**
+ * A partner server from the game's discovery service, with the skin sprites
+ * of its icon and of the showcase screenshots that finished downloading.
+ */
+struct FeaturedEntry {
+    std::string id;
+    std::string name;
+    std::string creator;
+    std::string description;
+    std::string newsTitle;
+    std::string news;
+    std::string address;
+    std::string icon;
+    std::vector<std::string> showcase;
+    size_t showcaseCount = 0;
+};
+
 struct ConnectRequest {
     std::string name;
     std::string address;
@@ -285,6 +302,18 @@ public:
         serverStatus = std::move(status);
     }
 
+    void setFeatured(std::vector<FeaturedEntry> entries, bool loading)
+    {
+        featured = std::move(entries);
+        featuredLoading = loading;
+    }
+
+    /**
+     * The id of the partner server open in the detail pane, whose showcase
+     * is worth downloading.
+     */
+    std::optional<std::string> focusedFeatured() const;
+
     void setHud(HudView view)
     {
         hud = std::move(view);
@@ -344,16 +373,23 @@ public:
     void notify(std::string message);
 
 private:
+    enum class ServerGroup {
+        Featured,
+        Creator,
+        Saved,
+    };
+
     struct ServerRow {
-        bool featured = false;
+        ServerGroup group = ServerGroup::Saved;
         size_t index = 0;
         std::string name;
         std::string address;
         std::string detail;
+        std::string icon;
     };
 
     struct Selection {
-        bool featured = false;
+        ServerGroup group = ServerGroup::Saved;
         size_t index = 0;
     };
 
@@ -373,6 +409,7 @@ private:
     void play(ui::Context& ui, float width, float height);
     void realmsTab(ui::Context& ui, const ui::Rect& area);
     void serversTab(ui::Context& ui, const ui::Rect& area);
+    void featuredDetail(ui::Context& ui, const ui::Rect& area, const FeaturedEntry& entry);
     void serverForm(ui::Context& ui, float width, float height);
     void settings(ui::Context& ui, float width, float height);
     void settingsPage(ui::Context& ui, const ui::Rect& area);
@@ -388,7 +425,7 @@ private:
     void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight);
     void todoRow(ui::Context& ui, float x, float& y, float width, std::string_view label);
 
-    std::vector<ServerRow> featuredRows() const;
+    std::vector<ServerRow> featuredRows(ServerGroup group) const;
     std::vector<ServerRow> savedRows() const;
     std::optional<ServerRow> selectedRow() const;
 
@@ -421,6 +458,10 @@ private:
     std::string editPort;
     std::string socialSearch;
     std::map<std::string, ServerStatus> serverStatus;
+    std::vector<FeaturedEntry> featured;
+    bool featuredLoading = true;
+    size_t showcaseIndex = 0;
+    std::chrono::steady_clock::time_point showcaseShown = std::chrono::steady_clock::now();
     Field selectedField = Field::None;
     bool selectAllPending = false;
     std::string lastFieldClick;
@@ -449,6 +490,7 @@ private:
     std::optional<size_t> rebinding;
     float listScroll = 0.0f;
     float detailScroll = 0.0f;
+    float detailContent = 0.0f;
     float pageScroll = 0.0f;
     float sidebarScroll = 0.0f;
     float pageContent = 0.0f;
