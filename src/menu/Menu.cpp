@@ -141,6 +141,9 @@ void Menu::setSession(SessionInfo info)
     switch (session.status) {
     case SessionStatus::Resolving:
     case SessionStatus::Connecting:
+        if (previous != SessionStatus::Joined && previous != SessionStatus::Resolving && previous != SessionStatus::Connecting && screen != Screen::Title) {
+            gameReturnScreen = screen;
+        }
         dialog = Dialog::Connecting;
         field = Field::None;
         socialOpen = false;
@@ -154,13 +157,16 @@ void Menu::setSession(SessionInfo info)
     case SessionStatus::Failed:
     case SessionStatus::Disconnected:
         dialog = Dialog::ConnectionError;
+        if (screen == Screen::Title) {
+            navigate(gameReturnScreen);
+        }
         break;
     case SessionStatus::Idle:
         if (dialog == Dialog::Connecting || dialog == Dialog::Pause) {
             dialog = Dialog::None;
         }
         if (previous == SessionStatus::Joined) {
-            navigate(Screen::Title);
+            navigate(gameReturnScreen);
         }
         break;
     }

@@ -407,6 +407,7 @@ private:
     std::chrono::steady_clock::time_point dialogChanged {};
     std::chrono::steady_clock::time_point socialChanged {};
     float screenDirection = 1.0f;
+    Screen gameReturnScreen = Screen::Play;
     Dialog shownDialog = Dialog::None;
     bool socialShown = false;
     std::optional<ConnectRequest> pending;
