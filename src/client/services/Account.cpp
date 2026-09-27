@@ -24,6 +24,7 @@ namespace {
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* XboxLiveRelyingParty = "http://xboxlive.com";
 constexpr const char* GameTitleId = "896928775";
+constexpr uint32_t IconWidth = 176;
 constexpr const char* GameServiceConfigId = "4fc10100-5f7a-4470-899b-280835760c07";
 constexpr const char* ProfileSettingsUrl ="https://profile.xboxlive.com/users/me/profile/settings?settings=GameDisplayPicRaw";
 
@@ -339,7 +340,7 @@ void Account::fetchProfile(const std::string& titleAuthorization, const std::str
         Achievement achievement = entry.achievement;
         HttpResponse image;
         std::string error;
-        if (!entry.iconUrl.empty() && HttpClient::get(entry.iconUrl + "&w=176&h=108", {}, image, error) && image.mStatus == 200) {
+        if (!entry.iconUrl.empty() && HttpClient::get(entry.iconUrl, {}, image, error) && image.mStatus == 200) {
             uint32_t width = 0;
             uint32_t height = 0;
             std::vector<uint8_t> rgba;
@@ -352,9 +353,29 @@ void Account::fetchProfile(const std::string& titleAuthorization, const std::str
                         rgba[i + 2] = grey;
                     }
                 }
-                achievement.icon = std::move(rgba);
-                achievement.iconWidth = width;
-                achievement.iconHeight = height;
+                achievement.iconWidth = std::min(width, IconWidth);
+                achievement.iconHeight = std::max<uint32_t>(1, height * achievement.iconWidth / width);
+                achievement.icon.assign(size_t(achievement.iconWidth) * achievement.iconHeight * 4, 0);
+                for (uint32_t y = 0; y < achievement.iconHeight; ++y) {
+                    uint32_t y0 = y * height / achievement.iconHeight;
+                    uint32_t y1 = std::max(y0 + 1, (y + 1) * height / achievement.iconHeight);
+                    for (uint32_t x = 0; x < achievement.iconWidth; ++x) {
+                        uint32_t x0 = x * width / achievement.iconWidth;
+                        uint32_t x1 = std::max(x0 + 1, (x + 1) * width / achievement.iconWidth);
+                        uint64_t sum[4] {};
+                        for (uint32_t sy = y0; sy < y1; ++sy) {
+                            for (uint32_t sx = x0; sx < x1; ++sx) {
+                                for (int c = 0; c < 4; ++c) {
+                                    sum[c] += rgba[(size_t(sy) * width + sx) * 4 + c];
+                                }
+                            }
+                        }
+                        uint64_t count = uint64_t(x1 - x0) * (y1 - y0);
+                        for (int c = 0; c < 4; ++c) {
+                            achievement.icon[(size_t(y) * achievement.iconWidth + x) * 4 + c] = static_cast<uint8_t>(sum[c] / count);
+                        }
+                    }
+                }
             }
         }
         return achievement;

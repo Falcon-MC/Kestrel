@@ -78,6 +78,7 @@ enum class Dialog {
     Connecting,
     ConnectionError,
     Chat,
+    ProfileOptions,
 };
 
 enum class Field {
@@ -500,6 +501,7 @@ private:
     void profileCard(ui::Context& ui, const ui::Rect& card);
     void profileSummary(ui::Context& ui, const ui::Rect& area);
     void profileStats(ui::Context& ui, const ui::Rect& area);
+    void profileOptions(ui::Context& ui, float width, float height);
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);

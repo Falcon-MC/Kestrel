@@ -265,6 +265,9 @@ void Menu::frame(Context& ui, float width, float height)
     case Dialog::Chat:
         chatScreen(ui, width, height);
         break;
+    case Dialog::ProfileOptions:
+        profileOptions(ui, width, height);
+        break;
     case Dialog::Connecting:
     case Dialog::ConnectionError:
     case Dialog::SignIn:
