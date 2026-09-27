@@ -16,8 +16,15 @@
 #include "Protocol/Packets/UpdateBlockPacket.h"
 #include "Protocol/Packets/UpdateSubChunkBlocksPacket.h"
 
+#include "platform/Paths.h"
+#include "ui/Font.h"
+#include "ui/Image.h"
+#include "world/ServerPack.h"
+
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 #include <cstdlib>
 
@@ -67,6 +74,72 @@ const char* gameModeName(GameType type)
 int32_t floorChunk(float blockCoordinate)
 {
     return static_cast<int32_t>(std::floor(blockCoordinate / 16.0f));
+}
+
+std::filesystem::path packDirectory()
+{
+    return platform::dataDirectory() / "packs";
+}
+
+std::filesystem::path packPath(const std::string& id, const std::string& version)
+{
+    return packDirectory() / (id + "_" + version + ".zip");
+}
+
+void savePack(const DownloadedResourcePack& pack)
+{
+    std::error_code error;
+    std::filesystem::create_directories(packDirectory(), error);
+    std::filesystem::path path = packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion);
+    std::ofstream archive(path, std::ios::binary | std::ios::trunc);
+    archive.write(pack.mData.data(), static_cast<std::streamsize>(pack.mData.size()));
+    if (!pack.mOffer.mContentKey.empty()) {
+        std::ofstream key(std::filesystem::path(path).replace_extension(".key"), std::ios::trunc);
+        key << pack.mOffer.mContentKey;
+    }
+}
+
+std::shared_ptr<const std::vector<uint8_t>> packTitle(const world::PackFiles& pack)
+{
+    const std::string* encoded = pack.find("textures/ui/title.png");
+    std::vector<uint8_t> rgba;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    if (!encoded || !ui::decodeImage(*encoded, width, height, rgba) || width == 0 || height == 0) {
+        return nullptr;
+    }
+    constexpr uint32_t SlotWidth = ui::Font::TitleWidth;
+    constexpr uint32_t SlotHeight = ui::Font::TitleHeight;
+    float fit = std::min(float(SlotWidth) / float(width), float(SlotHeight) / float(height));
+    uint32_t drawnWidth = std::max<uint32_t>(1, uint32_t(float(width) * fit));
+    uint32_t drawnHeight = std::max<uint32_t>(1, uint32_t(float(height) * fit));
+    uint32_t left = (SlotWidth - drawnWidth) / 2;
+    uint32_t top = (SlotHeight - drawnHeight) / 2;
+    auto slot = std::make_shared<std::vector<uint8_t>>(size_t(SlotWidth) * SlotHeight * 4, 0);
+    for (uint32_t y = 0; y < drawnHeight; ++y) {
+        for (uint32_t x = 0; x < drawnWidth; ++x) {
+            uint32_t sx0 = x * width / drawnWidth;
+            uint32_t sx1 = std::max(sx0 + 1, (x + 1) * width / drawnWidth);
+            uint32_t sy0 = y * height / drawnHeight;
+            uint32_t sy1 = std::max(sy0 + 1, (y + 1) * height / drawnHeight);
+            uint32_t sum[4] = {};
+            uint32_t count = 0;
+            for (uint32_t sy = sy0; sy < sy1; ++sy) {
+                for (uint32_t sx = sx0; sx < sx1; ++sx) {
+                    const uint8_t* texel = rgba.data() + (size_t(sy) * width + sx) * 4;
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += texel[c];
+                    }
+                    ++count;
+                }
+            }
+            uint8_t* out = slot->data() + (size_t(top + y) * SlotWidth + left + x) * 4;
+            for (int c = 0; c < 4; ++c) {
+                out[c] = static_cast<uint8_t>(sum[c] / count);
+            }
+        }
+    }
+    return slot;
 }
 
 bool parseHostPort(const std::string& address, std::string& host, unsigned short& port)
@@ -133,6 +206,16 @@ std::vector<MeshUpdate> Session::takeMeshUpdates()
     std::vector<MeshUpdate> updates = std::move(pendingUpdates);
     pendingUpdates.clear();
     return updates;
+}
+
+void Session::answerResourcePacks(bool download)
+{
+    packDecision = static_cast<int>(download ? ResourcePackDecision::Download : ResourcePackDecision::Skip);
+    std::lock_guard<std::mutex> guard(mutex);
+    current.packPrompt = false;
+    current.packDownloading = download;
+    current.packReceived = 0;
+    current.packTotal = current.packBytes;
 }
 
 void Session::setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction)
@@ -350,6 +433,47 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     settings.mChunkRadius = ChunkRadius;
     settings.mTimeoutMs = TimeoutMs;
     settings.mCancel = &cancelled;
+    packDecision = static_cast<int>(ResourcePackDecision::Pending);
+    settings.mResourcePacks.mIsCached = [this](const ResourcePackOffer& offer) {
+        std::filesystem::path path = packPath(offer.mPackId, offer.mPackVersion);
+        std::error_code error;
+        if (!std::filesystem::exists(path, error)) {
+            return false;
+        }
+        bool needsTitle = false;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            needsTitle = !current.titleImage;
+        }
+        if (needsTitle) {
+            std::string packError;
+            if (std::shared_ptr<const world::PackFiles> pack = world::loadServerPack(path, offer.mContentKey, packError)) {
+                if (std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack)) {
+                    std::lock_guard<std::mutex> guard(mutex);
+                    current.titleImage = std::move(title);
+                }
+            }
+        }
+        return true;
+    };
+    settings.mResourcePacks.mOffer = [this](const std::vector<ResourcePackOffer>& offers) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.packPrompt = true;
+        current.packCount = offers.size();
+        current.packBytes = 0;
+        for (const ResourcePackOffer& offer : offers) {
+            current.packBytes += offer.mPackSize;
+        }
+    };
+    settings.mResourcePacks.mDecision = [this]() {
+        return static_cast<ResourcePackDecision>(packDecision.load());
+    };
+    settings.mResourcePacks.mProgress = [this](uint64_t received, uint64_t total) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.packDownloading = true;
+        current.packReceived = received;
+        current.packTotal = total;
+    };
 
     if (target.rfind(RealmPrefix, 0) == 0) {
         if (!authentication) {
@@ -374,6 +498,14 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
 
     ClientConnectionResult result = ClientNetworkSystem::dial(settings);
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.packPrompt = false;
+        current.packDownloading = false;
+    }
+    for (const DownloadedResourcePack& pack : result.mResourcePacks) {
+        savePack(pack);
+    }
     if (!result.mConnection) {
         fail(result.mError.empty() ? "Could not connect" : result.mError);
         return;
@@ -417,32 +549,49 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     world.setChunkRadius(connection->getChunkRadius());
 
     std::string assetsError;
-    assets = world::BlockAssets::shared(assetsError);
+    std::vector<std::shared_ptr<const world::PackFiles>> packs;
+    for (const ResourcePackOffer& offer : result.mOfferedPacks) {
+        std::filesystem::path path = packPath(offer.mPackId, offer.mPackVersion);
+        std::error_code exists;
+        if (!std::filesystem::exists(path, exists)) {
+            continue;
+        }
+        std::string key = offer.mContentKey;
+        if (key.empty()) {
+            std::ifstream keyFile(std::filesystem::path(path).replace_extension(".key"));
+            std::getline(keyFile, key);
+        }
+        std::string packError;
+        if (std::shared_ptr<const world::PackFiles> pack = world::loadServerPack(path, key, packError)) {
+            std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack);
+            std::lock_guard<std::mutex> guard(mutex);
+            if (title && !current.titleImage) {
+                current.titleImage = std::move(title);
+            }
+            packs.push_back(std::move(pack));
+        } else {
+            assetsError = "Resource pack " + offer.mPackId + ": " + packError;
+        }
+    }
+    std::vector<world::CustomBlock> customBlocks;
+    if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
+        for (const BlockPropertyData& block : startGame->mBlockProperties) {
+            customBlocks.push_back({ block.mName, block.mProperties });
+        }
+    }
+    std::string buildError;
+    assets = world::BlockAssets::create(packs, customBlocks, buildError);
+    if (!buildError.empty()) {
+        assetsError = buildError;
+    }
     ids = world::IdMapping {};
     ids.hashed = hashedNetworkIds;
     size_t customCount = 0;
     size_t customPermutationCount = 0;
     if (assets) {
-        if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
-            std::vector<world::CustomBlock> customBlocks;
-            for (const BlockPropertyData& block : startGame->mBlockProperties) {
-                world::CustomBlock custom;
-                custom.name = block.mName;
-                if (const Tag* properties = block.mProperties.get("properties")) {
-                    for (const Tag& property : properties->getList()) {
-                        if (const Tag* values = property.get("enum")) {
-                            custom.permutations *= std::max<uint32_t>(1, static_cast<uint32_t>(values->getList().size()));
-                        }
-                    }
-                }
-                customBlocks.push_back(std::move(custom));
-            }
-            customCount = customBlocks.size();
-            for (const world::CustomBlock& custom : customBlocks) {
-                customPermutationCount += custom.permutations;
-            }
-            ids.sequential = assets->sequentialMap(customBlocks);
-        }
+        customCount = assets->customBlockCount();
+        customPermutationCount = assets->customStateCount();
+        ids.sequential = assets->sequentialMap();
     }
     if (!mesher) {
         mesher = std::make_unique<world::MeshScheduler>();
@@ -456,6 +605,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.assetsError = assetsError;
         current.customBlocks = customCount;
         current.customPermutations = customPermutationCount;
+        current.assets = assets;
         if (assets) {
             current.materials = assets->materials().size();
             current.textureLayers = assets->textures().layers;

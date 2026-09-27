@@ -129,6 +129,12 @@ struct SessionInfo {
     std::string registryInfo;
     std::string targetBlock;
     std::string error;
+    bool packPrompt = false;
+    size_t packCount = 0;
+    uint64_t packBytes = 0;
+    bool packDownloading = false;
+    uint64_t packReceived = 0;
+    uint64_t packTotal = 0;
 };
 
 struct ChromeInfo {
@@ -212,6 +218,13 @@ public:
         return requested;
     }
 
+    std::optional<bool> takePackAnswer()
+    {
+        std::optional<bool> answer = packAnswer;
+        packAnswer.reset();
+        return answer;
+    }
+
     void setWorlds(std::vector<WorldEntry> entries)
     {
         worldEntries = std::move(entries);
@@ -225,6 +238,11 @@ public:
     void setAvatar(ui::ImageRef image)
     {
         avatar = image;
+    }
+
+    void setTitleImage(ui::ImageRef image)
+    {
+        titleImage = image;
     }
 
     AccountRequest takeAccountRequest()
@@ -267,6 +285,7 @@ private:
     void pause(ui::Context& ui, float width, float height);
     void signInSheet(ui::Context& ui, float width, float height);
     void connectingSheet(ui::Context& ui, float width, float height);
+    void connectionTitle(ui::Context& ui, float width, const ui::Rect& frame);
     void connectionErrorSheet(ui::Context& ui, float width, float height);
     void gameView(ui::Context& ui, const Area& area);
     void beginSignIn();
@@ -318,11 +337,13 @@ private:
     std::vector<WorldEntry> worldEntries;
     SessionInfo session;
     ui::ImageRef avatar;
+    ui::ImageRef titleImage;
     std::string cameraInfo;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
     float settingsScroll = 0.0f;
     bool disconnectRequested = false;
+    std::optional<bool> packAnswer;
     float scale = 1.0f;
     bool quit = false;
 };

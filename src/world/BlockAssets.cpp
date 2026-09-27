@@ -1,8 +1,11 @@
 #include "world/BlockAssets.h"
 
 #include "Core/Json/Json.h"
+#include "Protocol/BlockStateHasher.h"
 #include "ui/Image.h"
 #include "world/BlockModels.h"
+#include "world/Geometry.h"
+#include "world/Molang.h"
 #include "world/PackSource.h"
 
 #include <algorithm>
@@ -158,7 +161,8 @@ Family classify(const std::string& name)
         || isAquaticName(name) || name == "cocoa" || isCropName(name) || name == "wildflowers" || name == "pink_petals"
         || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
         || name == "cake" || name == "farmland" || isShelfName(name) || isCrossName(name) || contains(name, "shulker_box")
-        || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo") {
+        || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
+        || name == "amethyst_cluster" || endsWith(name, "_amethyst_bud")) {
         return Family::Model;
     }
     if (endsWith(name, "leaves") || endsWith(name, "leaves_flowered")) {
@@ -200,6 +204,7 @@ enum class ModelKind {
     Sign,
     SinkingCube,
     Bamboo,
+    Cluster,
 };
 
 ModelKind modelKind(const std::string& name)
@@ -212,6 +217,9 @@ ModelKind modelKind(const std::string& name)
     }
     if (name == "bamboo") {
         return ModelKind::Bamboo;
+    }
+    if (name == "amethyst_cluster" || endsWith(name, "_amethyst_bud")) {
+        return ModelKind::Cluster;
     }
     if (contains(name, "trapdoor")) {
         return ModelKind::Trapdoor;
@@ -687,6 +695,127 @@ void applyTint(std::vector<uint8_t>& pixels, uint32_t rgb)
     }
 }
 
+float tagNumber(const Tag* value, float fallback = 0.0f)
+{
+    if (!value) {
+        return fallback;
+    }
+    switch (value->getType()) {
+    case Tag::Type::Byte:
+        return value->asByte();
+    case Tag::Type::Short:
+        return value->asShort();
+    case Tag::Type::Int:
+        return static_cast<float>(value->asInt());
+    case Tag::Type::Long:
+        return static_cast<float>(value->asLong());
+    case Tag::Type::Float:
+        return value->asFloat();
+    case Tag::Type::Double:
+        return static_cast<float>(value->asDouble());
+    default:
+        return fallback;
+    }
+}
+
+void collectComponents(const Tag* components, std::map<std::string, const Tag*>& out)
+{
+    if (!components || components->getType() != Tag::Type::Compound) {
+        return;
+    }
+    const std::vector<std::string>& keys = components->getKeys();
+    const std::vector<Tag>& values = components->getValues();
+    for (size_t i = 0; i < keys.size(); ++i) {
+        out[keys[i]] = &values[i];
+    }
+}
+
+/**
+ * Every state of a server-declared block in client palette order: the explicit
+ * properties first, then the properties added by its traits, with the last
+ * property varying fastest.
+ */
+std::vector<Tag> enumerateCustomStates(const Tag& definition)
+{
+    std::vector<std::pair<std::string, std::vector<Tag>>> properties;
+    if (const Tag* list = definition.get("properties"); list && list->getType() == Tag::Type::List) {
+        for (const Tag& property : list->getList()) {
+            const Tag* name = property.get("name");
+            const Tag* values = property.get("enum");
+            if (name && values && name->getType() == Tag::Type::String && values->getType() == Tag::Type::List && !values->getList().empty()) {
+                properties.emplace_back(name->asString(), values->getList());
+            }
+        }
+    }
+    if (const Tag* traits = definition.get("traits"); traits && traits->getType() == Tag::Type::List) {
+        auto strings = [](std::initializer_list<const char*> values) {
+            std::vector<Tag> tags;
+            for (const char* value : values) {
+                tags.push_back(Tag::ofString(value));
+            }
+            return tags;
+        };
+        for (const Tag& trait : traits->getList()) {
+            const Tag* name = trait.get("name");
+            const Tag* enabled = trait.get("enabled_states");
+            if (!name || name->getType() != Tag::Type::String) {
+                continue;
+            }
+            auto isEnabled = [&](const char* state) {
+                const Tag* flag = enabled ? enabled->get(state) : nullptr;
+                return flag && tagNumber(flag) != 0.0f;
+            };
+            std::string traitName = name->asString();
+            if (traitName == "minecraft:connection" && isEnabled("cardinal_connections")) {
+                for (const char* direction : { "north", "south", "west", "east" }) {
+                    properties.emplace_back(std::string("minecraft:connection_") + direction, std::vector<Tag> { Tag::ofByte(0), Tag::ofByte(1) });
+                }
+            } else if (traitName == "minecraft:multi_block" && isEnabled("multi_block_part")) {
+                int32_t parts = static_cast<int32_t>(tagNumber(trait.get("parts")));
+                if (parts >= 2 && parts <= 4) {
+                    std::vector<Tag> values;
+                    for (int32_t part = 0; part < parts; ++part) {
+                        values.push_back(Tag::ofInt(part));
+                    }
+                    properties.emplace_back("minecraft:multi_block_part", std::move(values));
+                }
+            } else if (traitName == "minecraft:placement_direction") {
+                if (isEnabled("cardinal_direction") || isEnabled("corner_and_cardinal_direction")) {
+                    properties.emplace_back("minecraft:cardinal_direction", strings({ "south", "north", "west", "east" }));
+                }
+                if (isEnabled("facing_direction")) {
+                    properties.emplace_back("minecraft:facing_direction", strings({ "down", "up", "south", "north", "west", "east" }));
+                }
+                if (isEnabled("corner_and_cardinal_direction")) {
+                    properties.emplace_back("minecraft:corner", strings({ "none", "inner_left", "inner_right", "outer_left", "outer_right" }));
+                }
+            } else if (traitName == "minecraft:placement_position") {
+                if (isEnabled("block_face")) {
+                    properties.emplace_back("minecraft:block_face", strings({ "down", "up", "south", "north", "west", "east" }));
+                }
+                if (isEnabled("vertical_half")) {
+                    properties.emplace_back("minecraft:vertical_half", strings({ "bottom", "top" }));
+                }
+            }
+        }
+    }
+
+    std::vector<Tag> states { Tag::ofCompound() };
+    for (const auto& [name, values] : properties) {
+        std::vector<Tag> next;
+        next.reserve(states.size() * values.size());
+        for (const Tag& state : states) {
+            for (const Tag& value : values) {
+                Tag expanded = state;
+                expanded.put(name, value);
+                next.push_back(std::move(expanded));
+            }
+        }
+        states = std::move(next);
+    }
+    return states;
+}
+
 uint8_t blockTint(const std::string& name, int face)
 {
     constexpr uint8_t Grass = uint8_t(TintKind::Grass);
@@ -816,7 +945,7 @@ std::shared_ptr<const BlockAssets> BlockAssets::shared(std::string& error)
     std::lock_guard<std::mutex> guard(mutex);
     if (!instance && failure.empty()) {
         auto assets = std::shared_ptr<BlockAssets>(new BlockAssets());
-        if (assets->build(failure)) {
+        if (assets->build({}, failure)) {
             instance = assets;
         }
     }
@@ -824,20 +953,36 @@ std::shared_ptr<const BlockAssets> BlockAssets::shared(std::string& error)
     return instance;
 }
 
-std::shared_ptr<const SequentialMap> BlockAssets::sequentialMap(const std::vector<CustomBlock>& customBlocks) const
+std::shared_ptr<const BlockAssets> BlockAssets::create(const std::vector<std::shared_ptr<const PackFiles>>& packs, const std::vector<CustomBlock>& customBlocks, std::string& error)
 {
-    std::unordered_set<std::string> vanillaNames;
-    for (const BlockRecord& record : registry.records()) {
-        vanillaNames.insert(record.name);
+    if (packs.empty() && customBlocks.empty()) {
+        return shared(error);
     }
+    auto assets = std::shared_ptr<BlockAssets>(new BlockAssets());
+    assets->customs = customBlocks;
+    if (!assets->build(packs, error)) {
+        return nullptr;
+    }
+    return assets;
+}
 
+const std::string& BlockAssets::nameAt(size_t index) const
+{
+    if (index < registry.records().size()) {
+        return registry.records()[index].name;
+    }
+    return customs[customStates[index - registry.records().size()].block].name;
+}
+
+std::shared_ptr<const SequentialMap> BlockAssets::sequentialMap() const
+{
     std::unordered_set<std::string> declared;
-    for (const CustomBlock& custom : customBlocks) {
+    for (const CustomBlock& custom : customs) {
         declared.insert(custom.name);
     }
 
     std::vector<std::pair<uint64_t, int32_t>> entries;
-    entries.reserve(registry.records().size());
+    entries.reserve(registry.records().size() + customStates.size());
     for (size_t i = 0; i < registry.records().size(); ++i) {
         const std::string& name = registry.records()[i].name;
         if (registry.isDataDriven(name) && !declared.contains(name)) {
@@ -845,14 +990,9 @@ std::shared_ptr<const SequentialMap> BlockAssets::sequentialMap(const std::vecto
         }
         entries.emplace_back(BlockRegistry::nameHash(name), static_cast<int32_t>(i));
     }
-    for (const CustomBlock& custom : customBlocks) {
-        if (vanillaNames.contains(custom.name)) {
-            continue;
-        }
-        uint64_t hash = BlockRegistry::nameHash(custom.name);
-        for (uint32_t i = 0; i < custom.permutations; ++i) {
-            entries.emplace_back(hash, -1);
-        }
+    for (size_t i = 0; i < customStates.size(); ++i) {
+        const std::string& name = customs[customStates[i].block].name;
+        entries.emplace_back(BlockRegistry::nameHash(name), static_cast<int32_t>(registry.records().size() + i));
     }
 
     std::stable_sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
@@ -875,17 +1015,18 @@ std::string BlockAssets::describe(uint32_t networkValue, bool hashed, const Sequ
     if (!hashed && sequential) {
         if (networkValue < sequential->size()) {
             index = (*sequential)[networkValue];
-            if (index < 0) {
-                return "custom block #" + std::to_string(networkValue);
-            }
         }
     } else {
         index = registry.resolve(networkValue, hashed);
+        if (index < 0) {
+            auto custom = customByHash.find(networkValue);
+            index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
+        }
     }
     if (index < 0) {
         return "unknown #" + std::to_string(networkValue);
     }
-    return registry.records()[static_cast<size_t>(index)].name + " #" + std::to_string(networkValue);
+    return nameAt(static_cast<size_t>(index)) + " #" + std::to_string(networkValue);
 }
 
 const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
@@ -904,6 +1045,10 @@ const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const
         return visuals[static_cast<size_t>((*sequential)[networkValue])];
     }
     int32_t index = registry.resolve(networkValue, hashed);
+    if (index < 0 && hashed) {
+        auto custom = customByHash.find(networkValue);
+        index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
+    }
     if (index < 0) {
         unresolved.fetch_add(1, std::memory_order_relaxed);
         lastUnresolved.store(networkValue, std::memory_order_relaxed);
@@ -912,7 +1057,7 @@ const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const
     return visuals[static_cast<size_t>(index)];
 }
 
-bool BlockAssets::build(std::string& error)
+bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error)
 {
     if (!registry.load(error)) {
         return false;
@@ -924,6 +1069,7 @@ bool BlockAssets::build(std::string& error)
         return false;
     }
     PackSource pack(root);
+    pack.setOverlays(packs);
 
     std::vector<std::unique_ptr<json::Value>> documents;
     std::vector<const json::Value*> blockLayers;
@@ -1542,6 +1688,27 @@ bool BlockAssets::build(std::string& error)
                 });
                 break;
             }
+            case ModelKind::Cluster: {
+                uint32_t material = materials[models::Up];
+                if (material == DiagnosticMaterial) {
+                    break;
+                }
+                std::string direction = stateString(record.states, "minecraft:block_face");
+                static const std::pair<const char*, uint32_t> Sides[] = {
+                    { "down", models::Down }, { "up", models::Up }, { "north", models::North },
+                    { "south", models::South }, { "west", models::West }, { "east", models::East },
+                };
+                uint32_t facing = models::Up;
+                for (const auto& [label, side] : Sides) {
+                    if (direction == label) {
+                        facing = side;
+                    }
+                }
+                modelTemplate = intern(keyOf("cluster", uniform(models::Up), { facing }), [&] {
+                    pushTemplate(models::orientedCross(material, facing), 0);
+                });
+                break;
+            }
             case ModelKind::Bamboo: {
                 uint32_t stem = materials[models::North];
                 if (stem == DiagnosticMaterial) {
@@ -1611,6 +1778,103 @@ bool BlockAssets::build(std::string& error)
             visual.flags = FlagDiagnostic;
             visual.faces.fill(DiagnosticMaterial);
             ++diagnosticCount;
+        }
+    }
+
+    std::unordered_set<std::string> vanillaNames;
+    for (const BlockRecord& record : registry.records()) {
+        vanillaNames.insert(record.name);
+    }
+    GeometryLibrary geometries;
+    geometries.load(packs);
+    static constexpr const char* FaceNames[6] = { "west", "east", "down", "up", "north", "south" };
+
+    for (size_t block = 0; block < customs.size(); ++block) {
+        const CustomBlock& custom = customs[block];
+        if (vanillaNames.contains(custom.name)) {
+            continue;
+        }
+        for (Tag& states : enumerateCustomStates(custom.definition)) {
+            std::map<std::string, const Tag*> components;
+            collectComponents(custom.definition.get("components"), components);
+            if (const Tag* permutations = custom.definition.get("permutations"); permutations && permutations->getType() == Tag::Type::List) {
+                for (const Tag& permutation : permutations->getList()) {
+                    const Tag* condition = permutation.get("condition");
+                    if (condition && condition->getType() == Tag::Type::String && evaluateCondition(condition->asString(), states)) {
+                        collectComponents(permutation.get("components"), components);
+                    }
+                }
+            }
+
+            const Tag* instances = components.contains("minecraft:material_instances") ? components["minecraft:material_instances"] : nullptr;
+            const Tag* materialMap = instances ? instances->get("materials") : nullptr;
+            const Tag* mappings = instances ? instances->get("mappings") : nullptr;
+            bool translucent = false;
+            bool cutout = false;
+            auto instanceMaterial = [&](const std::string& instanceName, int side) -> uint32_t {
+                if (!materialMap || materialMap->getType() != Tag::Type::Compound) {
+                    return DiagnosticMaterial;
+                }
+                std::vector<std::string> candidates;
+                if (!instanceName.empty()) {
+                    candidates.push_back(instanceName);
+                }
+                candidates.push_back(FaceNames[side]);
+                candidates.push_back("*");
+                for (std::string candidate : candidates) {
+                    if (mappings && mappings->getType() == Tag::Type::Compound) {
+                        if (const Tag* mapped = mappings->get(candidate); mapped && mapped->getType() == Tag::Type::String) {
+                            candidate = mapped->asString();
+                        }
+                    }
+                    const Tag* instance = materialMap->get(candidate);
+                    const Tag* texture = instance ? instance->get("texture") : nullptr;
+                    if (!texture || texture->getType() != Tag::Type::String) {
+                        continue;
+                    }
+                    if (const Tag* method = instance->get("render_method"); method && method->getType() == Tag::Type::String) {
+                        translucent |= method->asString() == "blend";
+                        cutout |= method->asString() != "opaque";
+                    }
+                    return materialFor(texture->asString(), false);
+                }
+                return DiagnosticMaterial;
+            };
+
+            std::string geometryName = "minecraft:geometry.full_block";
+            if (const Tag* geometry = components.contains("minecraft:geometry") ? components["minecraft:geometry"] : nullptr) {
+                if (const Tag* identifier = geometry->get("identifier"); identifier && identifier->getType() == Tag::Type::String) {
+                    geometryName = identifier->asString();
+                }
+            }
+            BlockTransform transform;
+            if (const Tag* transformation = components.contains("minecraft:transformation") ? components["minecraft:transformation"] : nullptr) {
+                transform.rotation = { tagNumber(transformation->get("RX")) * 90.0f, tagNumber(transformation->get("RY")) * 90.0f, tagNumber(transformation->get("RZ")) * 90.0f };
+                transform.scale = { tagNumber(transformation->get("SX"), 1.0f), tagNumber(transformation->get("SY"), 1.0f), tagNumber(transformation->get("SZ"), 1.0f) };
+                transform.translation = { tagNumber(transformation->get("TX")), tagNumber(transformation->get("TY")), tagNumber(transformation->get("TZ")) };
+            }
+
+            BlockVisual visual;
+            if (geometryName == "minecraft:geometry.full_block" || components.contains("minecraft:unit_cube")) {
+                for (int side = 0; side < 6; ++side) {
+                    visual.faces[side] = instanceMaterial({}, side);
+                }
+                visual.flags = FlagCubeGeometry | (translucent || cutout ? FlagCullSame : FlagOccludesFullFace) | (translucent ? FlagTranslucent : 0);
+            } else if (const Geometry* geometry = geometries.find(geometryName)) {
+                std::vector<ModelQuad> modelQuads = buildGeometryQuads(*geometry, transform, instanceMaterial);
+                visual.flags = FlagModel | (translucent ? FlagTranslucent : 0);
+                visual.faces.fill(modelQuads.empty() ? DiagnosticMaterial : modelQuads.front().material);
+                visual.modelTemplate = modelQuads.empty() ? NoModelTemplate : pushTemplate(modelQuads, 0);
+            }
+            if (visual.flags == 0 || (visual.flags & FlagModel && visual.modelTemplate == NoModelTemplate)) {
+                visual = BlockVisual { FlagDiagnostic, {} };
+                ++diagnosticCount;
+            }
+
+            uint32_t index = static_cast<uint32_t>(visuals.size());
+            customByHash.emplace(static_cast<uint32_t>(BlockStateHasher::hash(custom.name, states)), index);
+            customStates.push_back({ block, std::move(states) });
+            visuals.push_back(visual);
         }
     }
 

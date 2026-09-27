@@ -1,5 +1,7 @@
 #pragma once
 
+#include "world/ServerPack.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -26,6 +28,16 @@ public:
         return stack;
     }
 
+    void setOverlays(std::vector<std::shared_ptr<const PackFiles>> packs)
+    {
+        overlays = std::move(packs);
+    }
+
+    const std::vector<std::shared_ptr<const PackFiles>>& overlayPacks() const
+    {
+        return overlays;
+    }
+
     bool readText(const std::string& relative, std::string& out) const;
     std::vector<std::string> readTextLayers(const std::string& relative) const;
     bool readTexture(const std::string& texturePath, std::string& out);
@@ -43,6 +55,7 @@ private:
 
     std::filesystem::path base;
     std::vector<std::filesystem::path> stack;
+    std::vector<std::shared_ptr<const PackFiles>> overlays;
     std::map<std::filesystem::path, std::unique_ptr<Archive>> archives;
 };
 

@@ -37,6 +37,7 @@ std::vector<ModelQuad> button(const Materials& materials, uint32_t orientation, 
 std::vector<ModelQuad> pressurePlate(const Materials& materials, bool pressed);
 std::vector<ModelQuad> torch(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> bamboo(uint32_t stem, uint32_t leaves, bool thick);
+std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> standingSign(uint32_t material, uint32_t rotation);
 std::vector<ModelQuad> wallSign(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> hangingWallSign(uint32_t material, uint32_t facing);

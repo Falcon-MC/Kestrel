@@ -803,6 +803,47 @@ std::vector<ModelQuad> rotateSign(std::vector<ModelQuad> quads, uint32_t rotatio
 
 }
 
+std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing)
+{
+    std::vector<ModelQuad> quads = cross(material, material);
+    for (ModelQuad& quad : quads) {
+        for (Point& position : quad.positions) {
+            int32_t cx = int32_t(position[0]) - 128;
+            int32_t cy = int32_t(position[1]) - 128;
+            int32_t cz = int32_t(position[2]) - 128;
+            int32_t x = cx;
+            int32_t y = cy;
+            int32_t z = cz;
+            switch (facing) {
+            case Down:
+                y = -cy;
+                z = -cz;
+                break;
+            case North:
+                y = cz;
+                z = -cy;
+                break;
+            case South:
+                y = -cz;
+                z = cy;
+                break;
+            case West:
+                x = -cy;
+                y = cx;
+                break;
+            case East:
+                x = cy;
+                y = -cx;
+                break;
+            default:
+                break;
+            }
+            position = { static_cast<int16_t>(x + 128), static_cast<int16_t>(y + 128), static_cast<int16_t>(z + 128) };
+        }
+    }
+    return quads;
+}
+
 std::vector<ModelQuad> bamboo(uint32_t stem, uint32_t leaves, bool thick)
 {
     int16_t size = thick ? 48 : 32;

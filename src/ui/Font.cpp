@@ -172,6 +172,11 @@ Font::ImageSlot Font::imageSlot() const
     return { 16, size - ImageSlotSize - 8, ImageSlotSize };
 }
 
+Font::ImageSlot Font::titleSlot() const
+{
+    return { 16 + ImageSlotSize + 16, size - TitleHeight - 8, TitleWidth };
+}
+
 const Font::Face& Font::face(TextStyle style) const
 {
     return faces[static_cast<size_t>(style)];

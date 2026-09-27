@@ -2,12 +2,14 @@
 
 #include "world/BiomeTints.h"
 #include "world/BlockRegistry.h"
+#include "world/ServerPack.h"
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace kestrel::world {
@@ -120,9 +122,13 @@ struct TextureArray {
     std::array<std::vector<uint8_t>, TextureMipLevels> mips;
 };
 
+/**
+ * A block declared by the server in StartGame: its identifier and the block
+ * property compound (properties, traits, components and permutations).
+ */
 struct CustomBlock {
     std::string name;
-    uint32_t permutations = 1;
+    Tag definition;
 };
 
 using SequentialMap = std::vector<int32_t>;
@@ -130,10 +136,21 @@ using SequentialMap = std::vector<int32_t>;
 class BlockAssets {
 public:
     static std::shared_ptr<const BlockAssets> shared(std::string& error);
+    static std::shared_ptr<const BlockAssets> create(const std::vector<std::shared_ptr<const PackFiles>>& packs, const std::vector<CustomBlock>& customBlocks, std::string& error);
 
     const BlockVisual& visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential = nullptr) const;
-    std::shared_ptr<const SequentialMap> sequentialMap(const std::vector<CustomBlock>& customBlocks) const;
+    std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+
+    size_t customBlockCount() const
+    {
+        return customs.size();
+    }
+
+    size_t customStateCount() const
+    {
+        return customStates.size();
+    }
 
     const std::vector<Material>& materials() const
     {
@@ -206,9 +223,18 @@ public:
     }
 
 private:
-    bool build(std::string& error);
+    struct CustomState {
+        size_t block = 0;
+        Tag states;
+    };
+
+    bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
+    const std::string& nameAt(size_t index) const;
 
     BlockRegistry registry;
+    std::vector<CustomBlock> customs;
+    std::vector<CustomState> customStates;
+    std::unordered_map<uint32_t, uint32_t> customByHash;
     std::vector<BlockVisual> visuals;
     std::vector<Material> materialTable;
     std::vector<ModelTemplate> templates;

@@ -116,6 +116,11 @@ bool PackSource::readText(const std::string& relative, std::string& out) const
 std::vector<std::string> PackSource::readTextLayers(const std::string& relative) const
 {
     std::vector<std::string> result;
+    for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
+        if (const std::string* text = overlay->find(relative)) {
+            result.push_back(*text);
+        }
+    }
     for (const fs::path& layer : stack) {
         std::string text;
         if (readFile(layer / relative, text)) {
@@ -128,6 +133,14 @@ std::vector<std::string> PackSource::readTextLayers(const std::string& relative)
 bool PackSource::readTexture(const std::string& texturePath, std::string& out)
 {
     fs::path path(texturePath);
+    for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
+        for (const char* extension : { ".png", ".tga" }) {
+            if (const std::string* data = overlay->find(texturePath + extension)) {
+                out = *data;
+                return true;
+            }
+        }
+    }
     for (const fs::path& layer : stack) {
         for (const char* extension : { ".png", ".tga" }) {
             if (readFile(layer / (texturePath + extension), out)) {
@@ -152,6 +165,17 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
 std::vector<std::string> PackSource::archiveEntries(const std::string& archiveName)
 {
     std::vector<std::string> names;
+    std::string prefix = archiveName + "/";
+    for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
+        for (const auto& [name, data] : overlay->files) {
+            if (name.size() > prefix.size() && name.compare(0, prefix.size(), prefix) == 0 && name.find('/', prefix.size()) == std::string::npos) {
+                std::string entry = name.substr(prefix.size());
+                if (std::find(names.begin(), names.end(), entry) == names.end()) {
+                    names.push_back(entry);
+                }
+            }
+        }
+    }
     for (const fs::path& layer : stack) {
         const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
         if (!source) {
@@ -168,6 +192,12 @@ std::vector<std::string> PackSource::archiveEntries(const std::string& archiveNa
 
 bool PackSource::readArchived(const std::string& archiveName, const std::string& name, std::string& out)
 {
+    for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
+        if (const std::string* data = overlay->find(archiveName + "/" + name)) {
+            out = *data;
+            return true;
+        }
+    }
     for (const fs::path& layer : stack) {
         const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
         if (!source) {

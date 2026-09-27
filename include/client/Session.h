@@ -68,6 +68,14 @@ struct SessionSnapshot {
     uint64_t unresolvedLookups = 0;
     uint32_t lastUnresolved = 0;
     std::string targetBlock;
+    std::shared_ptr<const world::BlockAssets> assets;
+    std::shared_ptr<const std::vector<uint8_t>> titleImage;
+    bool packPrompt = false;
+    size_t packCount = 0;
+    uint64_t packBytes = 0;
+    bool packDownloading = false;
+    uint64_t packReceived = 0;
+    uint64_t packTotal = 0;
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
@@ -90,6 +98,7 @@ public:
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
+    void answerResourcePacks(bool download);
 
 private:
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
@@ -117,6 +126,7 @@ private:
     uint64_t localRuntimeId = 0;
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
+    std::atomic<int> packDecision { 0 };
 };
 
 }

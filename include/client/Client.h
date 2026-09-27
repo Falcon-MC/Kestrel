@@ -49,11 +49,14 @@ private:
     std::vector<uint8_t> avatarPixels;
     uint64_t avatarRevision = 0;
     uint64_t uploadedAvatarRevision = 0;
+    std::shared_ptr<const std::vector<uint8_t>> shownTitle;
+    std::vector<uint8_t> titlePixels;
+    uint64_t titleRevision = 0;
+    uint64_t uploadedTitleRevision = 0;
     FreeCamera camera;
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;
     bool worldShown = false;
-    bool blockTexturesUploaded = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
     SessionSnapshot timeState;
     double startSeconds = 0.0;

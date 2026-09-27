@@ -6,6 +6,8 @@
 #include "ui/Utf8.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <span>
 
 namespace kestrel::menu {
@@ -426,6 +428,7 @@ void Menu::confirm(Context& ui, float width, float height, std::string_view titl
 void Menu::pause(Context& ui, float width, float height)
 {
     Rect frame = sheetFrame(ui, width, height, 380.0f, 272.0f);
+    connectionTitle(ui, width, frame);
     float x = frame.x + PadXl;
     float w = frame.w - PadXl * 2.0f;
     ui.text("Paused", TextStyle::Heading, x, frame.y + PadXl, Text);
@@ -520,22 +523,99 @@ void Menu::signInSheet(Context& ui, float width, float height)
     }
 }
 
+namespace {
+
+std::string megabytes(uint64_t bytes)
+{
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return text;
+}
+
+}
+
+void Menu::connectionTitle(Context& ui, float width, const Rect& frame)
+{
+    float bottom = frame.y - 28.0f;
+    if (titleImage.valid) {
+        float titleWidth = std::min(440.0f, width - PadXl * 2.0f);
+        float titleHeight = titleWidth * static_cast<float>(ui::Font::TitleHeight) / static_cast<float>(ui::Font::TitleWidth);
+        ui.image({ (width - titleWidth) * 0.5f, bottom - titleHeight, titleWidth, titleHeight }, titleImage, 0.0f);
+        return;
+    }
+
+    constexpr std::string_view Word = "KESTREL";
+    constexpr float Tracking = 10.0f;
+    float lineHeight = ui.lineHeight(TextStyle::Display);
+    float wordWidth = -Tracking;
+    for (char letter : Word) {
+        wordWidth += ui.measure(std::string_view(&letter, 1), TextStyle::Display) + Tracking;
+    }
+    float x = (width - wordWidth) * 0.5f;
+    float y = bottom - lineHeight - 14.0f;
+    ui.glow(width * 0.5f, y + lineHeight * 0.5f, wordWidth * 1.4f, AccentGlow);
+    for (char letter : Word) {
+        std::string_view glyph(&letter, 1);
+        ui.text(glyph, TextStyle::Display, x + 2.0f, y + 4.0f, { 70, 44, 118, 220 });
+        ui.text(glyph, TextStyle::Display, x, y, Accent);
+        x += ui.measure(glyph, TextStyle::Display) + Tracking;
+    }
+    float underline = wordWidth * 0.3f;
+    ui.gradient({ (width - underline) * 0.5f, y + lineHeight + 6.0f, underline, 4.0f }, Secondary, SecondaryDeep, 2.0f);
+}
+
 void Menu::connectingSheet(Context& ui, float width, float height)
 {
     Rect frame = sheetFrame(ui, width, height, 460.0f, 250.0f);
+    connectionTitle(ui, width, frame);
     float x = frame.x + PadXl;
     float w = frame.w - PadXl * 2.0f;
+    float buttonsY = frame.bottom() - PadLg - ControlHeight;
 
-    ui.text(session.status == SessionStatus::Resolving ? "Finding the Realm" : "Joining server", TextStyle::Heading, x, frame.y + PadXl, Text, w);
+    if (session.packPrompt) {
+        ui.text("Download resource packs?", TextStyle::Heading, x, frame.y + PadXl, Text, w);
+        ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
+        std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
+        ui.paragraph("This server uses " + count + " (" + megabytes(session.packBytes) + "). They are saved on this device and only downloaded once.",
+            TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
+        if (ui.button("packs:download", "Download", { frame.right() - PadXl - 130.0f, buttonsY, 130.0f, ControlHeight }, ButtonKind::Primary)) {
+            packAnswer = true;
+        }
+        if (ui.button("packs:skip", "Skip", { frame.right() - PadXl - 130.0f - Gap - 100.0f, buttonsY, 100.0f, ControlHeight }, ButtonKind::Ghost)) {
+            packAnswer = false;
+        }
+        return;
+    }
+
+    if (session.packDownloading) {
+        ui.text("Downloading resource packs", TextStyle::Heading, x, frame.y + PadXl, Text, w);
+        ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
+        float progress = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
+        std::string detail = megabytes(session.packReceived) + " of " + megabytes(session.packTotal) + "  \xC2\xB7  " + std::to_string(static_cast<int>(progress * 100.0f)) + "%";
+        ui.text(detail, TextStyle::Body, x, frame.y + PadXl + 70.0f, Muted, w);
+        Rect track { x, frame.bottom() - PadLg - ControlHeight - 26.0f, w, 8.0f };
+        ui.fill(track, theme::Field, 4.0f);
+        if (progress > 0.0f) {
+            ui.gradient({ track.x, track.y, std::max(track.w * progress, 8.0f), track.h }, AccentHover, AccentDeep, 4.0f);
+        }
+        if (ui.button("packs:cancel", "Cancel", { frame.right() - PadXl - 110.0f, buttonsY, 110.0f, ControlHeight }, ButtonKind::Ghost)) {
+            disconnectRequested = true;
+            sheet = Sheet::None;
+        }
+        return;
+    }
+
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::string dots(static_cast<size_t>(now / 450 % 3 + 1), '.');
+    bool resolving = session.status == SessionStatus::Resolving;
+    ui.text((resolving ? "Finding the Realm" : "Connecting to server") + dots, TextStyle::Heading, x, frame.y + PadXl, Text, w);
     ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
-    ui.paragraph(session.status == SessionStatus::Resolving
-            ? "Asking Realms for the address. A sleeping Realm can take a moment to start."
-            : "Signing the login, negotiating encryption and resource packs, then waiting for the world.",
+    ui.paragraph(resolving ? "A sleeping Realm can take a moment to wake up." : "Hang tight, the world is almost here.",
         TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
 
     Rect track { x, frame.bottom() - PadLg - ControlHeight - 26.0f, w, 6.0f };
     ui.fill(track, theme::Field, 3.0f);
-    float phase = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() % 1400) / 1400.0f;
+    float phase = static_cast<float>(now % 1400) / 1400.0f;
     float barWidth = w * 0.3f;
     float barX = track.x + (w + barWidth) * phase - barWidth;
     float left = std::max(barX, track.x);
@@ -544,7 +624,6 @@ void Menu::connectingSheet(Context& ui, float width, float height)
         ui.gradient({ left, track.y, right - left, track.h }, AccentHover, AccentDeep, 3.0f);
     }
 
-    float buttonsY = frame.bottom() - PadLg - ControlHeight;
     if (ui.button("connecting:cancel", "Cancel", { frame.right() - PadXl - 110.0f, buttonsY, 110.0f, ControlHeight }, ButtonKind::Ghost)) {
         disconnectRequested = true;
         sheet = Sheet::None;

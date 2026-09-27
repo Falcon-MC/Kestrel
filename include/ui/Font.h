@@ -22,6 +22,8 @@ enum class TextStyle {
 class Font {
 public:
     static constexpr uint32_t ImageSlotSize = 128;
+    static constexpr uint32_t TitleWidth = 512;
+    static constexpr uint32_t TitleHeight = 128;
 
     struct ImageSlot {
         uint32_t x;
@@ -53,6 +55,7 @@ public:
     }
 
     ImageSlot imageSlot() const;
+    ImageSlot titleSlot() const;
 
     float measure(std::string_view text, TextStyle style) const;
     float lineHeight(TextStyle style) const;

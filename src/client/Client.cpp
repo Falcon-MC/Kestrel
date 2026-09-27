@@ -76,9 +76,10 @@ int Client::run()
             font.bake(scale);
             bakedScale = scale;
         }
-        if (rebaked || avatarRevision != uploadedAvatarRevision) {
+        if (rebaked || avatarRevision != uploadedAvatarRevision || titleRevision != uploadedTitleRevision) {
             uploadAtlas();
             uploadedAvatarRevision = avatarRevision;
+            uploadedTitleRevision = titleRevision;
         }
 
         menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / menu.interfaceScale(), window->maximized() });
@@ -132,6 +133,9 @@ int Client::run()
         }
         if (menu.takeDisconnectRequest()) {
             session.disconnect();
+        }
+        if (std::optional<bool> answer = menu.takePackAnswer()) {
+            session.answerResourcePacks(*answer);
         }
         if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings)) {
             saveSettings();
@@ -245,6 +249,21 @@ void Client::uploadAtlas()
         avatarImage.valid = true;
     }
     menu.setAvatar(avatarImage);
+
+    ui::ImageRef titleImage;
+    ui::Font::ImageSlot title = font.titleSlot();
+    if (titlePixels.size() == size_t(ui::Font::TitleWidth) * ui::Font::TitleHeight * 4) {
+        for (uint32_t row = 0; row < ui::Font::TitleHeight; ++row) {
+            std::memcpy(atlasPixels.data() + ((static_cast<size_t>(title.y) + row) * size + title.x) * 4, titlePixels.data() + static_cast<size_t>(row) * ui::Font::TitleWidth * 4, size_t(ui::Font::TitleWidth) * 4);
+        }
+        float extent = static_cast<float>(size);
+        titleImage.u0 = (title.x + 0.5f) / extent;
+        titleImage.v0 = (title.y + 0.5f) / extent;
+        titleImage.u1 = (title.x + ui::Font::TitleWidth - 0.5f) / extent;
+        titleImage.v1 = (title.y + ui::Font::TitleHeight - 0.5f) / extent;
+        titleImage.valid = true;
+    }
+    menu.setTitleImage(titleImage);
     renderer->uploadUiAtlas(atlasPixels.data(), size, size);
 }
 
@@ -273,31 +292,34 @@ void Client::applyMeshUpdates()
 void Client::syncSession()
 {
     SessionSnapshot snapshot = session.snapshot();
+    const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
+    if (wantedTitle != shownTitle.get()) {
+        shownTitle = snapshot.titleImage;
+        titlePixels = shownTitle ? *shownTitle : std::vector<uint8_t> {};
+        ++titleRevision;
+    }
     if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
         seenJoin = snapshot.joinCount;
         seenTeleport = snapshot.teleportCount;
         renderer->clearChunkMeshes();
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
-        if (!blockTexturesUploaded) {
-            std::string error;
-            if (std::shared_ptr<const world::BlockAssets> assets = world::BlockAssets::shared(error)) {
-                const world::TextureArray& textures = assets->textures();
-                std::array<const uint8_t*, world::TextureMipLevels> mips {};
-                for (uint32_t level = 0; level < world::TextureMipLevels; ++level) {
-                    mips[level] = textures.mips[level].data();
-                }
-                BlockTextureUpload upload;
-                upload.mips = mips.data();
-                upload.layers = textures.layers;
-                upload.size = world::TextureSize;
-                upload.mipLevels = world::TextureMipLevels;
-                renderer->uploadBlockTextures(upload);
-                std::vector<SkyVertex> clouds = buildCloudMesh(assets->cloudMask());
-                renderer->setCloudMesh(clouds.data(), static_cast<uint32_t>(clouds.size()));
-                blockAssets = assets;
-                blockTexturesUploaded = true;
-            }
+    }
+    if (snapshot.state == SessionState::Joined && snapshot.assets && snapshot.assets != blockAssets) {
+        std::shared_ptr<const world::BlockAssets> assets = snapshot.assets;
+        const world::TextureArray& textures = assets->textures();
+        std::array<const uint8_t*, world::TextureMipLevels> mips {};
+        for (uint32_t level = 0; level < world::TextureMipLevels; ++level) {
+            mips[level] = textures.mips[level].data();
         }
+        BlockTextureUpload upload;
+        upload.mips = mips.data();
+        upload.layers = textures.layers;
+        upload.size = world::TextureSize;
+        upload.mipLevels = world::TextureMipLevels;
+        renderer->uploadBlockTextures(upload);
+        std::vector<SkyVertex> clouds = buildCloudMesh(assets->cloudMask());
+        renderer->setCloudMesh(clouds.data(), static_cast<uint32_t>(clouds.size()));
+        blockAssets = assets;
     }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {
         seenTeleport = snapshot.teleportCount;
@@ -359,6 +381,12 @@ void Client::syncSession()
         static_cast<unsigned long long>(snapshot.unresolvedLookups), snapshot.blockAtPlayer.c_str());
     info.registryInfo = registry;
     info.targetBlock = std::move(snapshot.targetBlock);
+    info.packPrompt = snapshot.packPrompt;
+    info.packCount = snapshot.packCount;
+    info.packBytes = snapshot.packBytes;
+    info.packDownloading = snapshot.packDownloading;
+    info.packReceived = snapshot.packReceived;
+    info.packTotal = snapshot.packTotal;
     info.error = std::move(snapshot.error);
     menu.setSession(std::move(info));
 }
