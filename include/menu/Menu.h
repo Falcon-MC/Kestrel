@@ -86,14 +86,12 @@ enum class Field {
 
 /**
  * What a saved server answered to the last ping: still checking, reachable
- * with its message of the day and player counts, or unreachable.
+ * with its message of the day, or unreachable.
  */
 struct ServerStatus {
     bool checked = false;
     bool online = false;
     std::string motd;
-    int players = 0;
-    int maxPlayers = 0;
 };
 
 struct ConnectRequest {

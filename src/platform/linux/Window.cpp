@@ -1,8 +1,12 @@
 #include "platform/Window.h"
 
+#include "AppIconPng.h"
+#include "ui/Image.h"
+
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 
 namespace kestrel {
@@ -24,6 +28,7 @@ public:
             throw std::runtime_error("glfwCreateWindow failed");
         }
         glfwSetWindowSizeLimits(window, 760, 520, GLFW_DONT_CARE, GLFW_DONT_CARE);
+        setIcon();
         glfwSetWindowUserPointer(window, this);
 
         glfwSetFramebufferSizeCallback(window, [](GLFWwindow* handle, int, int) {
@@ -311,6 +316,21 @@ private:
         default:
             return Key::None;
         }
+    }
+
+    void setIcon()
+    {
+        std::string encoded(reinterpret_cast<const char*>(KestrelAppIconData::kAppIconPng), KestrelAppIconData::kAppIconPngSize);
+        constexpr std::array<uint32_t, 4> Sizes { 16, 32, 64, 256 };
+        std::array<std::vector<uint8_t>, Sizes.size()> pixels;
+        std::array<GLFWimage, Sizes.size()> images {};
+        for (size_t i = 0; i < Sizes.size(); ++i) {
+            if (!ui::decodeSquareImage(encoded, Sizes[i], pixels[i])) {
+                return;
+            }
+            images[i] = { static_cast<int>(Sizes[i]), static_cast<int>(Sizes[i]), pixels[i].data() };
+        }
+        glfwSetWindowIcon(window, static_cast<int>(images.size()), images.data());
     }
 
     static GlfwWindow* self(GLFWwindow* handle)
