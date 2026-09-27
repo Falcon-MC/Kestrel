@@ -377,6 +377,7 @@ private:
     std::string toastMessage;
     std::chrono::steady_clock::time_point toastUntil;
     std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
+    std::array<bool, 6> panoramaReady {};
     std::optional<ConnectRequest> pending;
     ChromeInfo chrome;
     ChromeAction chromeAction = ChromeAction::None;

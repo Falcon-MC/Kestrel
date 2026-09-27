@@ -488,7 +488,9 @@ void Client::syncAccount()
 // Mirrors the game's automatic GUI scale, one menu unit being a whole number of pixels.
 float Client::guiScale() const
 {
-    float automatic = std::max(1.0f, std::floor(static_cast<float>(window->height()) / 400.0f));
+    float byHeight = std::floor(static_cast<float>(window->height()) / 360.0f);
+    float byWidth = std::floor(static_cast<float>(window->width()) / 660.0f);
+    float automatic = std::max(1.0f, std::min(byHeight, byWidth));
     return std::max(1.0f, std::round(automatic * menu.interfaceScale()));
 }
 

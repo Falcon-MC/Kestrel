@@ -585,7 +585,7 @@ void Menu::settingsHeading(Context& ui, float x, float& y, float width, std::str
         return static_cast<char>(std::toupper(c));
     });
     ui.text(upper, TextStyle::HeadingSmall, x + 12.0f, y, White, width - 24.0f);
-    y += 10.0f;
+    y += std::max(10.0f, ui.lineHeight(TextStyle::HeadingSmall)) + 3.0f;
     if (!detail.empty()) {
         ui.text(detail, TextStyle::UiSmall, x + 12.0f, y, Muted0, width - 24.0f);
         y += 12.0f;
@@ -596,7 +596,8 @@ void Menu::settingsHeading(Context& ui, float x, float& y, float width, std::str
 
 void Menu::settingsRow(Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight)
 {
-    ui.text(label, TextStyle::Ui, x + 12.0f, y + 7.0f, White, width - 90.0f);
+    float labelY = detail.empty() && controlHeight > 24.0f ? std::round(y + (controlHeight - ui.lineHeight(TextStyle::Ui)) * 0.5f) : y + 7.0f;
+    ui.text(label, TextStyle::Ui, x + 12.0f, labelY, White, width - 90.0f);
     float height = 18.0f;
     if (!detail.empty()) {
         height += ui.paragraph(detail, TextStyle::UiSmall, x + 12.0f, y + 17.0f, width - 90.0f, Muted0);
@@ -672,10 +673,10 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
-        settingsRow(ui, x, y, w, "GUI scale modifier", "Makes every menu larger on top of the automatic scale", 44.0f);
+        settingsRow(ui, x, y, w, "GUI scale modifier", "Makes every menu larger on top of the automatic scale", 60.0f);
         float segment = std::floor((w - 24.0f) / static_cast<float>(std::size(InterfaceScales)));
         for (size_t i = 0; i < std::size(InterfaceScales); ++i) {
-            Rect option { x + 12.0f + segment * static_cast<float>(i), rowY + 20.0f, segment, 20.0f };
+            Rect option { x + 12.0f + segment * static_cast<float>(i), rowY + 33.0f, segment, 20.0f };
             bool active = scale == InterfaceScales[i];
             if (ui.pressableButton(std::string("scale:") + InterfaceScaleLabels[i], active ? "pressableElevatedPrimary" : "pressableElevatedSecondary", InterfaceScaleLabels[i], option)) {
                 scale = InterfaceScales[i];
@@ -736,7 +737,7 @@ void Menu::todoScreen(Context& ui, float width, float height, std::string_view h
 void Menu::socialDrawer(Context& ui, float width, float height)
 {
     ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
-    Rect panel { width - 229.33f, 24.0f, 186.67f, height - 48.0f };
+    Rect panel { width - 1.0f - 186.67f, 28.0f, 186.67f, height - 29.0f };
     if (socialArmed && dialog == Dialog::None && ui.input().mousePressed && !panel.contains(ui.mouseX(), ui.mouseY())) {
         socialOpen = false;
         socialArmed = false;
