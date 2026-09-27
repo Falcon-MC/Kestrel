@@ -565,6 +565,8 @@ void Menu::gameView(Context& ui, float width, float height)
         y += 10.0f;
     }
 
+    drawHud(ui, hud, 0.0f, 0.0f, width, height);
+
     float cx = std::floor(width * 0.5f - 7.5f);
     float cy = std::floor(height * 0.5f - 7.5f);
     ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });

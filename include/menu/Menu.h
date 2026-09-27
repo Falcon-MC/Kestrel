@@ -1,5 +1,6 @@
 #pragma once
 
+#include "menu/Hud.h"
 #include "menu/ServerStore.h"
 #include "platform/Keys.h"
 #include "ui/Font.h"
@@ -232,6 +233,11 @@ public:
         cameraInfo = std::move(text);
     }
 
+    void setHud(HudView view)
+    {
+        hud = std::move(view);
+    }
+
     const KeyBindings& keyBindings() const
     {
         return bindings;
@@ -377,6 +383,7 @@ private:
     std::vector<WorldEntry> worldEntries;
     SessionInfo session;
     std::string cameraInfo;
+    HudView hud;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
     float listScroll = 0.0f;

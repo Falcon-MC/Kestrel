@@ -38,6 +38,9 @@ struct GeometryBone {
     std::string parent;
     Vec3f pivot {};
     Vec3f rotation {};
+    bool mirror = false;
+    float inflate = 0.0f;
+    bool neverRender = false;
     std::vector<GeometryCube> cubes;
 };
 
@@ -60,12 +63,14 @@ struct BlockTransform {
 class GeometryLibrary {
 public:
     void load(const std::vector<std::shared_ptr<const PackFiles>>& packs);
+    void parse(const std::string& text);
+    void resolveInheritance();
     const Geometry* find(const std::string& identifier) const;
+    const Geometry* first() const;
 
 private:
-    void parse(const std::string& text);
-
     std::map<std::string, Geometry> byIdentifier;
+    std::map<std::string, std::string> parents;
 };
 
 /**

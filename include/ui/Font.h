@@ -92,6 +92,8 @@ private:
 
     const Glyph* glyph(const Face& face, char32_t cp) const;
     float advance(TextStyle style, char32_t cp) const;
+    float boldStep(TextStyle style) const;
+    char32_t scrambled(TextStyle style, char32_t cp, uint32_t seed) const;
     void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color) const;
     void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color) const;
     float pixelAdvance(char32_t cp) const;
