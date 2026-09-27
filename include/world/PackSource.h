@@ -44,6 +44,11 @@ public:
     std::vector<std::string> archiveEntries(const std::string& archive);
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
 
+    /**
+     * The archived file from every layer that has it, highest priority first.
+     */
+    std::vector<std::string> readArchivedLayers(const std::string& archive, const std::string& name);
+
 private:
     struct Archive {
         std::string data;

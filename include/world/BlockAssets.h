@@ -242,6 +242,7 @@ public:
     const BlockVisual& visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential = nullptr) const;
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**
      * The block state hash of a network block value, or 0 for a value that

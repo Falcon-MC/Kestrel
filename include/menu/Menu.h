@@ -31,6 +31,7 @@ inline constexpr int DefaultMaxFps = 120;
 inline constexpr int MinFov = 30;
 inline constexpr int MaxFov = 110;
 inline constexpr int DefaultFov = 90;
+inline constexpr size_t VolumeChannelCount = 10;
 
 enum class Screen {
     Title,
@@ -233,6 +234,22 @@ public:
     void setFov(int degrees)
     {
         fieldOfView = degrees;
+    }
+
+    /**
+     * Volume percentages: the main volume first, then music, ambient,
+     * weather, blocks, hostile, friendly, players, records and interface.
+     */
+    const std::array<int, VolumeChannelCount>& soundVolumes() const
+    {
+        return volumes;
+    }
+
+    void setSoundVolume(size_t channel, int percent)
+    {
+        if (channel < volumes.size()) {
+            volumes[channel] = percent;
+        }
     }
 
     const std::string& playerName() const
@@ -445,6 +462,7 @@ private:
     int chunkDistance = DefaultRenderDistance;
     int fpsLimit = DefaultMaxFps;
     int fieldOfView = DefaultFov;
+    std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;
 };
 

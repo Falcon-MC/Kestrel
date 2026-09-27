@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/SoundEngine.h"
 #include "client/Account.h"
 #include "client/Camera.h"
 #include "client/Profiler.h"
@@ -57,6 +58,9 @@ private:
     void syncAccount();
     void syncSession();
     float nightVisionStrength() const;
+    void updateAudio(const SessionSnapshot& snapshot);
+    void playSoundRequest(const SoundRequest& request);
+    void updateMusic(const SessionSnapshot& snapshot);
     void applyMeshUpdates();
     size_t visibleTerrain() const;
     std::vector<world::ModelQuadGpu> buildActorQuads(const std::array<int32_t, 3>& origin);
@@ -94,6 +98,17 @@ private:
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;
     PlayerView playerView;
+    std::unique_ptr<audio::SoundEngine> soundEngine;
+    std::shared_ptr<world::PackSource> vanillaSounds;
+    std::shared_ptr<world::PackSource> musicSounds;
+    std::vector<std::shared_ptr<const world::PackFiles>> soundPacks;
+    bool soundLibraryBuilt = false;
+    uint64_t heardClicks = 0;
+    std::string musicSituation;
+    double nextMusicAt = 0.0;
+    bool musicWasPlaying = false;
+    double nextRainSoundAt = 0.0;
+    std::array<int, menu::VolumeChannelCount> savedVolumes {};
     bool worldShown = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
     SessionSnapshot timeState;

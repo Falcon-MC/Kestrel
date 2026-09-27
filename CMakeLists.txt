@@ -19,6 +19,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.22
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(miniaudio)
+if(NOT miniaudio_POPULATED)
+    FetchContent_Populate(miniaudio)
+endif()
+
 set(KESTREL_FALCON_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Directory containing Falcon-NBT, Falcon-Protocol and Falcon-Network")
 if(EXISTS "${KESTREL_FALCON_ROOT}/Falcon-Network/CMakeLists.txt")
     set(FETCHCONTENT_SOURCE_DIR_FALCON_NBT "${KESTREL_FALCON_ROOT}/Falcon-NBT")
@@ -93,7 +104,7 @@ endif()
 
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
 
-target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(Kestrel PRIVATE FalconNetwork ZLIB::ZLIB)
 if(MSVC)
     set_source_files_properties(src/client/PlayerMotion.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
@@ -115,8 +126,11 @@ elseif(APPLE)
         "-framework Cocoa"
         "-framework Metal"
         "-framework QuartzCore"
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework CoreFoundation"
     )
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 else()
-    target_link_libraries(Kestrel PRIVATE glfw Vulkan::Vulkan)
+    target_link_libraries(Kestrel PRIVATE glfw Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)
 endif()

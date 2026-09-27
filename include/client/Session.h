@@ -145,6 +145,29 @@ struct PlayerView {
     uint64_t teleports = 0;
 };
 
+/**
+ * A sound the world asks for: a level event resolved through the block,
+ * entity and individual event tables, a named sound definition, or a stop.
+ */
+struct SoundRequest {
+    enum class Kind {
+        Event,
+        Named,
+        Stop,
+        StopAll,
+    };
+
+    Kind kind = Kind::Event;
+    std::string name;
+    std::array<double, 3> position {};
+    std::string actor;
+    std::string block;
+    bool baby = false;
+    bool global = false;
+    float volume = 1.0f;
+    float pitch = 1.0f;
+};
+
 struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
@@ -187,6 +210,7 @@ struct SessionSnapshot {
     uint32_t lastUnresolved = 0;
     std::string targetBlock;
     std::shared_ptr<const world::BlockAssets> assets;
+    std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
     bool packPrompt = false;
     size_t packCount = 0;
@@ -224,6 +248,7 @@ public:
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
     std::vector<SkinUpload> takeSkinUploads();
+    std::vector<SoundRequest> takeSounds();
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
@@ -232,6 +257,10 @@ public:
 
 private:
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
+    void handleSoundPacket(const std::shared_ptr<Packet>& packet);
+    void queueSound(SoundRequest request);
+    std::string blockNameAt(int32_t x, int32_t y, int32_t z);
+    void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
@@ -292,6 +321,11 @@ private:
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
     int32_t motionDimension = 0;
+    std::vector<SoundRequest> pendingSounds;
+    float walkedDistance = 0.0f;
+    float nextStepDistance = 1.0f;
+    float fallStartY = 0.0f;
+    bool wasOnGround = true;
 };
 
 }

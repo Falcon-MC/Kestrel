@@ -713,8 +713,33 @@ void Menu::settingsPage(Context& ui, const Rect& area)
                 scale = InterfaceScales[i];
             }
         }
-        todoRow(ui, x, y, w, "Field of view");
         todoRow(ui, x, y, w, "Brightness");
+        break;
+    }
+    case SettingsPage::Audio: {
+        settingsHeading(ui, x, y, w, "Audio", "Adjust the volume of each kind of sound");
+        static constexpr std::pair<const char*, const char*> Channels[VolumeChannelCount] = {
+            { "Main volume", "Every sound" },
+            { "Music", "Menu and game music" },
+            { "Ambient & environment", "Caves, biomes and underwater" },
+            { "Weather", "Rain and thunder" },
+            { "Blocks", "Breaking, placing and using blocks" },
+            { "Hostile creatures", "Monsters" },
+            { "Friendly creatures", "Animals and villagers" },
+            { "Players", "Steps, hits and other players" },
+            { "Jukebox & note blocks", "Records and notes" },
+            { "Interface", "Buttons and menus" },
+        };
+        for (size_t i = 0; i < VolumeChannelCount; ++i) {
+            float rowY = y;
+            settingsRow(ui, x, y, w, Channels[i].first, Channels[i].second, 44.0f);
+            std::string percent = std::to_string(volumes[i]) + "%";
+            ui.text(percent, TextStyle::Ui, x + w - 12.0f - ui.measure(percent, TextStyle::Ui), rowY + 7.0f, White);
+            float fraction = float(volumes[i]) / 100.0f;
+            if (slider(ui, "audio:" + std::to_string(i), { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fraction)) {
+                volumes[i] = int(std::lround(fraction * 100.0f));
+            }
+        }
         break;
     }
     case SettingsPage::Account: {
