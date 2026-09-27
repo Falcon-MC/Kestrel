@@ -159,7 +159,7 @@ ModelKind modelKind(const std::string& name)
     if (name == "cactus") {
         return ModelKind::Cactus;
     }
-    if (name == "farmland") {
+    if (name == "farmland" || name == "grass_path" || name == "dirt_path") {
         return ModelKind::Farmland;
     }
     if (name == "cake") {
