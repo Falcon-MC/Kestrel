@@ -57,6 +57,37 @@ void FreeCamera::update(const InputState& input, const KeyBindings& bindings, fl
     pz += (-right * sinYaw - forward * cosYaw) * step;
 }
 
+void FreeCamera::look(const InputState& input, bool captured)
+{
+    if (captured) {
+        yaw -= input.mouseDeltaX * LookSensitivity;
+        pitch = std::clamp(pitch - input.mouseDeltaY * LookSensitivity, -PitchLimit, PitchLimit);
+    }
+}
+
+void FreeCamera::setPosition(double x, double y, double z)
+{
+    px = x;
+    py = y;
+    pz = z;
+}
+
+float FreeCamera::minecraftYaw() const
+{
+    return (3.14159265f - yaw) * 180.0f / 3.14159265f;
+}
+
+float FreeCamera::minecraftPitch() const
+{
+    return -pitch * 180.0f / 3.14159265f;
+}
+
+void FreeCamera::easeFov(float target, float deltaSeconds)
+{
+    float blend = 1.0f - std::exp(-deltaSeconds * 10.0f);
+    fovScale += (target - fovScale) * blend;
+}
+
 std::array<float, 3> FreeCamera::forward() const
 {
     float cosPitch = std::cos(pitch);
@@ -84,7 +115,7 @@ Mat4 FreeCamera::viewProjection(float aspect) const
 
     constexpr float nearPlane = 0.05f;
     constexpr float farPlane = 1024.0f;
-    float horizontal = HorizontalFovDegrees * 3.14159265f / 180.0f;
+    float horizontal = std::min(HorizontalFovDegrees * fovScale, 170.0f) * 3.14159265f / 180.0f;
     float vertical = 2.0f * std::atan(std::tan(horizontal * 0.5f) / std::max(aspect, 0.01f));
     float f = 1.0f / std::tan(vertical * 0.5f);
     Mat4 projection {

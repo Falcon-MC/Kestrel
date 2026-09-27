@@ -1214,6 +1214,29 @@ const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const
     return visuals[static_cast<size_t>(index)];
 }
 
+uint32_t BlockAssets::stateHash(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    if (networkValue == 0xFFFFFFFFu) {
+        return 0;
+    }
+    int32_t index = -1;
+    if (!hashed && sequential) {
+        if (networkValue < sequential->size()) {
+            index = (*sequential)[networkValue];
+        }
+    } else {
+        if (hashed) {
+            return networkValue;
+        }
+        index = registry.resolve(networkValue, hashed);
+    }
+    const std::vector<BlockRecord>& records = registry.records();
+    if (index < 0 || static_cast<size_t>(index) >= records.size()) {
+        return 0;
+    }
+    return records[static_cast<size_t>(index)].networkHash;
+}
+
 bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error)
 {
     if (!registry.load(error)) {

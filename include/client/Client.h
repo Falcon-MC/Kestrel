@@ -91,6 +91,7 @@ private:
     FreeCamera camera;
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;
+    PlayerView playerView;
     bool worldShown = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
     SessionSnapshot timeState;
