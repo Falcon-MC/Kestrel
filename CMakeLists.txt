@@ -108,6 +108,9 @@ else()
         GIT_REPOSITORY https://github.com/glfw/glfw.git
         GIT_TAG 3.4
         GIT_SHALLOW TRUE
+        PATCH_COMMAND ${CMAKE_COMMAND}
+            -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw-wayland-fullscreen-output.patch
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ApplyPatch.cmake
     )
     FetchContent_MakeAvailable(glfw)
 endif()
