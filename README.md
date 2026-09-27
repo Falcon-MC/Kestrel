@@ -37,7 +37,7 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
-When `Falcon-NBT`, `Falcon-Protocol` and `Falcon-Network` sit next to this directory they are used
+When `Falcon-NBT`, `Falcon-Protocol`, `Falcon-Network` and `Falcon-BedrockData` sit next to this directory they are used
 directly, otherwise they are fetched from GitHub. Set `KESTREL_FALCON_ROOT` to point at another directory.
 
 The block textures are read from the installed game. Set `KESTREL_VANILLA_PACK` to use another vanilla

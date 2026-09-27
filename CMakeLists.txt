@@ -42,8 +42,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(falcon_network)
 
+if(EXISTS "${KESTREL_FALCON_ROOT}/Falcon-BedrockData/cmake/FalconBedrockData.cmake")
+    set(FETCHCONTENT_SOURCE_DIR_FALCON_BEDROCK_DATA "${KESTREL_FALCON_ROOT}/Falcon-BedrockData")
+endif()
+FetchContent_Declare(
+    falcon_bedrock_data
+    GIT_REPOSITORY https://github.com/Falcon-MC/BedrockData.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR cmake
+)
+FetchContent_MakeAvailable(falcon_bedrock_data)
+
 set(FALCON_BEDROCK_DATA_PROTOCOL 2193)
-include("${KESTREL_FALCON_ROOT}/Falcon-BedrockData/cmake/FalconBedrockData.cmake")
+include("${falcon_bedrock_data_SOURCE_DIR}/cmake/FalconBedrockData.cmake")
 falcon_bedrock_data_embed_binary(FILE block_palette.nbt NAMESPACE KestrelBlockPaletteData
         SYMBOL kBlockPaletteNbt OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockPaletteNbt.h")
 falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlockDefinitionData
