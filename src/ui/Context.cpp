@@ -242,9 +242,9 @@ float Context::paragraph(std::string_view value, TextStyle style, float x, float
     return font.drawWrapped(drawList, value, style, x, y, width, color);
 }
 
-void Context::pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color)
+void Context::pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color, bool shadow)
 {
-    font.drawPixelScaled(drawList, value, x, y, magnify, color);
+    font.drawPixelScaled(drawList, value, x, y, magnify, color, shadow);
 }
 
 float Context::paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color)

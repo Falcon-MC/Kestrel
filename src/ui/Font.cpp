@@ -323,30 +323,71 @@ void Font::reloadPixelPages()
     readPixelPage(0);
 }
 
-void Font::setPixelPageSourceWidth(size_t index, uint32_t width)
+void Font::setPixelPageGlyphs(size_t index, uint32_t cell, const std::array<GlyphBox, 256>& boxes)
 {
-    if (index < sourceWidths.size()) {
-        sourceWidths[index] = width;
+    if (index > 0 && index < splitPages.size() && cell > 0) {
+        splitPages[index] = SplitPage { cell, boxes };
     }
 }
 
+void Font::clearPixelPageGlyphs()
+{
+    for (std::optional<SplitPage>& page : splitPages) {
+        page.reset();
+    }
+}
+
+std::string Font::pixelGlyphName(size_t index, uint32_t code)
+{
+    char suffix[8];
+    std::snprintf(suffix, sizeof(suffix), "/%02X", code & 0xFF);
+    return pixelPageName(index) + suffix;
+}
+
 /**
- * Measures a sheet. default8 cells are drawn 8 units tall; glyph sheets are
- * drawn at half a unit per source pixel, so a 256 wide sheet matches the
- * text and bigger sheets give bigger glyphs, the way the game sizes them.
+ * Measures a sheet. default8 cells are drawn 8 units tall. The Unicode sheets
+ * hold 16 pixel cells with letters drawn at twice the size of default8, so
+ * they are drawn at half a unit per pixel with their cell centered on the
+ * line. The private use sheets (E0 to F8, where packs put icons and bars) are
+ * drawn at one unit per pixel centered two units under the top of the line,
+ * which is how ViaBedrock matches the game.
  */
+void Font::placePage(size_t index, BitmapPage& page)
+{
+    bool privateUse = index >= 1 + 0xE0 && index <= 1 + 0xF8;
+    float cell = static_cast<float>(page.cell);
+    page.height = index == 0 ? 8.0f : privateUse ? cell : cell * 0.5f;
+    page.top = index == 0 ? 0.0f : privateUse ? 2.0f - page.height * 0.5f : (8.0f - page.height) * 0.5f;
+}
+
 void Font::readPixelPage(size_t index) const
 {
     BitmapPage& page = pages[index];
     page.tried = true;
     page.sprite = pixelPageName(index);
+    if (const std::optional<SplitPage>& split = splitPages[index]) {
+        page.cell = split->cell;
+        page.split = true;
+        page.glyphSprites.assign(256, {});
+        for (uint32_t code = 0; code < 256; ++code) {
+            const GlyphBox& box = split->boxes[code];
+            if (box.right > box.left && box.bottom > box.top) {
+                page.start[code] = static_cast<uint8_t>(std::min<uint32_t>(box.left, 255));
+                page.end[code] = static_cast<uint8_t>(std::min<uint32_t>(box.right, 255));
+                page.rows[code] = { box.top, box.bottom };
+                page.glyphSprites[code] = pixelGlyphName(index, code);
+            }
+        }
+        placePage(index, page);
+        page.loaded = true;
+        return;
+    }
     const Bitmap* bitmap = skin->bitmap(page.sprite);
     if (!bitmap || bitmap->width != bitmap->height || bitmap->width % 16 != 0) {
         return;
     }
     page.cell = bitmap->width / 16;
-    uint32_t source = sourceWidths[index] ? sourceWidths[index] : bitmap->width;
-    page.height = index == 0 ? 8.0f : static_cast<float>(source) / 16.0f * 0.5f;
+    placePage(index, page);
     for (uint32_t code = 0; code < 256; ++code) {
         uint32_t cellX = (code % 16) * page.cell;
         uint32_t cellY = (code / 16) * page.cell;
@@ -579,8 +620,25 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
         const BitmapPage* page = pixelPage(cp, &pageIndex);
         float bold = state.bold ? unit : 0.0f;
         float step = pixelAdvance(cp) * unit + bold;
-        const Sprite* sheet = page ? &skin->sprite(page->sprite) : nullptr;
-        if (cp != U' ' && sheet && sheet->valid) {
+        const Sprite* sheet = page && !page->split ? &skin->sprite(page->sprite) : nullptr;
+        if (cp != U' ' && page && page->split) {
+            uint32_t code = static_cast<uint32_t>(cp & 0xFF);
+            const std::string& name = page->glyphSprites[code];
+            const Sprite* glyph = name.empty() ? nullptr : &skin->sprite(name);
+            if (glyph && glyph->valid) {
+                float texel = page->height / static_cast<float>(page->cell) * unit;
+                float glyphTop = top + std::round(page->top * unit);
+                float y0 = glyphTop + page->rows[code][0] * texel;
+                float y1 = glyphTop + page->rows[code][1] * texel;
+                float x1 = pen + (page->end[code] - page->start[code]) * texel;
+                float slant = state.italic ? (y1 - y0) * ItalicSlant : 0.0f;
+                const ImageRef& image = glyph->image;
+                list.quad(pen, y0, x1, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
+                if (state.bold) {
+                    list.quad(pen + bold, y0, x1 + bold, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
+                }
+            }
+        } else if (cp != U' ' && sheet && sheet->valid) {
             uint32_t code = static_cast<uint32_t>(cp & 0xFF);
             float texel = page->height / static_cast<float>(page->cell) * unit;
             float first = pageIndex == 0 ? 0.0f : page->start[code];
@@ -595,7 +653,7 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
             float v1 = sheet->image.v0 + (cellY + page->cell) * dv;
             float height = page->cell * texel;
             float slant = state.italic ? height * ItalicSlant : 0.0f;
-            float glyphTop = top + std::round((8.0f - page->height) * 0.5f * unit);
+            float glyphTop = top + std::round(page->top * unit);
             list.quad(pen, glyphTop, pen + (last - first) * texel, glyphTop + height, u0, v0, u1, v1, packed, slant, 0.0f);
             if (state.bold) {
                 list.quad(pen + bold, glyphTop, pen + bold + (last - first) * texel, glyphTop + height, u0, v0, u1, v1, packed, slant, 0.0f);
@@ -718,9 +776,9 @@ float Font::drawWrapped(DrawList& list, std::string_view text, TextStyle style, 
     return static_cast<float>(lines.size()) * height;
 }
 
-void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color) const
+void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow) const
 {
-    emitPixel(list, text, x, y, color, false, magnify);
+    emitPixel(list, text, x, y, color, shadow, magnify);
 }
 
 float Font::drawWrappedShadowed(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color, float shadowOffset) const

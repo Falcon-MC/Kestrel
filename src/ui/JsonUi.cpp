@@ -1226,7 +1226,7 @@ struct JsonUiLayout {
             float width = ui.measure(line, TextStyle::Pixel) * scale;
             float lineX = align == "center" ? rect.x + (rect.w - width) * 0.5f : align == "right" ? rect.right() - width : rect.x;
             if (shadow && shadow->boolean(false)) {
-                ui.pixelTextScaled(line, lineX + scale, lineY + scale, scale, { static_cast<uint8_t>(ink.r / 4), static_cast<uint8_t>(ink.g / 4), static_cast<uint8_t>(ink.b / 4), ink.a });
+                ui.pixelTextScaled(line, lineX + scale, lineY + scale, scale, ink, true);
             }
             ui.pixelTextScaled(line, lineX, lineY, scale, ink);
             if (end == std::string::npos) {
