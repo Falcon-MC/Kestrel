@@ -62,6 +62,25 @@ void Localization::setInterfacePack(std::shared_ptr<world::PackSource> interface
 void Localization::rebuild()
 {
     texts.clear();
+    splashTexts.clear();
+    std::string splashFile;
+    if (pack) {
+        pack->readText("splashes.json", splashFile);
+    }
+    for (auto server = serverPacks.rbegin(); server != serverPacks.rend(); ++server) {
+        if (const std::string* file = (*server)->find("splashes.json")) {
+            splashFile = *file;
+        }
+    }
+    if (auto root = json::parse(util::stripJsonComments(splashFile)); root && root->isObject()) {
+        if (const auto* entries = root->get("splashes"); entries && entries->isArray()) {
+            for (const auto& entry : entries->mArray) {
+                if (entry->isString() && !entry->mString.empty()) {
+                    splashTexts.push_back(entry->mString);
+                }
+            }
+        }
+    }
     auto loadLanguage = [&](const std::string& code) {
         std::string path = "texts/" + code + ".lang";
         for (const std::shared_ptr<world::PackSource>& source : { pack, interfacePack }) {

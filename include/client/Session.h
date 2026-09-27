@@ -268,6 +268,7 @@ struct SessionSnapshot {
     std::string blockAtPlayer;
     double boomFraction = 0.0;
     bool dead = false;
+    bool changingDimension = false;
     std::string deathCause;
     std::vector<std::string> deathParameters;
     uint32_t localSkinSlot = NoSkin;
@@ -362,6 +363,7 @@ private:
     void fail(const std::string& error);
     void handleWorldPacket(const std::string& payload);
     void scheduleMeshes();
+    void finishDimensionChange();
     void collectMeshes();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround);
@@ -428,6 +430,7 @@ private:
     std::atomic<int> requestedSlot { -1 };
     std::atomic<bool> respawnRequested { false };
     bool respawnPending = false;
+    bool dimensionAckReceived = false;
     std::atomic<bool> useRequested { false };
     std::atomic<bool> attackRequested { false };
     PlayerMotion motion;

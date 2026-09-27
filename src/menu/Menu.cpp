@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <random>
 
 namespace kestrel::menu {
 
@@ -312,6 +313,9 @@ void Menu::frame(Context& ui, float width, float height)
         dialog = Dialog::None;
     }
 
+    if (inGame() && session.changingDimension) {
+        dimensionScreen(ui, width, height);
+    }
     toast(ui, width, height);
     handleKeys(ui);
 }
@@ -554,6 +558,41 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel)
 void Menu::title(Context& ui, float width, float height)
 {
     logo(ui, width * 0.5f, 80.0f, width - 32.0f);
+    const auto& splashes = Localization::shared().splashes();
+    if (splashText.empty() && !splashes.empty()) {
+        std::mt19937 random(std::random_device {}());
+        splashText = splashes[std::uniform_int_distribution<size_t>(0, splashes.size() - 1)(random)];
+    }
+    if (!splashText.empty()) {
+        std::string key = splashText.front() == '%' ? splashText.substr(1) : splashText;
+        std::string text = tr(key, splashText);
+        float widest = 0.0f;
+        size_t start = 0;
+        while (start < text.size()) {
+            size_t end = text.find('\n', start);
+            if (end == std::string::npos) end = text.size();
+            while (ui.measure(std::string_view(text).substr(start, end - start), TextStyle::Pixel) > 130.0f) {
+                size_t split = text.rfind(' ', end - 1);
+                if (split == std::string::npos || split <= start) break;
+                end = split;
+            }
+            widest = std::max(widest, ui.measure(std::string_view(text).substr(start, end - start), TextStyle::Pixel));
+            if (end < text.size()) text[end] = '\n';
+            start = end + 1;
+        }
+        float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count();
+        float pulse = 1.0f - 0.05f * std::abs(std::sin(seconds * 6.2831853f));
+        float magnify = pulse * std::min(1.0f, 130.0f / std::max(widest, 1.0f));
+        const Sprite& serverArt = ui.skin().sprite("dynamic/title");
+        bool customLogo = serverArt.valid && session.status != SessionStatus::Idle;
+        float logoWidth = std::min(width - 32.0f, customLogo ? 263.0f : 378.5f);
+        const Sprite& art = customLogo ? serverArt : ui.skin().sprite("kestrel/title");
+        float logoHeight = art.valid ? logoWidth * art.height / art.width : 40.0f;
+        float textHeight = (1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n'))) * 9.0f;
+        float halfWidth = ((widest + 2.0f) * 0.93969262f + (textHeight + 2.0f) * 0.34202014f) * magnify * 0.5f;
+        float centerX = std::min(width * 0.5f + logoWidth * 0.46f, width - 8.0f - halfWidth);
+        ui.rotatedPixelText(text, centerX, 80.0f + logoHeight * 0.65f, magnify, -0.34906585f, { 255, 255, 0, 255 });
+    }
 
     float x = std::floor((width - TitleButtonWidth) * 0.5f);
     float y = std::round(height * 0.5f + 13.67f);
@@ -639,6 +678,52 @@ void Menu::pause(Context& ui, float width, float height)
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
     backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), y - 25.67f);
     playerModel(ui, dressingX + 41.0f, y - 13.0f, 4.06f);
+}
+
+/**
+ * The screen that hides the world while the player travels to another
+ * dimension, until the server has sent the new terrain: the dimension's own
+ * backdrop, its name, and the terrain building bar.
+ */
+void Menu::dimensionScreen(Context& ui, float width, float height)
+{
+    static constexpr const char* Backdrops[] = { "textures/blocks/dirt", "textures/blocks/netherrack", "textures/blocks/end_stone" };
+    size_t index = static_cast<size_t>(std::clamp(session.dimension, 0, 2));
+    ui.fill({ 0.0f, 0.0f, width, height }, Black);
+    const Sprite& tile = ui.skin().sprite(Backdrops[index]);
+    if (tile.valid) {
+        constexpr float Tile = 16.0f;
+        for (float y = 0.0f; y < height; y += Tile) {
+            for (float x = 0.0f; x < width; x += Tile) {
+                ui.sprite({ x, y, Tile, Tile }, Backdrops[index], { 64, 64, 64, 255 });
+            }
+        }
+    }
+
+    constexpr float DialogWidth = 286.67f;
+    constexpr float DialogHeight = 97.33f;
+    Rect frame { std::round((width - DialogWidth) * 0.5f), std::round(height * 0.5f - 49.0f), DialogWidth, DialogHeight };
+    const Sprite& word = ui.skin().sprite("kestrel/title");
+    float logoWidth = std::min(width - 32.0f, 378.5f);
+    float logoHeight = word.valid && word.width > 0.0f ? logoWidth * word.height / word.width : 64.0f;
+    float logoTop = frame.y - 24.0f - logoHeight;
+    if (logoTop < 8.0f) {
+        logoTop = 8.0f;
+        logoWidth = std::max(120.0f, (frame.y - 32.0f) * logoWidth / std::max(logoHeight, 1.0f));
+    }
+    logo(ui, width * 0.5f, logoTop, logoWidth);
+
+    ui.nineSlice(frame, "ui/dialog_background_opaque");
+    std::string heading = tr("progressScreen.generating", "Generating World");
+    float headingWidth = ui.measure(heading, TextStyle::Pixel);
+    ui.text(heading, TextStyle::Pixel, frame.x + std::floor((frame.w - std::min(headingWidth, frame.w - 12.0f)) * 0.5f), frame.y + 9.0f, DialogInk, frame.w - 12.0f);
+
+    Rect well { frame.x + 5.67f, frame.y + 21.33f, frame.w - 11.33f, frame.h - 27.0f };
+    ui.fill(well, { 85, 85, 85, 255 });
+    ui.fill(well.inset(1.0f), { 0, 0, 0, 220 });
+    std::string stage = tr("progressScreen.message.building", "Building terrain");
+    float stageWidth = ui.measure(stage, TextStyle::Pixel);
+    ui.text(stage, TextStyle::Pixel, std::round(well.x + (well.w - stageWidth) * 0.5f), well.y + 5.0f, White);
 }
 
 /**
@@ -833,10 +918,10 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
 
 void Menu::gameView(Context& ui, float width, float height)
 {
+    drawNameTags(ui, hud.nameTags);
     if (dialog != Dialog::None) {
         return;
     }
-    drawNameTags(ui, hud.nameTags);
 
     float y = 2.0f;
     if (debugShown) {

@@ -210,8 +210,7 @@ BlockCollisions::BlockCollisions()
             cube.shape = static_cast<int16_t>(index);
             cube.flags = CollisionSolid;
             cube.name = 0xFFFF;
-        }
-        shapes.push_back(std::move(shape));
+        }        shapes.push_back(std::move(shape));
     }
 
     if (!reader.next(line)) {

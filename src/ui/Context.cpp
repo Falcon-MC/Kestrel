@@ -1,6 +1,7 @@
 #include "ui/Context.h"
 
 #include "ui/DrawList.h"
+#include "render/Renderer.h"
 #include "ui/Theme.h"
 
 #include <algorithm>
@@ -245,6 +246,60 @@ float Context::paragraph(std::string_view value, TextStyle style, float x, float
 void Context::pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color, bool shadow)
 {
     font.drawPixelScaled(drawList, value, x, y, magnify, color, shadow);
+}
+
+void Context::nameTag(std::string_view value, float x, float y, float magnify, float depth, bool sneaking)
+{
+    // Project a camera-facing plane without snapping its moving vertices to screen pixels.
+    auto pass = [&](float z, uint8_t alpha, bool background) {
+        DrawList label;
+        label.reset(1.0f, font.whiteU(), font.whiteV());
+        font.drawNameTag(label, value, { 255, 255, 255, alpha }, background);
+        const auto& vertices = label.vertices();
+        for (size_t i = 0; i + 3 < vertices.size(); i += 4) {
+            std::array<std::array<float, 2>, 4> points {}, uvs {};
+            for (size_t j = 0; j < 4; ++j) {
+                const auto& vertex = vertices[i + j];
+                points[j] = { (x + vertex.x * magnify) * scale, (y + vertex.y * magnify) * scale };
+                uvs[j] = { vertex.u, vertex.v };
+            }
+            drawList.freeQuad(points, uvs, vertices[i].color, z);
+        }
+    };
+    if (!sneaking) {
+        // The faint pass sees through terrain, but stays behind the first-person hand.
+        pass(HandDepthRange, 32, true);
+    }
+    pass(depth, sneaking ? 128 : 255, sneaking);
+}
+
+void Context::rotatedPixelText(std::string_view value, float centerX, float centerY, float magnify, float radians, Color color)
+{
+    DrawList textList;
+    textList.reset(scale, font.whiteU(), font.whiteV());
+    size_t lines = 1 + static_cast<size_t>(std::count(value.begin(), value.end(), '\n'));
+    float y = -static_cast<float>(lines) * 9.0f * magnify * 0.5f;
+    while (!value.empty()) {
+        size_t end = value.find('\n');
+        std::string_view line = value.substr(0, end);
+        float x = -measure(line, TextStyle::Pixel) * magnify * 0.5f;
+        font.drawPixelScaled(textList, line, x + magnify, y + magnify, magnify, color, true);
+        font.drawPixelScaled(textList, line, x, y, magnify, color);
+        y += 9.0f * magnify;
+        if (end == std::string_view::npos) break;
+        value.remove_prefix(end + 1);
+    }
+    float c = std::cos(radians), s = std::sin(radians);
+    const auto& vertices = textList.vertices();
+    for (size_t i = 0; i + 3 < vertices.size(); i += 4) {
+        std::array<std::array<float, 2>, 4> points {}, uvs {};
+        for (size_t j = 0; j < 4; ++j) {
+            const auto& v = vertices[i + j];
+            points[j] = { centerX * scale + v.x * c - v.y * s, centerY * scale + v.x * s + v.y * c };
+            uvs[j] = { v.u, v.v };
+        }
+        drawList.freeQuad(points, uvs, vertices[i].color);
+    }
 }
 
 float Context::paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color)

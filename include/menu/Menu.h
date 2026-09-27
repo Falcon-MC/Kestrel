@@ -220,6 +220,7 @@ struct SessionInfo {
     bool loadingTerrain = false;
     bool dead = false;
     std::string deathMessage;
+    bool changingDimension = false;
     std::string name;
     std::string displayName;
     std::string levelName;
@@ -532,6 +533,7 @@ private:
     void profileStats(ui::Context& ui, const ui::Rect& area);
     void profileOptions(ui::Context& ui, float width, float height);
     void deathScreen(ui::Context& ui, float width, float height);
+    void dimensionScreen(ui::Context& ui, float width, float height);
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
@@ -599,6 +601,7 @@ private:
     std::string toastMessage;
     std::chrono::steady_clock::time_point toastUntil;
     std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
+    std::string splashText;
     std::array<bool, 6> panoramaReady {};
     std::chrono::steady_clock::time_point screenChanged {};
     std::chrono::steady_clock::time_point dialogChanged {};

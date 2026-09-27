@@ -782,6 +782,26 @@ void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float
     emitPixel(list, text, x, y, color, shadow, magnify);
 }
 
+void Font::drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const
+{
+    float y = -9.0f * (1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n')));
+    std::string carried;
+    while (true) {
+        size_t end = text.find('\n');
+        std::string line = carried + std::string(text.substr(0, end));
+        float width = measure(line, TextStyle::Pixel);
+        float x = -std::floor(width * 0.5f);
+        if (background && width > 0.0f) {
+            list.fill({ x - 1.0f, y - 1.0f, width + 2.0f, 9.0f }, { 0, 0, 0, 64 });
+        }
+        emitPixel(list, line, x / scale, y / scale, color, false, 1.0f / scale);
+        carried = activeFormatting(line);
+        if (end == std::string_view::npos) break;
+        text.remove_prefix(end + 1);
+        y += 9.0f;
+    }
+}
+
 float Font::drawWrappedShadowed(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color, float shadowOffset) const
 {
     std::vector<std::string_view> lines;

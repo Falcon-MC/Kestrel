@@ -14,6 +14,7 @@
 #include "Protocol/Packets/AddPlayerPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
+#include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
 #include "Protocol/Packets/LevelEventPacket.h"
@@ -272,7 +273,7 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
     {
         std::lock_guard<std::mutex> guard(mutex);
         current = SessionSnapshot {};
-        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 ? SessionState::Resolving : SessionState::Connecting;
+        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 || !RealmsService::inviteCode(target).empty() ? SessionState::Resolving : SessionState::Connecting;
         current.name = std::move(name);
         current.target = target;
         pendingChat.clear();
@@ -525,6 +526,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::LevelEvent:
     case MinecraftPacketIds::NetworkStackLatency:
     case MinecraftPacketIds::Respawn:
+    case MinecraftPacketIds::PlayerAction:
     case MinecraftPacketIds::DeathInfo:
     case MinecraftPacketIds::LevelSoundEvent:
     case MinecraftPacketIds::PlaySound:
@@ -712,9 +714,41 @@ void Session::handleWorldPacket(const std::string& payload)
         actors.clear();
         runtimeByUnique.clear();
         uuidByRuntime.clear();
+        dimensionAckReceived = false;
         std::lock_guard<std::mutex> guard(mutex);
         current.dimension = dimension->mDimension;
+        current.changingDimension = true;
+    } else if (auto action = std::dynamic_pointer_cast<PlayerActionPacket>(packet)) {
+        if (action->mAction == PlayerActionType::DimensionChangeSuccess) {
+            dimensionAckReceived = true;
+        }
     }
+}
+
+/**
+ * Once the server has said the new dimension is ready and the chunks it
+ * announced are here, answers its acknowledgement and lifts the dimension
+ * screen.
+ */
+void Session::finishDimensionChange()
+{
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (!current.changingDimension) {
+            return;
+        }
+    }
+    if (!dimensionAckReceived || !world.cohortLoaded() || !connection) {
+        return;
+    }
+    PlayerActionPacket action;
+    action.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
+    action.mAction = PlayerActionType::DimensionChangeSuccess;
+    action.mFace = -1;
+    connection->send(action);
+    dimensionAckReceived = false;
+    std::lock_guard<std::mutex> guard(mutex);
+    current.changingDimension = false;
 }
 
 void Session::scheduleMeshes()
@@ -876,13 +910,26 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.packTotal = total;
     };
 
-    if (target.rfind(RealmPrefix, 0) == 0) {
+    std::string inviteCode = RealmsService::inviteCode(target);
+    if (target.rfind(RealmPrefix, 0) == 0 || !inviteCode.empty()) {
         if (!authentication) {
             fail("Sign in with Microsoft to join Realms");
             return;
         }
-        long long realmId = std::strtoll(target.c_str() + std::char_traits<char>::length(RealmPrefix), nullptr, 10);
         RealmsService realms(*authentication);
+        realms.setCancelFlag(&cancelled);
+        long long realmId = 0;
+        if (!inviteCode.empty()) {
+            RealmDescription realm;
+            std::string error;
+            if (!realms.requestRealmByCode(inviteCode, realm, error)) {
+                fail(error);
+                return;
+            }
+            realmId = realm.mId;
+        } else {
+            realmId = std::strtoll(target.c_str() + std::char_traits<char>::length(RealmPrefix), nullptr, 10);
+        }
         RealmAddress address;
         SessionConnectionTarget resolved;
         std::string error;
@@ -1126,6 +1173,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         tickMotion();
         scheduleMeshes();
         collectMeshes();
+        finishDimensionChange();
 
         std::lock_guard<std::mutex> guard(mutex);
         if (received) {

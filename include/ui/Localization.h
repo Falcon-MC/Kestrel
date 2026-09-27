@@ -47,6 +47,7 @@ public:
     }
 
     bool has(std::string_view key) const;
+    const std::vector<std::string>& splashes() const { return splashTexts; }
 
     /**
      * The text of a key, or the fallback when no loaded language has it.
@@ -77,6 +78,7 @@ private:
     std::string current = "en_US";
     std::vector<LanguageInfo> available;
     std::unordered_map<std::string, std::string> texts;
+    std::vector<std::string> splashTexts;
 };
 
 /**

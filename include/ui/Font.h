@@ -89,6 +89,8 @@ public:
      * that sits in the world and shrinks with distance.
      */
     void drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow = false) const;
+    // Centered multiline label in font pixels, independent of the UI atlas scale.
+    void drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const;
 
     /**
      * The skin sprite of a pixel font sheet: font/default8 for index 0, then

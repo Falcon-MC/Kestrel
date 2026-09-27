@@ -30,6 +30,7 @@ struct VertexIn {
     float2 local [[attribute(3)]];
     float2 halfSize [[attribute(4)]];
     float2 shape [[attribute(5)]];
+    float depth [[attribute(6)]];
 };
 
 struct VertexOut {
@@ -44,7 +45,7 @@ struct VertexOut {
 vertex VertexOut ui_vertex(VertexIn in [[stage_in]], constant float2& viewport [[buffer(1)]])
 {
     VertexOut out;
-    out.position = float4(in.position.x / viewport.x * 2.0 - 1.0, 1.0 - in.position.y / viewport.y * 2.0, 0.0, 1.0);
+    out.position = float4(in.position.x / viewport.x * 2.0 - 1.0, 1.0 - in.position.y / viewport.y * 2.0, in.depth, 1.0);
     out.uv = in.uv;
     out.color = in.color;
     out.local = in.local;
@@ -739,7 +740,7 @@ private:
         overlayDepth = [device newDepthStencilStateWithDescriptor:overlayDepthDescriptor];
 
         MTLDepthStencilDescriptor* uiDepthDescriptor = [MTLDepthStencilDescriptor new];
-        uiDepthDescriptor.depthCompareFunction = MTLCompareFunctionAlways;
+        uiDepthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
         uiDepthDescriptor.depthWriteEnabled = NO;
         uiDepth = [device newDepthStencilStateWithDescriptor:uiDepthDescriptor];
 
@@ -775,6 +776,9 @@ private:
             vertexDescriptor.attributes[attribute].offset = 20 + (attribute - 3) * 8;
             vertexDescriptor.attributes[attribute].bufferIndex = 0;
         }
+        vertexDescriptor.attributes[6].format = MTLVertexFormatFloat;
+        vertexDescriptor.attributes[6].offset = 44;
+        vertexDescriptor.attributes[6].bufferIndex = 0;
         vertexDescriptor.layouts[0].stride = sizeof(ui::UiVertex);
 
         MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];

@@ -20,6 +20,8 @@ constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr int SwimmingFlag = 57;
 constexpr double MaxNameTagDistance = 64.0;
 constexpr double NameTagLift = 0.5;
+constexpr float NameTagPixelSize = 0.025f;
+constexpr uint64_t SneakingFlag = 1ull << 1;
 constexpr uint64_t InvisibleFlag = 1ull << 5;
 constexpr uint64_t CanShowNameFlag = 1ull << 14;
 constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
@@ -124,9 +126,10 @@ void appendTiled(const std::array<QuadCorner, 4>& corners, uint32_t layer, std::
 
 /**
  * Clip space of a point relative to the camera, x and y in normalized device
- * coordinates with y up and w the depth, or nothing behind the camera.
+ * coordinates with y up, camera depth and buffer depth, or nothing outside
+ * the camera's near/far planes.
  */
-std::optional<std::array<double, 3>> project(const Mat4& matrix, double x, double y, double z)
+std::optional<std::array<double, 4>> project(const Mat4& matrix, double x, double y, double z)
 {
     auto row = [&](size_t r) {
         return double(matrix[r]) * x + double(matrix[4 + r]) * y + double(matrix[8 + r]) * z + double(matrix[12 + r]);
@@ -135,7 +138,9 @@ std::optional<std::array<double, 3>> project(const Mat4& matrix, double x, doubl
     if (w <= 0.05) {
         return std::nullopt;
     }
-    return std::array<double, 3> { row(0) / w, row(1) / w, w };
+    double depth = row(2) / w;
+    if (depth < 0.0 || depth > 1.0) return std::nullopt;
+    return std::array<double, 4> { row(0) / w, row(1) / w, w, depth };
 }
 
 float wrapDegrees(float degrees)
@@ -468,8 +473,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
  * Names over entities the way the game floats them: players whose name may
  * show, and anything flagged to always show its name, which is how servers
  * put floating text in the world. Each sits half a block over the entity's
- * box and keeps the size of chat text on screen whatever the distance,
- * farthest first so nearer ones cover them.
+ * box. Glyphs have a fixed world size on a camera-facing plane, sorted back
+ * to front, with the same projected depth as that plane.
  */
 std::vector<menu::NameTag> Client::buildNameTags() const
 {
@@ -478,11 +483,14 @@ std::vector<menu::NameTag> Client::buildNameTags() const
     float width = static_cast<float>(window->width());
     float height = static_cast<float>(window->height());
     Mat4 matrix = camera.viewProjection(width / std::max(height, 1.0f));
+    float focalPixels = height / (2.0f * camera.halfVerticalTangent(width / std::max(height, 1.0f)));
     for (const ActorView& actor : actorViews) {
         if (actor.name.empty()) {
             continue;
         }
         bool player = actor.identifier == "minecraft:player";
+        bool sneaking = player && (actor.flags[0] & SneakingFlag) != 0;
+        if (player && (actor.flags[0] & InvisibleFlag) != 0) continue;
         bool always = actor.alwaysShowName || (actor.flags[0] & AlwaysShowNameFlag) != 0;
         if (!always && (!player || (actor.flags[0] & CanShowNameFlag) == 0 || (actor.flags[0] & InvisibleFlag) != 0)) {
             continue;
@@ -496,19 +504,21 @@ std::vector<menu::NameTag> Client::buildNameTags() const
         double dy = feet[1] + box + NameTagLift - camera.y();
         double dz = feet[2] - camera.z();
         double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (distance > MaxNameTagDistance) {
+        if (distance > (sneaking ? 32.0 : MaxNameTagDistance)) {
             continue;
         }
-        std::optional<std::array<double, 3>> anchor = project(matrix, dx, dy, dz);
-        if (!anchor || std::abs((*anchor)[0]) > 1.5 || std::abs((*anchor)[1]) > 1.5) {
+        auto anchor = project(matrix, dx, dy, dz);
+        if (!anchor) {
             continue;
         }
         menu::NameTag tag;
         tag.text = actor.name;
         tag.x = static_cast<float>(((*anchor)[0] + 1.0) * 0.5 * width) / scale;
         tag.y = static_cast<float>((1.0 - (*anchor)[1]) * 0.5 * height) / scale;
-        tag.magnify = 1.0f;
-        placed.emplace_back(distance, std::move(tag));
+        tag.magnify = NameTagPixelSize * focalPixels / (static_cast<float>((*anchor)[2]) * scale);
+        tag.depth = static_cast<float>((*anchor)[3]);
+        tag.sneaking = sneaking;
+        placed.emplace_back((*anchor)[2], std::move(tag));
     }
     std::sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     std::vector<menu::NameTag> tags;

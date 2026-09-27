@@ -592,9 +592,9 @@ void Menu::serverForm(Context& ui, float width, float height)
 {
     (void)height;
     header(ui, width, upperCase(editing ? tr("accessibility.play.editServer", "Edit server") : tr("externalServerScreen.addServer", "Add a new server")), false);
-    constexpr float PanelWidth = 522.67f;
+    float panelWidth = std::min(522.67f, width - 16.0f);
     constexpr float RowStep = 50.0f;
-    Rect panel { std::round((width - PanelWidth) * 0.5f), 53.33f, PanelWidth, 191.33f };
+    Rect panel { std::round((width - panelWidth) * 0.5f), 53.33f, panelWidth, 191.33f };
     ui.fill(panel, Panel);
 
     struct Entry {
@@ -643,8 +643,10 @@ void Menu::serverForm(Context& ui, float width, float height)
 void Menu::settings(Context& ui, float width, float height)
 {
     header(ui, width, upperCase(tr("menu.settings", "Settings")), false);
-    Rect sidebar { std::round(width * 0.5f - 314.67f), 53.33f, 196.0f, std::min(402.0f, height - 53.33f - 8.0f) };
-    Rect page { sidebar.right() + 17.33f, 53.33f, 408.0f, height - 53.33f - 8.0f };
+    Rect content = column(width, 53.33f, height - 8.0f);
+    float sidebarWidth = std::min(196.0f, content.w * 0.31f);
+    Rect sidebar { content.x, content.y, sidebarWidth, std::min(402.0f, content.h) };
+    Rect page { sidebar.right() + 17.33f, content.y, content.right() - sidebar.right() - 24.33f, content.h };
 
     ui.fill(sidebar, PanelDark);
     float listHeight = 0.0f;
@@ -785,7 +787,7 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
-        settingsRow(ui, x, y, w, tr("options.guiScale.optionName", "GUI scale modifier"), "Makes every menu larger on top of the automatic scale", 60.0f);
+        settingsRow(ui, x, y, w, tr("options.guiScale.optionName", "GUI scale"), "Rescales and repositions the menus and in-game HUD", 60.0f);
         float segment = std::floor((w - 24.0f) / static_cast<float>(std::size(InterfaceScales)));
         for (size_t i = 0; i < std::size(InterfaceScales); ++i) {
             Rect option { x + 12.0f + segment * static_cast<float>(i), rowY + 33.0f, segment, 20.0f };

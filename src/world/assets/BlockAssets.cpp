@@ -924,6 +924,19 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 });
                 break;
             }
+            case ModelKind::Chain: {
+                uint32_t first = materials[models::Up];
+                uint32_t second = materials[models::South];
+                if (first == DiagnosticMaterial || second == DiagnosticMaterial) {
+                    break;
+                }
+                std::string axis = stateString(record.states, "pillar_axis");
+                uint32_t facing = axis == "x" ? models::East : axis == "z" ? models::South : models::Up;
+                modelTemplate = intern(keyOf("chain", { first, second, 0, 0, 0, 0 }, { facing }), [&] {
+                    pushTemplate(models::orientedCross(first, second, facing), 0);
+                });
+                break;
+            }
             case ModelKind::Bamboo: {
                 uint32_t stem = materials[models::North];
                 if (stem == DiagnosticMaterial) {

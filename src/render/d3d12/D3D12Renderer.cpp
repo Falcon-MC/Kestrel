@@ -41,6 +41,7 @@ struct VertexIn
     float2 local : TEXCOORD1;
     float2 halfSize : TEXCOORD2;
     float2 shape : TEXCOORD3;
+    float depth : TEXCOORD4;
 };
 
 struct VertexOut
@@ -59,7 +60,7 @@ SamplerState atlasSampler : register(s0);
 VertexOut vs_main(VertexIn input)
 {
     VertexOut output;
-    output.position = float4(input.position.x / viewport.x * 2.0 - 1.0, 1.0 - input.position.y / viewport.y * 2.0, 0.0, 1.0);
+    output.position = float4(input.position.x / viewport.x * 2.0 - 1.0, 1.0 - input.position.y / viewport.y * 2.0, input.depth, 1.0);
     output.uv = input.uv;
     output.color = input.color;
     output.local = input.local;
@@ -1119,6 +1120,7 @@ private:
             { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
             { "TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
             { "TEXCOORD", 3, DXGI_FORMAT_R32G32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 4, DXGI_FORMAT_R32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         };
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineDesc {};
@@ -1141,7 +1143,9 @@ private:
         pipelineDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
         pipelineDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         pipelineDesc.RasterizerState.DepthClipEnable = TRUE;
-        pipelineDesc.DepthStencilState.DepthEnable = FALSE;
+        pipelineDesc.DepthStencilState.DepthEnable = TRUE;
+        pipelineDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        pipelineDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
         pipelineDesc.DepthStencilState.StencilEnable = FALSE;
         pipelineDesc.InputLayout = { layout, static_cast<UINT>(std::size(layout)) };
         pipelineDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
