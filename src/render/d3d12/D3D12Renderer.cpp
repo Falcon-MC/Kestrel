@@ -914,10 +914,10 @@ public:
             return left.first > right.first;
         });
         for (const auto& [distance, chunk] : ordered) {
-            commandList->SetPipelineState(blendPipeline.Get());
-            drawStream(*chunk, 2);
             commandList->SetPipelineState(modelBlendPipeline.Get());
             drawStream(*chunk, 3);
+            commandList->SetPipelineState(blendPipeline.Get());
+            drawStream(*chunk, 2);
         }
     }
 
