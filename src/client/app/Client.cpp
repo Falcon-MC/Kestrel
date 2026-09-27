@@ -85,6 +85,9 @@ int Client::run()
                 break;
             }
         }
+        if (window->consumeFocusLost()) {
+            menu.pauseIfPlaying();
+        }
         if (window->consumeResize()) {
             Profiler::Section section(profiler, "resize");
             renderer->resize(window->width(), window->height());
@@ -149,22 +152,15 @@ int Client::run()
                 if (captured && keys.pressedKey == bindings.perspective()) {
                     perspective = (perspective + 1) % 3;
                 }
-                camera.setOrbiting(perspective != PerspectiveFirst);
-                std::array<double, 3> boom {};
-                std::array<float, 3> look = camera.viewForward();
-                if (perspective == PerspectiveBack) {
-                    boom = { -look[0] * ThirdPersonRadius, -look[1] * ThirdPersonRadius, -look[2] * ThirdPersonRadius };
-                } else if (perspective == PerspectiveFront) {
-                    double flat = std::sqrt(double(look[0]) * look[0] + double(look[2]) * look[2]);
-                    boom = flat > 1.0e-6 ? std::array<double, 3> { look[0] / flat * ThirdPersonRadius, 0.0, look[2] / flat * ThirdPersonRadius } : std::array<double, 3> { 0.0, 0.0, -ThirdPersonRadius };
-                }
+                std::array<float, 3> look = camera.forward();
+                double reach = perspective == PerspectiveBack ? -ThirdPersonRadius : perspective == PerspectiveFront ? ThirdPersonRadius : 0.0;
+                std::array<double, 3> boom { look[0] * reach, look[1] * reach, look[2] * reach };
                 session.setCameraBoom(eyePosition, boom);
                 camera.setFacingSubject(perspective == PerspectiveFront);
                 camera.setPosition(eyePosition[0] + boom[0] * boomFraction, eyePosition[1] + boom[1] * boomFraction, eyePosition[2] + boom[2] * boomFraction);
             } else {
                 perspective = PerspectiveFirst;
                 camera.setFacingSubject(false);
-                camera.setOrbiting(false);
                 camera.easeFov(1.0f, deltaSeconds);
                 camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
                 eyePosition = { camera.x(), camera.y(), camera.z() };
@@ -319,25 +315,19 @@ int Client::run()
                 Profiler::Section section(profiler, "entities");
                 interpolateActors(secondsNow());
                 if (perspective != PerspectiveFirst && playerView.active) {
-                    ActorView self;
-                    self.runtimeId = LocalActorId;
-                    self.identifier = "minecraft:player";
-                    self.x = eyePosition[0];
-                    self.y = eyePosition[1] - (playerView.sneaking ? 1.54 : 1.62);
-                    self.z = eyePosition[2];
-                    self.yaw = camera.minecraftYaw();
-                    self.headYaw = self.yaw;
-                    self.pitch = camera.minecraftPitch();
-                    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0);
-                    self.skinSlot = localSkinSlot;
-                    self.slim = localSlim;
-                    actorViews.push_back(self);
+                    actorViews.push_back(localActorView(deltaSeconds));
                 }
-                entityQuads = buildActorQuads(entityOrigin);
-                appendFirstPerson(entityOrigin, entityQuads);
+                std::vector<world::ModelQuadGpu> blendedQuads;
+                std::vector<world::ModelQuadGpu> handQuads;
+                buildActorQuads(entityOrigin, entityQuads, blendedQuads);
+                appendFirstPerson(entityOrigin, handQuads);
+                view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());
+                view.entityBlendCount = static_cast<uint32_t>(blendedQuads.size());
+                view.handQuadCount = static_cast<uint32_t>(handQuads.size());
+                entityQuads.insert(entityQuads.end(), blendedQuads.begin(), blendedQuads.end());
+                entityQuads.insert(entityQuads.end(), handQuads.begin(), handQuads.end());
             }
             view.entityQuads = entityQuads.data();
-            view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
             renderer->drawWorld(view);

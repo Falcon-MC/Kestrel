@@ -15,10 +15,10 @@ namespace {
 
 constexpr double MaxActorDistance = 120.0;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
+constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr double MaxNameTagDistance = 64.0;
 constexpr double NameTagLift = 0.5;
-constexpr double NameTagPixel = 0.025;
 constexpr uint64_t InvisibleFlag = 1ull << 5;
 constexpr uint64_t CanShowNameFlag = 1ull << 14;
 constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
@@ -26,6 +26,99 @@ constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
 int16_t roundToShort(float value)
 {
     return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
+}
+
+struct QuadCorner {
+    std::array<float, 3> position {};
+    std::array<float, 2> uv {};
+};
+
+world::ModelQuadGpu packCorners(const std::array<QuadCorner, 4>& corners, uint32_t layer, uint32_t shadeWord)
+{
+    world::ModelQuadGpu gpu;
+    std::array<int16_t, 12> positions {};
+    for (size_t corner = 0; corner < 4; ++corner) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            positions[corner * 3 + axis] = roundToShort(corners[corner].position[axis]);
+        }
+    }
+    for (size_t word = 0; word < 6; ++word) {
+        gpu.words[word] = uint32_t(uint16_t(positions[word * 2])) | (uint32_t(uint16_t(positions[word * 2 + 1])) << 16);
+    }
+    for (size_t corner = 0; corner < 4; ++corner) {
+        uint32_t u = static_cast<uint32_t>(std::clamp(corners[corner].uv[0] * 4096.0f + 0.5f, 0.0f, 65535.0f));
+        uint32_t v = static_cast<uint32_t>(std::clamp(corners[corner].uv[1] * 4096.0f + 0.5f, 0.0f, 65535.0f));
+        gpu.words[6 + corner] = u | (v << 16);
+    }
+    gpu.words[10] = layer;
+    gpu.words[11] = shadeWord;
+    gpu.words[12] = FullSkyLight;
+    return gpu;
+}
+
+/**
+ * Pushes a quad whose texture may be spread over a grid of layers. Such a
+ * quad is cut along the tile edges it crosses, each piece sampling the one
+ * layer under it with its UVs moved into that tile.
+ */
+void appendTiled(const std::array<QuadCorner, 4>& corners, uint32_t layer, std::pair<uint32_t, uint32_t> grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+{
+    auto [tilesX, tilesY] = grid;
+    if (tilesX * tilesY <= 1) {
+        out.push_back(packCorners(corners, layer, shadeWord));
+        return;
+    }
+    auto cuts = [&](const QuadCorner& from, const QuadCorner& to) {
+        std::vector<float> list { 0.0f, 1.0f };
+        for (size_t axis = 0; axis < 2; ++axis) {
+            float a = from.uv[axis];
+            float b = to.uv[axis];
+            float tiles = static_cast<float>(axis == 0 ? tilesX : tilesY);
+            if (std::abs(b - a) < 1.0e-6f) {
+                continue;
+            }
+            float high = std::max(a, b) * tiles;
+            for (float edge = std::floor(std::min(a, b) * tiles) + 1.0f; edge < high; edge += 1.0f) {
+                float t = (edge / tiles - a) / (b - a);
+                if (t > 1.0e-4f && t < 1.0f - 1.0e-4f) {
+                    list.push_back(t);
+                }
+            }
+        }
+        std::sort(list.begin(), list.end());
+        return list;
+    };
+    std::vector<float> across = cuts(corners[0], corners[1]);
+    std::vector<float> down = cuts(corners[0], corners[3]);
+    auto at = [&](float s, float t) {
+        QuadCorner point;
+        float weights[4] = { (1.0f - s) * (1.0f - t), s * (1.0f - t), s * t, (1.0f - s) * t };
+        for (size_t corner = 0; corner < 4; ++corner) {
+            for (size_t axis = 0; axis < 3; ++axis) {
+                point.position[axis] += corners[corner].position[axis] * weights[corner];
+            }
+            point.uv[0] += corners[corner].uv[0] * weights[corner];
+            point.uv[1] += corners[corner].uv[1] * weights[corner];
+        }
+        return point;
+    };
+    for (size_t row = 0; row + 1 < down.size(); ++row) {
+        for (size_t column = 0; column + 1 < across.size(); ++column) {
+            std::array<QuadCorner, 4> piece {
+                at(across[column], down[row]), at(across[column + 1], down[row]),
+                at(across[column + 1], down[row + 1]), at(across[column], down[row + 1]),
+            };
+            float centerU = (piece[0].uv[0] + piece[2].uv[0]) * 0.5f;
+            float centerV = (piece[0].uv[1] + piece[2].uv[1]) * 0.5f;
+            uint32_t tileX = std::min(static_cast<uint32_t>(std::max(centerU, 0.0f) * float(tilesX)), tilesX - 1);
+            uint32_t tileY = std::min(static_cast<uint32_t>(std::max(centerV, 0.0f) * float(tilesY)), tilesY - 1);
+            for (QuadCorner& corner : piece) {
+                corner.uv[0] = std::clamp(corner.uv[0] * float(tilesX) - float(tileX), 0.0f, 1.0f);
+                corner.uv[1] = std::clamp(corner.uv[1] * float(tilesY) - float(tileY), 0.0f, 1.0f);
+            }
+            out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord));
+        }
+    }
 }
 
 /**
@@ -101,14 +194,16 @@ uint32_t pickChoice(world::EntityAnimator& animator, const world::molang::Script
  * The quads of every entity close enough to the camera, placed around origin
  * in 1/256 block: every bone posed by the entity's animations, then the model
  * scaled and turned to its body yaw. Entity quads set bit 5 of the shade word
- * so they sample the entity textures.
+ * so they sample the entity textures, and bit 6 when their material adds
+ * light. Quads whose material blends go to blended. Invisible or zero scale
+ * entities draw nothing, which is how servers hide the armor stands behind
+ * floating text.
  */
-std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_t, 3>& origin)
+void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
 {
-    std::vector<world::ModelQuadGpu> out;
     if (!blockAssets) {
         animators.clear();
-        return out;
+        return;
     }
     double now = secondsNow();
     double worldTime = currentWorldTime(timeState);
@@ -120,9 +215,15 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
     cullView.cameraY = camera.y();
     cullView.cameraZ = camera.z();
     ChunkFrustum frustum(cullView);
+    bool facing = perspective == PerspectiveFront;
+    float viewYaw = wrapDegrees(camera.minecraftYaw() + (facing ? 180.0f : 0.0f));
+    float viewPitch = facing ? -camera.minecraftPitch() : camera.minecraftPitch();
     std::unordered_set<uint64_t> present;
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
+        if ((actor.flags[0] & InvisibleFlag) || actor.scale <= 0.0f) {
+            continue;
+        }
         double dx = actor.x - origin[0];
         double dy = actor.y - origin[1];
         double dz = actor.z - origin[2];
@@ -160,9 +261,27 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
         input.identifier = actor.identifier;
         input.name = actor.name;
         input.onGround = actor.onGround;
+        input.cameraX = camera.x();
+        input.cameraY = camera.y();
+        input.cameraZ = camera.z();
+        input.cameraYaw = viewYaw;
+        input.cameraPitch = viewPitch;
+        if (actor.identifier == "minecraft:armor_stand") {
+            input.engineVariables = { { "armor_stand.pose_index", double(actor.poseIndex) } };
+        }
+        if (actor.runtimeId == LocalActorId) {
+            const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
+            input.mainHandItem = held.empty() ? std::string() : held.identifier;
+            input.engineVariables = {
+                { "attack_time", swingProgress() },
+                { "is_holding_right", held.empty() ? 0.0 : 1.0 },
+                { "is_first_person", 0.0 },
+            };
+        }
         if (model->rigs.empty()) {
             continue;
         }
+        bool combined = !model->combined.quads.empty() && actor.skinSlot == NoSkin;
         const world::EntityRenderController* controller = nullptr;
         for (const world::EntityRenderController& candidate : model->controllers) {
             if (candidate.condition.empty() || animator.evaluate(candidate.condition) != 0.0) {
@@ -172,7 +291,9 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
         }
         uint32_t rigIndex = controller ? pickChoice(animator, controller->geometry, controller->geometryChoices) : 0;
         const world::EntityRig* chosenRig = &model->rigs[rigIndex < model->rigs.size() ? rigIndex : 0];
-        if (actor.skinSlot != NoSkin) {
+        if (combined) {
+            chosenRig = &model->combined;
+        } else if (actor.skinSlot != NoSkin) {
             if (auto skinRig = skinRigs.find(actor.skinSlot); skinRig != skinRigs.end() && skinRig->second) {
                 chosenRig = skinRig->second.get();
             }
@@ -187,67 +308,68 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
         }
         const std::vector<world::BoneMatrix>& matrices = animator.matrices();
         float scale = animator.scale() * actor.scale * 16.0f;
-        uint32_t layer = model->layer;
-        std::vector<uint8_t> hidden;
-        if (controller) {
-            uint32_t chosen = pickChoice(animator, controller->texture, controller->textureChoices);
-            if (chosen != world::NoEntityChoice) {
-                layer = chosen;
+        auto hiddenBones = [&](const world::EntityRenderController& source) {
+            std::vector<uint8_t> hidden;
+            if (source.parts.empty()) {
+                return hidden;
             }
-            if (!controller->parts.empty()) {
-                std::vector<uint8_t> visible(controller->parts.size(), 1);
-                for (size_t rule = 0; rule < controller->parts.size(); ++rule) {
-                    visible[rule] = animator.evaluate(controller->parts[rule].visible) != 0.0 ? 1 : 0;
-                }
-                std::vector<int32_t>& lastRule = partMatches[{ controller, &rig }];
-                if (lastRule.size() != rig.bones.size()) {
-                    lastRule.assign(rig.bones.size(), -1);
-                    for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
-                        for (size_t rule = 0; rule < controller->parts.size(); ++rule) {
-                            if (matchesPattern(controller->parts[rule].pattern, rig.bones[bone].name)) {
-                                lastRule[bone] = static_cast<int32_t>(rule);
-                            }
+            std::vector<uint8_t> visible(source.parts.size(), 1);
+            for (size_t rule = 0; rule < source.parts.size(); ++rule) {
+                visible[rule] = animator.evaluate(source.parts[rule].visible) != 0.0 ? 1 : 0;
+            }
+            std::vector<int32_t>& lastRule = partMatches[{ &source, &rig }];
+            if (lastRule.size() != rig.bones.size()) {
+                lastRule.assign(rig.bones.size(), -1);
+                for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                    for (size_t rule = 0; rule < source.parts.size(); ++rule) {
+                        if (matchesPattern(source.parts[rule].pattern, rig.bones[bone].name)) {
+                            lastRule[bone] = static_cast<int32_t>(rule);
                         }
                     }
                 }
-                std::vector<uint8_t> own(rig.bones.size(), 0);
-                for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
-                    if (lastRule[bone] >= 0) {
-                        own[bone] = visible[lastRule[bone]] ? 0 : 1;
-                    }
-                }
-                hidden.assign(rig.bones.size(), 0);
-                for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
-                    int32_t walker = static_cast<int32_t>(bone);
-                    for (size_t steps = 0; walker >= 0 && steps <= rig.bones.size(); ++steps) {
-                        if (own[walker]) {
-                            hidden[bone] = 1;
-                            break;
-                        }
-                        walker = rig.bones[walker].parent;
-                    }
+            }
+            std::vector<uint8_t> own(rig.bones.size(), 0);
+            for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                if (lastRule[bone] >= 0) {
+                    own[bone] = visible[lastRule[bone]] ? 0 : 1;
                 }
             }
-        }
-        if (actor.skinSlot != NoSkin) {
-            layer = blockAssets->skinLayerBase() + actor.skinSlot;
-        }
+            hidden.assign(rig.bones.size(), 0);
+            for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                int32_t walker = static_cast<int32_t>(bone);
+                for (size_t steps = 0; walker >= 0 && steps <= rig.bones.size(); ++steps) {
+                    if (own[walker]) {
+                        hidden[bone] = 1;
+                        break;
+                    }
+                    walker = rig.bones[walker].parent;
+                }
+            }
+            return hidden;
+        };
+        auto textureOf = [&](const world::EntityRenderController* source) {
+            uint32_t chosen = source ? pickChoice(animator, source->texture, source->textureChoices) : world::NoEntityChoice;
+            return chosen != world::NoEntityChoice ? chosen : model->layer;
+        };
         float radians = (180.0f - wrapDegrees(actor.yaw)) * 3.14159265f / 180.0f;
         float cosine = std::cos(radians);
         float sine = std::sin(radians);
         float baseX = static_cast<float>(dx * 256.0);
         float baseY = static_cast<float>(dy * 256.0);
         float baseZ = static_cast<float>(dz * 256.0);
-        out.reserve(out.size() + rig.quads.size());
-        for (size_t index = 0; index < rig.quads.size(); ++index) {
+        std::array<float, 3> cameraLocal {
+            static_cast<float>((camera.x() - origin[0]) * 256.0),
+            static_cast<float>((camera.y() - origin[1]) * 256.0),
+            static_cast<float>((camera.z() - origin[2]) * 256.0),
+        };
+        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : matrices.size();
             if (bone < hidden.size() && hidden[bone]) {
-                continue;
+                return;
             }
             const world::BoneMatrix* matrix = bone < matrices.size() ? &matrices[bone] : nullptr;
-            world::ModelQuadGpu gpu;
-            std::array<int16_t, 12> positions {};
+            std::array<QuadCorner, 4> corners;
             for (size_t corner = 0; corner < 4; ++corner) {
                 float x = quad.positions[corner][0] / 16.0f;
                 float y = quad.positions[corner][1] / 16.0f;
@@ -266,20 +388,50 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
                 z *= scale;
                 float turnedX = cosine * x + sine * z;
                 float turnedZ = -sine * x + cosine * z;
-                positions[corner * 3 + 0] = roundToShort(baseX + turnedX);
-                positions[corner * 3 + 1] = roundToShort(baseY + y);
-                positions[corner * 3 + 2] = roundToShort(baseZ + turnedZ);
+                corners[corner].position = { baseX + turnedX, baseY + y, baseZ + turnedZ };
+                corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
             }
-            for (size_t word = 0; word < 6; ++word) {
-                gpu.words[word] = uint32_t(uint16_t(positions[word * 2])) | (uint32_t(uint16_t(positions[word * 2 + 1])) << 16);
+            if (quad.flags & world::QuadInward) {
+                std::array<float, 3> edgeA {}, edgeB {}, toCamera {};
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    edgeA[axis] = corners[1].position[axis] - corners[0].position[axis];
+                    edgeB[axis] = corners[3].position[axis] - corners[0].position[axis];
+                    toCamera[axis] = cameraLocal[axis] - corners[0].position[axis];
+                }
+                float facing = (edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1]) * toCamera[0] + (edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2]) * toCamera[1] + (edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]) * toCamera[2];
+                if (facing <= 0.0f) {
+                    return;
+                }
             }
-            for (size_t corner = 0; corner < 4; ++corner) {
-                gpu.words[6 + corner] = uint32_t(quad.uvs[corner][0]) | (uint32_t(quad.uvs[corner][1]) << 16);
+            uint32_t shadeWord = (quad.flags & world::QuadFaceMask) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
+            appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, blend == world::EntityBlend::Opaque ? out : blended);
+        };
+        if (combined) {
+            for (size_t index = 0; index < model->controllers.size(); ++index) {
+                const world::EntityRenderController& source = model->controllers[index];
+                if (!source.condition.empty() && animator.evaluate(source.condition) == 0.0) {
+                    continue;
+                }
+                uint32_t picked = pickChoice(animator, source.geometry, source.geometryChoices);
+                uint32_t layer = textureOf(&source);
+                std::vector<uint8_t> hidden = hiddenBones(source);
+                for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
+                    const world::CombinedQuadSource& from = model->combinedSources[quad];
+                    if (from.controller == index && from.rig == picked) {
+                        emit(quad, layer, hidden, source.blend);
+                    }
+                }
             }
-            gpu.words[10] = layer;
-            gpu.words[11] = (quad.flags & world::QuadFaceMask) | EntityQuadFlag;
-            gpu.words[12] = FullSkyLight;
-            out.push_back(gpu);
+        } else {
+            uint32_t layer = actor.skinSlot != NoSkin ? blockAssets->skinLayerBase() + actor.skinSlot : textureOf(controller);
+            std::vector<uint8_t> hidden = controller ? hiddenBones(*controller) : std::vector<uint8_t> {};
+            world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
+            for (size_t index = 0; index < rig.quads.size(); ++index) {
+                emit(index, layer, hidden, blend);
+            }
+        }
+        if (actor.runtimeId == LocalActorId) {
+            appendThirdPersonItem(rig, matrices, scale, { baseX, baseY, baseZ }, cosine, sine, out);
         }
     }
     for (auto it = animators.begin(); it != animators.end();) {
@@ -289,7 +441,6 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
             it = animators.erase(it);
         }
     }
-    return out;
 }
 
 /**
@@ -303,8 +454,8 @@ std::vector<world::ModelQuadGpu> Client::buildActorQuads(const std::array<int32_
  * Names over entities the way the game floats them: players whose name may
  * show, and anything flagged to always show its name, which is how servers
  * put floating text in the world. Each sits half a block over the entity's
- * box, one font pixel being 0.025 blocks, farthest first so nearer ones cover
- * them.
+ * box and keeps the size of chat text on screen whatever the distance,
+ * farthest first so nearer ones cover them.
  */
 std::vector<menu::NameTag> Client::buildNameTags() const
 {
@@ -335,18 +486,14 @@ std::vector<menu::NameTag> Client::buildNameTags() const
             continue;
         }
         std::optional<std::array<double, 3>> anchor = project(matrix, dx, dy, dz);
-        std::optional<std::array<double, 3>> above = project(matrix, dx, dy + NameTagPixel, dz);
-        if (!anchor || !above || std::abs((*anchor)[0]) > 1.5 || std::abs((*anchor)[1]) > 1.5) {
+        if (!anchor || std::abs((*anchor)[0]) > 1.5 || std::abs((*anchor)[1]) > 1.5) {
             continue;
         }
         menu::NameTag tag;
         tag.text = actor.name;
         tag.x = static_cast<float>(((*anchor)[0] + 1.0) * 0.5 * width) / scale;
         tag.y = static_cast<float>((1.0 - (*anchor)[1]) * 0.5 * height) / scale;
-        tag.magnify = static_cast<float>(((*above)[1] - (*anchor)[1]) * 0.5 * height) / scale;
-        if (tag.magnify < 0.05f) {
-            continue;
-        }
+        tag.magnify = 1.0f;
         placed.emplace_back(distance, std::move(tag));
     }
     std::sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -356,6 +503,46 @@ std::vector<menu::NameTag> Client::buildNameTags() const
         tags.push_back(std::move(tag));
     }
     return tags;
+}
+
+/**
+ * The local player as the third person views draw it. The body trails the
+ * head the way the game turns it: it swings toward the walking direction
+ * (facing forward while backing up), never lets the head turn more than 75
+ * degrees away, and creeps after the head once it is past 50.
+ */
+ActorView Client::localActorView(float deltaSeconds)
+{
+    ActorView self;
+    self.runtimeId = LocalActorId;
+    self.identifier = "minecraft:player";
+    self.x = eyePosition[0];
+    self.y = eyePosition[1] - (playerView.sneaking ? 1.54 : 1.62);
+    self.z = eyePosition[2];
+    self.headYaw = camera.minecraftYaw();
+    self.pitch = camera.minecraftPitch();
+    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0);
+    self.skinSlot = localSkinSlot;
+    self.slim = localSlim;
+
+    float ticks = deltaSeconds * 20.0f;
+    double dx = playerView.current[0] - playerView.previous[0];
+    double dz = playerView.current[2] - playerView.previous[2];
+    if (dx * dx + dz * dz > 0.0025) {
+        float heading = static_cast<float>(std::atan2(-dx, dz) * 180.0 / 3.14159265358979);
+        if (std::abs(wrapDegrees(self.headYaw - heading)) > 95.0f) {
+            heading += 180.0f;
+        }
+        localBodyYaw += wrapDegrees(heading - localBodyYaw) * (1.0f - std::pow(0.7f, ticks));
+    }
+    float turn = std::clamp(wrapDegrees(self.headYaw - localBodyYaw), -75.0f, 75.0f);
+    localBodyYaw = self.headYaw - turn;
+    if (std::abs(turn) > 50.0f) {
+        localBodyYaw += turn * (1.0f - std::pow(0.8f, ticks));
+    }
+    localBodyYaw = wrapDegrees(localBodyYaw);
+    self.yaw = localBodyYaw;
+    return self;
 }
 
 void Client::interpolateActors(double now)

@@ -106,9 +106,12 @@ void BlockAssets::buildBlockEntityTemplates(PackSource& pack, std::vector<std::v
         return pushTemplate(modelQuads, 0);
     };
 
-    static constexpr const char* ChestTextures[ChestKinds] = { "normal", "trapped", "ender" };
-    static constexpr const char* DoubleChestTextures[ChestKinds] = { "double_normal", "trapped_double", "ender" };
-    static constexpr const char* SkullTextures[SkullKinds] = { "textures/entity/skulls/skeleton", "textures/entity/skulls/wither_skeleton", "textures/entity/skulls/zombie", "textures/entity/skulls/creeper", "textures/entity/steve" };
+    static constexpr const char* ChestTextures[ChestKinds] = { "normal", "trapped", "ender", "copper_default", "copper_exposed", "copper_weathered", "copper_oxidized" };
+    static constexpr const char* DoubleChestTextures[ChestKinds] = { "double_normal", "trapped_double", "ender", "copper_default_double", "copper_exposed_double", "copper_weathered_double", "copper_oxidized_double" };
+    static constexpr const char* SkullTextures[SkullKinds] = {
+        "textures/entity/skulls/skeleton", "textures/entity/skulls/wither_skeleton", "textures/entity/skulls/zombie", "textures/entity/skulls/creeper",
+        "textures/entity/steve", "textures/entity/piglin/piglin", "textures/entity/dragon/dragon",
+    };
     for (size_t kind = 0; kind < ChestKinds; ++kind) {
         for (uint32_t rotation = 0; rotation < 4; ++rotation) {
             float yaw = 90.0f * float(rotation);
@@ -132,12 +135,17 @@ void BlockAssets::buildBlockEntityTemplates(PackSource& pack, std::vector<std::v
         }
     }
     for (size_t kind = 0; kind < SkullKinds; ++kind) {
+        auto boxes = kind == 5 ? piglinHeadBoxes : kind == 6 ? dragonHeadBoxes : skullBoxes;
         for (uint32_t step = 0; step < FineRotations; ++step) {
-            entityTemplates.floorSkull[kind][step] = build(SkullTextures[kind], skullBoxes(false), 22.5f * float(step), 0);
+            entityTemplates.floorSkull[kind][step] = build(SkullTextures[kind], boxes(false), 22.5f * float(step), 0);
         }
         for (uint32_t rotation = 0; rotation < 4; ++rotation) {
-            entityTemplates.wallSkull[kind][rotation] = build(SkullTextures[kind], skullBoxes(true), 90.0f * float(rotation), 0);
+            entityTemplates.wallSkull[kind][rotation] = build(SkullTextures[kind], boxes(true), 90.0f * float(rotation), 0);
         }
+    }
+    for (size_t color = 0; color <= DyeColors; ++color) {
+        std::string suffix = color < DyeColors ? BedColors[color] : "undyed";
+        entityTemplates.shulkerBox[color] = build("textures/entity/shulker/shulker_" + suffix, shulkerBoxBoxes(), 0.0f, 0);
     }
 
     for (BlockVisual& visual : visuals) {
@@ -163,8 +171,9 @@ uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* 
     switch (visual.blockEntity) {
     case EntityChest:
     case EntityTrappedChest:
-    case EntityEnderChest: {
-        size_t kind = size_t(visual.blockEntity - EntityChest);
+    case EntityEnderChest:
+    case EntityCopperChest: {
+        size_t kind = visual.blockEntity == EntityCopperChest ? CopperChestKind + ((visual.variant >> 2) & 3) : size_t(visual.blockEntity - EntityChest);
         if (visual.blockEntity != EntityEnderChest && data && data->get("pairx") && data->get("pairz")) {
             if (!entityInt(data, "pairlead", 0)) {
                 return NoModelTemplate;
@@ -197,6 +206,8 @@ uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* 
     }
     case EntityWallSkull:
         return entityTemplates.wallSkull[visual.variant & 15][(visual.variant >> 4) & 3];
+    case EntityShulkerBox:
+        return entityTemplates.shulkerBox[std::min<size_t>(visual.variant, DyeColors)];
     default:
         return NoModelTemplate;
     }

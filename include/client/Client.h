@@ -20,6 +20,7 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -73,10 +74,14 @@ private:
     void updateMusic(const SessionSnapshot& snapshot);
     void applyMeshUpdates();
     size_t visibleTerrain() const;
-    std::vector<world::ModelQuadGpu> buildActorQuads(const std::array<int32_t, 3>& origin);
+    void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
+    ActorView localActorView(float deltaSeconds);
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
+    float swingProgress();
+    void appendHeldItem(const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
+    void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
     void handleHotbarInput();
@@ -163,6 +168,7 @@ private:
     int perspective = PerspectiveFirst;
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
+    float localBodyYaw = 0.0f;
     uint32_t localSkinSlot = NoSkin;
     bool localSlim = false;
     double swingStart = -1.0;

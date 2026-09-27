@@ -803,6 +803,17 @@ std::vector<ModelQuad> rotateSign(std::vector<ModelQuad> quads, uint32_t rotatio
 
 }
 
+std::vector<ModelQuad> shape(const std::vector<ShapePart>& parts, std::vector<ModelQuad> extra, uint32_t turns)
+{
+    std::vector<ModelQuad> quads;
+    for (const ShapePart& part : parts) {
+        auto faces = cuboid(part.materials, part.min, part.max);
+        quads.insert(quads.end(), faces.begin(), faces.end());
+    }
+    quads.insert(quads.end(), extra.begin(), extra.end());
+    return rotateSign(std::move(quads), (turns & 3) * 4);
+}
+
 std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing)
 {
     std::vector<ModelQuad> quads = cross(material, material);

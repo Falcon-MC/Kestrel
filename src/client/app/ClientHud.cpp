@@ -12,7 +12,8 @@ namespace kestrel {
 
 /**
  * Changes the held hotbar slot with the number keys and the mouse wheel while
- * the game has the mouse.
+ * the game has the mouse, and passes clicks on to the session: left hits,
+ * right uses the held item.
  */
 void Client::handleHotbarInput()
 {
@@ -20,6 +21,13 @@ void Client::handleHotbarInput()
         return;
     }
     const InputState& input = window->input();
+    if (input.mousePressed) {
+        session.requestInteraction(false);
+    }
+    if (input.rightMousePressed) {
+        session.requestInteraction(true);
+        swingStart = secondsNow();
+    }
     int selected = hudState.selectedSlot;
     if (input.pressedKey >= Key::Num1 && input.pressedKey <= Key::Num9) {
         selected = static_cast<int>(input.pressedKey) - static_cast<int>(Key::Num1);

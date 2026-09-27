@@ -124,6 +124,13 @@ bool Menu::capturesMouse() const
     return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen;
 }
 
+void Menu::pauseIfPlaying()
+{
+    if (capturesMouse()) {
+        dialog = Dialog::Pause;
+    }
+}
+
 float Menu::captionHeight() const
 {
     if (capturesMouse()) {
@@ -829,30 +836,32 @@ void Menu::gameView(Context& ui, float width, float height)
     if (dialog != Dialog::None) {
         return;
     }
-    std::vector<std::string> lines {
-        session.levelName.empty() ? session.name : session.levelName,
-        cameraInfo,
-        "Looking at " + (session.targetBlock.empty() ? std::string("nothing") : session.targetBlock),
-        "Chunks " + std::to_string(session.columns) + ", sub-chunks " + std::to_string(session.subChunks) + ", pending " + std::to_string(session.pendingSubChunks),
-        "Meshes " + std::to_string(session.meshes) + ", quads " + std::to_string(session.meshQuads) + ", jobs " + std::to_string(session.meshJobs),
-        "Textures " + std::to_string(session.textureLayers) + ", decode errors " + std::to_string(session.worldErrors),
-        session.registryInfo,
-    };
-    if (!session.assetsError.empty()) {
-        lines.push_back(session.assetsError);
-    }
-    if (!session.lastWorldError.empty()) {
-        lines.push_back(session.lastWorldError);
-    }
     drawNameTags(ui, hud.nameTags);
 
     float y = 2.0f;
-    for (const std::string& line : lines) {
-        if (!line.empty()) {
-            ui.fill({ 1.0f, y - 1.0f, ui.measure(line, TextStyle::Pixel) + 2.0f, 10.0f }, { 0, 0, 0, 110 });
-            ui.text(line, TextStyle::Pixel, 2.0f, y, White);
+    if (debugShown) {
+        std::vector<std::string> lines {
+            session.levelName.empty() ? session.name : session.levelName,
+            cameraInfo,
+            "Looking at " + (session.targetBlock.empty() ? std::string("nothing") : session.targetBlock),
+            "Chunks " + std::to_string(session.columns) + ", sub-chunks " + std::to_string(session.subChunks) + ", pending " + std::to_string(session.pendingSubChunks),
+            "Meshes " + std::to_string(session.meshes) + ", quads " + std::to_string(session.meshQuads) + ", jobs " + std::to_string(session.meshJobs),
+            "Textures " + std::to_string(session.textureLayers) + ", decode errors " + std::to_string(session.worldErrors),
+            session.registryInfo,
+        };
+        if (!session.assetsError.empty()) {
+            lines.push_back(session.assetsError);
         }
-        y += 10.0f;
+        if (!session.lastWorldError.empty()) {
+            lines.push_back(session.lastWorldError);
+        }
+        for (const std::string& line : lines) {
+            if (!line.empty()) {
+                ui.fill({ 1.0f, y - 1.0f, ui.measure(line, TextStyle::Pixel) + 2.0f, 10.0f }, { 0, 0, 0, 110 });
+                ui.text(line, TextStyle::Pixel, 2.0f, y, White);
+            }
+            y += 10.0f;
+        }
     }
 
     drawHud(ui, hud, 0.0f, 0.0f, width, height);
@@ -893,6 +902,9 @@ void Menu::handleKeys(Context& ui)
 
     if (input.pressedKey == Key::F11) {
         chromeAction = ChromeAction::Fullscreen;
+    }
+    if (input.pressedKey == Key::F3) {
+        debugShown = !debugShown;
     }
     if (handleChatKeys(input)) {
         return;

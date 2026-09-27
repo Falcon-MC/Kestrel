@@ -74,6 +74,10 @@ void main()
     if (texel.a < 0.004) {
         discard;
     }
+    if (inEntity != 0u) {
+        outColor = vec4(texel.rgb * texel.a, (inEntity & 2u) != 0u ? 0.0 : texel.a);
+        return;
+    }
     outColor = vec4(shadeWorld(texel.rgb) * texel.a, texel.a);
 #else
     if (inEntity != 0u) {

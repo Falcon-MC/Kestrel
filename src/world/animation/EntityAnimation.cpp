@@ -986,6 +986,20 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "walk_distance" || name == "distance_moved") {
         return walkDistance;
     }
+    if (name == "distance_from_camera" || name == "rotation_to_camera") {
+        double dx = current.cameraX - current.x;
+        double dy = current.cameraY - current.y;
+        double dz = current.cameraZ - current.z;
+        double flat = std::sqrt(dx * dx + dz * dz);
+        if (name == "distance_from_camera") {
+            return std::sqrt(flat * flat + dy * dy);
+        }
+        constexpr double Degrees = 180.0 / 3.14159265358979;
+        return argument(0) == 0.0 ? std::atan2(-dy, flat) * Degrees : std::atan2(-dx, dz) * Degrees;
+    }
+    if (name == "camera_rotation") {
+        return argument(0) == 0.0 ? current.cameraPitch : current.cameraYaw;
+    }
     auto flag = [&](int bit) {
         return (current.flags[static_cast<size_t>(bit) / 64] >> (bit % 64)) & 1 ? 1.0 : 0.0;
     };

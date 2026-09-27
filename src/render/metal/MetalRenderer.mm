@@ -221,7 +221,7 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, in.d.y, corner);
-    out.entity = (words[11] >> 5) & 1;
+    out.entity = (words[11] >> 5) & 3;
     return out;
 }
 
@@ -263,6 +263,9 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     float4 texel = in.entity != 0 ? entities.sample(blockSampler, in.uv, in.material & 0xfff) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.004) {
         discard_fragment();
+    }
+    if (in.entity != 0) {
+        return float4(texel.rgb * texel.a, (in.entity & 2) != 0 ? 0.0 : texel.a);
     }
     return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light) * texel.a, texel.a);
 }
@@ -509,13 +512,21 @@ public:
             return chunk->counts[0] || chunk->counts[1];
         }));
 
-        if (view.entityQuadCount) {
-            id<MTLBuffer> entityBuffer = [device newBufferWithBytes:view.entityQuads length:static_cast<NSUInteger>(view.entityQuadCount) * ModelQuadBytes options:MTLResourceStorageModeShared];
-            [encoder setRenderPipelineState:modelPipeline];
+        id<MTLBuffer> entityBuffer = view.entityTotal() ? [device newBufferWithBytes:view.entityQuads length:static_cast<NSUInteger>(view.entityTotal()) * ModelQuadBytes options:MTLResourceStorageModeShared] : nil;
+        auto drawEntities = [&](id<MTLRenderPipelineState> pipeline, uint32_t first, uint32_t count, double maxDepth) {
+            if (!entityBuffer || count == 0) {
+                return;
+            }
+            MTLViewport squeezed { 0.0, 0.0, double(width), double(height), 0.0, maxDepth };
+            [encoder setViewport:squeezed];
+            [encoder setRenderPipelineState:pipeline];
             pushOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
             [encoder setVertexBuffer:entityBuffer offset:0 atIndex:0];
-            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6 instanceCount:view.entityQuadCount];
-        }
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6 instanceCount:count baseInstance:first];
+            MTLViewport full { 0.0, 0.0, double(width), double(height), 0.0, 1.0 };
+            [encoder setViewport:full];
+        };
+        drawEntities(modelPipeline, 0, view.entityQuadCount, 1.0);
 
         [encoder setDepthStencilState:overlayDepth];
 
@@ -537,6 +548,9 @@ public:
             [encoder setRenderPipelineState:blendPipeline];
             drawStream(*chunk, 2);
         }
+        drawEntities(modelBlendPipeline, view.entityQuadCount, view.entityBlendCount, 1.0);
+        [encoder setDepthStencilState:worldDepth];
+        drawEntities(modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
     void beginFrame(float r, float g, float b) override

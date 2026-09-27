@@ -325,7 +325,7 @@ void Font::reloadPixelPages()
 
 void Font::setPixelPageGlyphs(size_t index, uint32_t cell, const std::array<GlyphBox, 256>& boxes)
 {
-    if (index > 0 && index < splitPages.size() && cell > 0) {
+    if (index < splitPages.size() && cell > 0) {
         splitPages[index] = SplitPage { cell, boxes };
     }
 }
@@ -630,12 +630,13 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
                 float glyphTop = top + std::round(page->top * unit);
                 float y0 = glyphTop + page->rows[code][0] * texel;
                 float y1 = glyphTop + page->rows[code][1] * texel;
-                float x1 = pen + (page->end[code] - page->start[code]) * texel;
+                float x0 = pen + (pageIndex == 0 ? page->start[code] * texel : 0.0f);
+                float x1 = x0 + (page->end[code] - page->start[code]) * texel;
                 float slant = state.italic ? (y1 - y0) * ItalicSlant : 0.0f;
                 const ImageRef& image = glyph->image;
-                list.quad(pen, y0, x1, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
+                list.quad(x0, y0, x1, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
                 if (state.bold) {
-                    list.quad(pen + bold, y0, x1 + bold, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
+                    list.quad(x0 + bold, y0, x1 + bold, y1, image.u0, image.v0, image.u1, image.v1, packed, slant, 0.0f);
                 }
             }
         } else if (cp != U' ' && sheet && sheet->valid) {

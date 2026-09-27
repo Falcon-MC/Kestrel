@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -297,6 +298,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     };
 
     std::vector<bool> overlayLayers;
+    // A tint flagged TintOverlay is baked in as an overlay color instead of waiting for a biome.
     auto materialFor = [&](const std::string& textureKey, bool rotate, size_t variant = 0, uint32_t tint = 0, uint8_t tintFlags = 0) -> uint32_t {
         const Flipbook* flipbook = nullptr;
         for (const Flipbook& candidate : flipbooks) {
@@ -340,19 +342,22 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 timeline.push_back(0);
             }
             timeline.resize(std::min<size_t>(timeline.size(), 128));
+            bool bakedOverlay = tint && (tintFlags & TintOverlay);
             for (size_t frame : timeline) {
                 std::vector<uint8_t> pixels = frames[frame];
-                if (tint) {
+                if (bakedOverlay) {
+                    applyOverlay(pixels, tint);
+                } else if (tint) {
                     applyTint(pixels, tint);
                 }
                 layers.push_back(std::move(pixels));
                 overlayLayers.resize(layers.size(), false);
-                overlayLayers.back() = (tintFlags & TintOverlay) != 0;
+                overlayLayers.back() = !bakedOverlay && (tintFlags & TintOverlay) != 0;
             }
             material.frameCount = static_cast<uint32_t>(timeline.size());
             material.ticksPerFrame = flipbook ? std::clamp<uint32_t>(flipbook->ticksPerFrame, 1, 2048) : 1;
             material.interpolate = flipbook && flipbook->blendFrames;
-            material.tint = tintFlags;
+            material.tint = bakedOverlay ? 0 : tintFlags;
             id = static_cast<uint32_t>(materialTable.size());
             materialTable.push_back(material);
         }
@@ -434,6 +439,9 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             std::optional<int32_t> facingDirection = stateInt(states, "facing_direction");
             return facingDirection && *facingDirection >= 2 ? 1 : 0;
         }
+        if (textureKey == "cocoa") {
+            return std::min<size_t>(static_cast<size_t>(std::clamp(stateInt(states, "age").value_or(0), 0, 2)), count - 1);
+        }
         if (textureKey == "torchflower_crop") {
             return growth && *growth >= 4 ? 1 : 0;
         }
@@ -442,6 +450,42 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         }
         size_t value = static_cast<size_t>(*growth);
         return std::min(count >= 8 ? value : value * count / 8, count - 1);
+    };
+
+    static constexpr Face FaceOrder[] = { Face::West, Face::East, Face::Down, Face::Up, Face::North, Face::South };
+
+    auto carriedMaterial = [&](const std::string& key, bool rotate, size_t variant) {
+        uint32_t overlay = 0;
+        const json::Value* entry = terrainEntry(key);
+        const json::Value* texture = entry ? entry->get("textures") : nullptr;
+        if (texture && texture->isArray()) {
+            texture = texture->mArray.empty() ? nullptr : texture->mArray[std::min(variant, texture->mArray.size() - 1)].get();
+        }
+        const json::Value* color = texture && texture->isObject() ? texture->get("overlay_color") : nullptr;
+        if (color && color->isString() && color->mString.size() == 7 && color->mString[0] == '#') {
+            overlay = static_cast<uint32_t>(std::strtoul(color->mString.c_str() + 1, nullptr, 16));
+        }
+        return materialFor(key, rotate, variant, overlay, overlay ? TintOverlay : 0);
+    };
+
+    // Items draw a block with its carried_textures when blocks.json has them: grass
+    // with the plains green, leaves already colored, and so on.
+    auto rememberCarried = [&](const BlockRecord& record, const std::string& name, const json::Value* entry, const BlockVisual& visual, Axis axis, std::optional<Face> facing) {
+        const json::Value* carried = entry ? entry->get("carried_textures") : nullptr;
+        if (!carried || (visual.flags & FlagDiagnostic) || carriedVisuals.contains(record.name)) {
+            return;
+        }
+        BlockVisual look = visual;
+        for (int face = 0; face < 6; ++face) {
+            bool rotate = false;
+            std::string key = resolveTextureKey(carried, FaceOrder[face], axis, facing, rotate);
+            uint32_t material = key.empty() ? DiagnosticMaterial : carriedMaterial(key, rotate, variantFor(key, name, record.states));
+            if (material == DiagnosticMaterial) {
+                return;
+            }
+            look.faces[face] = material;
+        }
+        carriedVisuals.emplace(record.name, look);
     };
 
     visuals.resize(registry.records().size());
@@ -525,10 +569,9 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         Axis axis = stateAxis(record.states);
 
         if (family == Family::Model) {
-            static constexpr Face order[] = { Face::West, Face::East, Face::Down, Face::Up, Face::North, Face::South };
             auto faceKeyFor = [&](int face) {
                 bool rotate = false;
-                return textures ? resolveTextureKey(textures, order[face], Axis::Y, std::nullopt, rotate) : fallbackKey;
+                return textures ? resolveTextureKey(textures, FaceOrder[face], Axis::Y, std::nullopt, rotate) : fallbackKey;
             };
             models::Materials materials {};
             bool complete = true;
@@ -921,6 +964,47 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 }
                 break;
             }
+            case ModelKind::Shape: {
+                BlockShape shape = blockShape(name, record.states);
+                std::vector<models::ShapePart> parts;
+                std::string shapeKey = "shape";
+                bool usable = true;
+                for (const ShapeBox& box : shape.boxes) {
+                    models::ShapePart shapePart;
+                    for (int axis = 0; axis < 3; ++axis) {
+                        shapePart.min[axis] = static_cast<int16_t>(box.min[axis] * 16);
+                        shapePart.max[axis] = static_cast<int16_t>(box.max[axis] * 16);
+                    }
+                    shapePart.materials = box.texture ? uniform(0) : box.side >= 0 ? uniform(box.side) : materials;
+                    if (box.texture) {
+                        shapePart.materials.fill(materialFor(box.texture, false));
+                    }
+                    for (uint32_t material : shapePart.materials) {
+                        usable &= material != DiagnosticMaterial;
+                        shapeKey += ':' + std::to_string(material);
+                    }
+                    for (int axis = 0; axis < 3; ++axis) {
+                        shapeKey += '/' + std::to_string(box.min[axis]) + ',' + std::to_string(box.max[axis]);
+                    }
+                    parts.push_back(shapePart);
+                }
+                std::vector<ModelQuad> extra;
+                if (shape.crossSide >= 0 && materials[shape.crossSide] != DiagnosticMaterial) {
+                    extra = models::cross(materials[shape.crossSide], materials[shape.crossSide]);
+                }
+                if (shape.planeSide >= 0) {
+                    usable &= materials[shape.planeSide] != DiagnosticMaterial;
+                    extra = models::flatPlane(materials[shape.planeSide], 16);
+                }
+                if (!usable || (parts.empty() && extra.empty())) {
+                    break;
+                }
+                shapeKey += "|" + std::to_string(extra.empty() ? 0 : extra.front().material) + "|" + std::to_string(shape.crossSide) + std::to_string(shape.planeSide);
+                modelTemplate = intern(keyOf(shapeKey, {}, { shape.turns }), [&] {
+                    pushTemplate(models::shape(parts, std::move(extra), shape.turns), 0);
+                });
+                break;
+            }
             case ModelKind::None:
                 break;
             }
@@ -933,6 +1017,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 visual.faces = materials;
                 visual.modelTemplate = modelTemplate;
                 visual.variant = variant;
+                rememberCarried(record, name, entry, visual, Axis::Y, std::nullopt);
             }
             continue;
         }
@@ -940,9 +1025,8 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         std::optional<Face> facing = stateFacing(record.states);
         bool resolved = true;
         for (int face = 0; face < 6; ++face) {
-            static constexpr Face order[] = { Face::West, Face::East, Face::Down, Face::Up, Face::North, Face::South };
             bool rotate = false;
-            std::string key = textures ? resolveTextureKey(textures, order[face], axis, facing, rotate) : fallbackKey;
+            std::string key = textures ? resolveTextureKey(textures, FaceOrder[face], axis, facing, rotate) : fallbackKey;
             visual.faces[face] = key.empty() ? DiagnosticMaterial : materialFor(key, rotate, 0, tint, blockTint(name, face));
             resolved &= visual.faces[face] != DiagnosticMaterial;
         }
@@ -954,6 +1038,8 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             visual.liquid = contains(name, "lava") ? 2 : 1;
             visual.liquidLevel = static_cast<uint8_t>(std::clamp(stateInt(record.states, "liquid_depth").value_or(0), 0, 15));
             visual.flags = static_cast<uint8_t>(visual.flags & FlagTranslucent);
+        } else {
+            rememberCarried(record, name, entry, visual, axis, facing);
         }
     }
 

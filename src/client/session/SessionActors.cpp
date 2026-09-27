@@ -46,7 +46,7 @@ namespace session {
 float metadataScale(const EntityDataMap& metadata, float fallback)
 {
     for (const EntityDataEntry& entry : metadata.mEntries) {
-        if (entry.mId == ScaleDataId && entry.mFormat == EntityDataFormat::Float && entry.mFloatValue > 0.0f) {
+        if (entry.mId == ScaleDataId && entry.mFormat == EntityDataFormat::Float && entry.mFloatValue >= 0.0f) {
             return entry.mFloatValue;
         }
     }
@@ -78,8 +78,14 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
         case 4:
             actor.name = entry.mStringValue;
             break;
+        case 53:
+            actor.width = entry.mFloatValue;
+            break;
         case 54:
             actor.height = entry.mFloatValue;
+            break;
+        case 79:
+            actor.poseIndex = entry.mIntValue;
             break;
         case 81:
             actor.alwaysShowName = entry.mByteValue != 0;
@@ -182,11 +188,21 @@ void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
     pendingSkins.push_back(std::move(upload));
 }
 
+/**
+ * Frees the skin slot of a player once nothing shows it. Servers put their
+ * NPCs on the player list just long enough to send the skin and take them off
+ * again, so an entity still wearing the skin keeps the slot until it leaves.
+ */
 void Session::releaseSkin(const std::string& uuid)
 {
     auto skin = skinByUuid.find(uuid);
     if (skin == skinByUuid.end()) {
         return;
+    }
+    for (const auto& [runtime, owner] : uuidByRuntime) {
+        if (owner == uuid) {
+            return;
+        }
     }
     slotOwners[skin->second.first].clear();
     skinByUuid.erase(skin);

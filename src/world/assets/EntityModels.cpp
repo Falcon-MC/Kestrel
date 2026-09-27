@@ -36,6 +36,7 @@ struct ClientEntity {
     std::string geometry;
     std::map<std::string, std::string> textures;
     std::map<std::string, std::string> geometries;
+    std::map<std::string, std::string> materials;
     std::vector<std::pair<std::string, std::string>> renderControllers;
     std::vector<uint64_t> version;
     std::shared_ptr<const EntityScripts> scripts;
@@ -68,6 +69,7 @@ void readClientEntity(const std::string& text, std::map<std::string, ClientEntit
     ClientEntity parsed;
     parsed.textures = readNamedStrings(description->get("textures"));
     parsed.geometries = readNamedStrings(description->get("geometry"));
+    parsed.materials = readNamedStrings(description->get("materials"));
     if (parsed.textures.empty() || parsed.geometries.empty()) {
         return;
     }
@@ -177,6 +179,8 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
             std::array<float, 3> cubePivot { -cube.pivot[0], cube.pivot[1], cube.pivot[2] };
             std::array<float, 3> cubeRotation { -cube.rotation[0], -cube.rotation[1], cube.rotation[2] };
             bool mirror = cube.mirror != bone.mirror;
+            bool inverted = cube.size[0] < 0.0f || cube.size[1] < 0.0f || cube.size[2] < 0.0f;
+            std::array<float, 3> cubeCenter = rotateEulerAround({ (min[0] + max[0]) * 0.5f, (min[1] + max[1]) * 0.5f, (min[2] + max[2]) * 0.5f }, cubePivot, cubeRotation);
             float x = cube.size[0];
             float y = cube.size[1];
             float z = cube.size[2];
@@ -233,6 +237,22 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
                     quad.uvs[corner] = { static_cast<uint16_t>(std::clamp(uv[0], 0.0f, 15.0f) * 4096.0f), static_cast<uint16_t>(std::clamp(uv[1], 0.0f, 15.0f) * 4096.0f) };
                 }
                 quad.flags = FaceIds[face] | QuadTwoSided;
+                if (inverted) {
+                    // A cube with a negative size is drawn inside out and only shows its far
+                    // walls, which packs use as a backdrop; wind it to face the middle.
+                    std::array<float, 3> edgeA {}, edgeB {}, toCenter {};
+                    for (int axis = 0; axis < 3; ++axis) {
+                        edgeA[axis] = float(quad.positions[1][axis] - quad.positions[0][axis]);
+                        edgeB[axis] = float(quad.positions[3][axis] - quad.positions[0][axis]);
+                        toCenter[axis] = cubeCenter[axis] * 16.0f - float(quad.positions[0][axis]);
+                    }
+                    std::array<float, 3> normal { edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1], edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2], edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0] };
+                    if (normal[0] * toCenter[0] + normal[1] * toCenter[1] + normal[2] * toCenter[2] < 0.0f) {
+                        std::swap(quad.positions[1], quad.positions[3]);
+                        std::swap(quad.uvs[1], quad.uvs[3]);
+                    }
+                    quad.flags = FaceIds[face] | QuadInward;
+                }
                 model.quads.push_back(quad);
                 model.quadBones.push_back(static_cast<uint16_t>(boneIndex));
             }
@@ -253,7 +273,23 @@ struct RenderControllerSource {
     molang::Script texture;
     std::vector<std::string> textureChoices;
     std::vector<EntityPartRule> parts;
+    std::string material;
 };
+
+/**
+ * How a vanilla entity material draws: the additive beam and glow materials
+ * add light, the alpha blended ones blend, everything else is cut out.
+ */
+EntityBlend blendOf(const std::string& material)
+{
+    if (material.find("additive") != std::string::npos) {
+        return EntityBlend::Additive;
+    }
+    if (material.find("blend") != std::string::npos) {
+        return EntityBlend::Blend;
+    }
+    return EntityBlend::Opaque;
+}
 
 std::string rewriteSelector(const std::string& expression, const ControllerArrays& arrays, const std::string& kind, std::vector<std::string>& choices)
 {
@@ -369,6 +405,14 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
             texture = list->mArray.front()->mString;
         }
         parsed.texture = molang::Script::compile(rewriteSelector(texture, textureArrays, "texture", parsed.textureChoices));
+        if (const json::Value* list = controller.get("materials"); list && list->isArray() && !list->mArray.empty()) {
+            const json::Value& first = *list->mArray.front();
+            if (!first.mKeys.empty()) {
+                if (const json::Value* value = first.get(first.mKeys.front()); value && value->isString()) {
+                    parsed.material = lowercase(value->mString);
+                }
+            }
+        }
         if (const json::Value* visibility = controller.get("part_visibility"); visibility && visibility->isArray()) {
             for (const std::unique_ptr<json::Value>& entry : visibility->mArray) {
                 for (const std::string& pattern : entry->mKeys) {
@@ -387,6 +431,48 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
             }
         }
         out[lowercase(name)] = std::move(parsed);
+    }
+}
+
+}
+
+namespace {
+
+/**
+ * Folds every rig the render controllers can pick into the combined rig,
+ * joining bones that share a name, and notes which controller and rig each
+ * quad belongs to.
+ */
+void combineRigs(EntityModel& model)
+{
+    std::map<std::string, uint16_t> boneByName;
+    for (size_t controller = 0; controller < model.controllers.size(); ++controller) {
+        for (uint32_t choice : model.controllers[controller].geometryChoices) {
+            if (choice >= model.rigs.size()) {
+                continue;
+            }
+            const EntityRig& rig = model.rigs[choice];
+            std::vector<uint16_t> remap(rig.bones.size());
+            for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                auto [found, added] = boneByName.try_emplace(lowercase(rig.bones[bone].name), static_cast<uint16_t>(model.combined.bones.size()));
+                if (added) {
+                    model.combined.bones.push_back(rig.bones[bone]);
+                    model.combined.bones.back().parent = -1;
+                }
+                remap[bone] = found->second;
+            }
+            for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                EntityBone& merged = model.combined.bones[remap[bone]];
+                if (merged.parent < 0 && rig.bones[bone].parent >= 0) {
+                    merged.parent = remap[size_t(rig.bones[bone].parent)];
+                }
+            }
+            for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
+                model.combined.quads.push_back(rig.quads[quad]);
+                model.combined.quadBones.push_back(quad < rig.quadBones.size() && rig.quadBones[quad] < remap.size() ? remap[rig.quadBones[quad]] : uint16_t(0xFFFF));
+                model.combinedSources.push_back({ static_cast<uint16_t>(controller), static_cast<uint16_t>(choice) });
+            }
+        }
     }
 }
 
@@ -502,8 +588,29 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             return std::nullopt;
         }
         uint32_t layer = entityTextureLayers();
-        std::vector<uint8_t> resized = resizeNearest(rgba, width, height, EntityTextureSize);
-        entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
+        uint32_t tilesX = std::clamp<uint32_t>((width + EntityTextureSize - 1) / EntityTextureSize, 1, MaxEntityTiles);
+        uint32_t tilesY = std::clamp<uint32_t>((height + EntityTextureSize - 1) / EntityTextureSize, 1, MaxEntityTiles);
+        if (tilesX * tilesY == 1) {
+            std::vector<uint8_t> resized = resizeNearest(rgba, width, height, EntityTextureSize);
+            entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
+        } else {
+            // Too big for one layer: spread it over a grid of layers, row by row.
+            uint32_t spanX = tilesX * EntityTextureSize;
+            uint32_t spanY = tilesY * EntityTextureSize;
+            for (uint32_t tileY = 0; tileY < tilesY; ++tileY) {
+                for (uint32_t tileX = 0; tileX < tilesX; ++tileX) {
+                    for (uint32_t y = 0; y < EntityTextureSize; ++y) {
+                        uint32_t sourceY = (tileY * EntityTextureSize + y) * height / spanY;
+                        for (uint32_t x = 0; x < EntityTextureSize; ++x) {
+                            uint32_t sourceX = (tileX * EntityTextureSize + x) * width / spanX;
+                            const uint8_t* texel = rgba.data() + (size_t(sourceY) * width + sourceX) * 4;
+                            entityPixels.insert(entityPixels.end(), texel, texel + 4);
+                        }
+                    }
+                }
+            }
+            entityTiles.emplace(layer, std::make_pair(tilesX, tilesY));
+        }
         layerByTexture.emplace(path, layer);
         return layer;
     };
@@ -564,7 +671,16 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             for (const std::string& choice : source->second.textureChoices) {
                 controller.textureChoices.push_back(layerOf(choice));
             }
+            const std::string& material = source->second.material;
+            if (startsWith(material, "material.")) {
+                if (auto named = definition.materials.find(material.substr(std::string("material.").size())); named != definition.materials.end()) {
+                    controller.blend = blendOf(named->second);
+                }
+            }
             model.controllers.push_back(std::move(controller));
+        }
+        if (model.controllers.size() > 1) {
+            combineRigs(model);
         }
         return model;
     };

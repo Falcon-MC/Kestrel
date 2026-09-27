@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 
 namespace kestrel {
 
@@ -141,12 +142,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     }
     const world::EntityRig& rig = *chosenRig;
     double now = secondsNow();
-    const InputState& keys = window->input();
-    if (menu.capturesMouse() && keys.mousePressed) {
-        swingStart = now;
-    }
-    double swing = swingStart >= 0.0 ? (now - swingStart) / SwingSeconds : 1.0;
-    float attackTime = swing < 1.0 ? static_cast<float>(swing) : 0.0f;
+    float attackTime = swingProgress();
 
     int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
     const HudItem& held = hudState.inventory[static_cast<size_t>(slot)];
@@ -282,19 +278,79 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         -std::sin(root * 75.0f * Pi / 180.0f) * 15.0f,
         -std::sin(root * 80.0f * Pi / 180.0f) * 35.0f,
     };
-    const world::BlockVisual* cube = blockAssets->itemCube(heldName);
-    Vec3 pose = cube ? Vec3 { 12.0f, -35.0f, 0.0f } : Vec3 { 0.0f, -70.0f, 20.0f };
-    auto place = [&](const Vec3& local) {
+    auto place = [&](const Vec3& local, bool cube) {
+        Vec3 pose = cube ? Vec3 { 12.0f, -35.0f, 0.0f } : Vec3 { 0.0f, -70.0f, 20.0f };
         Vec3 turned = add(rotate(rotate(local, pose), swingTurn), HeldOffset);
         Vec3 world = add(add(scaled(axes[0], turned[0] * handZoom), scaled(axes[1], turned[1] * handZoom)), scaled(axes[2], turned[2]));
         return add(center, scaled(world, 256.0f));
     };
+    appendHeldItem(place, out);
+}
+
+/**
+ * The selected item in the right hand of the local player's model in the
+ * third person views, hanging off the right item bone the way the game holds
+ * it: a block as a small cube turned to show a corner, anything else upright
+ * with its top pointing ahead.
+ */
+void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out)
+{
+    int32_t itemBone = -1;
+    for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
+        if (lowercase(rig.bones[bone].name) == "rightitem") {
+            itemBone = static_cast<int32_t>(bone);
+        }
+    }
+    if (itemBone < 0) {
+        return;
+    }
+    const world::BoneMatrix& m = matrices[static_cast<size_t>(itemBone)];
+    const Vec3& pivot = rig.bones[static_cast<size_t>(itemBone)].pivot;
+    auto place = [&](const Vec3& local, bool cube) {
+        Vec3 pixels = cube ? add(rotate(scaled(local, 12.0f), { 10.0f, 45.0f, 0.0f }), { 0.0f, -1.0f, -3.0f })
+                           : add(Vec3 { local[2] * 12.8f, local[1] * 12.8f, -local[0] * 12.8f }, { 0.0f, 4.0f, -6.0f });
+        pixels = add(pixels, pivot);
+        Vec3 posed = scaled({
+            m[0] * pixels[0] + m[1] * pixels[1] + m[2] * pixels[2] + m[3],
+            m[4] * pixels[0] + m[5] * pixels[1] + m[6] * pixels[2] + m[7],
+            m[8] * pixels[0] + m[9] * pixels[1] + m[10] * pixels[2] + m[11],
+        }, scale);
+        return Vec3 { base[0] + cosine * posed[0] + sine * posed[2], base[1] + posed[1], base[2] - sine * posed[0] + cosine * posed[2] };
+    };
+    appendHeldItem(place, out);
+}
+
+float Client::swingProgress()
+{
+    double now = secondsNow();
+    if (menu.capturesMouse() && window->input().mousePressed) {
+        swingStart = now;
+    }
+    double swing = swingStart >= 0.0 ? (now - swingStart) / SwingSeconds : 1.0;
+    return swing < 1.0 ? static_cast<float>(swing) : 0.0f;
+}
+
+/**
+ * The selected hotbar item as the hand holds it: a block as a cube and any
+ * other item as its texture extruded one pixel deep. place maps a point of
+ * the item, in blocks around its center, to 1/256 block around the draw
+ * origin; it is told whether the item is a cube so it can pose it.
+ */
+void Client::appendHeldItem(const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out)
+{
+    int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
+    const HudItem& held = hudState.inventory[static_cast<size_t>(slot)];
+    if (held.empty() || !blockAssets) {
+        return;
+    }
+    const std::string& heldName = held.identifier;
+    const world::BlockVisual* cube = blockAssets->itemCube(heldName);
     auto emit = [&](const std::array<Vec3, 4>& local, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord) {
         std::array<Vec3, 4> corners;
         std::array<Vec3, 4> reversed;
         std::array<std::array<uint16_t, 2>, 4> reversedUvs;
         for (size_t corner = 0; corner < 4; ++corner) {
-            corners[corner] = place(local[corner]);
+            corners[corner] = place(local[corner], cube != nullptr);
             reversed[3 - corner] = corners[corner];
             reversedUvs[3 - corner] = uvs[corner];
         }
@@ -320,8 +376,11 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         const std::vector<world::Material>& materials = blockAssets->materials();
         for (const Side& side : sides) {
             uint32_t material = cube->faces[static_cast<size_t>(side.face)];
-            uint32_t tint = material < materials.size() && materials[material].tintKind() != world::TintKind::None ? 0x6BBD7Cu : 0u;
-            emit(side.corners, fullUv, material, (uint32_t(side.face) + 1) | (tint << 8));
+            if (material >= materials.size()) {
+                continue;
+            }
+            uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
+            emit(side.corners, fullUv, materials[material].gpuWord(), (uint32_t(side.face) + 1) | (tint << 8));
         }
         return;
     }

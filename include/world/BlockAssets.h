@@ -50,6 +50,7 @@ enum ModelQuadFlag : uint32_t {
     QuadFaceMask = 0x7,
     QuadTwoSided = 1 << 3,
     QuadCullFaceMask = 0x70,
+    QuadInward = 1 << 7,
 };
 
 /**
@@ -80,10 +81,13 @@ enum BlockEntityKind : uint8_t {
     EntityWallBanner,
     EntityFloorSkull,
     EntityWallSkull,
+    EntityCopperChest,
+    EntityShulkerBox,
 };
 
-inline constexpr size_t ChestKinds = 3;
-inline constexpr size_t SkullKinds = 5;
+inline constexpr size_t ChestKinds = 7;
+inline constexpr size_t CopperChestKind = 3;
+inline constexpr size_t SkullKinds = 7;
 inline constexpr size_t DyeColors = 16;
 inline constexpr size_t FineRotations = 16;
 
@@ -100,6 +104,7 @@ struct BlockEntityTemplates {
     std::array<std::array<uint32_t, 4>, SkullKinds> wallSkull {};
     std::array<std::array<uint32_t, FineRotations>, DyeColors> standingBanner {};
     std::array<std::array<uint32_t, 4>, DyeColors> wallBanner {};
+    std::array<uint32_t, DyeColors + 1> shulkerBox {};
 };
 
 struct BlockVisual {
@@ -177,7 +182,14 @@ struct CustomBlock {
 using SequentialMap = std::vector<int32_t>;
 
 inline constexpr uint32_t EntityTextureSize = 128;
+inline constexpr uint32_t MaxEntityTiles = 8;
 inline constexpr uint32_t ItemIconSize = 32;
+
+/**
+ * The plains green a tinted block gets when it is drawn as an item and has no
+ * carried texture of its own.
+ */
+inline constexpr uint32_t ItemTint = 0x79C05A;
 inline constexpr uint32_t SkinSlots = 32;
 
 /**
@@ -213,6 +225,12 @@ struct EntityPartRule {
  * index into the rig or texture layer choices (NoEntityChoice when missing),
  * and the part visibility rules in order, later rules winning.
  */
+enum class EntityBlend : uint8_t {
+    Opaque,
+    Blend,
+    Additive,
+};
+
 struct EntityRenderController {
     molang::Script condition;
     molang::Script geometry;
@@ -220,18 +238,33 @@ struct EntityRenderController {
     molang::Script texture;
     std::vector<uint32_t> textureChoices;
     std::vector<EntityPartRule> parts;
+    EntityBlend blend = EntityBlend::Opaque;
+};
+
+/**
+ * Where a quad of a combined rig came from: the render controller that draws
+ * it and the rig that controller has to pick for it to show.
+ */
+struct CombinedQuadSource {
+    uint16_t controller = 0;
+    uint16_t rig = 0;
 };
 
 /**
  * An entity's model from its client definition: every geometry it references
  * as a rig (the default one first), its render controllers, its scripts and
- * the default entity texture layer it samples.
+ * the default entity texture layer it samples. An entity drawn by several
+ * render controllers at once also gets one combined rig holding every
+ * geometry those controllers can pick, bones shared by name, so a single
+ * animation pass poses all of them.
  */
 struct EntityModel {
     std::vector<EntityRig> rigs;
     std::vector<EntityRenderController> controllers;
     std::shared_ptr<const EntityScripts> scripts;
     uint32_t layer = 0;
+    EntityRig combined;
+    std::vector<CombinedQuadSource> combinedSources;
 };
 
 class BlockAssets {
@@ -312,6 +345,16 @@ public:
         return entityTextureLayers();
     }
 
+    /**
+     * How many layers across and down an entity texture starting at layer is
+     * cut into; one by one for all but the textures bigger than a layer.
+     */
+    std::pair<uint32_t, uint32_t> entityTileGrid(uint32_t layer) const
+    {
+        auto found = entityTiles.find(layer);
+        return found == entityTiles.end() ? std::make_pair(1u, 1u) : found->second;
+    }
+
     std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
 
     /**
@@ -378,6 +421,12 @@ private:
         const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
 
+    /**
+     * The default state of the block an item places, with its carried
+     * textures when the block has them; null for items that place no block.
+     */
+    const BlockVisual* itemVisual(const std::string& identifier) const;
+
     BlockRegistry registry;
     std::vector<CustomBlock> customs;
     std::vector<CustomState> customStates;
@@ -390,10 +439,12 @@ private:
     std::unordered_map<std::string, EntityModel> entityModels;
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
+    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
     std::unordered_map<std::string, std::vector<std::vector<uint8_t>>> itemTextures;
     std::unordered_map<std::string, uint32_t> blockByName;
+    std::unordered_map<std::string, BlockVisual> carriedVisuals;
     std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};

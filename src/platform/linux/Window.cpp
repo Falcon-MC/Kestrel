@@ -28,6 +28,7 @@ public:
             throw std::runtime_error("glfwCreateWindow failed");
         }
         glfwSetWindowSizeLimits(window, 760, 520, GLFW_DONT_CARE, GLFW_DONT_CARE);
+        glfwSetWindowAttrib(window, GLFW_AUTO_ICONIFY, GLFW_FALSE);
         setIcon();
         glfwSetWindowUserPointer(window, this);
 
@@ -36,6 +37,9 @@ public:
         });
         glfwSetWindowContentScaleCallback(window, [](GLFWwindow* handle, float, float) {
             self(handle)->resized = true;
+        });
+        glfwSetWindowFocusCallback(window, [](GLFWwindow* handle, int focused) {
+            self(handle)->focusLost |= focused == GLFW_FALSE;
         });
         glfwSetCursorPosCallback(window, [](GLFWwindow* handle, double x, double y) {
             self(handle)->mouse(x, y);
@@ -48,10 +52,15 @@ public:
             }
         });
         glfwSetMouseButtonCallback(window, [](GLFWwindow* handle, int button, int action, int) {
+            InputState& input = self(handle)->state;
+            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                input.rightMouseDown = action != GLFW_RELEASE;
+                input.rightMousePressed |= action == GLFW_PRESS;
+                return;
+            }
             if (button != GLFW_MOUSE_BUTTON_LEFT) {
                 return;
             }
-            InputState& input = self(handle)->state;
             if (action == GLFW_PRESS) {
                 input.mouseDown = true;
                 input.mousePressed = true;
@@ -151,6 +160,13 @@ public:
     {
         bool value = resized;
         resized = false;
+        return value;
+    }
+
+    bool consumeFocusLost() override
+    {
+        bool value = focusLost;
+        focusLost = false;
         return value;
     }
 
@@ -363,6 +379,7 @@ private:
     GLFWcursor* cursors[3] {};
     Cursor cursor = Cursor::Arrow;
     bool resized = false;
+    bool focusLost = false;
     bool captured = false;
     bool hasLastCursor = false;
     double lastCursorX = 0.0;

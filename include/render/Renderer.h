@@ -76,10 +76,28 @@ struct WorldView {
     std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
+    /**
+     * Entity quads in three runs: entityQuadCount opaque ones, then
+     * entityBlendCount alpha blended ones drawn after translucent terrain,
+     * then handQuadCount first person ones drawn last in a sliver of the depth
+     * range so walls never cut into the hand.
+     */
     const void* entityQuads = nullptr;
     uint32_t entityQuadCount = 0;
+    uint32_t entityBlendCount = 0;
+    uint32_t handQuadCount = 0;
     std::array<float, 3> entityOrigin {};
+
+    uint32_t entityTotal() const
+    {
+        return entityQuadCount + entityBlendCount + handQuadCount;
+    }
 };
+
+/**
+ * The depth range first person quads are squeezed into.
+ */
+inline constexpr float HandDepthRange = 0.05f;
 
 /**
  * Push constants shared by every world pipeline: view projection, draw origin

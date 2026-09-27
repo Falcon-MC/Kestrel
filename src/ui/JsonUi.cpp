@@ -1017,8 +1017,14 @@ struct JsonUiLayout {
         h.natural = node.h;
         float lw = extentSize(parseExtent(resolve(node, limit->mArray[0].get()), TermKind::Parent), w);
         float lh = extentSize(parseExtent(resolve(node, limit->mArray[1].get()), TermKind::Parent), h);
-        node.w = upper ? std::min(node.w, lw) : std::max(node.w, lw);
-        node.h = upper ? std::min(node.h, lh) : std::max(node.h, lh);
+        // A zero maximum leaves that axis unbounded; packs write [0, 1000] to cap only the height.
+        if (upper) {
+            node.w = lw > 0.0f ? std::min(node.w, lw) : node.w;
+            node.h = lh > 0.0f ? std::min(node.h, lh) : node.h;
+        } else {
+            node.w = std::max(node.w, lw);
+            node.h = std::max(node.h, lh);
+        }
     }
 
     void measureChildren(Node& node) const
