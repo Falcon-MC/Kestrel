@@ -40,14 +40,11 @@ inline constexpr uint32_t ModelQuadBytes = 64;
 enum SkyVertexFlag : uint32_t {
     SkyTextured = 1 << 0,
     SkyAdditive = 1 << 1,
-    SkyFogged = 1 << 2,
-    SkyNormalShift = 3,
 };
 
 /**
- * One vertex of the sky, celestial bodies or clouds. Positions are relative to
- * the draw origin, color is RGBA8 and the normal index (flags >> 3, 1..6) lights
- * cloud faces from the sun.
+ * One vertex of the sky or a celestial body. Positions are relative to the
+ * draw origin and color is RGBA8.
  */
 struct SkyVertex {
     float x = 0.0f;
@@ -75,8 +72,6 @@ struct WorldView {
     std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
-    const std::array<float, 3>* cloudOrigins = nullptr;
-    uint32_t cloudOriginCount = 0;
 };
 
 /**
@@ -109,9 +104,21 @@ struct WorldConstants {
     }
 };
 
+/**
+ * The latest frame the GPU has finished: its submission number (counting
+ * from one) and how many sub-chunks with opaque terrain it drew.
+ */
+struct CompletedFrame {
+    uint64_t submission = 0;
+    uint32_t opaqueChunks = 0;
+};
+
 class Renderer {
 public:
     virtual ~Renderer() = default;
+
+    virtual uint64_t submittedFrames() const = 0;
+    virtual CompletedFrame completedFrame() const = 0;
 
     virtual void resize(uint32_t width, uint32_t height) = 0;
     virtual void uploadUiAtlas(const uint8_t* pixels, uint32_t width, uint32_t height) = 0;
@@ -119,7 +126,6 @@ public:
     virtual void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) = 0;
     virtual void removeChunkMesh(uint64_t id) = 0;
     virtual void clearChunkMeshes() = 0;
-    virtual void setCloudMesh(const SkyVertex* vertices, uint32_t count) = 0;
 
     virtual void beginFrame(float r, float g, float b) = 0;
     virtual void drawWorld(const WorldView& view) = 0;

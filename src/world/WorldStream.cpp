@@ -262,10 +262,33 @@ void WorldStream::handle(const UpdateSubChunkBlocksPacket& packet)
     }
 }
 
+/**
+ * Every column the server has announced around its publisher center has
+ * arrived. The edge ring is left out because servers round the circle
+ * differently.
+ */
+bool WorldStream::cohortLoaded() const
+{
+    int32_t radius = publisherRadius > 0 ? publisherRadius : chunkRadius;
+    if (radius <= 0) {
+        return false;
+    }
+    int32_t inner = std::max(radius - 1, 0);
+    for (int32_t dx = -inner; dx <= inner; ++dx) {
+        for (int32_t dz = -inner; dz <= inner; ++dz) {
+            if (dx * dx + dz * dz <= inner * inner && !chunks.isLoaded({ dimension, centerX + dx, centerZ + dz })) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void WorldStream::handle(const NetworkChunkPublisherUpdatePacket& packet)
 {
     centerX = floorDiv16(packet.mPosition.x);
     centerZ = floorDiv16(packet.mPosition.z);
+    publisherRadius = static_cast<int32_t>(packet.mRadius / 16);
     if (chunkRadius <= 0) {
         chunkRadius = static_cast<int32_t>(packet.mRadius / 16);
     }

@@ -18,6 +18,15 @@ class Context;
 
 namespace kestrel::menu {
 
+inline constexpr int MinRenderDistance = 2;
+inline constexpr int MaxRenderDistance = 32;
+inline constexpr int DefaultRenderDistance = 16;
+inline constexpr int MinMaxFps = 30;
+inline constexpr int MaxMaxFps = 240;
+inline constexpr int MaxFpsStep = 10;
+inline constexpr int UnlimitedFps = 0;
+inline constexpr int DefaultMaxFps = 120;
+
 enum class Screen {
     Home,
     Servers,
@@ -105,6 +114,7 @@ enum class SessionStatus {
 
 struct SessionInfo {
     SessionStatus status = SessionStatus::Idle;
+    bool loadingTerrain = false;
     std::string name;
     std::string displayName;
     std::string levelName;
@@ -173,6 +183,16 @@ public:
         return scale;
     }
 
+    int renderDistance() const
+    {
+        return chunkDistance;
+    }
+
+    int maxFps() const
+    {
+        return fpsLimit;
+    }
+
     const std::string& playerName() const
     {
         return displayName;
@@ -233,6 +253,16 @@ public:
     void setInterfaceScale(float value)
     {
         scale = value;
+    }
+
+    void setRenderDistance(int chunks)
+    {
+        chunkDistance = chunks;
+    }
+
+    void setMaxFps(int limit)
+    {
+        fpsLimit = limit;
     }
 
     void setAvatar(ui::ImageRef image)
@@ -345,6 +375,8 @@ private:
     bool disconnectRequested = false;
     std::optional<bool> packAnswer;
     float scale = 1.0f;
+    int chunkDistance = DefaultRenderDistance;
+    int fpsLimit = DefaultMaxFps;
     bool quit = false;
 };
 

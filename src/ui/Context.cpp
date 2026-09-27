@@ -233,6 +233,31 @@ bool Context::toggle(std::string_view id, const Rect& rect, bool on)
     return state.clicked;
 }
 
+/**
+ * A horizontal slider over [0, 1]: pressing anywhere on the track grabs the
+ * knob, which then follows the mouse until the button is released.
+ */
+bool Context::slider(std::string_view id, const Rect& rect, float& fraction)
+{
+    constexpr float knobSize = 20.0f;
+    constexpr float trackHeight = 6.0f;
+    Interaction interaction = interact(id, rect);
+    float before = fraction;
+    if (state.active == hashId(id) && in.mouseDown) {
+        fraction = std::clamp((mouseX() - rect.x - knobSize * 0.5f) / std::max(rect.w - knobSize, 1.0f), 0.0f, 1.0f);
+    }
+    float travel = rect.w - knobSize;
+    Rect track { rect.x + knobSize * 0.5f, rect.y + (rect.h - trackHeight) * 0.5f, travel, trackHeight };
+    fill(track, theme::Field, trackHeight * 0.5f);
+    fill({ track.x, track.y, travel * fraction, trackHeight }, theme::Accent, trackHeight * 0.5f);
+    Rect knob { rect.x + travel * fraction, rect.y + (rect.h - knobSize) * 0.5f, knobSize, knobSize };
+    if (interaction.hovered || state.active == hashId(id)) {
+        shadow(knob, knobSize * 0.5f, 10.0f, theme::AccentGlow);
+    }
+    gradient(knob, theme::AccentHover, theme::AccentDeep, knobSize * 0.5f);
+    return fraction != before;
+}
+
 void Context::endFrame()
 {
     if (!in.mouseDown) {

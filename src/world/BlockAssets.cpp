@@ -43,6 +43,7 @@ enum class Family {
     Leaves,
     TransparentCube,
     Model,
+    Deferred,
 };
 
 bool startsWith(const std::string& value, const std::string& prefix)
@@ -137,6 +138,21 @@ bool isShelfName(const std::string& name)
     return endsWith(name, "_shelf");
 }
 
+/**
+ * Blocks whose look comes from their block entity: chests, beds, banners,
+ * brewing stands, campfires, copper golem statues, decorated pots, enchanting
+ * tables, item frames, hoppers, lecterns and skulls. They are drawn as the
+ * diagnostic cube until their block entity renderer exists.
+ */
+bool isDeferredName(const std::string& name)
+{
+    return name == "chest" || name == "trapped_chest" || name == "ender_chest" || name == "bed" || endsWith(name, "_bed")
+        || name == "standing_banner" || name == "wall_banner" || name == "brewing_stand" || name == "campfire"
+        || name == "soul_campfire" || contains(name, "copper_golem_statue") || name == "decorated_pot"
+        || name == "enchanting_table" || name == "frame" || name == "glow_frame" || name == "hopper" || name == "lectern"
+        || name == "skull" || endsWith(name, "_skull") || endsWith(name, "_head");
+}
+
 Family classify(const std::string& name)
 {
     if (name == "air") {
@@ -144,6 +160,9 @@ Family classify(const std::string& name)
     }
     if (name == "water" || name == "flowing_water" || name == "lava" || name == "flowing_lava") {
         return Family::Liquid;
+    }
+    if (isDeferredName(name)) {
+        return Family::Deferred;
     }
     if (name == "barrier" || name == "structure_void" || startsWith(name, "light_block")) {
         return Family::Invisible;
@@ -171,7 +190,7 @@ Family classify(const std::string& name)
     }
     if (contains(name, "stained_glass") || name == "glass" || name == "tinted_glass" || name == "ice" || name == "frosted_ice"
         || name == "slime" || name == "honey_block" || endsWith(name, "copper_grate") || name == "mob_spawner"
-        || name == "trial_spawner" || name == "vault") {
+        || name == "trial_spawner" || name == "vault" || name == "beacon") {
         return Family::TransparentCube;
     }
     return Family::Cube;
@@ -1380,6 +1399,10 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         case Family::Invisible:
             visual.flags = 0;
             continue;
+        case Family::Deferred:
+            visual.flags = FlagDiagnostic;
+            ++diagnosticCount;
+            continue;
         case Family::Liquid:
             visual.flags = FlagCubeGeometry | FlagCullSame;
             break;
@@ -1983,15 +2006,6 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         for (uint32_t phase = 0; phase < 8; ++phase) {
             moonPhases[phase] = static_cast<uint32_t>(layers.size());
             layers.push_back(tileOf(rgba, width, (phase % 4) * size, (phase / 4) * size, size));
-        }
-    }
-    if (loadImage("textures/environment/clouds", width, height, rgba)) {
-        clouds.assign(256 * 256, 0);
-        for (uint32_t z = 0; z < 256; ++z) {
-            for (uint32_t x = 0; x < 256; ++x) {
-                size_t source = (size_t(z * height / 256) * width + x * width / 256) * 4;
-                clouds[size_t(z) * 256 + x] = rgba[source + 3] >= 128 ? 1 : 0;
-            }
         }
     }
 

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -53,7 +54,6 @@ struct SessionSnapshot {
     std::string assetsError;
     std::string error;
     uint64_t joinCount = 0;
-    bool worldReady = false;
     double spawnX = 0.0;
     double spawnY = 0.0;
     double spawnZ = 0.0;
@@ -80,6 +80,10 @@ struct SessionSnapshot {
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
+    float rainLevel = 0.0f;
+    float thunderLevel = 0.0f;
+    bool cohortComplete = false;
+    bool updatesPending = false;
 };
 
 double secondsNow();
@@ -100,6 +104,7 @@ public:
     std::vector<MeshUpdate> takeMeshUpdates();
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
     void answerResourcePacks(bool download);
+    void setRenderDistance(int chunks);
 
 private:
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
@@ -107,7 +112,7 @@ private:
     void handleWorldPacket(const std::string& payload);
     void scheduleMeshes();
     void collectMeshes();
-    bool spawnAreaReady();
+    void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     std::string traceTarget();
 
     std::thread worker;
@@ -125,11 +130,15 @@ private:
     size_t meshQuads = 0;
     std::vector<MeshUpdate> pendingUpdates;
     uint64_t joins = 0;
-    double joinedAt = 0.0;
     uint64_t localRuntimeId = 0;
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
     std::atomic<int> packDecision { 0 };
+    std::atomic<int> requestedRadius { 16 };
+    int sentRadius = 0;
+    bool spawnInitialized = false;
+    std::set<int> seenPackets;
+    double lastReadinessLog = 0.0;
 };
 
 }

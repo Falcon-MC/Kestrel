@@ -54,6 +54,7 @@ public:
     }
 
     WorldStats stats() const;
+    bool cohortLoaded() const;
 
 private:
     struct PendingSubChunk {
@@ -73,6 +74,7 @@ private:
     int32_t centerX = 0;
     int32_t centerZ = 0;
     int32_t chunkRadius = 0;
+    int32_t publisherRadius = 0;
     WorldStats counters;
 };
 

@@ -191,11 +191,6 @@ public:
         return moonPhases[phase % 8];
     }
 
-    const std::vector<uint8_t>& cloudMask() const
-    {
-        return clouds;
-    }
-
     uint32_t templateFlags(const BlockVisual& visual) const
     {
         return visual.hasModel() && visual.modelTemplate < templates.size() ? templates[visual.modelTemplate].flags : 0;
@@ -247,7 +242,6 @@ private:
     BiomeTints biomes;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
-    std::vector<uint8_t> clouds;
     size_t diagnosticCount = 0;
     uint32_t airSequential = 0;
     uint32_t airHash = 0;

@@ -88,6 +88,7 @@ public:
     bool tab(std::string_view id, std::string_view label, const Rect& rect, bool active);
     bool field(std::string_view id, std::string_view placeholder, std::string_view value, const Rect& rect, bool focused);
     bool toggle(std::string_view id, const Rect& rect, bool on);
+    bool slider(std::string_view id, const Rect& rect, float& fraction);
 
     void endFrame();
 

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <string>
 
 namespace kestrel::menu {
 
@@ -498,6 +500,29 @@ void Menu::settings(Context& ui, const Area& area)
         }
     }
     y = interfacePanel.bottom() + PadLg;
+
+    Rect video { area.x, y, area.w, 196.0f };
+    panel(ui, video);
+    ui.text("Video", TextStyle::Label, x, video.y + 26.0f, Text);
+    float sliderWidth = std::min(video.w - 56.0f - 160.0f, 420.0f);
+
+    ui.text("Render distance", TextStyle::Body, x, video.y + 66.0f, Muted);
+    float distanceFraction = float(chunkDistance - MinRenderDistance) / float(MaxRenderDistance - MinRenderDistance);
+    if (ui.slider("settings:distance", { x + 160.0f, video.y + 60.0f, sliderWidth, 32.0f }, distanceFraction)) {
+        chunkDistance = MinRenderDistance + int(std::lround(distanceFraction * float(MaxRenderDistance - MinRenderDistance)));
+    }
+    ui.text(std::to_string(chunkDistance) + " chunks", TextStyle::Label, x + 176.0f + sliderWidth, video.y + 66.0f, Text);
+
+    int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
+    int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;
+    ui.text("Max FPS", TextStyle::Body, x, video.y + 126.0f, Muted);
+    float fpsFraction = float(fpsStep) / float(fpsSteps);
+    if (ui.slider("settings:fps", { x + 160.0f, video.y + 120.0f, sliderWidth, 32.0f }, fpsFraction)) {
+        int step = int(std::lround(fpsFraction * float(fpsSteps)));
+        fpsLimit = step >= fpsSteps ? UnlimitedFps : MinMaxFps + step * MaxFpsStep;
+    }
+    ui.text(fpsLimit == UnlimitedFps ? std::string("Unlimited") : std::to_string(fpsLimit), TextStyle::Label, x + 176.0f + sliderWidth, video.y + 126.0f, Text);
+    y = video.bottom() + PadLg;
 
     constexpr float bindingRow = 56.0f;
     size_t bindingRows = (KeyBindings::Count + 1) / 2;

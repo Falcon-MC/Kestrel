@@ -61,7 +61,6 @@ public:
         for (RetiredBuffer& entry : retired) {
             destroyBuffer(entry.buffer);
         }
-        destroyBuffer(clouds);
         vkDestroyPipeline(device, worldPipeline, nullptr);
         vkDestroyPipeline(device, modelPipeline, nullptr);
         vkDestroyPipeline(device, blendPipeline, nullptr);
@@ -279,15 +278,6 @@ public:
         chunks.emplace(id, chunk);
     }
 
-    void setCloudMesh(const SkyVertex* vertices, uint32_t count) override
-    {
-        if (clouds.buffer != VK_NULL_HANDLE) {
-            retired.push_back({ clouds, frameCounter });
-        }
-        clouds = uploadBytes(vertices, size_t(count) * sizeof(SkyVertex));
-        cloudCount = count;
-    }
-
     void removeChunkMesh(uint64_t id) override
     {
         auto found = chunks.find(id);
@@ -355,17 +345,9 @@ public:
                 drawStream(chunk, stream);
             }
         }
-
-        if (clouds.buffer != VK_NULL_HANDLE && cloudCount) {
-            bind(skyPipeline);
-            for (uint32_t i = 0; i < view.cloudOriginCount; ++i) {
-                const std::array<float, 3>& origin = view.cloudOrigins[i];
-                pushOrigin(origin[0], origin[1], origin[2]);
-                VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(command, 0, 1, &clouds.buffer, &offset);
-                vkCmdDraw(command, cloudCount, 1, 0, 0);
-            }
-        }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
+            return entry.second.counts[0] || entry.second.counts[1];
+        }));
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
         for (const auto& [id, chunk] : chunks) {
@@ -398,6 +380,10 @@ public:
         }
 
         vkWaitForFences(device, 1, &inFlight[frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        if (slotFrames[frame].submission > completed.submission) {
+            completed = slotFrames[frame];
+        }
+        recordedOpaque = 0;
         VkResult acquired = vkAcquireNextImageKHR(device, swapchain, std::numeric_limits<uint64_t>::max(), imageAvailable[frame], VK_NULL_HANDLE, &imageIndex);
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
             swapchainDirty = true;
@@ -466,6 +452,16 @@ public:
         vkCmdDrawIndexed(command, static_cast<uint32_t>(list.indices().size()), 1, 0, 0, 0);
     }
 
+    uint64_t submittedFrames() const override
+    {
+        return submissions;
+    }
+
+    CompletedFrame completedFrame() const override
+    {
+        return completed;
+    }
+
     void endFrame() override
     {
         if (!recording) {
@@ -487,6 +483,7 @@ public:
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &renderFinished[imageIndex];
         check(vkQueueSubmit(queue, 1, &submit, inFlight[frame]), "vkQueueSubmit");
+        slotFrames[frame] = { ++submissions, recordedOpaque };
 
         VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
@@ -1006,7 +1003,17 @@ private:
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.preTransform = capabilities.currentTransform;
         info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        uint32_t modeCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, nullptr);
+        std::vector<VkPresentModeKHR> modes(modeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, modes.data());
         info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        for (VkPresentModeKHR preferred : { VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR }) {
+            if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
+                info.presentMode = preferred;
+                break;
+            }
+        }
         info.clipped = VK_TRUE;
         check(vkCreateSwapchainKHR(device, &info, nullptr, &swapchain), "vkCreateSwapchainKHR");
 
@@ -1357,12 +1364,14 @@ private:
     VkPipeline blendPipeline = VK_NULL_HANDLE;
     VkPipeline modelBlendPipeline = VK_NULL_HANDLE;
     VkPipeline skyPipeline = VK_NULL_HANDLE;
-    Buffer clouds;
-    uint32_t cloudCount = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
     std::vector<RetiredBuffer> retired;
     uint64_t frameCounter = 0;
     uint32_t frame = 0;
+    uint64_t submissions = 0;
+    uint32_t recordedOpaque = 0;
+    std::array<CompletedFrame, FramesInFlight> slotFrames {};
+    CompletedFrame completed;
     uint32_t imageIndex = 0;
     bool swapchainDirty = false;
     bool recording = false;

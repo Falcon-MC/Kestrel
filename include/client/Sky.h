@@ -17,17 +17,15 @@ struct SkyFrame {
     float daylight = 1.0f;
     std::array<float, 3> sunDirection {};
     uint32_t moonPhase = 0;
-    float cloudOffset = 0.0f;
 };
 
 /**
- * Bedrock atmosphere from absolute world ticks: sun and moon directions, sky
- * gradient, distance fog and eastward cloud drift.
+ * Bedrock atmosphere from absolute world ticks and the rain and thunder
+ * levels: sun and moon directions, a sky gradient darkened toward storm grey,
+ * and distance fog that closes in as the weather worsens.
  */
-SkyFrame atmosphereAt(double worldTicks, float renderDistance);
+SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, float thunderLevel);
 
 std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLayer, uint32_t moonLayer);
-std::vector<SkyVertex> buildCloudMesh(const std::vector<uint8_t>& mask);
-std::vector<std::array<float, 3>> cloudTileOrigins(const SkyFrame& frame, double cameraX, double cameraY, double cameraZ);
 
 }

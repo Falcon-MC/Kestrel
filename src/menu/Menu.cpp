@@ -175,16 +175,8 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     }
 
-    ui.clearExcluded();
-    bool headerOnTop = sheet == Sheet::Pause;
-    if (!headerOnTop) {
-        header(ui, width);
-    }
-
     ui.setBlocked(false);
-    if (headerOnTop) {
-        ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
-    }
+    ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
     switch (sheet) {
     case Sheet::None:
         break;
@@ -215,13 +207,11 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     }
 
-    if (headerOnTop) {
-        ui.clearExcluded();
-        Screen before = screen;
-        header(ui, width);
-        if (screen != before && sheet == Sheet::Pause) {
-            sheet = Sheet::None;
-        }
+    ui.clearExcluded();
+    Screen before = screen;
+    header(ui, width);
+    if (screen != before && sheet == Sheet::Pause) {
+        sheet = Sheet::None;
     }
 
     toast(ui, width, height);
@@ -608,7 +598,8 @@ void Menu::connectingSheet(Context& ui, float width, float height)
     int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     std::string dots(static_cast<size_t>(now / 450 % 3 + 1), '.');
     bool resolving = session.status == SessionStatus::Resolving;
-    ui.text((resolving ? "Finding the Realm" : "Connecting to server") + dots, TextStyle::Heading, x, frame.y + PadXl, Text, w);
+    const char* heading = resolving ? "Finding the Realm" : (session.loadingTerrain ? "Loading terrain" : "Connecting to server");
+    ui.text(heading + dots, TextStyle::Heading, x, frame.y + PadXl, Text, w);
     ui.text(session.name, TextStyle::Label, x, frame.y + PadXl + 36.0f, Accent, w);
     ui.paragraph(resolving ? "A sleeping Realm can take a moment to wake up." : "Hang tight, the world is almost here.",
         TextStyle::Body, x, frame.y + PadXl + 64.0f, w, Muted);
