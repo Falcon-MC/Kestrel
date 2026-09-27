@@ -344,6 +344,12 @@ void Session::tickMotion()
     if (tick.startFlying) {
         flag(PlayerAuthInputData::StartFlying);
     }
+    if (tick.startSwimming) {
+        flag(PlayerAuthInputData::StartSwimming);
+    }
+    if (tick.stopSwimming) {
+        flag(PlayerAuthInputData::StopSwimming);
+    }
     if (tick.stopFlying) {
         flag(PlayerAuthInputData::StopFlying);
     }
@@ -377,6 +383,7 @@ void Session::tickMotion()
     current.player.tickTime = now;
     current.player.sneaking = tick.sneaking;
     current.player.sprinting = tick.sprinting;
+    current.player.swimming = tick.swimming;
     current.player.flying = tick.flying;
     current.player.movementSpeed = motion.speed();
 }

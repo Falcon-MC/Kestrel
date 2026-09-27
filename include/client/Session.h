@@ -159,8 +159,14 @@ struct PlayerView {
     double tickTime = 0.0;
     bool sneaking = false;
     bool sprinting = false;
+    bool swimming = false;
     bool flying = false;
     float movementSpeed = 0.1f;
+
+    double eyeHeight() const
+    {
+        return swimming ? 0.4 : sneaking ? 1.54 : 1.62;
+    }
     uint64_t teleports = 0;
 };
 

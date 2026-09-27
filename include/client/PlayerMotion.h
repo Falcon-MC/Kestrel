@@ -81,9 +81,12 @@ struct MotionTick {
     bool stopSneaking = false;
     bool startFlying = false;
     bool stopFlying = false;
+    bool startSwimming = false;
+    bool stopSwimming = false;
     bool sneaking = false;
     bool sprinting = false;
     bool flying = false;
+    bool swimming = false;
 };
 
 /**
@@ -141,6 +144,11 @@ public:
         return ready;
     }
 
+    bool swimming() const
+    {
+        return isSwimming;
+    }
+
 private:
     struct Fluid {
         bool water = false;
@@ -164,6 +172,19 @@ private:
     float friction(const world::CollisionState* state) const;
     bool climbable(int32_t x, int32_t y, int32_t z) const;
     Fluid fluidState(const world::CollisionBox& area) const;
+
+    /**
+     * The liquid in a block, from either block layer: whether it is lava, its
+     * depth (0 for a source, 8 and up while falling) and whether there is one.
+     */
+    bool liquidAt(int32_t x, int32_t y, int32_t z, bool& lava, int32_t& depth) const;
+    std::vector<std::array<int32_t, 3>> touchingLiquid(bool lava) const;
+    MotionVector liquidFlow(int32_t x, int32_t y, int32_t z, bool lava, int32_t depth) const;
+    bool closesFlow(int32_t x, int32_t y, int32_t z) const;
+    void applyLiquidFlow(const std::vector<std::array<int32_t, 3>>& blocks, bool lava);
+    void updateSwimming(bool inWater, MotionTick& tick);
+    void updateSwimTravel();
+    void applyBubbleColumn(const Fluid& fluid);
     bool insideBlockNamed(std::string_view name) const;
     const world::CollisionState* blockUnder(float distance) const;
     float jumpPreventionMultiplier() const;
@@ -173,7 +194,7 @@ private:
     void updateInput(const MotionInput& input, MotionTick& tick);
     void simulate();
     void runGroundAndAir();
-    void runWater(const Fluid& fluid);
+    void runWater(const Fluid& fluid, bool touchingWater);
     void runLava();
     void runFlight(const MotionInput& input);
     void moveRelative(float speed);
@@ -196,6 +217,10 @@ private:
     MotionVector pendingKnockback;
     bool hasKnockback = false;
     float yaw = 0.0f;
+    float pitch = 0.0f;
+    bool isSwimming = false;
+    float swimAmount = 0.0f;
+    bool stoppedSwimmingThisTick = false;
     float impulseSideways = 0.0f;
     float impulseForward = 0.0f;
     float width = 0.6f;

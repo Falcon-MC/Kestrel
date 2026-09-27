@@ -26,6 +26,7 @@ inline constexpr float WaterDrag = 0.8f;
 inline constexpr float WaterFastDrag = 0.9f;
 inline constexpr float WaterAscent = 0.04f;
 inline constexpr float WaterGravity = 0.02f;
+inline constexpr float SwimlessWaterGravity = 0.005f;
 inline constexpr float LedgeClimb = 0.3f;
 inline constexpr float LavaDrag = 0.5f;
 inline constexpr float FluidHorizontalInset = 0.001f;

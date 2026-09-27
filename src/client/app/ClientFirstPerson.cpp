@@ -156,7 +156,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
 
     float yaw = camera.minecraftYaw();
     float pitch = camera.minecraftPitch();
-    double eye = playerView.sneaking ? 1.54 : 1.62;
+    double eye = playerView.eyeHeight();
     world::AnimationInput input;
     input.x = camera.x();
     input.y = camera.y() - eye;
