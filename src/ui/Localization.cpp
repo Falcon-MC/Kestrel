@@ -158,7 +158,14 @@ std::string Localization::fill(std::string_view pattern, const std::vector<std::
                 index = static_cast<size_t>(std::atoi(std::string(pattern.substr(cursor, digits - cursor)).c_str())) - 1;
                 cursor = digits + 1;
             } else {
-                out += c;
+                // Newer screens write a bare %1, which carries no type after it.
+                size_t position = static_cast<size_t>(std::atoi(std::string(pattern.substr(cursor, digits - cursor)).c_str()));
+                if (position >= 1 && position <= arguments.size()) {
+                    out += arguments[position - 1];
+                    i = digits - 1;
+                } else {
+                    out += c;
+                }
                 continue;
             }
         } else {

@@ -659,16 +659,15 @@ void Menu::progressDialog(Context& ui, float width, float height)
         body = session.error.empty() ? tr("disconnect.closed", "The connection was closed.") : Localization::shared().translateMessage(session.error);
         button = tr("gui.ok", "OK");
     } else if (session.packPrompt) {
-        heading = "Resource Packs Required";
-        std::string count = session.packCount == 1 ? "1 resource pack" : std::to_string(session.packCount) + " resource packs";
-        body = "This server uses " + count + " (" + megabytes(session.packBytes) + "). Download them?";
+        heading = tr("progressScreen.dialog.title.resourcePack", "Download Resource Packs?");
+        body = session.packSkippable ? tr("progressScreen.dialog.message.resourcePack.optional", "This world has optional Resource Packs applied to it. Would you like to download them before you join?") : tr("progressScreen.dialog.message.resourcePack.serverRequired", "The owner of this world requires players to download all Resource Packs applied to it. Would you like to download them and join?");
         button = tr("selectTemplate.download", "Download");
         twoButtons = session.packSkippable;
     } else if (session.packDownloading) {
-        heading = "Downloading packs (" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")";
+        heading = trf("progressScreen.title.downloading", "Downloading packs %1", { "(" + megabytes(session.packReceived) + " / " + megabytes(session.packTotal) + ")" });
         fraction = session.packTotal ? std::clamp(static_cast<float>(session.packReceived) / static_cast<float>(session.packTotal), 0.0f, 1.0f) : 0.0f;
     } else {
-        heading = session.status == SessionStatus::Resolving ? tr("progressScreen.message.locating", "Locating server") : session.loadingTerrain ? tr("menu.generatingLevel", "Generating world") : tr("progressScreen.title.connectingCOM", "Connecting to online experience");
+        heading = tr("progressScreen.title.connectingExternal", "Connecting to external server");
         progress = true;
     }
 
@@ -684,12 +683,11 @@ void Menu::progressDialog(Context& ui, float width, float height)
     if (!body.empty()) {
         ui.paragraph(body, TextStyle::Pixel, well.x + 6.0f, well.y + 6.0f, well.w - 12.0f, White);
     }
-    bool generating = progress && dialog == Dialog::Connecting && session.status != SessionStatus::Resolving && session.loadingTerrain;
-    if (generating) {
-        std::string Waiting = tr("menu.loadingLevel", "Loading server...");
-        float waitingWidth = ui.measure(Waiting, TextStyle::Pixel);
+    if (progress && dialog == Dialog::Connecting) {
+        std::string stage = session.loadingTerrain ? tr("progressScreen.message.building", "Building terrain") : tr("progressScreen.message.locating", "Locating server");
+        float stageWidth = ui.measure(stage, TextStyle::Pixel);
         float buttonCenter = std::floor(well.x + (well.w - 64.0f) * 0.5f) + 32.0f;
-        ui.text(Waiting, TextStyle::Pixel, std::round(buttonCenter - waitingWidth * 0.5f), buttonY - 33.0f, White);
+        ui.text(stage, TextStyle::Pixel, std::round(buttonCenter - stageWidth * 0.5f), buttonY - 33.0f, White);
     }
     if (progress) {
         const Sprite& bar = ui.skin().sprite("ui/loading_bar");
