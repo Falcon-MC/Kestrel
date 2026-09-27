@@ -993,7 +993,7 @@ uint8_t blockTint(const std::string& name, int face)
     if (name == "spruce_leaves") {
         return Foliage | (uint8_t(FoliageVariant::Evergreen) << TintVariantShift);
     }
-    if (name == "short_grass" || name == "tall_grass" || name == "fern" || name == "large_fern") {
+    if (name == "short_grass" || name == "tall_grass" || name == "fern" || name == "large_fern" || name == "bush") {
         return Grass;
     }
     return 0;
@@ -1184,6 +1184,26 @@ std::string BlockAssets::describe(uint32_t networkValue, bool hashed, const Sequ
         return "unknown #" + std::to_string(networkValue);
     }
     return nameAt(static_cast<size_t>(index)) + " #" + std::to_string(networkValue);
+}
+
+std::string BlockAssets::blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    if (networkValue == 0xFFFFFFFFu) {
+        return "minecraft:air";
+    }
+    int32_t index = -1;
+    if (!hashed && sequential) {
+        if (networkValue < sequential->size()) {
+            index = (*sequential)[networkValue];
+        }
+    } else {
+        index = registry.resolve(networkValue, hashed);
+        if (index < 0) {
+            auto custom = customByHash.find(networkValue);
+            index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
+        }
+    }
+    return index < 0 ? std::string() : nameAt(static_cast<size_t>(index));
 }
 
 const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
