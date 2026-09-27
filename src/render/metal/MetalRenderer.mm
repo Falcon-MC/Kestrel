@@ -532,10 +532,10 @@ public:
             return left.first > right.first;
         });
         for (const auto& [distance, chunk] : ordered) {
-            [encoder setRenderPipelineState:blendPipeline];
-            drawStream(*chunk, 2);
             [encoder setRenderPipelineState:modelBlendPipeline];
             drawStream(*chunk, 3);
+            [encoder setRenderPipelineState:blendPipeline];
+            drawStream(*chunk, 2);
         }
     }
 

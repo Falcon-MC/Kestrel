@@ -519,10 +519,10 @@ public:
             return left.first > right.first;
         });
         for (const auto& [distance, chunk] : ordered) {
-            bind(blendPipeline);
-            drawStream(*chunk, 2);
             bind(modelBlendPipeline);
             drawStream(*chunk, 3);
+            bind(blendPipeline);
+            drawStream(*chunk, 2);
         }
     }
 
