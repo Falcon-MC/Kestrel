@@ -336,7 +336,11 @@ void Menu::header(Context& ui, float width)
     };
 
     float x = logo.right() + 12.0f + ui.measure("Kestrel", TextStyle::Heading) + PadXl;
-    for (const Tab& item : inGame() ? std::span<const Tab>(gameTabs) : std::span<const Tab>(tabs)) {
+    std::span<const Tab> shown = inGame() ? std::span<const Tab>(gameTabs) : std::span<const Tab>(tabs);
+    if (sheet == Sheet::Connecting) {
+        shown = {};
+    }
+    for (const Tab& item : shown) {
         float tabWidth = ui.measure(item.label, TextStyle::Label) + 32.0f;
         if (ui.tab(std::string("tab:") + item.label, item.label, { x, (HeaderHeight - 36.0f) * 0.5f, tabWidth, 36.0f }, screen == item.target)) {
             navigate(item.target);

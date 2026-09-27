@@ -333,6 +333,7 @@ void Session::handleWorldPacket(const std::string& payload)
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
         world.handle(*publisher);
     } else if (auto radius = std::dynamic_pointer_cast<ChunkRadiusUpdatedPacket>(packet)) {
+        debugLog("server chunk radius " + std::to_string(radius->mRadius));
         world.setChunkRadius(radius->mRadius);
         std::lock_guard<std::mutex> guard(mutex);
         current.chunkRadius = radius->mRadius;
@@ -714,6 +715,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             request.mMaxRadius = wanted;
             connection->send(request);
             sentRadius = wanted;
+            debugLog("requested chunk radius " + std::to_string(wanted));
         }
         scheduleMeshes();
         collectMeshes();
@@ -732,7 +734,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             lastReadinessLog = now;
             debugLog("columns " + std::to_string(current.world.columns) + " subchunks " + std::to_string(current.world.subChunks) + " pending " + std::to_string(current.world.pendingSubChunks)
                 + " meshes " + std::to_string(meshes.size()) + " jobs " + std::to_string(current.meshJobs) + " cohort " + (current.cohortComplete ? "complete" : "incomplete")
-                + " updates " + (current.updatesPending ? "pending" : "none") + " radius " + std::to_string(current.chunkRadius) + " spawn " + (spawnInitialized ? "initialized" : "waiting"));
+                + " updates " + (current.updatesPending ? "pending" : "none") + " radius " + std::to_string(current.chunkRadius) + " spawn " + (spawnInitialized ? "initialized" : "waiting") + " mesh ms " + std::to_string(mesher->averageMilliseconds()) + " workers " + std::to_string(mesher->workerCount()));
         }
         if (assets) {
             int32_t bx = static_cast<int32_t>(std::floor(current.spawnX));
