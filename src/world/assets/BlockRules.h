@@ -70,6 +70,7 @@ enum class ModelKind {
     SinkingCube,
     Bamboo,
     Cluster,
+    Chain,
     Shape,
 };
 

@@ -33,13 +33,16 @@ struct HudEffectView {
 /**
  * A name floating over an entity, already projected: x and y are where the
  * bottom center of its last line sits on screen, and magnify how many menu
- * units one font pixel takes at that distance.
+ * units one font pixel takes at that distance. Depth is the projected world
+ * depth for per-pixel occlusion against terrain and entities.
  */
 struct NameTag {
     std::string text;
     float x = 0.0f;
     float y = 0.0f;
     float magnify = 1.0f;
+    float depth = 0.0f;
+    bool sneaking = false;
 };
 
 enum class HeartKind {
@@ -82,7 +85,7 @@ struct HudView {
 /**
  * Draws the hotbar, hearts, armor, hunger, air bubbles, experience bar,
  * selected item name and status effects over a width by height area, laid
- * out in GUI pixels scaled by the classic GUI scale rule.
+ * out in the same logical coordinates as the rest of the interface.
  */
 void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width, float height);
 

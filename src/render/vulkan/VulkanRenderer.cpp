@@ -1307,6 +1307,7 @@ private:
             { 3, 0, VK_FORMAT_R32G32_SFLOAT, 20 },
             { 4, 0, VK_FORMAT_R32G32_SFLOAT, 28 },
             { 5, 0, VK_FORMAT_R32G32_SFLOAT, 36 },
+            { 6, 0, VK_FORMAT_R32_SFLOAT, 44 },
         };
         VkPipelineVertexInputStateCreateInfo vertexInput { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
         vertexInput.vertexBindingDescriptionCount = 1;
@@ -1349,7 +1350,8 @@ private:
         dynamic.pDynamicStates = dynamicStates;
 
         VkPipelineDepthStencilStateCreateInfo depthState { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-        depthState.depthTestEnable = VK_FALSE;
+        depthState.depthTestEnable = VK_TRUE;
+        depthState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         depthState.depthWriteEnable = VK_FALSE;
 
         VkPushConstantRange pushConstant { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 2 };

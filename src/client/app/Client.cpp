@@ -173,6 +173,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "hud");
             handleHotbarInput();
+            interpolateActors(secondsNow());
             menu.setHud(buildHudView());
             if (!worldShown) {
                 for (const menu::SavedServer& server : store.servers()) {
@@ -313,7 +314,6 @@ int Client::run()
             std::vector<world::ModelQuadGpu> entityQuads;
             {
                 Profiler::Section section(profiler, "entities");
-                interpolateActors(secondsNow());
                 if (perspective != PerspectiveFirst && playerView.active) {
                     actorViews.push_back(localActorView(deltaSeconds));
                 }
@@ -536,13 +536,15 @@ void Client::syncAccount()
     menu.setAccount(std::move(info));
 }
 
-// Mirrors the game's automatic GUI scale, one menu unit being a whole number of pixels.
+// Keep enough logical space for the interface at every scale and window size.
 float Client::guiScale() const
 {
     float byHeight = std::floor(static_cast<float>(window->height()) / 360.0f);
     float byWidth = std::floor(static_cast<float>(window->width()) / 660.0f);
     float automatic = std::max(1.0f, std::min(byHeight, byWidth));
-    return std::max(1.0f, std::round(automatic * menu.interfaceScale()));
+    float fit = std::min(static_cast<float>(window->width()) / 360.0f,
+        static_cast<float>(window->height()) / 240.0f);
+    return std::max(0.01f, std::min(automatic * menu.interfaceScale(), fit));
 }
 
 void Client::uploadAtlas()
@@ -810,6 +812,7 @@ void Client::syncSession()
     info.packTotal = snapshot.packTotal;
     info.error = std::move(snapshot.error);
     info.dead = snapshot.dead && snapshot.state == SessionState::Joined;
+    info.changingDimension = snapshot.changingDimension && snapshot.state == SessionState::Joined;
     if (info.dead && !snapshot.deathCause.empty()) {
         info.deathMessage = ui::Localization::shared().translateMessage(snapshot.deathCause, snapshot.deathParameters);
     }

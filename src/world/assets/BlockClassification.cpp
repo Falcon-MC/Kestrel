@@ -86,7 +86,7 @@ Family classify(const std::string& name)
         || endsWith(name, "_carpet") || name == "carpet" || name == "snow_layer"
         || isAquaticName(name) || isCropName(name) || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
         || name == "cake" || name == "farmland" || isCrossName(name) || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
-        || name == "amethyst_cluster" || endsWith(name, "_amethyst_bud")) {
+        || name == "amethyst_cluster" || endsWith(name, "_amethyst_bud") || name == "chain" || endsWith(name, "_chain")) {
         return Family::Model;
     }
     if (endsWith(name, "leaves") || endsWith(name, "leaves_flowered")) {
@@ -185,6 +185,9 @@ ModelKind modelKind(const std::string& name)
     }
     if (isCrossName(name) || isCropName(name) || isAquaticName(name)) {
         return ModelKind::Cross;
+    }
+    if (name == "chain" || endsWith(name, "_chain")) {
+        return ModelKind::Chain;
     }
     return ModelKind::None;
 }

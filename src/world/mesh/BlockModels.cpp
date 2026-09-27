@@ -816,7 +816,12 @@ std::vector<ModelQuad> shape(const std::vector<ShapePart>& parts, std::vector<Mo
 
 std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing)
 {
-    std::vector<ModelQuad> quads = cross(material, material);
+    return orientedCross(material, material, facing);
+}
+
+std::vector<ModelQuad> orientedCross(uint32_t first, uint32_t second, uint32_t facing)
+{
+    std::vector<ModelQuad> quads = cross(first, second);
     for (ModelQuad& quad : quads) {
         for (Point& position : quad.positions) {
             int32_t cx = int32_t(position[0]) - 128;
@@ -950,7 +955,7 @@ std::vector<ModelQuad> flatPlane(uint32_t material, int16_t height)
 
 std::vector<ModelQuad> attachedPlanes(uint32_t material, uint32_t sides)
 {
-    constexpr int16_t Inset = 13;
+    constexpr int16_t Inset = 1;
     constexpr int16_t Far = Full - Inset;
     std::vector<ModelQuad> result;
     for (uint32_t side = 0; side < 6; ++side) {

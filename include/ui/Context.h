@@ -95,6 +95,8 @@ public:
     void textCentered(std::string_view value, TextStyle style, const Rect& rect, Color color);
     float paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     void pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color, bool shadow = false);
+    void rotatedPixelText(std::string_view value, float centerX, float centerY, float magnify, float radians, Color color);
+    void nameTag(std::string_view value, float x, float y, float magnify, float depth, bool sneaking);
     float paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     float paragraphHeight(std::string_view value, TextStyle style, float width) const;
 
