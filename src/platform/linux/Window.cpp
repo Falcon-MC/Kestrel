@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace kestrel {
@@ -219,13 +220,13 @@ public:
             glfwSetWindowMonitor(window, nullptr, windowedX, windowedY, windowedWidth, windowedHeight, GLFW_DONT_CARE);
             return;
         }
-        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        glfwGetWindowPos(window, &windowedX, &windowedY);
+        glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
+        GLFWmonitor* monitor = currentMonitor();
         const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
         if (!mode) {
             return;
         }
-        glfwGetWindowPos(window, &windowedX, &windowedY);
-        glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
         glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
     }
 
@@ -235,6 +236,38 @@ public:
     }
 
 private:
+    // Wayland hides window positions, so our GLFW patch lets the compositor pick the output there.
+    GLFWmonitor* currentMonitor() const
+    {
+        if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+            return glfwGetPrimaryMonitor();
+        }
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        GLFWmonitor* best = glfwGetPrimaryMonitor();
+        long long bestArea = 0;
+        for (int i = 0; i < count; ++i) {
+            const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+            if (!mode) {
+                continue;
+            }
+            int x = 0;
+            int y = 0;
+            glfwGetMonitorPos(monitors[i], &x, &y);
+            int overlapWidth = std::min(windowedX + windowedWidth, x + mode->width) - std::max(windowedX, x);
+            int overlapHeight = std::min(windowedY + windowedHeight, y + mode->height) - std::max(windowedY, y);
+            if (overlapWidth <= 0 || overlapHeight <= 0) {
+                continue;
+            }
+            long long area = static_cast<long long>(overlapWidth) * overlapHeight;
+            if (area > bestArea) {
+                bestArea = area;
+                best = monitors[i];
+            }
+        }
+        return best;
+    }
+
     static Key translateKey(int key)
     {
         if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) {
