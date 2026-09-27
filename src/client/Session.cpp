@@ -3,9 +3,14 @@
 #include "Network/BedrockConnection.h"
 #include "Network/Client/ClientNetworkSystem.h"
 #include "Network/Session/RealmsService.h"
+#include "client/DebugLog.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
+#include "Protocol/Packets/LevelEventPacket.h"
+#include "Protocol/Packets/PlayStatusPacket.h"
+#include "Protocol/Packets/RequestChunkRadiusPacket.h"
+#include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
 #include "Protocol/Packets/SetTimePacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
 #include "Protocol/Packets/MovePlayerPacket.h"
@@ -49,9 +54,6 @@ constexpr int ProtocolVersion = 2193;
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr unsigned int TimeoutMs = 30000;
-constexpr int ChunkRadius = 16;
-constexpr int32_t SpawnReadyRadius = 4;
-constexpr double WorldReadyTimeoutSeconds = 20.0;
 
 const char* gameModeName(GameType type)
 {
@@ -210,6 +212,29 @@ std::vector<MeshUpdate> Session::takeMeshUpdates()
     return updates;
 }
 
+/**
+ * Tells the server the local player has finished loading, once, after its
+ * PlayerSpawn status; the connection hands over before that status arrives so
+ * chunks can stream in while the server waits for it.
+ */
+void Session::initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId)
+{
+    if (spawnInitialized) {
+        return;
+    }
+    SetLocalPlayerAsInitializedPacket initialized;
+    initialized.mRuntimeActorId = runtimeId;
+    target.send(initialized);
+    target.flush();
+    spawnInitialized = true;
+    debugLog("sent SetLocalPlayerAsInitialized");
+}
+
+void Session::setRenderDistance(int chunks)
+{
+    requestedRadius = chunks;
+}
+
 void Session::answerResourcePacks(bool download)
 {
     packDecision = static_cast<int>(download ? ResourcePackDecision::Download : ResourcePackDecision::Skip);
@@ -270,8 +295,12 @@ void Session::handleWorldPacket(const std::string& payload)
     if (!BedrockConnection::peekPacketId(payload, id)) {
         return;
     }
+    if (seenPackets.insert(static_cast<int>(id)).second) {
+        debugLog("first world packet " + std::to_string(static_cast<int>(id)));
+    }
 
     switch (id) {
+    case MinecraftPacketIds::PlayStatus:
     case MinecraftPacketIds::LevelChunk:
     case MinecraftPacketIds::SubChunk:
     case MinecraftPacketIds::UpdateBlock:
@@ -282,6 +311,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::SetTime:
     case MinecraftPacketIds::GameRulesChanged:
+    case MinecraftPacketIds::LevelEvent:
         break;
     default:
         return;
@@ -328,6 +358,29 @@ void Session::handleWorldPacket(const std::string& payload)
                 current.worldTimeStamp = secondsNow();
                 current.daylightCycle = rule.mBoolValue;
             }
+        }
+    } else if (auto status = std::dynamic_pointer_cast<PlayStatusPacket>(packet)) {
+        debugLog("play status " + std::to_string(static_cast<int>(status->mStatus)));
+        if (status->mStatus == PlayStatusPacket::Status::PlayerSpawn) {
+            initializeLocalPlayer(*connection, localRuntimeId);
+        }
+    } else if (auto event = std::dynamic_pointer_cast<LevelEventPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        switch (event->mEventId) {
+        case LevelEventPacket::StartRain:
+            current.rainLevel = 1.0f;
+            break;
+        case LevelEventPacket::StopRain:
+            current.rainLevel = 0.0f;
+            break;
+        case LevelEventPacket::StartThunder:
+            current.thunderLevel = 1.0f;
+            break;
+        case LevelEventPacket::StopThunder:
+            current.thunderLevel = 0.0f;
+            break;
+        default:
+            break;
         }
     } else if (auto dimension = std::dynamic_pointer_cast<ChangeDimensionPacket>(packet)) {
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
@@ -383,28 +436,6 @@ void Session::scheduleMeshes()
         input.skyLight = key.dimension == 0;
         mesher->submit(key, generation, std::move(input), assets, ids);
     }
-}
-
-/**
- * The spawn area is ready once every column within a few chunks of the spawn
- * point has arrived, no sub-chunk is still awaited and every mesh is built.
- */
-bool Session::spawnAreaReady()
-{
-    if (!assets || current.meshJobs != 0 || current.world.pendingSubChunks != 0) {
-        return false;
-    }
-    int32_t radius = std::clamp(current.chunkRadius, 1, SpawnReadyRadius);
-    int32_t cx = static_cast<int32_t>(std::floor(current.spawnX)) >> 4;
-    int32_t cz = static_cast<int32_t>(std::floor(current.spawnZ)) >> 4;
-    for (int32_t dx = -radius; dx <= radius; ++dx) {
-        for (int32_t dz = -radius; dz <= radius; ++dz) {
-            if (dx * dx + dz * dz <= radius * radius && !world.store().isLoaded({ current.dimension, cx + dx, cz + dz })) {
-                return false;
-            }
-        }
-    }
-    return true;
 }
 
 void Session::collectMeshes()
@@ -467,7 +498,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     settings.mGameVersion = GameVersion;
     settings.mAuthentication = authentication;
     settings.mIdentity.mDisplayName = offlineName;
-    settings.mChunkRadius = ChunkRadius;
+    settings.mChunkRadius = requestedRadius.load();
     settings.mTimeoutMs = TimeoutMs;
     settings.mCancel = &cancelled;
     packDecision = static_cast<int>(ResourcePackDecision::Pending);
@@ -534,6 +565,12 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         return;
     }
 
+    resetDebugLog();
+    debugLog("dial " + settings.mHost + ":" + std::to_string(settings.mPort) + " radius " + std::to_string(settings.mChunkRadius));
+    settings.mDeferSpawn = true;
+    settings.mPacketObserver = [](MinecraftPacketIds id) {
+        debugLog("dial packet " + std::to_string(static_cast<int>(id)));
+    };
     ClientConnectionResult result = ClientNetworkSystem::dial(settings);
     {
         std::lock_guard<std::mutex> guard(mutex);
@@ -544,16 +581,20 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         savePack(pack);
     }
     if (!result.mConnection) {
+        debugLog("dial failed: " + result.mError);
         fail(result.mError.empty() ? "Could not connect" : result.mError);
         return;
+    }
+    debugLog("dial done, chunk radius " + std::to_string(result.mConnection->getChunkRadius()) + ", spawn " + (result.mConnection->isSpawnReceived() ? "received" : "pending"));
+    spawnInitialized = false;
+    if (result.mConnection->isSpawnReceived()) {
+        initializeLocalPlayer(*result.mConnection, result.mConnection->getStartGame() ? result.mConnection->getStartGame()->mRuntimeActorId : 0);
     }
 
     {
         std::lock_guard<std::mutex> guard(mutex);
         connection = std::move(result.mConnection);
         current.state = SessionState::Joined;
-        current.worldReady = false;
-        joinedAt = secondsNow();
         current.displayName = result.mIdentity.mDisplayName;
         current.chunkRadius = connection->getChunkRadius();
         current.joinCount = ++joins;
@@ -570,6 +611,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             current.gameMode = gameModeName(startGame->mPlayerGameType);
             current.dimension = startGame->mDimensionId;
             current.worldTimeStamp = secondsNow();
+            current.rainLevel = std::isfinite(startGame->mRainLevel) ? std::clamp(startGame->mRainLevel, 0.0f, 1.0f) : 0.0f;
+            current.thunderLevel = std::isfinite(startGame->mLightningLevel) ? std::clamp(startGame->mLightningLevel, 0.0f, 1.0f) : 0.0f;
             for (const GameRuleData& rule : startGame->mGamerules) {
                 if (rule.mName == "dodaylightcycle" && rule.mType == GameRuleData::Type::Bool) {
                     current.daylightCycle = rule.mBoolValue;
@@ -586,6 +629,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         hashedNetworkIds = startGame->mBlockNetworkIdsHashed;
     }
     world.setChunkRadius(connection->getChunkRadius());
+    sentRadius = settings.mChunkRadius;
 
     std::string assetsError;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
@@ -664,6 +708,13 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         for (const std::unique_ptr<SubChunkRequestPacket>& request : world.takeRequests(world::WorldStream::Clock::now())) {
             connection->send(*request);
         }
+        if (int wanted = requestedRadius.load(); wanted != sentRadius) {
+            RequestChunkRadiusPacket request;
+            request.mRadius = wanted;
+            request.mMaxRadius = wanted;
+            connection->send(request);
+            sentRadius = wanted;
+        }
         scheduleMeshes();
         collectMeshes();
 
@@ -675,8 +726,13 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.meshes = meshes.size();
         current.meshQuads = meshQuads;
         current.meshJobs = mesher->pending();
-        if (!current.worldReady && (spawnAreaReady() || secondsNow() - joinedAt > WorldReadyTimeoutSeconds)) {
-            current.worldReady = true;
+        current.cohortComplete = world.cohortLoaded();
+        current.updatesPending = !pendingUpdates.empty();
+        if (double now = secondsNow(); now - lastReadinessLog >= 1.0) {
+            lastReadinessLog = now;
+            debugLog("columns " + std::to_string(current.world.columns) + " subchunks " + std::to_string(current.world.subChunks) + " pending " + std::to_string(current.world.pendingSubChunks)
+                + " meshes " + std::to_string(meshes.size()) + " jobs " + std::to_string(current.meshJobs) + " cohort " + (current.cohortComplete ? "complete" : "incomplete")
+                + " updates " + (current.updatesPending ? "pending" : "none") + " radius " + std::to_string(current.chunkRadius) + " spawn " + (spawnInitialized ? "initialized" : "waiting"));
         }
         if (assets) {
             int32_t bx = static_cast<int32_t>(std::floor(current.spawnX));

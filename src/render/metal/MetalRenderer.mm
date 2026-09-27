@@ -7,6 +7,8 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <algorithm>
+#include <memory>
+#include <mutex>
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -286,7 +288,6 @@ vertex SkyOut sky_vertex(SkyIn in [[stage_in]], constant DrawData& draw [[buffer
 
 fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    const float3 normals[7] = { float3(0.0), float3(0, -1, 0), float3(0, 1, 0), float3(-1, 0, 0), float3(1, 0, 0), float3(0, 0, -1), float3(0, 0, 1) };
     float4 color = in.color;
     if ((in.flags & 1) != 0) {
         float4 texel = blocks.sample(blockSampler, in.uv, in.layer, level(0.0));
@@ -294,18 +295,6 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
         if ((in.flags & 2) == 0) {
             color.a *= texel.a;
         }
-    }
-    uint normal = (in.flags >> 3) & 7;
-    if (normal != 0) {
-        float directional = max(dot(normals[min(normal, 6u)], draw.sun.xyz), 0.0);
-        color.rgb *= max(draw.params.y, 0.2) * mix(0.55, 1.0, directional);
-    }
-    if ((in.flags & 4) != 0) {
-        float start = clamp(draw.fog.w, 0.0, 255.0);
-        float end = clamp(draw.params.x, 0.0, 255.0);
-        float range = length(in.relative);
-        float amount = end <= start ? (range >= end ? 1.0 : 0.0) : smoothstep(start, end, range);
-        color.a *= 1.0 - amount;
     }
     if ((in.flags & 2) != 0) {
         return float4(color.rgb * color.a, 0.0);
@@ -339,6 +328,7 @@ public:
         layer.device = device;
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         layer.framebufferOnly = YES;
+        layer.displaySyncEnabled = NO;
         layer.drawableSize = CGSizeMake(width, height);
 
         createUiPipeline();
@@ -402,12 +392,6 @@ public:
         chunks[id] = chunk;
     }
 
-    void setCloudMesh(const SkyVertex* vertices, uint32_t count) override
-    {
-        clouds = count ? [device newBufferWithBytes:vertices length:static_cast<NSUInteger>(count) * sizeof(SkyVertex) options:MTLResourceStorageModeShared] : nil;
-        cloudCount = count;
-    }
-
     void removeChunkMesh(uint64_t id) override
     {
         chunks.erase(id);
@@ -458,17 +442,11 @@ public:
                 drawStream(chunk, stream);
             }
         }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
+            return entry.second.counts[0] || entry.second.counts[1];
+        }));
 
         [encoder setDepthStencilState:overlayDepth];
-        if (clouds && cloudCount) {
-            [encoder setRenderPipelineState:skyPipeline];
-            for (uint32_t i = 0; i < view.cloudOriginCount; ++i) {
-                const std::array<float, 3>& origin = view.cloudOrigins[i];
-                pushOrigin(origin[0], origin[1], origin[2]);
-                [encoder setVertexBuffer:clouds offset:0 atIndex:0];
-                [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:cloudCount];
-            }
-        }
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
         for (const auto& [id, chunk] : chunks) {
@@ -544,6 +522,15 @@ public:
         }
         [encoder endEncoding];
         [commandBuffer presentDrawable:drawable];
+        CompletedFrame report { ++submissions, recordedOpaque };
+        recordedOpaque = 0;
+        std::shared_ptr<CompletedState> state = completedState;
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+            std::lock_guard<std::mutex> guard(state->mutex);
+            if (report.submission > state->frame.submission) {
+                state->frame = report;
+            }
+        }];
         [commandBuffer commit];
 
         encoder = nil;
@@ -551,8 +538,28 @@ public:
         drawable = nil;
     }
 
+    uint64_t submittedFrames() const override
+    {
+        return submissions;
+    }
+
+    CompletedFrame completedFrame() const override
+    {
+        std::lock_guard<std::mutex> guard(completedState->mutex);
+        return completedState->frame;
+    }
+
 private:
     static constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
+
+    struct CompletedState {
+        std::mutex mutex;
+        CompletedFrame frame;
+    };
+
+    uint64_t submissions = 0;
+    uint32_t recordedOpaque = 0;
+    std::shared_ptr<CompletedState> completedState = std::make_shared<CompletedState>();
 
     struct ChunkBuffer {
         std::array<id<MTLBuffer>, 4> buffers;
@@ -728,8 +735,6 @@ private:
     id<MTLRenderPipelineState> modelBlendPipeline;
     id<MTLRenderPipelineState> skyPipeline;
     id<MTLDepthStencilState> overlayDepth;
-    id<MTLBuffer> clouds;
-    uint32_t cloudCount = 0;
     id<MTLDepthStencilState> worldDepth;
     id<MTLDepthStencilState> uiDepth;
     id<MTLSamplerState> blockSampler;

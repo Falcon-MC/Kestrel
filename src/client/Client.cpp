@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "client/DebugLog.h"
 
 #include "platform/Paths.h"
 #include "platform/Window.h"
@@ -16,8 +17,15 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
+#include <thread>
 
 namespace kestrel {
+
+namespace {
+
+constexpr size_t MinVisibleTerrain = 1024;
+
+}
 
 Client::Client()
     : store(platform::dataDirectory() / "servers.txt")
@@ -54,11 +62,15 @@ int Client::run()
             renderer->resize(window->width(), window->height());
         }
 
+        if (int limit = menu.maxFps(); limit != menu::UnlimitedFps) {
+            std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
+        }
         auto now = std::chrono::steady_clock::now();
         float deltaSeconds = std::min(std::chrono::duration<float>(now - lastFrame).count(), 0.1f);
         lastFrame = now;
 
         syncAccount();
+        session.setRenderDistance(menu.renderDistance());
         syncSession();
         applyMeshUpdates();
 
@@ -137,21 +149,20 @@ int Client::run()
         if (std::optional<bool> answer = menu.takePackAnswer()) {
             session.answerResourcePacks(*answer);
         }
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings)) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps) {
             saveSettings();
         }
         if (menu.quitRequested()) {
             break;
         }
 
-        if (menu.worldVisible()) {
+        if (menu.worldVisible() || (worldShown && !terrainReleased)) {
             float renderDistance = static_cast<float>(std::max(timeState.chunkRadius, 4) * 16);
-            SkyFrame sky = atmosphereAt(currentWorldTime(timeState), renderDistance);
+            SkyFrame sky = atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel);
             std::vector<SkyVertex> background;
             if (blockAssets) {
                 background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
             }
-            std::vector<std::array<float, 3>> cloudOrigins = cloudTileOrigins(sky, camera.x(), camera.y(), camera.z());
 
             renderer->beginFrame(sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
             WorldView view;
@@ -168,8 +179,6 @@ int Client::run()
             view.sunDirection = sky.sunDirection;
             view.background = background.data();
             view.backgroundCount = static_cast<uint32_t>(background.size());
-            view.cloudOrigins = cloudOrigins.data();
-            view.cloudOriginCount = static_cast<uint32_t>(cloudOrigins.size());
             renderer->drawWorld(view);
         } else {
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
@@ -283,10 +292,87 @@ void Client::applyMeshUpdates()
             upload.translucentModels = update.mesh->translucentModels.data();
             upload.translucentModelCount = static_cast<uint32_t>(update.mesh->translucentModels.size());
             renderer->setChunkMesh(id, key.x * 16, key.y * 16, key.z * 16, upload);
+            if (update.mesh->cubes.empty() && update.mesh->models.empty()) {
+                opaqueChunks.erase(id);
+            } else {
+                opaqueChunks[id] = { key.x * 16, key.y * 16, key.z * 16 };
+            }
         } else {
             renderer->removeChunkMesh(id);
+            opaqueChunks.erase(id);
         }
     }
+}
+
+/**
+ * Sub-chunks with opaque terrain whose bounds touch the camera frustum.
+ */
+size_t Client::visibleTerrain() const
+{
+    float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
+    Mat4 matrix = camera.viewProjection(aspect);
+    std::array<std::array<float, 4>, 5> planes {};
+    for (size_t axis = 0; axis < 2; ++axis) {
+        for (size_t side = 0; side < 2; ++side) {
+            float sign = side == 0 ? 1.0f : -1.0f;
+            for (size_t column = 0; column < 4; ++column) {
+                planes[axis * 2 + side][column] = matrix[column * 4 + 3] + sign * matrix[column * 4 + axis];
+            }
+        }
+    }
+    for (size_t column = 0; column < 4; ++column) {
+        planes[4][column] = matrix[column * 4 + 2];
+    }
+    size_t visible = 0;
+    for (const auto& [id, origin] : opaqueChunks) {
+        float cx = static_cast<float>(origin[0] + 8 - camera.x());
+        float cy = static_cast<float>(origin[1] + 8 - camera.y());
+        float cz = static_cast<float>(origin[2] + 8 - camera.z());
+        bool inside = true;
+        for (const std::array<float, 4>& plane : planes) {
+            float radius = 8.0f * (std::abs(plane[0]) + std::abs(plane[1]) + std::abs(plane[2]));
+            if (plane[0] * cx + plane[1] * cy + plane[2] * cz + plane[3] < -radius) {
+                inside = false;
+                break;
+            }
+        }
+        if (inside) {
+            ++visible;
+        }
+    }
+    return visible;
+}
+
+/**
+ * The loading cover lifts once the view is dense (enough visible terrain) or
+ * the whole requested area has arrived and every mesh is built, and the GPU
+ * has finished a frame submitted after that point, one that drew opaque
+ * terrain for a dense view; after that it stays lifted for the session.
+ */
+bool Client::terrainReady(const SessionSnapshot& snapshot)
+{
+    if (terrainReleased) {
+        return true;
+    }
+    bool dense = visibleTerrain() >= MinVisibleTerrain;
+    bool bounded = snapshot.cohortComplete && snapshot.world.pendingSubChunks == 0 && snapshot.meshJobs == 0 && !snapshot.updatesPending;
+    if (!dense && !bounded) {
+        readinessFrame.reset();
+        return false;
+    }
+    if (!readinessFrame) {
+        readinessFrame = renderer->submittedFrames();
+        return false;
+    }
+    CompletedFrame completed = renderer->completedFrame();
+    if (completed.submission <= *readinessFrame) {
+        return false;
+    }
+    terrainReleased = (dense && completed.opaqueChunks != 0) || bounded;
+    if (terrainReleased) {
+        debugLog(std::string("terrain released, ") + (dense ? "dense view" : "bounded view") + ", gpu opaque chunks " + std::to_string(completed.opaqueChunks));
+    }
+    return terrainReleased;
 }
 
 void Client::syncSession()
@@ -302,6 +388,9 @@ void Client::syncSession()
         seenJoin = snapshot.joinCount;
         seenTeleport = snapshot.teleportCount;
         renderer->clearChunkMeshes();
+        opaqueChunks.clear();
+        terrainReleased = false;
+        readinessFrame.reset();
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
     if (snapshot.state == SessionState::Joined && snapshot.assets && snapshot.assets != blockAssets) {
@@ -317,8 +406,6 @@ void Client::syncSession()
         upload.size = world::TextureSize;
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
-        std::vector<SkyVertex> clouds = buildCloudMesh(assets->cloudMask());
-        renderer->setCloudMesh(clouds.data(), static_cast<uint32_t>(clouds.size()));
         blockAssets = assets;
     }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {
@@ -327,10 +414,17 @@ void Client::syncSession()
     }
     if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) {
         renderer->clearChunkMeshes();
+        opaqueChunks.clear();
+    }
+    if (snapshot.state != SessionState::Joined) {
+        terrainReleased = false;
+        readinessFrame.reset();
     }
     worldShown = snapshot.state == SessionState::Joined;
     timeState.worldTime = snapshot.worldTime;
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
+    timeState.rainLevel = snapshot.rainLevel;
+    timeState.thunderLevel = snapshot.thunderLevel;
     timeState.daylightCycle = snapshot.daylightCycle;
     timeState.chunkRadius = snapshot.chunkRadius;
     menu::SessionInfo info;
@@ -345,7 +439,8 @@ void Client::syncSession()
         info.status = menu::SessionStatus::Connecting;
         break;
     case SessionState::Joined:
-        info.status = snapshot.worldReady ? menu::SessionStatus::Joined : menu::SessionStatus::Connecting;
+        info.loadingTerrain = !terrainReady(snapshot);
+        info.status = info.loadingTerrain ? menu::SessionStatus::Connecting : menu::SessionStatus::Joined;
         break;
     case SessionState::Disconnected:
         info.status = menu::SessionStatus::Disconnected;
@@ -432,6 +527,11 @@ void Client::loadSettings()
             if (parsed >= 1.0f && parsed <= 2.0f) {
                 menu.setInterfaceScale(parsed);
             }
+        } else if (key == "renderDistance") {
+            menu.setRenderDistance(std::clamp(std::atoi(value.c_str()), menu::MinRenderDistance, menu::MaxRenderDistance));
+        } else if (key == "maxFps") {
+            int parsed = std::atoi(value.c_str());
+            menu.setMaxFps(parsed == menu::UnlimitedFps ? parsed : std::clamp(parsed, menu::MinMaxFps, menu::MaxMaxFps));
         }
         for (size_t i = 0; i < KeyBindings::Count; ++i) {
             if (key == std::string("key.") + KeyBindings::id(i)) {
@@ -445,18 +545,24 @@ void Client::loadSettings()
     menu.setKeyBindings(bindings);
     savedScale = menu.interfaceScale();
     savedBindings = bindings;
+    savedRenderDistance = menu.renderDistance();
+    savedMaxFps = menu.maxFps();
 }
 
 void Client::saveSettings()
 {
     std::ofstream file(settingsFile, std::ios::trunc);
     file << "interfaceScale=" << menu.interfaceScale() << '\n';
+    file << "renderDistance=" << menu.renderDistance() << '\n';
+    file << "maxFps=" << menu.maxFps() << '\n';
     const KeyBindings& current = menu.keyBindings();
     for (size_t i = 0; i < KeyBindings::Count; ++i) {
         file << "key." << KeyBindings::id(i) << '=' << keyName(current.keys[i]) << '\n';
     }
     savedScale = menu.interfaceScale();
     savedBindings = current;
+    savedRenderDistance = menu.renderDistance();
+    savedMaxFps = menu.maxFps();
 }
 
 }

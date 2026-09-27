@@ -8,11 +8,11 @@ namespace kestrel {
 namespace {
 
 constexpr double DayTicks = 24000.0;
-constexpr double CloudPeriod = 256.0;
-constexpr double CloudBlocksPerTick = 0.03;
-constexpr float CloudUnderside = 128.0f;
-constexpr float CloudTop = 132.0f;
 constexpr float CelestialHalfAngle = 0.075f;
+constexpr float ClearFogStart = 192.0f;
+constexpr float StormFogStart = 64.0f;
+constexpr float ClearFogEnd = 256.0f;
+constexpr float StormFogEnd = 112.0f;
 constexpr float Tau = 6.28318530718f;
 
 using Vec3 = std::array<float, 3>;
@@ -105,8 +105,10 @@ void pushCelestial(std::vector<SkyVertex>& out, const Vec3& direction, uint32_t 
 
 }
 
-SkyFrame atmosphereAt(double worldTicks, float renderDistance)
+SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, float thunderLevel)
 {
+    float rain = std::isfinite(rainLevel) ? std::clamp(rainLevel, 0.0f, 1.0f) : 0.0f;
+    float thunder = std::isfinite(thunderLevel) ? std::clamp(thunderLevel, 0.0f, 1.0f) : 0.0f;
     if (!std::isfinite(worldTicks)) {
         worldTicks = 0.0;
     }
@@ -125,23 +127,26 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance)
 
     float daylight = std::clamp(sun[1] * 0.8f + 0.2f, 0.0f, 1.0f);
     float sunrise = std::pow(1.0f - std::abs(sun[1]), 3.0f) * (0.25f + daylight * 0.75f);
-    Vec3 zenith = mix3({ 0.004f, 0.008f, 0.03f }, { 0.18f, 0.48f, 0.88f }, daylight);
+    float storm = std::clamp(rain * 0.55f + thunder * 0.3f, 0.0f, 0.8f);
+    Vec3 clearZenith = mix3({ 0.004f, 0.008f, 0.03f }, { 0.18f, 0.48f, 0.88f }, daylight);
     Vec3 clearHorizon = mix3({ 0.018f, 0.024f, 0.065f }, { 0.58f, 0.78f, 1.0f }, daylight);
-    Vec3 horizon = mix3(clearHorizon, { 1.0f, 0.36f, 0.12f }, sunrise * 0.55f);
+    Vec3 warmHorizon = mix3(clearHorizon, { 1.0f, 0.36f, 0.12f }, sunrise * 0.55f);
+    Vec3 zenith = mix3(clearZenith, { 0.12f, 0.14f, 0.16f }, storm);
+    Vec3 horizon = mix3(warmHorizon, { 0.22f, 0.24f, 0.26f }, storm);
     Vec3 fog = mix3(horizon, zenith, 0.18f);
 
     SkyFrame frame;
     frame.zenith = toDisplay(zenith);
     frame.horizon = toDisplay(horizon);
     frame.fogColor = toDisplay(fog);
-    frame.fogEnd = std::clamp(renderDistance - 8.0f, 32.0f, 256.0f);
-    frame.fogStart = frame.fogEnd * 0.75f;
+    float clearEnd = std::clamp(renderDistance - 8.0f, 32.0f, 256.0f);
+    float clearStart = clearEnd * 0.75f;
+    frame.fogStart = lerp(clearStart, clearStart * StormFogStart / ClearFogStart, std::clamp(rain * 0.8f + thunder * 0.2f, 0.0f, 1.0f));
+    frame.fogEnd = lerp(clearEnd, clearEnd * StormFogEnd / ClearFogEnd, std::clamp(rain * 0.75f + thunder * 0.25f, 0.0f, 1.0f));
     frame.daylight = daylight;
     frame.sunDirection = sun;
     double days = std::floor(worldTicks / DayTicks);
     frame.moonPhase = static_cast<uint32_t>(std::fmod(std::fmod(days, 8.0) + 8.0, 8.0));
-    double drift = std::fmod(worldTicks * CloudBlocksPerTick, CloudPeriod);
-    frame.cloudOffset = static_cast<float>(drift < 0.0 ? drift + CloudPeriod : drift);
     return frame;
 }
 
@@ -177,109 +182,6 @@ std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLay
     pushCelestial(out, frame.sunDirection, sunLayer);
     pushCelestial(out, { -frame.sunDirection[0], -frame.sunDirection[1], -frame.sunDirection[2] }, moonLayer);
     return out;
-}
-
-std::vector<SkyVertex> buildCloudMesh(const std::vector<uint8_t>& mask)
-{
-    std::vector<SkyVertex> out;
-    if (mask.size() != 256 * 256) {
-        return out;
-    }
-    auto filled = [&](int x, int z) {
-        return mask[size_t((z & 255) * 256 + (x & 255))] != 0;
-    };
-    uint32_t color = packColor({ 1.0f, 1.0f, 1.0f }, 0.8f);
-    auto vertex = [&](float x, float y, float z, uint32_t normal) {
-        SkyVertex result;
-        result.x = x;
-        result.y = y;
-        result.z = z;
-        result.color = color;
-        result.flags = SkyFogged | (normal << SkyNormalShift);
-        return result;
-    };
-
-    for (int z = 0; z < 256; ++z) {
-        int x = 0;
-        while (x < 256) {
-            if (!filled(x, z)) {
-                ++x;
-                continue;
-            }
-            int start = x;
-            while (x < 256 && filled(x, z)) {
-                ++x;
-            }
-            float x0 = static_cast<float>(start);
-            float x1 = static_cast<float>(x);
-            float z0 = static_cast<float>(z);
-            float z1 = z0 + 1.0f;
-            pushQuad(out, { vertex(x0, CloudTop, z0, 2), vertex(x0, CloudTop, z1, 2), vertex(x1, CloudTop, z1, 2), vertex(x1, CloudTop, z0, 2) });
-            pushQuad(out, { vertex(x0, CloudUnderside, z0, 1), vertex(x1, CloudUnderside, z0, 1), vertex(x1, CloudUnderside, z1, 1), vertex(x0, CloudUnderside, z1, 1) });
-        }
-    }
-
-    for (int z = 0; z < 256; ++z) {
-        for (int side = 0; side < 2; ++side) {
-            int dz = side == 0 ? -1 : 1;
-            int x = 0;
-            while (x < 256) {
-                if (!filled(x, z) || filled(x, z + dz)) {
-                    ++x;
-                    continue;
-                }
-                int start = x;
-                while (x < 256 && filled(x, z) && !filled(x, z + dz)) {
-                    ++x;
-                }
-                float x0 = static_cast<float>(start);
-                float x1 = static_cast<float>(x);
-                float edge = static_cast<float>(side == 0 ? z : z + 1);
-                uint32_t normal = side == 0 ? 5 : 6;
-                pushQuad(out, { vertex(x0, CloudUnderside, edge, normal), vertex(x1, CloudUnderside, edge, normal), vertex(x1, CloudTop, edge, normal), vertex(x0, CloudTop, edge, normal) });
-            }
-        }
-    }
-
-    for (int x = 0; x < 256; ++x) {
-        for (int side = 0; side < 2; ++side) {
-            int dx = side == 0 ? -1 : 1;
-            int z = 0;
-            while (z < 256) {
-                if (!filled(x, z) || filled(x + dx, z)) {
-                    ++z;
-                    continue;
-                }
-                int start = z;
-                while (z < 256 && filled(x, z) && !filled(x + dx, z)) {
-                    ++z;
-                }
-                float z0 = static_cast<float>(start);
-                float z1 = static_cast<float>(z);
-                float edge = static_cast<float>(side == 0 ? x : x + 1);
-                uint32_t normal = side == 0 ? 3 : 4;
-                pushQuad(out, { vertex(edge, CloudUnderside, z0, normal), vertex(edge, CloudUnderside, z1, normal), vertex(edge, CloudTop, z1, normal), vertex(edge, CloudTop, z0, normal) });
-            }
-        }
-    }
-    return out;
-}
-
-std::vector<std::array<float, 3>> cloudTileOrigins(const SkyFrame& frame, double cameraX, double cameraY, double cameraZ)
-{
-    std::vector<std::array<float, 3>> origins;
-    double baseX = std::floor((cameraX - frame.cloudOffset) / CloudPeriod) * CloudPeriod + frame.cloudOffset;
-    double baseZ = std::floor(cameraZ / CloudPeriod) * CloudPeriod;
-    for (int dz = -1; dz <= 1; ++dz) {
-        for (int dx = -1; dx <= 1; ++dx) {
-            origins.push_back({
-                static_cast<float>(baseX + dx * CloudPeriod - cameraX),
-                static_cast<float>(-cameraY),
-                static_cast<float>(baseZ + dz * CloudPeriod - cameraZ),
-            });
-        }
-    }
-    return origins;
 }
 
 }

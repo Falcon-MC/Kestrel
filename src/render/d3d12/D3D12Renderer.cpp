@@ -321,7 +321,6 @@ SkyOut vs_sky(SkyIn input)
 
 float4 ps_sky(SkyOut input) : SV_Target
 {
-    static const float3 normals[7] = { float3(0, 0, 0), float3(0, -1, 0), float3(0, 1, 0), float3(-1, 0, 0), float3(1, 0, 0), float3(0, 0, -1), float3(0, 0, 1) };
     float4 color = input.color;
     if ((input.flags & 1) != 0) {
         float4 texel = blocks.SampleLevel(blockSampler, float3(input.uv, input.layer), 0);
@@ -329,18 +328,6 @@ float4 ps_sky(SkyOut input) : SV_Target
         if ((input.flags & 2) == 0) {
             color.a *= texel.a;
         }
-    }
-    uint normal = (input.flags >> 3) & 7;
-    if (normal != 0) {
-        float directional = max(dot(normals[min(normal, 6u)], sun.xyz), 0.0);
-        color.rgb *= max(params.y, 0.2) * lerp(0.55, 1.0, directional);
-    }
-    if ((input.flags & 4) != 0) {
-        float start = clamp(fog.w, 0.0, 255.0);
-        float end = clamp(params.x, 0.0, 255.0);
-        float range = length(input.relative);
-        float amount = end <= start ? (range >= end ? 1.0 : 0.0) : smoothstep(start, end, range);
-        color.a *= 1.0 - amount;
     }
     if ((input.flags & 2) != 0) {
         return float4(color.rgb * color.a, 0.0);
@@ -649,15 +636,6 @@ public:
         chunks.emplace(id, std::move(chunk));
     }
 
-    void setCloudMesh(const SkyVertex* vertices, uint32_t count) override
-    {
-        if (clouds) {
-            retired.push_back({ std::move(clouds), fenceCounter + 1 });
-        }
-        clouds = uploadBytes(vertices, static_cast<size_t>(count) * sizeof(SkyVertex));
-        cloudCount = count;
-    }
-
     void removeChunkMesh(uint64_t id) override
     {
         auto found = chunks.find(id);
@@ -679,6 +657,10 @@ public:
     void beginFrame(float r, float g, float b) override
     {
         waitFor(fenceValues[frameIndex]);
+        if (slotFrames[frameIndex].submission > completedReport.submission) {
+            completedReport = slotFrames[frameIndex];
+        }
+        recordedOpaque = 0;
         uint64_t completed = fence->GetCompletedValue();
         std::erase_if(retired, [completed](const RetiredBuffer& entry) {
             return entry.fenceValue <= completed;
@@ -756,16 +738,9 @@ public:
                 drawStream(chunk, stream);
             }
         }
-
-        if (clouds && cloudCount) {
-            commandList->SetPipelineState(skyPipeline.Get());
-            for (uint32_t i = 0; i < view.cloudOriginCount; ++i) {
-                const std::array<float, 3>& origin = view.cloudOrigins[i];
-                bindOrigin(origin[0], origin[1], origin[2]);
-                bindVertices(clouds.Get(), cloudCount, sizeof(SkyVertex));
-                commandList->DrawInstanced(cloudCount, 1, 0, 0);
-            }
-        }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
+            return entry.second.counts[0] || entry.second.counts[1];
+        }));
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
         for (const auto& [id, chunk] : chunks) {
@@ -837,11 +812,22 @@ public:
 
         ID3D12CommandList* lists[] = { commandList.Get() };
         queue->ExecuteCommandLists(1, lists);
-        swapChain->Present(1, 0);
+        swapChain->Present(0, 0);
 
         fenceValues[frameIndex] = ++fenceCounter;
         queue->Signal(fence.Get(), fenceCounter);
+        slotFrames[frameIndex] = { ++submissions, recordedOpaque };
         frameIndex = swapChain->GetCurrentBackBufferIndex();
+    }
+
+    uint64_t submittedFrames() const override
+    {
+        return submissions;
+    }
+
+    CompletedFrame completedFrame() const override
+    {
+        return completedReport;
     }
 
 private:
@@ -1194,8 +1180,6 @@ private:
     ComPtr<ID3D12PipelineState> blendPipeline;
     ComPtr<ID3D12PipelineState> modelBlendPipeline;
     ComPtr<ID3D12PipelineState> skyPipeline;
-    ComPtr<ID3D12Resource> clouds;
-    uint32_t cloudCount = 0;
     ComPtr<ID3D12Resource> blockTextures;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
     std::vector<RetiredBuffer> retired;
@@ -1204,6 +1188,10 @@ private:
     HANDLE fenceEvent = nullptr;
     std::array<uint64_t, FrameCount> fenceValues {};
     uint64_t fenceCounter = 0;
+    uint64_t submissions = 0;
+    uint32_t recordedOpaque = 0;
+    std::array<CompletedFrame, FrameCount> slotFrames {};
+    CompletedFrame completedReport;
     uint32_t rtvStride = 0;
     uint32_t frameIndex = 0;
 };
