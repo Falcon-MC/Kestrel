@@ -59,6 +59,15 @@ void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, 
     pushIndices(base);
 }
 
+void DrawList::freeQuad(const std::array<std::array<float, 2>, 4>& points, const std::array<std::array<float, 2>, 4>& uvs, uint32_t color)
+{
+    uint32_t base = static_cast<uint32_t>(vertexData.size());
+    for (size_t corner = 0; corner < 4; ++corner) {
+        vertexData.push_back({ points[corner][0], points[corner][1], uvs[corner][0], uvs[corner][1], color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
+    }
+    pushIndices(base);
+}
+
 void DrawList::pushIndices(uint32_t base)
 {
     indexData.insert(indexData.end(), { base, base + 1, base + 2, base, base + 2, base + 3 });

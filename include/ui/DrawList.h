@@ -2,6 +2,7 @@
 
 #include "ui/Types.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -32,6 +33,7 @@ public:
 
     void fill(const Rect& logical, Color color);
     void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color, float topShift = 0.0f, float bottomShift = 0.0f);
+    void freeQuad(const std::array<std::array<float, 2>, 4>& points, const std::array<std::array<float, 2>, 4>& uvs, uint32_t color);
 
     // In pixels. Quads are cut down to it on the CPU, texture coordinates included.
     void setClip(const Rect& pixels)
