@@ -643,6 +643,48 @@ void Session::setLookRay(const std::array<double, 3>& origin, const std::array<f
     lookDirection = direction;
 }
 
+/**
+ * The liquid the given point sits in: 0 for air, 1 for water, 2 for lava. A
+ * liquid fills (8 - level) / 9 of its block, a falling one or one under the
+ * same liquid fills it all, the way liquid surfaces are meshed.
+ */
+uint8_t Session::mediumAt(const std::array<double, 3>& position)
+{
+    if (!assets) {
+        return 0;
+    }
+    auto liquidAt = [&](int64_t x, int64_t y, int64_t z, uint8_t& level) -> uint8_t {
+        world::SubChunkKey key { current.dimension, int32_t(x >> 4), int32_t(y >> 4), int32_t(z >> 4) };
+        std::shared_ptr<const world::SubChunk> sub = world.store().subChunk(key);
+        if (!sub) {
+            return 0;
+        }
+        for (uint32_t layer = 0; layer < 2; ++layer) {
+            uint32_t value = sub->runtimeId(layer, uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15));
+            if (value == world::ImplicitAir) {
+                continue;
+            }
+            const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+            if (visual.liquid) {
+                level = visual.liquidLevel;
+                return visual.liquid;
+            }
+        }
+        return 0;
+    };
+    int64_t x = static_cast<int64_t>(std::floor(position[0]));
+    int64_t y = static_cast<int64_t>(std::floor(position[1]));
+    int64_t z = static_cast<int64_t>(std::floor(position[2]));
+    uint8_t level = 0;
+    uint8_t kind = liquidAt(x, y, z, level);
+    if (!kind) {
+        return 0;
+    }
+    uint8_t above = 0;
+    double surface = level >= 8 || liquidAt(x, y + 1, z, above) == kind ? 1.0 : (8.0 - (level & 7)) / 9.0;
+    return position[1] - static_cast<double>(y) < surface ? kind : 0;
+}
+
 std::string Session::traceTarget()
 {
     constexpr double Reach = 32.0;
@@ -1255,6 +1297,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
                 current.blockAtPlayer = "no sub-chunk (air)";
             }
             current.targetBlock = traceTarget();
+            current.cameraMedium = mediumAt(lookOrigin);
             current.airSequential = assets->airSequentialId();
             current.airHash = assets->airNetworkHash();
             current.unresolvedLookups = assets->unresolvedLookups();

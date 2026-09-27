@@ -150,6 +150,24 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
     return frame;
 }
 
+SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium)
+{
+    constexpr std::array<float, 3> WaterFog { 0.152f, 0.380f, 0.484f };
+    constexpr float WaterFogEnd = 32.0f;
+    constexpr std::array<float, 3> LavaFog { 0.702f, 0.313f, 0.0f };
+    constexpr float LavaFogEnd = 3.0f;
+    if (medium != 1 && medium != 2) {
+        return frame;
+    }
+    SkyFrame result = frame;
+    result.fogColor = medium == 1 ? WaterFog : LavaFog;
+    result.fogStart = 0.0f;
+    result.fogEnd = medium == 1 ? WaterFogEnd : LavaFogEnd;
+    result.zenith = result.fogColor;
+    result.horizon = result.fogColor;
+    return result;
+}
+
 std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLayer, uint32_t moonLayer)
 {
     constexpr int Rings = 12;

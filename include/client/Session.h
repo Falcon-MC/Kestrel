@@ -182,6 +182,7 @@ struct SessionSnapshot {
     bool daylightCycle = true;
     float rainLevel = 0.0f;
     float thunderLevel = 0.0f;
+    uint8_t cameraMedium = 0;
     bool cohortComplete = false;
     bool updatesPending = false;
     std::vector<ActorView> actors;
@@ -223,6 +224,7 @@ private:
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     std::string traceTarget();
+    uint8_t mediumAt(const std::array<double, 3>& position);
 
     std::thread worker;
     std::atomic<bool> cancelled { false };

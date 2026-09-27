@@ -400,8 +400,8 @@ int Client::run()
             std::vector<SkyVertex> background;
             {
                 Profiler::Section section(profiler, "sky");
-                sky = atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel);
-                if (blockAssets) {
+                sky = submergedIn(atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel), timeState.cameraMedium);
+                if (blockAssets && timeState.cameraMedium == 0) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
             }
@@ -1083,6 +1083,7 @@ void Client::syncSession()
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
     timeState.rainLevel = snapshot.rainLevel;
     timeState.thunderLevel = snapshot.thunderLevel;
+    timeState.cameraMedium = snapshot.cameraMedium;
     actorViews = std::move(snapshot.actors);
     hudState = std::move(snapshot.hud);
     for (SkinUpload& skin : session.takeSkinUploads()) {
