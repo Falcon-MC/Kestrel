@@ -306,13 +306,9 @@ int Client::run()
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
                 session.setMotionInput(input);
-                float fovTarget = 1.0f;
-                if (playerView.flying) {
-                    fovTarget *= 1.1f;
-                }
-                if (playerView.sprinting) {
-                    fovTarget *= 1.15f;
-                }
+                float fovTarget = playerView.flying ? 1.1f : 1.0f;
+                fovTarget *= (playerView.movementSpeed / 0.1f + 1.0f) * 0.5f;
+                fovTarget = std::clamp(fovTarget, 0.1f, 1.5f);
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
                 double eye = playerView.sneaking ? 1.54 : 1.62;
@@ -457,6 +453,7 @@ int Client::run()
             view.fogStart = sky.fogStart;
             view.fogEnd = sky.fogEnd;
             view.daylight = sky.daylight;
+            view.nightVision = nightVisionStrength();
             view.sunDirection = sky.sunDirection;
             view.background = background.data();
             view.backgroundCount = static_cast<uint32_t>(background.size());
@@ -813,6 +810,33 @@ void Client::handleHotbarInput()
  * armor points, heart and hunger looks from active effects, the fading name
  * of a newly selected item and blinking effects about to expire.
  */
+/**
+ * How strongly night vision lights the world: fully while it lasts, pulsing
+ * during its last ten seconds, and not at all without it.
+ */
+float Client::nightVisionStrength() const
+{
+    constexpr int32_t NightVisionEffect = 16;
+    double now = secondsNow();
+    for (const HudEffect& effect : hudState.effects) {
+        if (effect.id != NightVisionEffect) {
+            continue;
+        }
+        if (effect.expires < 0.0) {
+            return 1.0f;
+        }
+        double remaining = effect.expires - now;
+        if (remaining <= 0.0) {
+            return 0.0f;
+        }
+        if (remaining > 10.0) {
+            return 1.0f;
+        }
+        return 0.7f + static_cast<float>(std::sin(remaining * 20.0 * 3.14159265 * 0.2)) * 0.3f;
+    }
+    return 0.0f;
+}
+
 menu::HudView Client::buildHudView()
 {
     menu::HudView view;

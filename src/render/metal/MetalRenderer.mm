@@ -251,6 +251,7 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
 {
     float daylight = max(saturate(draw.params.y), 0.2);
     float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    channel = mix(channel, 1.0, saturate(draw.params.z));
     float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(relative));

@@ -48,6 +48,7 @@ vec3 shadeWorld(vec3 rgb)
 {
     float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
     float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
+    channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
     float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
     vec3 color = rgb * inShade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(inRelative));

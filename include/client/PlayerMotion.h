@@ -131,6 +131,11 @@ public:
         return isSneaking;
     }
 
+    float speed() const
+    {
+        return movementSpeed;
+    }
+
     bool initialized() const
     {
         return ready;

@@ -886,6 +886,7 @@ void Session::tickMotion()
     current.player.sneaking = tick.sneaking;
     current.player.sprinting = tick.sprinting;
     current.player.flying = tick.flying;
+    current.player.movementSpeed = motion.speed();
 }
 
 /**
