@@ -215,6 +215,16 @@ public:
         [window zoom:nil];
     }
 
+    bool fullscreen() const override
+    {
+        return (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    }
+
+    void toggleFullscreen() override
+    {
+        [window toggleFullScreen:nil];
+    }
+
     void close() override
     {
         delegate.open = false;

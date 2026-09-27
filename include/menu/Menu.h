@@ -151,12 +151,14 @@ struct ChromeInfo {
     bool captionButtons = false;
     float insetLeft = 0.0f;
     bool maximized = false;
+    bool fullscreen = false;
 };
 
 enum class ChromeAction {
     None,
     Minimize,
     Maximize,
+    Fullscreen,
     Close,
 };
 
@@ -230,6 +232,7 @@ public:
 
     bool worldVisible() const;
     bool capturesMouse() const;
+    bool headerVisible() const;
 
     bool takeDisconnectRequest()
     {

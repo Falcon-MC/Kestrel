@@ -94,7 +94,7 @@ int Client::run()
             uploadedTitleRevision = titleRevision;
         }
 
-        menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / menu.interfaceScale(), window->maximized() });
+        menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / menu.interfaceScale(), window->maximized(), window->fullscreen() });
 
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, window->input(), widgets, scale);
@@ -102,7 +102,7 @@ int Client::run()
         context.endFrame();
 
         WindowChrome chrome;
-        chrome.captionHeight = ui::theme::HeaderHeight * scale;
+        chrome.captionHeight = menu.headerVisible() ? ui::theme::HeaderHeight * scale : 0.0f;
         for (const ui::Rect& rect : context.interactiveRects()) {
             if (rect.y < ui::theme::HeaderHeight) {
                 chrome.interactive.push_back({ rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale });
@@ -117,6 +117,9 @@ int Client::run()
             break;
         case menu::ChromeAction::Maximize:
             window->toggleMaximize();
+            break;
+        case menu::ChromeAction::Fullscreen:
+            window->toggleFullscreen();
             break;
         case menu::ChromeAction::Close:
             window->close();

@@ -208,6 +208,27 @@ public:
         }
     }
 
+    bool fullscreen() const override
+    {
+        return glfwGetWindowMonitor(window) != nullptr;
+    }
+
+    void toggleFullscreen() override
+    {
+        if (fullscreen()) {
+            glfwSetWindowMonitor(window, nullptr, windowedX, windowedY, windowedWidth, windowedHeight, GLFW_DONT_CARE);
+            return;
+        }
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        if (!mode) {
+            return;
+        }
+        glfwGetWindowPos(window, &windowedX, &windowedY);
+        glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
+        glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+    }
+
     void close() override
     {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -293,6 +314,10 @@ private:
     bool hasLastCursor = false;
     double lastCursorX = 0.0;
     double lastCursorY = 0.0;
+    int windowedX = 0;
+    int windowedY = 0;
+    int windowedWidth = 0;
+    int windowedHeight = 0;
     InputState state;
 };
 
