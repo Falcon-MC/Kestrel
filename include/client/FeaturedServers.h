@@ -14,9 +14,20 @@
 namespace kestrel {
 
 /**
+ * A game mode card from a server's availableGames, with the picture its
+ * image tag points at.
+ */
+struct FeaturedGame {
+    std::string title;
+    std::string subtitle;
+    std::string description;
+    std::string imageUrl;
+};
+
+/**
  * One partner server as the game's discovery service lists it. Featured ones
- * have an address to dial; creator experiences have none and are joined
- * through their experience id instead.
+ * have a catalog address, creator experiences have none; both are joined
+ * through their experience id, which is also the item id.
  */
 struct FeaturedServer {
     std::string id;
@@ -28,6 +39,7 @@ struct FeaturedServer {
     std::string address;
     std::string iconUrl;
     std::vector<std::string> showcaseUrls;
+    std::vector<FeaturedGame> games;
 
     bool creatorExperience() const
     {

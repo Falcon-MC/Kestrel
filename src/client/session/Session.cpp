@@ -185,8 +185,10 @@ std::shared_ptr<const std::vector<uint8_t>> packTitle(const world::PackFiles& pa
 }
 
 /**
- * Creator experiences have no fixed address; the gatherings service hands
- * out a server for them on every join.
+ * Partner servers are joined the way the game joins them: the gatherings
+ * service hands out the address on every join. Creator experiences have no
+ * other address, and featured servers may be steered away from their catalog
+ * one (The Hive answers with a different host).
  */
 bool resolveExperience(MinecraftAuthentication& authentication, const std::string& experienceId, std::string& host, unsigned short& port, std::string& error)
 {
@@ -774,7 +776,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.state = SessionState::Connecting;
     } else if (target.rfind(ExperiencePrefix, 0) == 0) {
         if (!authentication) {
-            fail("Sign in with Microsoft to join creator experiences");
+            fail("Sign in with Microsoft to join featured servers");
             return;
         }
         std::string error;

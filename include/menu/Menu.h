@@ -94,6 +94,13 @@ struct ServerStatus {
     std::string motd;
 };
 
+struct FeaturedGameEntry {
+    std::string title;
+    std::string subtitle;
+    std::string description;
+    std::string image;
+};
+
 /**
  * A partner server from the game's discovery service, with the skin sprites
  * of its icon and of the showcase screenshots that finished downloading.
@@ -109,6 +116,7 @@ struct FeaturedEntry {
     std::string icon;
     std::vector<std::string> showcase;
     size_t showcaseCount = 0;
+    std::vector<FeaturedGameEntry> games;
 };
 
 struct ConnectRequest {
