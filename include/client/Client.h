@@ -8,6 +8,8 @@
 #include "ui/Context.h"
 #include "ui/DrawList.h"
 #include "ui/Font.h"
+#include "ui/GameAssets.h"
+#include "ui/Skin.h"
 
 #include <array>
 #include <filesystem>
@@ -33,6 +35,7 @@ private:
     void applyMeshUpdates();
     size_t visibleTerrain() const;
     bool terrainReady(const SessionSnapshot& snapshot);
+    float guiScale() const;
     void uploadAtlas();
     void loadWorlds();
     void loadSettings();
@@ -40,6 +43,8 @@ private:
 
     std::unique_ptr<Window> window;
     std::unique_ptr<Renderer> renderer;
+    ui::GameAssets assets;
+    ui::Skin skin { assets };
     ui::Font font;
     ui::DrawList drawList;
     ui::WidgetState widgets;
@@ -53,13 +58,8 @@ private:
     int savedRenderDistance = menu::DefaultRenderDistance;
     int savedMaxFps = menu::DefaultMaxFps;
     std::vector<uint8_t> atlasPixels;
-    std::vector<uint8_t> avatarPixels;
     uint64_t avatarRevision = 0;
-    uint64_t uploadedAvatarRevision = 0;
     std::shared_ptr<const std::vector<uint8_t>> shownTitle;
-    std::vector<uint8_t> titlePixels;
-    uint64_t titleRevision = 0;
-    uint64_t uploadedTitleRevision = 0;
     FreeCamera camera;
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;

@@ -31,9 +31,18 @@ public:
     }
 
     void fill(const Rect& logical, Color color);
-    void shape(const Rect& logical, Color top, Color bottom, float radius, float softness);
-    void image(const Rect& logical, float u0, float v0, float u1, float v1, float radius);
     void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color);
+
+    // In pixels. Quads are cut down to it on the CPU, texture coordinates included.
+    void setClip(const Rect& pixels)
+    {
+        clip = pixels;
+    }
+
+    void clearClip()
+    {
+        clip = {};
+    }
 
     const std::vector<UiVertex>& vertices() const
     {
@@ -53,6 +62,7 @@ private:
     float pixelScale = 1.0f;
     float whiteU = 0.0f;
     float whiteV = 0.0f;
+    Rect clip {};
 };
 
 }

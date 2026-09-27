@@ -10,13 +10,27 @@
 namespace kestrel::ui {
 
 class DrawList;
+class GameAssets;
+class Skin;
 
+/**
+ * Pixel is the classic bitmap font from font/default8.png. The rest come from the fonts the
+ * HTML menus ship with: Seven for controls, Ten for headings, Five for sub headings and
+ * Noto Sans for running text. Sizes are in menu units, see theme::css().
+ */
 enum class TextStyle {
-    Caption,
-    Body,
-    Label,
+    Pixel,
+    Ui,
+    UiSmall,
+    UiLarge,
     Heading,
-    Display,
+    HeadingSmall,
+    HeadingLarge,
+    SubHeading,
+    Body,
+    BodySmall,
+    BodyBold,
+    Count,
 };
 
 class Font {
@@ -25,23 +39,12 @@ public:
     static constexpr uint32_t TitleWidth = 512;
     static constexpr uint32_t TitleHeight = 128;
 
-    struct ImageSlot {
-        uint32_t x;
-        uint32_t y;
-        uint32_t size;
-    };
-
-    bool load();
+    bool load(GameAssets& assets, Skin& skin);
     void bake(float scale);
 
-    const std::vector<uint8_t>& atlasPixels() const
+    const std::vector<uint8_t>& coverage() const
     {
         return pixels;
-    }
-
-    uint32_t atlasSize() const
-    {
-        return size;
     }
 
     float whiteU() const
@@ -54,13 +57,11 @@ public:
         return white[1];
     }
 
-    ImageSlot imageSlot() const;
-    ImageSlot titleSlot() const;
-
     float measure(std::string_view text, TextStyle style) const;
     float lineHeight(TextStyle style) const;
     void draw(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, float maxWidth) const;
     float drawWrapped(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color) const;
+    size_t wrap(std::string_view text, TextStyle style, float width, std::vector<std::string_view>& lines) const;
 
 private:
     struct Glyph {
@@ -76,22 +77,33 @@ private:
     };
 
     struct Face {
-        std::vector<Glyph> ascii;
-        std::vector<Glyph> extra;
+        std::vector<Glyph> glyphs;
+        std::vector<char32_t> codepoints;
         float ascent = 0.0f;
         float lineHeight = 0.0f;
     };
 
-    const Face& face(TextStyle style) const;
-    const Glyph& glyph(const Face& face, char32_t cp) const;
-    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color) const;
-    bool pack(uint32_t atlas, float scale);
+    struct BitmapPage {
+        std::array<uint8_t, 256> start {};
+        std::array<uint8_t, 256> end {};
+        uint32_t cell = 8;
+        bool loaded = false;
+    };
 
-    std::vector<unsigned char> regular;
-    std::vector<unsigned char> bold;
-    std::array<Face, 5> faces;
+    const Glyph* glyph(const Face& face, char32_t cp) const;
+    float advance(TextStyle style, char32_t cp) const;
+    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color) const;
+    void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color) const;
+    float pixelAdvance(char32_t cp) const;
+    const BitmapPage* pixelPage(char32_t cp) const;
+    void readPixelPage(size_t index);
+    bool pack(uint32_t height, float scale);
+
+    Skin* skin = nullptr;
+    std::array<std::vector<unsigned char>, 5> sources;
+    std::array<Face, static_cast<size_t>(TextStyle::Count)> faces;
+    std::array<BitmapPage, 3> pages;
     std::vector<uint8_t> pixels;
-    uint32_t size = 0;
     float scale = 1.0f;
     std::array<float, 2> white {};
 };
