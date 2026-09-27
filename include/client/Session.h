@@ -53,6 +53,7 @@ struct SessionSnapshot {
     std::string assetsError;
     std::string error;
     uint64_t joinCount = 0;
+    bool worldReady = false;
     double spawnX = 0.0;
     double spawnY = 0.0;
     double spawnZ = 0.0;
@@ -106,6 +107,7 @@ private:
     void handleWorldPacket(const std::string& payload);
     void scheduleMeshes();
     void collectMeshes();
+    bool spawnAreaReady();
     std::string traceTarget();
 
     std::thread worker;
@@ -123,6 +125,7 @@ private:
     size_t meshQuads = 0;
     std::vector<MeshUpdate> pendingUpdates;
     uint64_t joins = 0;
+    double joinedAt = 0.0;
     uint64_t localRuntimeId = 0;
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };

@@ -158,8 +158,10 @@ void ChunkStore::markDirty(const SubChunkKey& key)
             if (column == columnsByKey.end()) {
                 continue;
             }
-            for (auto it = column->second.subChunks.begin(); it != column->second.subChunks.end() && it->first <= key.y + 1; ++it) {
-                dirty.insert({ key.dimension, key.x + dx, it->first, key.z + dz });
+            for (int32_t dy = -1; dy <= 1; ++dy) {
+                if (column->second.subChunks.contains(key.y + dy)) {
+                    dirty.insert({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+                }
             }
         }
     }

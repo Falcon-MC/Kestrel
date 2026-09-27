@@ -345,7 +345,7 @@ void Client::syncSession()
         info.status = menu::SessionStatus::Connecting;
         break;
     case SessionState::Joined:
-        info.status = menu::SessionStatus::Joined;
+        info.status = snapshot.worldReady ? menu::SessionStatus::Joined : menu::SessionStatus::Connecting;
         break;
     case SessionState::Disconnected:
         info.status = menu::SessionStatus::Disconnected;

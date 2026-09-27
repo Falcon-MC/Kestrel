@@ -50,6 +50,8 @@ constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr unsigned int TimeoutMs = 30000;
 constexpr int ChunkRadius = 16;
+constexpr int32_t SpawnReadyRadius = 4;
+constexpr double WorldReadyTimeoutSeconds = 20.0;
 
 const char* gameModeName(GameType type)
 {
@@ -383,6 +385,28 @@ void Session::scheduleMeshes()
     }
 }
 
+/**
+ * The spawn area is ready once every column within a few chunks of the spawn
+ * point has arrived, no sub-chunk is still awaited and every mesh is built.
+ */
+bool Session::spawnAreaReady()
+{
+    if (!assets || current.meshJobs != 0 || current.world.pendingSubChunks != 0) {
+        return false;
+    }
+    int32_t radius = std::clamp(current.chunkRadius, 1, SpawnReadyRadius);
+    int32_t cx = static_cast<int32_t>(std::floor(current.spawnX)) >> 4;
+    int32_t cz = static_cast<int32_t>(std::floor(current.spawnZ)) >> 4;
+    for (int32_t dx = -radius; dx <= radius; ++dx) {
+        for (int32_t dz = -radius; dz <= radius; ++dz) {
+            if (dx * dx + dz * dz <= radius * radius && !world.store().isLoaded({ current.dimension, cx + dx, cz + dz })) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void Session::collectMeshes()
 {
     for (world::MeshResult& result : mesher->takeResults()) {
@@ -528,6 +552,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         std::lock_guard<std::mutex> guard(mutex);
         connection = std::move(result.mConnection);
         current.state = SessionState::Joined;
+        current.worldReady = false;
+        joinedAt = secondsNow();
         current.displayName = result.mIdentity.mDisplayName;
         current.chunkRadius = connection->getChunkRadius();
         current.joinCount = ++joins;
@@ -649,6 +675,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.meshes = meshes.size();
         current.meshQuads = meshQuads;
         current.meshJobs = mesher->pending();
+        if (!current.worldReady && (spawnAreaReady() || secondsNow() - joinedAt > WorldReadyTimeoutSeconds)) {
+            current.worldReady = true;
+        }
         if (assets) {
             int32_t bx = static_cast<int32_t>(std::floor(current.spawnX));
             int32_t by = static_cast<int32_t>(std::floor(current.spawnY));

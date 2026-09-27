@@ -539,35 +539,52 @@ private:
         propagate(block, queue);
     }
 
-    bool columnBlockedAbove(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, int32_t x, int32_t z) const
+    static std::vector<uint8_t> blockedColumns(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
     {
-        int32_t dx = x < 0 ? -1 : (x >= int32_t(Side) ? 1 : 0);
-        int32_t dz = z < 0 ? -1 : (z >= int32_t(Side) ? 1 : 0);
-        uint32_t lx = uint32_t(x - dx * int32_t(Side));
-        uint32_t lz = uint32_t(z - dz * int32_t(Side));
-        for (const std::shared_ptr<const SubChunk>& subChunk : input.above[size_t((dx + 1) * 3 + (dz + 1))]) {
-            if (!subChunk) {
-                continue;
-            }
-            for (const PalettedStorage& storage : subChunk->storages()) {
-                for (uint32_t y = 0; y < Side; ++y) {
-                    uint32_t value = storage.runtimeId(lx, y, lz);
-                    if (value != ImplicitAir && assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter > 0) {
-                        return true;
+        std::vector<uint8_t> blocked(size_t(Extent) * Extent, 0);
+        for (int32_t dx = -1; dx <= 1; ++dx) {
+            for (int32_t dz = -1; dz <= 1; ++dz) {
+                for (const std::shared_ptr<const SubChunk>& subChunk : input.above[size_t((dx + 1) * 3 + (dz + 1))]) {
+                    if (!subChunk) {
+                        continue;
+                    }
+                    for (const PalettedStorage& storage : subChunk->storages()) {
+                        std::vector<uint8_t> filters;
+                        bool anyFilter = false;
+                        for (uint32_t value : storage.palette()) {
+                            bool filtering = value != ImplicitAir && assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter > 0;
+                            filters.push_back(filtering ? 1 : 0);
+                            anyFilter |= filtering;
+                        }
+                        if (!anyFilter) {
+                            continue;
+                        }
+                        for (uint32_t x = 0; x < Side; ++x) {
+                            for (uint32_t z = 0; z < Side; ++z) {
+                                uint8_t& column = blocked[size_t(dx * int32_t(Side) + int32_t(x) + Offset) * Extent + size_t(dz * int32_t(Side) + int32_t(z) + Offset)];
+                                if (column) {
+                                    continue;
+                                }
+                                for (uint32_t y = 0; y < Side && !column; ++y) {
+                                    column = filters[storage.isUniform() ? 0 : storage.paletteIndex(linearIndex(x, y, z))];
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        return false;
+        return blocked;
     }
 
     void solveSky(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
     {
         std::vector<uint32_t> queue;
+        std::vector<uint8_t> blocked = blockedColumns(assets, ids, input);
         int32_t top = Extent - Offset - 1;
         for (int32_t x = -Offset; x < Extent - Offset; ++x) {
             for (int32_t z = -Offset; z < Extent - Offset; ++z) {
-                if (columnBlockedAbove(assets, ids, input, x, z)) {
+                if (blocked[size_t(x + Offset) * Extent + size_t(z + Offset)]) {
                     continue;
                 }
                 for (int32_t y = top; y >= -Offset; --y) {
@@ -617,8 +634,13 @@ std::array<std::array<int32_t, 3>, 4> cubeFaceCorners(Face face)
 void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField& field, Face face, uint32_t slice, std::array<uint32_t, Side>& rows, std::vector<PackedQuad>& opaque, std::vector<PackedQuad>& translucent)
 {
     const std::array<std::array<int32_t, 3>, 4> corners = cubeFaceCorners(face);
+    std::unordered_map<size_t, QuadLight> baked;
     auto lightOf = [&](uint32_t x, uint32_t y, uint32_t z) {
-        return field.bake(int32_t(x), int32_t(y), int32_t(z), face, corners);
+        auto [found, inserted] = baked.try_emplace(linearIndex(x, y, z));
+        if (inserted) {
+            found->second = field.bake(int32_t(x), int32_t(y), int32_t(z), face, corners);
+        }
+        return found->second;
     };
     size_t faceIndex = static_cast<size_t>(face);
     for (uint32_t v = 0; v < Side; ++v) {
