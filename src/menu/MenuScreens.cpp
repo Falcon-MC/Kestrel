@@ -118,7 +118,7 @@ float Menu::header(Context& ui, float width, std::string_view heading, bool soci
 
     Rect back { 0.0f, 0.0f, 106.0f, HeaderHeight - 2.0f };
     Interaction backState = ui.interact("header:back", back);
-    ui.sprite({ 51.0f, 21.0f, 3.0f, 6.0f }, "hbui/arrowBack", backState.hovered ? Color { 90, 90, 90, 255 } : InkDark);
+    ui.sprite({ 48.0f, std::round((HeaderHeight - 2.0f - 14.0f) * 0.5f), 7.0f, 14.0f }, "hbui/arrowBack", backState.hovered ? Color { 90, 90, 90, 255 } : InkDark);
     if (backState.clicked) {
         goBack();
     }
@@ -136,8 +136,8 @@ float Menu::header(Context& ui, float width, std::string_view heading, bool soci
         constexpr std::string_view Label = "Social (0)";
         float textWidth = ui.measure(Label, TextStyle::Ui);
         float x = std::round(button.x + (button.w - textWidth - 9.0f) * 0.5f);
-        ui.sprite({ x, 19.0f, 7.5f, 7.5f }, "hbui/friends", InkDark);
-        ui.text(Label, TextStyle::Ui, x + 9.0f, std::round((HeaderHeight - 2.0f - ui.lineHeight(TextStyle::Ui)) * 0.5f), InkDark);
+        ui.sprite({ x - 3.0f, std::round((HeaderHeight - 2.0f - 11.0f) * 0.5f), 11.0f, 11.0f }, "hbui/friends");
+        ui.text(Label, TextStyle::Ui, x + 11.0f, std::round((HeaderHeight - 2.0f - ui.lineHeight(TextStyle::Ui)) * 0.5f), InkDark);
         if (state.clicked) {
             socialOpen = true;
             socialParty = false;
@@ -241,10 +241,11 @@ void Menu::play(Context& ui, float width, float height)
         bool active = playTab == tabs[i].tab;
         Interaction state = ui.pressable("tab:" + tabs[i].label, "tabBarNeutral", tab, true, active);
         float textWidth = ui.measure(tabs[i].label, TextStyle::Ui);
-        float x = std::round(tab.x + (tab.w - textWidth - 9.0f) * 0.5f);
+        constexpr float IconSize = 10.0f;
+        float x = std::round(tab.x + (tab.w - textWidth - IconSize - 4.0f) * 0.5f);
         float y = std::round(tab.y + (tab.h - css(4.0f) - ui.lineHeight(TextStyle::Ui)) * 0.5f) + (active ? 1.0f : 0.0f);
-        ui.sprite({ x, y + 1.0f, 6.0f, 6.0f }, tabs[i].icon);
-        ui.text(tabs[i].label, TextStyle::Ui, x + 9.0f, y, White);
+        ui.sprite({ x, std::round(y + (ui.lineHeight(TextStyle::Ui) - IconSize) * 0.5f), IconSize, IconSize }, tabs[i].icon);
+        ui.text(tabs[i].label, TextStyle::Ui, x + IconSize + 4.0f, y, White);
         if (active) {
             tabUnderline(ui, tab);
         }
