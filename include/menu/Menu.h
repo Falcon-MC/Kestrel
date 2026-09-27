@@ -365,6 +365,7 @@ private:
     Dialog dialog = Dialog::None;
     Field field = Field::None;
     bool socialOpen = false;
+    bool socialArmed = false;
     bool socialParty = false;
     std::optional<Selection> selection;
     std::optional<size_t> editing;
