@@ -181,13 +181,29 @@ public:
         }
         vkDeviceWaitIdle(device);
         destroyBlockTextures();
+        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
+            uint32_t first = page * BlockTexturePageLayers;
+            uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
+            uploadBlockTexturePage(textures, page, first, count);
+        }
+    }
 
+    /**
+     * Uploads one page of the block texture layers into its own array image.
+     * An empty page still gets a one-layer image so its binding stays valid.
+     */
+    void uploadBlockTexturePage(const BlockTextureUpload& textures, uint32_t page, uint32_t first, uint32_t count)
+    {
+        uint32_t layers = std::max(count, 1u);
+        VkImage& blockImage = blockImages[page];
+        VkDeviceMemory& blockMemory = blockMemories[page];
+        VkImageView& blockView = blockViews[page];
         VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
         imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
         imageInfo.extent = { textures.size, textures.size, 1 };
         imageInfo.mipLevels = textures.mipLevels;
-        imageInfo.arrayLayers = textures.layers;
+        imageInfo.arrayLayers = layers;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -205,18 +221,23 @@ public:
         VkDeviceSize total = 0;
         for (uint32_t mip = 0; mip < textures.mipLevels; ++mip) {
             uint32_t side = std::max<uint32_t>(textures.size >> mip, 1);
-            total += VkDeviceSize(side) * side * 4 * textures.layers;
+            total += VkDeviceSize(side) * side * 4 * layers;
         }
         Buffer staging = createBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         std::vector<VkBufferImageCopy> regions;
         VkDeviceSize offset = 0;
         for (uint32_t mip = 0; mip < textures.mipLevels; ++mip) {
             uint32_t side = std::max<uint32_t>(textures.size >> mip, 1);
-            size_t bytes = size_t(side) * side * 4 * textures.layers;
-            std::memcpy(static_cast<uint8_t*>(staging.mapped) + offset, textures.mips[mip], bytes);
+            size_t layerBytes = size_t(side) * side * 4;
+            if (count) {
+                std::memcpy(static_cast<uint8_t*>(staging.mapped) + offset, textures.mips[mip] + layerBytes * first, layerBytes * count);
+            } else {
+                std::memset(static_cast<uint8_t*>(staging.mapped) + offset, 0, layerBytes);
+            }
+            size_t bytes = layerBytes * layers;
             VkBufferImageCopy region {};
             region.bufferOffset = offset;
-            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, textures.layers };
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, layers };
             region.imageExtent = { side, side, 1 };
             regions.push_back(region);
             offset += bytes;
@@ -230,7 +251,7 @@ public:
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = blockImage;
-        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, textures.mipLevels, 0, textures.layers };
+        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, textures.mipLevels, 0, layers };
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         vkCmdCopyBufferToImage(command, staging.buffer, blockImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -245,7 +266,7 @@ public:
         viewInfo.image = blockImage;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, textures.mipLevels, 0, textures.layers };
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, textures.mipLevels, 0, layers };
         check(vkCreateImageView(device, &viewInfo, nullptr, &blockView), "vkCreateImageView");
 
         VkDescriptorImageInfo imageDescriptor {};
@@ -254,7 +275,7 @@ public:
         imageDescriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
         write.dstSet = worldDescriptorSet;
-        write.dstBinding = 0;
+        write.dstBinding = page;
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &imageDescriptor;
@@ -298,7 +319,7 @@ public:
 
     void drawWorld(const WorldView& view) override
     {
-        if (!recording || !blockView) {
+        if (!recording || !blockViews[0]) {
             return;
         }
         VkCommandBuffer command = commandBuffers[frame];
@@ -619,33 +640,37 @@ private:
 
     void destroyBlockTextures()
     {
-        if (blockView != VK_NULL_HANDLE) {
-            vkDestroyImageView(device, blockView, nullptr);
-            blockView = VK_NULL_HANDLE;
-        }
-        if (blockImage != VK_NULL_HANDLE) {
-            vkDestroyImage(device, blockImage, nullptr);
-            blockImage = VK_NULL_HANDLE;
-        }
-        if (blockMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, blockMemory, nullptr);
-            blockMemory = VK_NULL_HANDLE;
+        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
+            if (blockViews[page] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, blockViews[page], nullptr);
+                blockViews[page] = VK_NULL_HANDLE;
+            }
+            if (blockImages[page] != VK_NULL_HANDLE) {
+                vkDestroyImage(device, blockImages[page], nullptr);
+                blockImages[page] = VK_NULL_HANDLE;
+            }
+            if (blockMemories[page] != VK_NULL_HANDLE) {
+                vkFreeMemory(device, blockMemories[page], nullptr);
+                blockMemories[page] = VK_NULL_HANDLE;
+            }
         }
     }
 
     void createWorldPipeline()
     {
-        VkDescriptorSetLayoutBinding binding {};
-        binding.binding = 0;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        binding.descriptorCount = 1;
-        binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        std::array<VkDescriptorSetLayoutBinding, BlockTexturePages> bindings {};
+        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
+            bindings[page].binding = page;
+            bindings[page].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[page].descriptorCount = 1;
+            bindings[page].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutCreateInfo layoutInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &binding;
+        layoutInfo.bindingCount = BlockTexturePages;
+        layoutInfo.pBindings = bindings.data();
         check(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &worldDescriptorLayout), "vkCreateDescriptorSetLayout");
 
-        VkDescriptorPoolSize size { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+        VkDescriptorPoolSize size { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, BlockTexturePages };
         VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         poolInfo.maxSets = 1;
         poolInfo.poolSizeCount = 1;
@@ -1351,9 +1376,9 @@ private:
     VkImage depthImage = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
     VkImageView depthView = VK_NULL_HANDLE;
-    VkImage blockImage = VK_NULL_HANDLE;
-    VkDeviceMemory blockMemory = VK_NULL_HANDLE;
-    VkImageView blockView = VK_NULL_HANDLE;
+    std::array<VkImage, BlockTexturePages> blockImages {};
+    std::array<VkDeviceMemory, BlockTexturePages> blockMemories {};
+    std::array<VkImageView, BlockTexturePages> blockViews {};
     VkSampler blockSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout worldDescriptorLayout = VK_NULL_HANDLE;
     VkDescriptorPool worldDescriptorPool = VK_NULL_HANDLE;

@@ -6,6 +6,8 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
+#include <map>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -13,6 +15,8 @@
 #include <vector>
 
 namespace kestrel::world {
+
+class PackSource;
 
 enum BlockFlag : uint8_t {
     FlagAir = 1 << 0,
@@ -28,6 +32,7 @@ enum BlockFlag : uint8_t {
 inline constexpr uint32_t DiagnosticMaterial = 0;
 inline constexpr uint32_t TextureSize = 16;
 inline constexpr uint32_t TextureMipLevels = 5;
+inline constexpr size_t MaxTextureLayers = 4096;
 inline constexpr uint32_t NoModelTemplate = 0xFFFFFFFFu;
 
 enum ModelTemplateFlag : uint32_t {
@@ -64,8 +69,41 @@ struct ModelTemplate {
     uint32_t flags = 0;
 };
 
+enum BlockEntityKind : uint8_t {
+    EntityNone,
+    EntityChest,
+    EntityTrappedChest,
+    EntityEnderChest,
+    EntityBed,
+    EntityStandingBanner,
+    EntityWallBanner,
+    EntityFloorSkull,
+    EntityWallSkull,
+};
+
+inline constexpr size_t ChestKinds = 3;
+inline constexpr size_t SkullKinds = 5;
+inline constexpr size_t DyeColors = 16;
+inline constexpr size_t FineRotations = 16;
+
+/**
+ * Pre-built models for blocks drawn from their block entity, one per look
+ * and rotation: the mesher picks one from the block state and the block
+ * entity compound.
+ */
+struct BlockEntityTemplates {
+    std::array<std::array<uint32_t, 4>, ChestKinds> chest {};
+    std::array<std::array<std::array<uint32_t, 4>, 2>, ChestKinds> doubleChest {};
+    std::array<std::array<std::array<uint32_t, 4>, 2>, DyeColors> bed {};
+    std::array<std::array<uint32_t, FineRotations>, SkullKinds> floorSkull {};
+    std::array<std::array<uint32_t, 4>, SkullKinds> wallSkull {};
+    std::array<std::array<uint32_t, FineRotations>, DyeColors> standingBanner {};
+    std::array<std::array<uint32_t, 4>, DyeColors> wallBanner {};
+};
+
 struct BlockVisual {
     uint8_t flags = 0;
+    uint8_t blockEntity = EntityNone;
     std::array<uint32_t, 6> faces {};
     uint32_t modelTemplate = NoModelTemplate;
     uint32_t variant = 0;
@@ -145,6 +183,7 @@ public:
     const BlockVisual& visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential = nullptr) const;
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    uint32_t blockEntityTemplate(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
 
     size_t customBlockCount() const
     {
@@ -228,6 +267,8 @@ private:
     };
 
     bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
+    void buildBlockEntityTemplates(PackSource& pack, std::vector<std::vector<uint8_t>>& layers, std::vector<bool>& overlayLayers, std::map<std::string, uint32_t>& materialByKey,
+        const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
 
     BlockRegistry registry;
@@ -238,6 +279,7 @@ private:
     std::vector<Material> materialTable;
     std::vector<ModelTemplate> templates;
     std::vector<ModelQuad> quads;
+    BlockEntityTemplates entityTemplates;
     TextureArray textureArray;
     BiomeTints biomes;
     uint32_t sun = 0;

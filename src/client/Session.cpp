@@ -4,6 +4,7 @@
 #include "Network/Client/ClientNetworkSystem.h"
 #include "Network/Session/RealmsService.h"
 #include "client/DebugLog.h"
+#include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
@@ -301,6 +302,7 @@ void Session::handleWorldPacket(const std::string& payload)
 
     switch (id) {
     case MinecraftPacketIds::PlayStatus:
+    case MinecraftPacketIds::BlockActorData:
     case MinecraftPacketIds::LevelChunk:
     case MinecraftPacketIds::SubChunk:
     case MinecraftPacketIds::UpdateBlock:
@@ -351,6 +353,7 @@ void Session::handleWorldPacket(const std::string& payload)
         std::lock_guard<std::mutex> guard(mutex);
         current.worldTime = time->mTime;
         current.worldTimeStamp = secondsNow();
+        debugLog("set time " + std::to_string(time->mTime));
     } else if (auto rules = std::dynamic_pointer_cast<GameRulesChangedPacket>(packet)) {
         for (const ChangedGameRuleData& rule : rules->mGameRules) {
             if (rule.mName == "dodaylightcycle" && rule.mType == ChangedGameRuleType::Bool) {
@@ -360,6 +363,8 @@ void Session::handleWorldPacket(const std::string& payload)
                 current.daylightCycle = rule.mBoolValue;
             }
         }
+    } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
+        world.handle(*actor);
     } else if (auto status = std::dynamic_pointer_cast<PlayStatusPacket>(packet)) {
         debugLog("play status " + std::to_string(static_cast<int>(status->mStatus)));
         if (status->mStatus == PlayStatusPacket::Status::PlayerSpawn) {
@@ -435,6 +440,8 @@ void Session::scheduleMeshes()
             }
         }
         input.skyLight = key.dimension == 0;
+        input.blockEntities = world.store().blockEntities(key);
+        input.origin = { key.x * 16, key.y * 16, key.z * 16 };
         mesher->submit(key, generation, std::move(input), assets, ids);
     }
 }
@@ -619,6 +626,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
                     current.daylightCycle = rule.mBoolValue;
                 }
             }
+            current.worldTime = !current.daylightCycle && startGame->mDayCycleStopTime >= 0 ? startGame->mDayCycleStopTime : startGame->mCurrentTick;
+            debugLog("start game time " + std::to_string(startGame->mCurrentTick) + ", lock time " + std::to_string(startGame->mDayCycleStopTime) + ", daylight cycle " + (current.daylightCycle ? "on" : "off"));
             char position[96];
             std::snprintf(position, sizeof(position), "%.1f, %.1f, %.1f", startGame->mPlayerPosition.x, startGame->mPlayerPosition.y, startGame->mPlayerPosition.z);
             current.position = position;
@@ -693,6 +702,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         if (assets) {
             current.materials = assets->materials().size();
             current.textureLayers = assets->textures().layers;
+            debugLog("texture layers " + std::to_string(assets->textures().layers) + ", model templates " + std::to_string(assets->modelTemplates().size()));
             current.diagnosticVisuals = assets->diagnosticVisuals();
         }
     }

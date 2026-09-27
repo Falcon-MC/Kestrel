@@ -145,11 +145,12 @@ void Menu::frame(Context& ui, float width, float height)
     }
 
     float contentWidth = std::min(width - PadXl * 2.0f, ContentMaxWidth);
+    float top = capturesMouse() ? 0.0f : HeaderHeight;
     Area area {
         (width - contentWidth) * 0.5f,
-        HeaderHeight + PadXl,
+        top + PadXl,
         contentWidth,
-        height - HeaderHeight - PadXl * 2.0f,
+        height - top - PadXl * 2.0f,
     };
 
     ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
@@ -208,10 +209,12 @@ void Menu::frame(Context& ui, float width, float height)
     }
 
     ui.clearExcluded();
-    Screen before = screen;
-    header(ui, width);
-    if (screen != before && sheet == Sheet::Pause) {
-        sheet = Sheet::None;
+    if (!capturesMouse()) {
+        Screen before = screen;
+        header(ui, width);
+        if (screen != before && sheet == Sheet::Pause) {
+            sheet = Sheet::None;
+        }
     }
 
     toast(ui, width, height);

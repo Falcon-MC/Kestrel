@@ -34,6 +34,8 @@ struct ChunkMeshUpload {
     uint32_t translucentModelCount = 0;
 };
 
+inline constexpr uint32_t BlockTexturePageLayers = 2048;
+inline constexpr uint32_t BlockTexturePages = 2;
 inline constexpr uint32_t CubeQuadBytes = 20;
 inline constexpr uint32_t ModelQuadBytes = 64;
 

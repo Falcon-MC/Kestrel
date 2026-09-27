@@ -9,6 +9,7 @@ layout(push_constant) uniform Draw {
 } draw;
 
 layout(set = 0, binding = 0) uniform sampler2DArray blocks;
+layout(set = 0, binding = 1) uniform sampler2DArray blocksHigh;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -19,6 +20,13 @@ layout(location = 5) in vec3 inLight;
 
 layout(location = 0) out vec4 outColor;
 
+vec4 sampleLayer(vec2 uv, uint layer)
+{
+    vec4 low = texture(blocks, vec3(uv, float(min(layer, 2047u))));
+    vec4 high = texture(blocksHigh, vec3(uv, float(layer >= 2048u ? layer - 2048u : 0u)));
+    return layer >= 2048u ? high : low;
+}
+
 vec4 sampleMaterial(uint material, vec2 uv)
 {
     uint layer = material & 0xfffu;
@@ -26,9 +34,9 @@ vec4 sampleMaterial(uint material, vec2 uv)
     uint ticksPerFrame = ((material >> 21) & 0x7ffu) + 1u;
     float timeline = draw.origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
-    vec4 texel = texture(blocks, vec3(uv, float(layer + frame)));
+    vec4 texel = sampleLayer(uv, layer + frame);
     if (count > 1u && ((material >> 13) & 1u) != 0u) {
-        vec4 next = texture(blocks, vec3(uv, float(layer + (frame + 1u) % count)));
+        vec4 next = sampleLayer(uv, layer + (frame + 1u) % count);
         texel = mix(texel, next, fract(timeline));
     }
     return texel;

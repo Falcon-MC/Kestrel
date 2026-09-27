@@ -946,7 +946,29 @@ void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, ui
     out.push_back(gpu);
 }
 
-void meshModels(const BlockAssets& assets, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, TintSampler& tints, const LightField& field, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
+void meshBlockEntity(const BlockAssets& assets, const BlockVisual& visual, const MeshInput& input, uint32_t x, uint32_t y, uint32_t z, TintSampler& tints, const LightField& field, std::vector<ModelQuadGpu>& out)
+{
+    const Tag* data = nullptr;
+    if (input.blockEntities) {
+        auto found = input.blockEntities->find(static_cast<uint16_t>(linearIndex(x, y, z)));
+        if (found != input.blockEntities->end()) {
+            data = &found->second;
+        }
+    }
+    std::array<int32_t, 3> position { input.origin[0] + int32_t(x), input.origin[1] + int32_t(y), input.origin[2] + int32_t(z) };
+    uint32_t selected = assets.blockEntityTemplate(visual, data, position);
+    const std::vector<ModelTemplate>& templates = assets.modelTemplates();
+    if (selected >= templates.size()) {
+        return;
+    }
+    const ModelTemplate& modelTemplate = templates[selected];
+    for (uint32_t q = 0; q < modelTemplate.quadCount; ++q) {
+        const ModelQuad& quad = assets.modelQuads()[modelTemplate.quadStart + q];
+        emitModelQuad(quad, x, y, z, 0, tints.tintWord(quad.material, x, y, z), field, out);
+    }
+}
+
+void meshModels(const BlockAssets& assets, const MeshInput& input, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, TintSampler& tints, const LightField& field, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
 {
     if (const BlockVisual* uniform = facts.uniformVisual(); uniform && !uniform->hasModel()) {
         return;
@@ -959,6 +981,10 @@ void meshModels(const BlockAssets& assets, const PaletteFacts& facts, const std:
             for (uint32_t z = 0; z < Side; ++z) {
                 const BlockVisual& visual = facts.at(x, y, z);
                 if (!visual.hasModel()) {
+                    continue;
+                }
+                if (visual.blockEntity != EntityNone) {
+                    meshBlockEntity(assets, visual, input, x, y, z, tints, field, opaque);
                     continue;
                 }
                 uint32_t count = 0;
@@ -1317,7 +1343,7 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
             greedySlice(facts, tints, field, face, slice, rows, mesh.cubes, mesh.translucentCubes);
         }
     }
-    meshModels(assets, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
+    meshModels(assets, input, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
     LiquidMesher(assets, ids, input, tints, field).mesh(mesh.models, mesh.translucentModels);
     return mesh;
 }

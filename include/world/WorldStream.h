@@ -14,6 +14,7 @@ class SubChunkPacket;
 class UpdateBlockPacket;
 class UpdateSubChunkBlocksPacket;
 class NetworkChunkPublisherUpdatePacket;
+class BlockActorDataPacket;
 class SubChunkRequestPacket;
 
 namespace kestrel::world {
@@ -45,6 +46,7 @@ public:
     void handle(const UpdateBlockPacket& packet);
     void handle(const UpdateSubChunkBlocksPacket& packet);
     void handle(const NetworkChunkPublisherUpdatePacket& packet);
+    void handle(const BlockActorDataPacket& packet);
 
     std::vector<std::unique_ptr<SubChunkRequestPacket>> takeRequests(Clock::time_point now);
 

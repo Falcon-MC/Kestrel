@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/NBT/Tag.h"
 #include "world/SubChunk.h"
 
 #include <cstdint>
@@ -39,10 +40,19 @@ struct DimensionRange {
 
 bool vanillaDimensionRange(int32_t dimension, DimensionRange& out);
 
+/**
+ * Block entity compounds of one sub-chunk, keyed by the block's linear index
+ * inside it.
+ */
+using BlockEntityMap = std::map<uint16_t, Tag>;
+
 class ChunkStore {
 public:
     std::shared_ptr<const SubChunk> subChunk(const SubChunkKey& key) const;
     std::shared_ptr<const PalettedStorage> biomes(const SubChunkKey& key) const;
+    std::shared_ptr<const BlockEntityMap> blockEntities(const SubChunkKey& key) const;
+    void setBlockEntity(int32_t dimension, int32_t x, int32_t y, int32_t z, Tag data);
+    void replaceBlockEntities(const SubChunkKey& key, BlockEntityMap entities);
     bool isLoaded(const ChunkKey& key) const;
 
     void markLoaded(const ChunkKey& key);
@@ -62,6 +72,7 @@ private:
         std::map<int32_t, std::shared_ptr<const SubChunk>> subChunks;
         int32_t biomeBaseY = 0;
         std::vector<std::shared_ptr<const PalettedStorage>> biomes;
+        std::map<int32_t, std::shared_ptr<const BlockEntityMap>> blockEntities;
     };
 
     void markDirty(const SubChunkKey& key);

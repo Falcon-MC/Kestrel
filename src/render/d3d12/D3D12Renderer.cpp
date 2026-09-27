@@ -94,6 +94,7 @@ cbuffer Draw : register(b0)
 };
 
 Texture2DArray blocks : register(t0);
+Texture2DArray blocksHigh : register(t1);
 SamplerState blockSampler : register(s0);
 
 struct WorldIn
@@ -232,6 +233,13 @@ WorldOut vs_model(ModelIn input)
     return output;
 }
 
+float4 sampleLayer(float2 uv, uint layer)
+{
+    float4 low = blocks.Sample(blockSampler, float3(uv, min(layer, 2047u)));
+    float4 high = blocksHigh.Sample(blockSampler, float3(uv, layer >= 2048u ? layer - 2048u : 0u));
+    return layer >= 2048u ? high : low;
+}
+
 float4 sampleMaterial(uint material, float2 uv)
 {
     uint layer = material & 0xfff;
@@ -239,9 +247,9 @@ float4 sampleMaterial(uint material, float2 uv)
     uint ticksPerFrame = ((material >> 21) & 0x7ff) + 1;
     float timeline = origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
-    float4 texel = blocks.Sample(blockSampler, float3(uv, layer + frame));
+    float4 texel = sampleLayer(uv, layer + frame);
     if (count > 1 && ((material >> 13) & 1) != 0) {
-        float4 next = blocks.Sample(blockSampler, float3(uv, layer + (frame + 1) % count));
+        float4 next = sampleLayer(uv, layer + (frame + 1) % count);
         texel = lerp(texel, next, frac(timeline));
     }
     return texel;
@@ -434,7 +442,7 @@ public:
         rtvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         D3D12_DESCRIPTOR_HEAP_DESC srvDesc {};
-        srvDesc.NumDescriptors = 2;
+        srvDesc.NumDescriptors = 1 + BlockTexturePages;
         srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         check(device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap)), "CreateDescriptorHeap");
@@ -551,21 +559,46 @@ public:
             return;
         }
         waitIdle();
-        blockTextures.Reset();
+        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
+            uint32_t first = page * BlockTexturePageLayers;
+            uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
+            uploadBlockTexturePage(textures, page, first, count);
+        }
+    }
+
+    /**
+     * Uploads one page of the block texture layers into its own texture
+     * array; an empty page gets a null view so shaders can still bind it.
+     */
+    void uploadBlockTexturePage(const BlockTextureUpload& textures, uint32_t page, uint32_t first, uint32_t count)
+    {
+        blockTextures[page].Reset();
+        D3D12_SHADER_RESOURCE_VIEW_DESC view {};
+        view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2DArray.MipLevels = textures.mipLevels;
+        view.Texture2DArray.ArraySize = std::max(count, 1u);
+        D3D12_CPU_DESCRIPTOR_HANDLE slot = srvHeap->GetCPUDescriptorHandleForHeapStart();
+        slot.ptr += srvStride * (1 + page);
+        if (count == 0) {
+            device->CreateShaderResourceView(nullptr, &view, slot);
+            return;
+        }
 
         D3D12_RESOURCE_DESC textureDesc {};
         textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         textureDesc.Width = textures.size;
         textureDesc.Height = textures.size;
-        textureDesc.DepthOrArraySize = static_cast<UINT16>(textures.layers);
+        textureDesc.DepthOrArraySize = static_cast<UINT16>(count);
         textureDesc.MipLevels = static_cast<UINT16>(textures.mipLevels);
         textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         textureDesc.SampleDesc.Count = 1;
 
         D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
-        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&blockTextures)), "CreateCommittedResource");
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&blockTextures[page])), "CreateCommittedResource");
 
-        UINT subresources = textures.layers * textures.mipLevels;
+        UINT subresources = count * textures.mipLevels;
         std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(subresources);
         std::vector<UINT> rows(subresources);
         std::vector<UINT64> rowSizes(subresources);
@@ -579,17 +612,17 @@ public:
 
         uploadAllocator->Reset();
         uploadList->Reset(uploadAllocator.Get(), nullptr);
-        for (uint32_t layer = 0; layer < textures.layers; ++layer) {
+        for (uint32_t layer = 0; layer < count; ++layer) {
             for (uint32_t mip = 0; mip < textures.mipLevels; ++mip) {
                 UINT index = mip + layer * textures.mipLevels;
                 uint32_t side = std::max<uint32_t>(textures.size >> mip, 1);
-                const uint8_t* source = textures.mips[mip] + static_cast<size_t>(layer) * side * side * 4;
+                const uint8_t* source = textures.mips[mip] + static_cast<size_t>(first + layer) * side * side * 4;
                 for (uint32_t y = 0; y < side; ++y) {
                     std::memcpy(mapped + footprints[index].Offset + static_cast<size_t>(y) * footprints[index].Footprint.RowPitch, source + static_cast<size_t>(y) * side * 4, static_cast<size_t>(side) * 4);
                 }
 
                 D3D12_TEXTURE_COPY_LOCATION destination {};
-                destination.pResource = blockTextures.Get();
+                destination.pResource = blockTextures[page].Get();
                 destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
                 destination.SubresourceIndex = index;
 
@@ -601,22 +634,14 @@ public:
             }
         }
         staging->Unmap(0, nullptr);
-        transition(uploadList.Get(), blockTextures.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        transition(uploadList.Get(), blockTextures[page].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         uploadList->Close();
 
         ID3D12CommandList* lists[] = { uploadList.Get() };
         queue->ExecuteCommandLists(1, lists);
         waitIdle();
 
-        D3D12_SHADER_RESOURCE_VIEW_DESC view {};
-        view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        view.Texture2DArray.MipLevels = textures.mipLevels;
-        view.Texture2DArray.ArraySize = textures.layers;
-        D3D12_CPU_DESCRIPTOR_HANDLE slot = srvHeap->GetCPUDescriptorHandleForHeapStart();
-        slot.ptr += srvStride;
-        device->CreateShaderResourceView(blockTextures.Get(), &view, slot);
+        device->CreateShaderResourceView(blockTextures[page].Get(), &view, slot);
     }
 
     void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) override
@@ -682,7 +707,7 @@ public:
 
     void drawWorld(const WorldView& view) override
     {
-        if (!blockTextures) {
+        if (!blockTextures[0]) {
             return;
         }
 
@@ -979,7 +1004,7 @@ private:
     {
         D3D12_DESCRIPTOR_RANGE range {};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = 1;
+        range.NumDescriptors = BlockTexturePages;
         range.BaseShaderRegister = 0;
         range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
@@ -1180,7 +1205,7 @@ private:
     ComPtr<ID3D12PipelineState> blendPipeline;
     ComPtr<ID3D12PipelineState> modelBlendPipeline;
     ComPtr<ID3D12PipelineState> skyPipeline;
-    ComPtr<ID3D12Resource> blockTextures;
+    std::array<ComPtr<ID3D12Resource>, BlockTexturePages> blockTextures;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
     std::vector<RetiredBuffer> retired;
     uint32_t srvStride = 0;

@@ -1,5 +1,8 @@
 #include "world/WorldStream.h"
 
+#include "Core/NBT/NbtIo.h"
+#include "Core/Utility/ReadOnlyBinaryStream.h"
+#include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
 #include "Protocol/Packets/NetworkChunkPublisherUpdatePacket.h"
 #include "Protocol/Packets/SubChunkPacket.h"
@@ -21,6 +24,47 @@ constexpr auto ResponseTimeout = std::chrono::seconds(2);
 int32_t floorDiv16(int32_t value)
 {
     return value >= 0 ? value / 16 : -((-value + 15) / 16);
+}
+
+int32_t tagInt(const Tag& tag, const char* key)
+{
+    const Tag* value = tag.get(key);
+    if (!value) {
+        return 0;
+    }
+    switch (value->getType()) {
+    case Tag::Type::Byte:
+        return value->asByte();
+    case Tag::Type::Short:
+        return value->asShort();
+    case Tag::Type::Int:
+        return value->asInt();
+    default:
+        return 0;
+    }
+}
+
+/**
+ * The block entity compounds trailing chunk data: back-to-back network NBT
+ * compounds, each carrying its world position in x, y and z.
+ */
+std::vector<Tag> readBlockEntities(const uint8_t* data, size_t size)
+{
+    std::vector<Tag> entities;
+    if (size == 0) {
+        return entities;
+    }
+    ReadOnlyBinaryStream stream(std::string(reinterpret_cast<const char*>(data), size));
+    try {
+        while (stream.getRemainingLength() > 0) {
+            Tag tag = NbtIo::readTag(stream, NbtVariant::Network);
+            if (tag.getType() == Tag::Type::Compound) {
+                entities.push_back(std::move(tag));
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    return entities;
 }
 
 uint8_t local16(int32_t value)
@@ -155,6 +199,14 @@ void WorldStream::handle(const LevelChunkPacket& packet)
         recordError("LevelChunk biomes " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + biomeError);
     }
 
+    std::vector<Tag> entities;
+    uint8_t borderBlocks = 0;
+    std::string borderError;
+    if (hasBiomes && reader.readByte(borderBlocks, borderError, "border blocks") && reader.remaining() >= borderBlocks) {
+        size_t start = reader.position() + borderBlocks;
+        entities = readBlockEntities(data + offset + start, packet.mData.size() - offset - start);
+    }
+
     pending.erase(key);
     chunks.evict(key);
     chunks.markLoaded(key);
@@ -164,6 +216,14 @@ void WorldStream::handle(const LevelChunkPacket& packet)
     for (uint32_t i = 0; i < decoded.size(); ++i) {
         chunks.commit({ key.dimension, key.x, range.baseSubChunkY + static_cast<int32_t>(i), key.z }, std::move(decoded[i]));
     }
+    for (Tag& entity : entities) {
+        chunks.setBlockEntity(key.dimension, tagInt(entity, "x"), tagInt(entity, "y"), tagInt(entity, "z"), std::move(entity));
+    }
+}
+
+void WorldStream::handle(const BlockActorDataPacket& packet)
+{
+    chunks.setBlockEntity(dimension, packet.mBlockPosition.x, packet.mBlockPosition.y, packet.mBlockPosition.z, packet.mData);
 }
 
 void WorldStream::handle(const SubChunkPacket& packet)
@@ -204,10 +264,19 @@ void WorldStream::handle(const SubChunkPacket& packet)
                 break;
             }
             chunks.commit(key, std::move(subChunk));
+            BlockEntityMap entities;
+            for (Tag& entity : readBlockEntities(reinterpret_cast<const uint8_t*>(entry.mData.data()) + consumed, entry.mData.size() - consumed)) {
+                int32_t x = tagInt(entity, "x");
+                int32_t y = tagInt(entity, "y");
+                int32_t z = tagInt(entity, "z");
+                entities[static_cast<uint16_t>(linearIndex(uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15)))] = std::move(entity);
+            }
+            chunks.replaceBlockEntities(key, std::move(entities));
             break;
         }
         case SubChunkRequestResult::SuccessAllAir:
             chunks.commit(key, SubChunk {});
+            chunks.replaceBlockEntities(key, {});
             break;
         default:
             break;
