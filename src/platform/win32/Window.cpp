@@ -190,6 +190,34 @@ public:
         ShowWindow(hwnd, maximized() ? SW_RESTORE : SW_MAXIMIZE);
     }
 
+    bool fullscreen() const override
+    {
+        return isFullscreen;
+    }
+
+    void toggleFullscreen() override
+    {
+        if (isFullscreen) {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+            SetWindowPlacement(hwnd, &windowedPlacement);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+            isFullscreen = false;
+        } else {
+            MONITORINFO monitor { sizeof(monitor) };
+            windowedPlacement.length = sizeof(windowedPlacement);
+            if (!GetWindowPlacement(hwnd, &windowedPlacement) || !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
+                return;
+            }
+            SetWindowLongPtrW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+            const RECT& area = monitor.rcMonitor;
+            SetWindowPos(hwnd, HWND_TOP, area.left, area.top, area.right - area.left, area.bottom - area.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+            isFullscreen = true;
+        }
+        if (captured) {
+            clipCursor();
+        }
+    }
+
     void close() override
     {
         open = false;
@@ -316,7 +344,7 @@ private:
         float x = static_cast<float>(point.x);
         float y = static_cast<float>(point.y);
 
-        if (!maximized()) {
+        if (!maximized() && !isFullscreen) {
             int border = frameThickness();
             bool left = point.x < border;
             bool right = point.x >= static_cast<LONG>(clientWidth) - border;
@@ -526,6 +554,8 @@ private:
     bool open = true;
     bool tracking = false;
     bool captured = false;
+    bool isFullscreen = false;
+    WINDOWPLACEMENT windowedPlacement {};
     wchar_t highSurrogate = 0;
     InputState state;
     WindowChrome chrome;

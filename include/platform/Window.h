@@ -41,6 +41,8 @@ public:
     virtual bool maximized() const = 0;
     virtual void minimize() = 0;
     virtual void toggleMaximize() = 0;
+    virtual bool fullscreen() const = 0;
+    virtual void toggleFullscreen() = 0;
     virtual void close() = 0;
 
     static std::unique_ptr<Window> create(const std::string& title, uint32_t width, uint32_t height);

@@ -95,6 +95,11 @@ bool Menu::capturesMouse() const
     return inGame() && screen == Screen::Home && sheet == Sheet::None;
 }
 
+bool Menu::headerVisible() const
+{
+    return !capturesMouse() && !(chrome.fullscreen && inGame());
+}
+
 void Menu::setSession(SessionInfo info)
 {
     SessionStatus previous = session.status;
@@ -146,7 +151,7 @@ void Menu::frame(Context& ui, float width, float height)
     }
 
     float contentWidth = std::min(width - PadXl * 2.0f, ContentMaxWidth);
-    float top = capturesMouse() ? 0.0f : HeaderHeight;
+    float top = headerVisible() ? HeaderHeight : 0.0f;
     Area area {
         (width - contentWidth) * 0.5f,
         top + PadXl,
@@ -210,7 +215,7 @@ void Menu::frame(Context& ui, float width, float height)
     }
 
     ui.clearExcluded();
-    if (!capturesMouse()) {
+    if (headerVisible()) {
         Screen before = screen;
         header(ui, width);
         if (screen != before && sheet == Sheet::Pause) {
@@ -665,7 +670,8 @@ void Menu::gameView(Context& ui, const Area& area)
     }
 
     float lineHeight = ui.lineHeight(TextStyle::Caption) + 4.0f;
-    Rect panel { Pad, HeaderHeight + Pad, 520.0f, 20.0f + lineHeight * static_cast<float>(lines.size()) };
+    float top = headerVisible() ? HeaderHeight : 0.0f;
+    Rect panel { Pad, top + Pad, 520.0f, 20.0f + lineHeight * static_cast<float>(lines.size()) };
     ui.fill(panel, { 10, 8, 14, 150 }, 12.0f);
     for (size_t i = 0; i < lines.size(); ++i) {
         Color color = i == 0 ? Text : i >= 7 ? Danger : Muted;
@@ -673,7 +679,7 @@ void Menu::gameView(Context& ui, const Area& area)
     }
 
     float centerX = area.x + area.w * 0.5f;
-    float centerY = (HeaderHeight + area.y + area.h + PadXl) * 0.5f;
+    float centerY = (top + area.y + area.h + PadXl) * 0.5f;
     ui.fill({ centerX - 8.0f, centerY - 1.0f, 16.0f, 2.0f }, { 255, 255, 255, 200 });
     ui.fill({ centerX - 1.0f, centerY - 8.0f, 2.0f, 16.0f }, { 255, 255, 255, 200 });
 }
@@ -705,6 +711,9 @@ void Menu::handleKeys(Context& ui)
         return;
     }
 
+    if (input.pressedKey == Key::F11) {
+        chromeAction = ChromeAction::Fullscreen;
+    }
     if (!input.text.empty()) {
         type(input.text);
     }
