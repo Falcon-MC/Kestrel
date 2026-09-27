@@ -55,6 +55,16 @@ public:
         blocked = value;
     }
 
+    void setExcluded(const Rect& rect)
+    {
+        excluded = rect;
+    }
+
+    void clearExcluded()
+    {
+        excluded = {};
+    }
+
     float mouseX() const;
     float mouseY() const;
     bool hovered(const Rect& rect) const;
@@ -88,6 +98,7 @@ private:
     WidgetState& state;
     float scale;
     bool blocked = false;
+    Rect excluded {};
     std::vector<Rect> interactive;
     Cursor wantedCursor = Cursor::Arrow;
 };

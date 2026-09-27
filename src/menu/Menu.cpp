@@ -150,6 +150,7 @@ void Menu::frame(Context& ui, float width, float height)
         height - HeaderHeight - PadXl * 2.0f,
     };
 
+    ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
     switch (inGame() && screen != Screen::Settings ? Screen::Home : screen) {
     case Screen::Home:
         if (inGame()) {
@@ -172,9 +173,16 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     }
 
-    header(ui, width);
+    ui.clearExcluded();
+    bool headerOnTop = sheet == Sheet::Pause;
+    if (!headerOnTop) {
+        header(ui, width);
+    }
 
     ui.setBlocked(false);
+    if (headerOnTop) {
+        ui.setExcluded({ 0.0f, 0.0f, width, HeaderHeight });
+    }
     switch (sheet) {
     case Sheet::None:
         break;
@@ -203,6 +211,15 @@ void Menu::frame(Context& ui, float width, float height)
     case Sheet::ConnectionError:
         connectionErrorSheet(ui, width, height);
         break;
+    }
+
+    if (headerOnTop) {
+        ui.clearExcluded();
+        Screen before = screen;
+        header(ui, width);
+        if (screen != before && sheet == Sheet::Pause) {
+            sheet = Sheet::None;
+        }
     }
 
     toast(ui, width, height);

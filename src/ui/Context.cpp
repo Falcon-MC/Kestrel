@@ -44,12 +44,14 @@ float Context::mouseY() const
 
 bool Context::hovered(const Rect& rect) const
 {
-    return !blocked && rect.contains(mouseX(), mouseY());
+    return !blocked && rect.contains(mouseX(), mouseY()) && !excluded.contains(mouseX(), mouseY());
 }
 
 Interaction Context::interact(std::string_view id, const Rect& rect)
 {
-    interactive.push_back(rect);
+    if (excluded.w <= 0.0f || rect.y >= excluded.bottom()) {
+        interactive.push_back(rect);
+    }
     uint64_t key = hashId(id);
     Interaction result;
     result.hovered = hovered(rect);
