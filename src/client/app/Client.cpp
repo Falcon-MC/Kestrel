@@ -145,7 +145,7 @@ int Client::run()
                 fovTarget = std::clamp(fovTarget, 0.1f, 1.5f);
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
-                double eye = playerView.sneaking ? 1.54 : 1.62;
+                double eye = playerView.eyeHeight();
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };

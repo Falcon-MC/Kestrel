@@ -160,6 +160,8 @@ private:
     bool featuredDirty = false;
     uint64_t actorFrame = 0;
     world::EntityAnimator handAnimator;
+    std::unordered_map<uint64_t, float> swimAmounts;
+    double lastActorTime = 0.0;
     static constexpr int PerspectiveFirst = 0;
     static constexpr int PerspectiveBack = 1;
     static constexpr int PerspectiveFront = 2;

@@ -17,6 +17,7 @@ constexpr double MaxActorDistance = 120.0;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
+constexpr int SwimmingFlag = 57;
 constexpr double MaxNameTagDistance = 64.0;
 constexpr double NameTagLift = 0.5;
 constexpr uint64_t InvisibleFlag = 1ull << 5;
@@ -278,6 +279,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 { "is_first_person", 0.0 },
             };
         }
+        float& swimAmount = swimAmounts[actor.runtimeId];
+        bool swimmingFlag = (actor.flags[SwimmingFlag / 64] >> (SwimmingFlag % 64)) & 1;
+        float swimStep = static_cast<float>(std::min(now - lastActorTime, 0.25) * 2.0);
+        swimAmount = std::clamp(swimAmount + (swimmingFlag ? swimStep : -swimStep), 0.0f, 1.0f);
+        input.engineVariables.push_back({ "swim_amount", swimAmount });
         if (model->rigs.empty()) {
             continue;
         }
@@ -441,6 +447,14 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             it = animators.erase(it);
         }
     }
+    for (auto it = swimAmounts.begin(); it != swimAmounts.end();) {
+        if (present.count(it->first)) {
+            ++it;
+        } else {
+            it = swimAmounts.erase(it);
+        }
+    }
+    lastActorTime = now;
 }
 
 /**
@@ -517,11 +531,11 @@ ActorView Client::localActorView(float deltaSeconds)
     self.runtimeId = LocalActorId;
     self.identifier = "minecraft:player";
     self.x = eyePosition[0];
-    self.y = eyePosition[1] - (playerView.sneaking ? 1.54 : 1.62);
+    self.y = eyePosition[1] - playerView.eyeHeight();
     self.z = eyePosition[2];
     self.headYaw = camera.minecraftYaw();
     self.pitch = camera.minecraftPitch();
-    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0);
+    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (playerView.swimming ? 1ull << SwimmingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;
 

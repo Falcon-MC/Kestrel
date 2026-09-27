@@ -137,6 +137,7 @@ void PlayerMotion::setHunger(float value)
 void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
 {
     yaw = input.yaw;
+    pitch = input.pitch;
     pressingSneak = input.sneak;
 
     bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && hunger > 6.0f;
@@ -209,6 +210,7 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     MotionTick tick;
     jumped = false;
     updateInput(input, tick);
+    updateSwimming(!touchingLiquid(false).empty(), tick);
 
     if (teleported) {
         teleported = false;
@@ -244,6 +246,7 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     tick.sneaking = isSneaking;
     tick.sprinting = isSprinting;
     tick.flying = isFlying;
+    tick.swimming = isSwimming;
     lookup = nullptr;
     return tick;
 }
@@ -251,11 +254,17 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
 void PlayerMotion::simulate()
 {
     Fluid fluid = fluidState(boundingBox());
-    if (fluid.water) {
-        runWater(fluid);
+    std::vector<std::array<int32_t, 3>> water = touchingLiquid(false);
+    std::vector<std::array<int32_t, 3>> lava = touchingLiquid(true);
+    if (!water.empty() || (isSwimming && lava.empty() && fluid.water)) {
+        applyKnockback();
+        applyLiquidFlow(water, false);
+        runWater(fluid, !water.empty());
         return;
     }
-    if (fluid.lava) {
+    if (!lava.empty()) {
+        applyKnockback();
+        applyLiquidFlow(lava, true);
         runLava();
         return;
     }
@@ -487,49 +496,42 @@ void PlayerMotion::runGroundAndAir()
     applyHoneyWallSlide();
 }
 
-void PlayerMotion::runWater(const Fluid& fluid)
+void PlayerMotion::runWater(const Fluid& fluid, bool touchingWater)
 {
-    applyKnockback();
-    if (jumping && onGround && jumpDelay <= 0) {
-        velocity.y = jumpHeight * jumpPreventionMultiplier();
-        jumpDelay = JumpDelayTicks;
-        jumped = true;
-    } else if (pressingJump) {
-        velocity.y = velocity.y + WaterAscent;
+    if (pressingSneak) {
+        velocity.y -= WaterAscent;
+    }
+    updateSwimTravel();
+    if (jumping) {
+        if ((swimAmount > 0.0f && swimAmount < 1.0f) || (isSwimming && !touchingWater)) {
+            velocity.y = 0.0f;
+        } else {
+            velocity.y += WaterAscent;
+        }
     }
     moveRelative(WaterAcceleration);
 
     float boxBottom = boundingBox().minY;
     move();
 
-    float drag = isSprinting ? WaterFastDrag : WaterDrag;
+    float drag = isSprinting || stoppedSwimmingThisTick ? WaterFastDrag : WaterDrag;
     velocity = { velocity.x * drag, velocity.y * WaterDrag, velocity.z * drag };
     if (levitationLevel > 0) {
         float target = static_cast<float>(levitationLevel + 1) * 0.05f;
         velocity.y = velocity.y + (target - velocity.y) * 0.2f;
-    } else if (gravity != 0.0f) {
-        velocity.y = velocity.y - WaterGravity;
+    } else if (affectedByGravity && !isSwimming) {
+        velocity.y = velocity.y - SwimlessWaterGravity;
     }
 
     if ((collideX || collideZ) && canClimbOut(boxBottom)) {
         velocity.y = LedgeClimb;
     }
-
-    if (fluid.bubbleDirection != 0) {
-        float y = std::max(velocity.y, -0.3f);
-        if (fluid.bubbleDirection < 0) {
-            y = std::max(fluid.bubbleSurface ? -0.9f : -0.3f, y - 0.03f);
-        } else {
-            y = fluid.bubbleSurface ? std::min(1.8f, y + 0.1f) : std::min(0.7f, y + 0.08f);
-        }
-        velocity.y = y;
-    }
+    applyBubbleColumn(fluid);
 }
 
 void PlayerMotion::runLava()
 {
-    applyKnockback();
-    if (pressingJump) {
+    if (jumping) {
         velocity.y = velocity.y + WaterAscent;
     }
     float boxBottom = boundingBox().minY;
@@ -537,8 +539,11 @@ void PlayerMotion::runLava()
     move();
 
     velocity = velocity.scaled(LavaDrag);
-    if (gravity != 0.0f) {
-        velocity.y = velocity.y - gravity / 4.0f;
+    if (levitationLevel > 0) {
+        float target = static_cast<float>(levitationLevel + 1) * 0.05f;
+        velocity.y = velocity.y + (target - velocity.y) * 0.2f;
+    } else if (affectedByGravity) {
+        velocity.y = velocity.y - WaterGravity;
     }
     if ((collideX || collideZ) && canClimbOut(boxBottom)) {
         velocity.y = LedgeClimb;
