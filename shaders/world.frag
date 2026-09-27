@@ -35,7 +35,8 @@ vec4 sampleMaterial(uint material, vec2 uv)
 
 vec3 shadeWorld(vec3 rgb)
 {
-    vec3 color = rgb * inShade * mix(0.25, 1.0, draw.params.y);
+    float light = mix(0.04, 1.0, max(clamp(draw.params.y, 0.0, 1.0), 0.2));
+    vec3 color = rgb * inShade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(inRelative));
     return mix(color, draw.fog.rgb, amount);
 }

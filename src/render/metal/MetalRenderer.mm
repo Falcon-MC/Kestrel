@@ -216,7 +216,8 @@ float4 sampleMaterial(texture2d_array<float> blocks, sampler blockSampler, const
 
 float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative)
 {
-    float3 color = rgb * shade * mix(0.25, 1.0, draw.params.y);
+    float light = mix(0.04, 1.0, max(saturate(draw.params.y), 0.2));
+    float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(draw.fog.w, draw.params.x, length(relative));
     return mix(color, draw.fog.rgb, amount);
 }

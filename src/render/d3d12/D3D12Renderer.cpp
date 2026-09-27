@@ -228,7 +228,8 @@ float4 sampleMaterial(uint material, float2 uv)
 
 float3 shadeWorld(float3 rgb, float shade, float3 relative)
 {
-    float3 color = rgb * shade * lerp(0.25, 1.0, params.y);
+    float light = lerp(0.04, 1.0, max(saturate(params.y), 0.2));
+    float3 color = rgb * shade * pow(light, 1.0 / 2.2);
     float amount = smoothstep(fog.w, params.x, length(relative));
     return lerp(color, fog.rgb, amount);
 }
