@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Protocol/PacketCodecContext.h"
+#include "Protocol/Types/ItemStack.h"
 #include "world/BlockAssets.h"
 #include "world/MeshScheduler.h"
 #include "world/WorldStream.h"
@@ -16,6 +18,8 @@
 
 class BedrockConnection;
 class MinecraftAuthentication;
+class Packet;
+class SerializedSkin;
 
 namespace kestrel {
 
@@ -26,6 +30,102 @@ enum class SessionState {
     Joined,
     Disconnected,
     Failed,
+};
+
+inline constexpr uint32_t NoSkin = 0xFFFFFFFFu;
+
+/**
+ * One entity the server has shown the client: its identifier, feet position,
+ * body yaw in degrees, and for players the skin slot their skin sits in.
+ */
+struct ActorView {
+    uint64_t runtimeId = 0;
+    std::string identifier;
+    std::string name;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    float yaw = 0.0f;
+    float headYaw = 0.0f;
+    float pitch = 0.0f;
+    float scale = 1.0f;
+    std::array<uint64_t, 3> flags{};
+    int variant = 0;
+    int markVariant = 0;
+    int color = 0;
+    int skinId = 0;
+    uint32_t skinSlot = NoSkin;
+    bool slim = false;
+    bool onGround = true;
+    uint64_t moves = 0;
+    uint64_t teleports = 0;
+};
+
+/**
+ * A player skin to place in its entity texture slot, already scaled to the
+ * entity texture size.
+ */
+struct SkinUpload {
+    uint32_t slot = 0;
+    std::vector<uint8_t> pixels;
+    std::shared_ptr<const world::EntityRig> rig;
+};
+
+/**
+ * One inventory stack as the HUD shows it: the item identifier, its count, its
+ * aux value (the variant for legacy items), the damage of tools and armor and
+ * any custom name.
+ */
+struct HudItem {
+    std::string identifier;
+    int32_t count = 0;
+    int32_t aux = 0;
+    int32_t damage = 0;
+    std::string customName;
+    std::string icon;
+
+    bool empty() const
+    {
+        return identifier.empty() || count <= 0;
+    }
+
+    bool operator==(const HudItem&) const = default;
+};
+
+/**
+ * A status effect on the local player; expires is in secondsNow time, or
+ * negative when it lasts forever.
+ */
+struct HudEffect {
+    int32_t id = 0;
+    int32_t amplifier = 0;
+    double expires = -1.0;
+    bool ambient = false;
+};
+
+/**
+ * Everything the gameplay HUD shows about the local player, as the server
+ * reports it.
+ */
+struct HudState {
+    int32_t gameType = 0;
+    std::array<HudItem, 36> inventory {};
+    std::array<HudItem, 4> armor {};
+    HudItem offhand;
+    int32_t selectedSlot = 0;
+    double selectedChanged = 0.0;
+    bool statsKnown = false;
+    float health = 20.0f;
+    float maxHealth = 20.0f;
+    float absorption = 0.0f;
+    float hunger = 20.0f;
+    float saturation = 5.0f;
+    float experience = 0.0f;
+    int32_t level = 0;
+    int32_t air = 300;
+    int32_t maxAir = 300;
+    double lastHealthDrop = 0.0;
+    std::vector<HudEffect> effects;
 };
 
 struct MeshUpdate {
@@ -84,6 +184,8 @@ struct SessionSnapshot {
     float thunderLevel = 0.0f;
     bool cohortComplete = false;
     bool updatesPending = false;
+    std::vector<ActorView> actors;
+    HudState hud;
 };
 
 double secondsNow();
@@ -102,17 +204,24 @@ public:
 
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
+    std::vector<SkinUpload> takeSkinUploads();
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
+    void selectHotbarSlot(int slot);
 
 private:
+    void handleHudPacket(const std::shared_ptr<Packet>& packet);
+    void sendSelectedSlot(int slot);
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
     void fail(const std::string& error);
     void handleWorldPacket(const std::string& payload);
     void scheduleMeshes();
     void collectMeshes();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
+    void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround);
+    void storeSkin(const std::string& uuid, const SerializedSkin& skin);
+    void releaseSkin(const std::string& uuid);
     std::string traceTarget();
 
     std::thread worker;
@@ -137,8 +246,19 @@ private:
     std::atomic<int> requestedRadius { 16 };
     int sentRadius = 0;
     bool spawnInitialized = false;
+    std::map<uint64_t, ActorView> actors;
+    std::map<int64_t, uint64_t> runtimeByUnique;
+    std::map<uint64_t, std::string> uuidByRuntime;
+    std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
+    std::array<std::string, world::SkinSlots> slotOwners;
+    std::vector<SkinUpload> pendingSkins;
     std::set<int> seenPackets;
     double lastReadinessLog = 0.0;
+    BlockDefinitionRegistry blockDefinitions;
+    ItemDefinitionRegistry itemDefinitions;
+    std::unique_ptr<PacketCodecContext> codecContext;
+    std::array<ItemStack, 36> inventoryStacks {};
+    std::atomic<int> requestedSlot { -1 };
 };
 
 }

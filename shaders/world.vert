@@ -17,6 +17,7 @@ layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
 layout(location = 5) out vec3 outLight;
+layout(location = 6) flat out uint outEntity;
 
 const float lightCurve[16] = float[16](
     0.0, 0.01754386, 0.037037037, 0.05882353,
@@ -93,4 +94,5 @@ void main()
     outRelative = position;
     outTint = inQuad.z;
     outLight = cornerLight(inQuad.w, inAo, corner);
+    outEntity = 0u;
 }

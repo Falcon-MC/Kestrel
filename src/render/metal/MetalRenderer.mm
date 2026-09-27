@@ -92,6 +92,7 @@ struct WorldOut {
     float3 relative;
     uint tint [[flat]];
     float3 light;
+    uint entity [[flat]];
 };
 
 constant float lightCurve[16] = {
@@ -181,6 +182,7 @@ vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]
     out.relative = position;
     out.tint = in.quad.z;
     out.light = cornerLight(in.quad.w, in.ao, corner);
+    out.entity = 0;
     return out;
 }
 
@@ -219,6 +221,7 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, in.d.y, corner);
+    out.entity = (words[11] >> 5) & 1;
     return out;
 }
 
@@ -254,9 +257,9 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
     return mix(color, draw.fog.rgb, amount);
 }
 
-fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? entities.sample(blockSampler, in.uv, in.material & 0xfff) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.004) {
         discard_fragment();
     }
@@ -309,9 +312,15 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
     return float4(color.rgb * color.a, color.a);
 }
 
-fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? entities.sample(blockSampler, in.uv, in.material & 0xfff) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if (in.entity != 0) {
+        if (texel.a < 0.1) {
+            discard_fragment();
+        }
+        return texel;
+    }
     if (texel.a < 0.5) {
         discard_fragment();
     }
@@ -355,6 +364,38 @@ public:
         descriptor.usage = MTLTextureUsageShaderRead;
         atlas = [device newTextureWithDescriptor:descriptor];
         [atlas replaceRegion:MTLRegionMake2D(0, 0, atlasWidth, atlasHeight) mipmapLevel:0 withBytes:pixels bytesPerRow:atlasWidth * 4];
+    }
+
+    void uploadEntityTextures(const uint8_t* pixels, uint32_t size, uint32_t layers) override
+    {
+        std::vector<uint8_t> blank;
+        if (layers == 0) {
+            size = 1;
+            layers = 1;
+            blank.assign(4, 0);
+            pixels = blank.data();
+        }
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor new];
+        descriptor.textureType = MTLTextureType2DArray;
+        descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm;
+        descriptor.width = size;
+        descriptor.height = size;
+        descriptor.arrayLength = layers;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        entityTextures = [device newTextureWithDescriptor:descriptor];
+        entitySize = size;
+        entityLayers = layers;
+        for (uint32_t layer = 0; layer < layers; ++layer) {
+            updateEntityTexture(layer, pixels + static_cast<size_t>(layer) * size * size * 4);
+        }
+    }
+
+    void updateEntityTexture(uint32_t layer, const uint8_t* pixels) override
+    {
+        if (!entityTextures || layer >= entityLayers) {
+            return;
+        }
+        [entityTextures replaceRegion:MTLRegionMake2D(0, 0, entitySize, entitySize) mipmapLevel:0 slice:layer withBytes:pixels bytesPerRow:entitySize * 4 bytesPerImage:entitySize * entitySize * 4];
     }
 
     void uploadBlockTextures(const BlockTextureUpload& textures) override
@@ -420,6 +461,7 @@ public:
         }
         [encoder setFragmentTexture:blockTextures[0] atIndex:0];
         [encoder setFragmentTexture:blockTextures[1] atIndex:1];
+        [encoder setFragmentTexture:entityTextures atIndex:2];
         [encoder setFragmentSamplerState:blockSampler atIndex:0];
 
         WorldConstants constants(view);
@@ -448,25 +490,41 @@ public:
         }
 
         [encoder setDepthStencilState:worldDepth];
-        for (size_t stream : { size_t(0), size_t(1) }) {
-            [encoder setRenderPipelineState:stream == 0 ? worldPipeline : modelPipeline];
-            for (const auto& [id, chunk] : chunks) {
-                drawStream(chunk, stream);
+        ChunkFrustum frustum(view);
+        std::vector<const ChunkBuffer*> visible;
+        visible.reserve(chunks.size());
+        for (const auto& [id, chunk] : chunks) {
+            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
+                visible.push_back(&chunk);
             }
         }
-        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
-            return entry.second.counts[0] || entry.second.counts[1];
+        for (size_t stream : { size_t(0), size_t(1) }) {
+            [encoder setRenderPipelineState:stream == 0 ? worldPipeline : modelPipeline];
+            for (const ChunkBuffer* chunk : visible) {
+                drawStream(*chunk, stream);
+            }
+        }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(visible.begin(), visible.end(), [](const ChunkBuffer* chunk) {
+            return chunk->counts[0] || chunk->counts[1];
         }));
+
+        if (view.entityQuadCount) {
+            id<MTLBuffer> entityBuffer = [device newBufferWithBytes:view.entityQuads length:static_cast<NSUInteger>(view.entityQuadCount) * ModelQuadBytes options:MTLResourceStorageModeShared];
+            [encoder setRenderPipelineState:modelPipeline];
+            pushOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            [encoder setVertexBuffer:entityBuffer offset:0 atIndex:0];
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6 instanceCount:view.entityQuadCount];
+        }
 
         [encoder setDepthStencilState:overlayDepth];
 
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
-        for (const auto& [id, chunk] : chunks) {
-            if (chunk.counts[2] || chunk.counts[3]) {
-                double dx = chunk.origin[0] + 8.0 - view.cameraX;
-                double dy = chunk.origin[1] + 8.0 - view.cameraY;
-                double dz = chunk.origin[2] + 8.0 - view.cameraZ;
-                ordered.emplace_back(dx * dx + dy * dy + dz * dz, &chunk);
+        for (const ChunkBuffer* chunk : visible) {
+            if (chunk->counts[2] || chunk->counts[3]) {
+                double dx = chunk->origin[0] + 8.0 - view.cameraX;
+                double dy = chunk->origin[1] + 8.0 - view.cameraY;
+                double dz = chunk->origin[2] + 8.0 - view.cameraZ;
+                ordered.emplace_back(dx * dx + dy * dy + dz * dz, chunk);
             }
         }
         std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
@@ -751,6 +809,9 @@ private:
     id<MTLDepthStencilState> uiDepth;
     id<MTLSamplerState> blockSampler;
     std::array<id<MTLTexture>, BlockTexturePages> blockTextures;
+    id<MTLTexture> entityTextures;
+    uint32_t entitySize = 0;
+    uint32_t entityLayers = 0;
     id<MTLTexture> depthTexture;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
 };

@@ -95,6 +95,7 @@ cbuffer Draw : register(b0)
 
 Texture2DArray blocks : register(t0);
 Texture2DArray blocksHigh : register(t1);
+Texture2DArray entities : register(t2);
 SamplerState blockSampler : register(s0);
 
 struct WorldIn
@@ -113,6 +114,7 @@ struct WorldOut
     float3 relative : TEXCOORD3;
     nointerpolation uint tint : TEXCOORD4;
     float3 light : TEXCOORD5;
+    nointerpolation uint entity : TEXCOORD6;
 };
 
 static const float lightCurve[16] = {
@@ -190,6 +192,7 @@ WorldOut vs_world(WorldIn input)
     output.relative = position;
     output.tint = input.quad.z;
     output.light = cornerLight(input.quad.w, input.ao, corner);
+    output.entity = 0;
     return output;
 }
 
@@ -230,6 +233,7 @@ WorldOut vs_model(ModelIn input)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, input.d.y, corner);
+    output.entity = (words[11] >> 5) & 1;
     return output;
 }
 
@@ -277,9 +281,23 @@ float4 applyTint(float4 texel, uint tint)
     return float4(texel.rgb * color, texel.a);
 }
 
+float4 surfaceTexel(WorldOut input)
+{
+    if (input.entity != 0) {
+        return entities.Sample(blockSampler, float3(input.uv, input.material & 0xfff));
+    }
+    return applyTint(sampleMaterial(input.material, input.uv), input.tint);
+}
+
 float4 ps_world(WorldOut input) : SV_Target
 {
-    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
+    float4 texel = surfaceTexel(input);
+    if (input.entity != 0) {
+        if (texel.a < 0.1) {
+            discard;
+        }
+        return texel;
+    }
     if (texel.a < 0.5) {
         discard;
     }
@@ -288,7 +306,7 @@ float4 ps_world(WorldOut input) : SV_Target
 
 float4 ps_blend(WorldOut input) : SV_Target
 {
-    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
+    float4 texel = surfaceTexel(input);
     if (texel.a < 0.004) {
         discard;
     }
@@ -442,11 +460,22 @@ public:
         rtvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         D3D12_DESCRIPTOR_HEAP_DESC srvDesc {};
-        srvDesc.NumDescriptors = 1 + BlockTexturePages;
+        srvDesc.NumDescriptors = 2 + BlockTexturePages;
         srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         check(device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap)), "CreateDescriptorHeap");
         srvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        for (uint32_t slot = 1; slot < 2 + BlockTexturePages; ++slot) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC empty {};
+            empty.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            empty.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            empty.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            empty.Texture2DArray.MipLevels = 1;
+            empty.Texture2DArray.ArraySize = 1;
+            D3D12_CPU_DESCRIPTOR_HANDLE handle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+            handle.ptr += srvStride * slot;
+            device->CreateShaderResourceView(nullptr, &empty, handle);
+        }
 
         D3D12_DESCRIPTOR_HEAP_DESC dsvDesc {};
         dsvDesc.NumDescriptors = 1;
@@ -564,6 +593,91 @@ public:
             uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
             uploadBlockTexturePage(textures, page, first, count);
         }
+    }
+
+    void uploadEntityTextures(const uint8_t* pixels, uint32_t size, uint32_t layers) override
+    {
+        waitIdle();
+        entityTextures.Reset();
+        entitySize = size;
+        entityLayers = layers;
+        if (layers == 0) {
+            return;
+        }
+        D3D12_RESOURCE_DESC textureDesc {};
+        textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        textureDesc.Width = size;
+        textureDesc.Height = size;
+        textureDesc.DepthOrArraySize = static_cast<UINT16>(layers);
+        textureDesc.MipLevels = 1;
+        textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        textureDesc.SampleDesc.Count = 1;
+        D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&entityTextures)), "CreateCommittedResource");
+        copyEntityLayers(pixels, 0, layers, D3D12_RESOURCE_STATE_COPY_DEST);
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC view {};
+        view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2DArray.MipLevels = 1;
+        view.Texture2DArray.ArraySize = layers;
+        D3D12_CPU_DESCRIPTOR_HANDLE slot = srvHeap->GetCPUDescriptorHandleForHeapStart();
+        slot.ptr += srvStride * (1 + BlockTexturePages);
+        device->CreateShaderResourceView(entityTextures.Get(), &view, slot);
+    }
+
+    void updateEntityTexture(uint32_t layer, const uint8_t* pixels) override
+    {
+        if (!entityTextures || layer >= entityLayers) {
+            return;
+        }
+        waitIdle();
+        copyEntityLayers(pixels, layer, 1, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+
+    /**
+     * Copies consecutive entity texture layers from tightly packed pixels and
+     * leaves the texture ready for sampling.
+     */
+    void copyEntityLayers(const uint8_t* pixels, uint32_t first, uint32_t count, D3D12_RESOURCE_STATES state)
+    {
+        D3D12_RESOURCE_DESC textureDesc = entityTextures->GetDesc();
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(count);
+        std::vector<UINT> rows(count);
+        std::vector<UINT64> rowSizes(count);
+        UINT64 totalSize = 0;
+        device->GetCopyableFootprints(&textureDesc, first, count, 0, footprints.data(), rows.data(), rowSizes.data(), &totalSize);
+        ComPtr<ID3D12Resource> staging = createUploadBuffer(totalSize);
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE none { 0, 0 };
+        check(staging->Map(0, &none, reinterpret_cast<void**>(&mapped)), "Map");
+        uploadAllocator->Reset();
+        uploadList->Reset(uploadAllocator.Get(), nullptr);
+        if (state != D3D12_RESOURCE_STATE_COPY_DEST) {
+            transition(uploadList.Get(), entityTextures.Get(), state, D3D12_RESOURCE_STATE_COPY_DEST);
+        }
+        for (uint32_t layer = 0; layer < count; ++layer) {
+            const uint8_t* source = pixels + static_cast<size_t>(layer) * entitySize * entitySize * 4;
+            for (uint32_t y = 0; y < entitySize; ++y) {
+                std::memcpy(mapped + footprints[layer].Offset + static_cast<size_t>(y) * footprints[layer].Footprint.RowPitch, source + static_cast<size_t>(y) * entitySize * 4, static_cast<size_t>(entitySize) * 4);
+            }
+            D3D12_TEXTURE_COPY_LOCATION destination {};
+            destination.pResource = entityTextures.Get();
+            destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            destination.SubresourceIndex = first + layer;
+            D3D12_TEXTURE_COPY_LOCATION copySource {};
+            copySource.pResource = staging.Get();
+            copySource.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            copySource.PlacedFootprint = footprints[layer];
+            uploadList->CopyTextureRegion(&destination, 0, 0, 0, &copySource, nullptr);
+        }
+        staging->Unmap(0, nullptr);
+        transition(uploadList.Get(), entityTextures.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        uploadList->Close();
+        ID3D12CommandList* lists[] = { uploadList.Get() };
+        queue->ExecuteCommandLists(1, lists);
+        waitIdle();
     }
 
     /**
@@ -757,23 +871,42 @@ public:
             commandList->DrawInstanced(view.backgroundCount, 1, 0, 0);
         }
 
-        for (size_t stream : { size_t(0), size_t(1) }) {
-            commandList->SetPipelineState(stream == 0 ? worldPipeline.Get() : modelPipeline.Get());
-            for (const auto& [id, chunk] : chunks) {
-                drawStream(chunk, stream);
+        ChunkFrustum frustum(view);
+        std::vector<const ChunkBuffer*> visible;
+        visible.reserve(chunks.size());
+        for (const auto& [id, chunk] : chunks) {
+            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
+                visible.push_back(&chunk);
             }
         }
-        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
-            return entry.second.counts[0] || entry.second.counts[1];
+        for (size_t stream : { size_t(0), size_t(1) }) {
+            commandList->SetPipelineState(stream == 0 ? worldPipeline.Get() : modelPipeline.Get());
+            for (const ChunkBuffer* chunk : visible) {
+                drawStream(*chunk, stream);
+            }
+        }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(visible.begin(), visible.end(), [](const ChunkBuffer* chunk) {
+            return chunk->counts[0] || chunk->counts[1];
         }));
 
+        if (view.entityQuadCount && entityTextures) {
+            FrameBuffers& buffers = frameBuffers[frameIndex];
+            size_t bytes = static_cast<size_t>(view.entityQuadCount) * ModelQuadBytes;
+            ensure(buffers.entities, buffers.entityCapacity, buffers.entityMapped, bytes);
+            std::memcpy(buffers.entityMapped, view.entityQuads, bytes);
+            commandList->SetPipelineState(modelPipeline.Get());
+            bindOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            bindVertices(buffers.entities.Get(), view.entityQuadCount, ModelQuadBytes);
+            commandList->DrawInstanced(6, view.entityQuadCount, 0, 0);
+        }
+
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
-        for (const auto& [id, chunk] : chunks) {
-            if (chunk.counts[2] || chunk.counts[3]) {
-                double dx = chunk.origin[0] + 8.0 - view.cameraX;
-                double dy = chunk.origin[1] + 8.0 - view.cameraY;
-                double dz = chunk.origin[2] + 8.0 - view.cameraZ;
-                ordered.emplace_back(dx * dx + dy * dy + dz * dz, &chunk);
+        for (const ChunkBuffer* chunk : visible) {
+            if (chunk->counts[2] || chunk->counts[3]) {
+                double dx = chunk->origin[0] + 8.0 - view.cameraX;
+                double dy = chunk->origin[1] + 8.0 - view.cameraY;
+                double dz = chunk->origin[2] + 8.0 - view.cameraZ;
+                ordered.emplace_back(dx * dx + dy * dy + dz * dz, chunk);
             }
         }
         std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
@@ -896,12 +1029,15 @@ private:
         ComPtr<ID3D12Resource> vertices;
         ComPtr<ID3D12Resource> indices;
         ComPtr<ID3D12Resource> sky;
+        ComPtr<ID3D12Resource> entities;
         size_t vertexCapacity = 0;
         size_t indexCapacity = 0;
         size_t skyCapacity = 0;
+        size_t entityCapacity = 0;
         void* vertexMapped = nullptr;
         void* indexMapped = nullptr;
         void* skyMapped = nullptr;
+        void* entityMapped = nullptr;
     };
 
     void createTargets()
@@ -1004,7 +1140,7 @@ private:
     {
         D3D12_DESCRIPTOR_RANGE range {};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = BlockTexturePages;
+        range.NumDescriptors = BlockTexturePages + 1;
         range.BaseShaderRegister = 0;
         range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
@@ -1206,6 +1342,9 @@ private:
     ComPtr<ID3D12PipelineState> modelBlendPipeline;
     ComPtr<ID3D12PipelineState> skyPipeline;
     std::array<ComPtr<ID3D12Resource>, BlockTexturePages> blockTextures;
+    ComPtr<ID3D12Resource> entityTextures;
+    uint32_t entitySize = 0;
+    uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
     std::vector<RetiredBuffer> retired;
     uint32_t srvStride = 0;

@@ -140,6 +140,15 @@ void parseBones(const json::Value* bones, Geometry& geometry)
         }
         parsed.pivot = readVec3(bone->get("pivot"));
         parsed.rotation = readVec3(bone->get("rotation"));
+        if (const json::Value* mirror = bone->get("mirror"); mirror && mirror->mType == json::Value::Type::Boolean) {
+            parsed.mirror = mirror->mBoolean;
+        }
+        if (const json::Value* inflate = bone->get("inflate"); inflate && inflate->isNumber()) {
+            parsed.inflate = static_cast<float>(inflate->mNumber);
+        }
+        if (const json::Value* hidden = bone->get("neverRender"); hidden && hidden->mType == json::Value::Type::Boolean) {
+            parsed.neverRender = hidden->mBoolean;
+        }
         if (const json::Value* cubes = bone->get("cubes"); cubes && cubes->isArray()) {
             for (const auto& cube : cubes->mArray) {
                 parsed.cubes.push_back(parseCube(*cube));
@@ -250,7 +259,49 @@ void GeometryLibrary::parse(const std::string& text)
             geometry.textureHeight = static_cast<float>(height->number(16.0));
         }
         parseBones(entry->get("bones"), geometry);
-        byIdentifier[key.substr(0, key.find(':'))] = std::move(geometry);
+        size_t separator = key.find(':');
+        std::string name = key.substr(0, separator);
+        if (separator != std::string::npos) {
+            parents[name] = key.substr(separator + 1);
+        }
+        byIdentifier[name] = std::move(geometry);
+    }
+}
+
+/**
+ * Applies legacy geometry inheritance (geometry.child:geometry.parent): the
+ * child keeps its own bones and takes every parent bone it does not redefine.
+ */
+void GeometryLibrary::resolveInheritance()
+{
+    std::function<void(const std::string&, int)> resolve = [&](const std::string& name, int depth) {
+        auto parent = parents.find(name);
+        if (parent == parents.end() || depth > 16) {
+            return;
+        }
+        std::string parentName = parent->second;
+        parents.erase(parent);
+        resolve(parentName, depth + 1);
+        auto base = byIdentifier.find(parentName);
+        auto child = byIdentifier.find(name);
+        if (base == byIdentifier.end() || child == byIdentifier.end()) {
+            return;
+        }
+        std::vector<GeometryBone> merged = base->second.bones;
+        for (const GeometryBone& bone : child->second.bones) {
+            auto same = std::find_if(merged.begin(), merged.end(), [&](const GeometryBone& existing) {
+                return existing.name == bone.name;
+            });
+            if (same != merged.end()) {
+                *same = bone;
+            } else {
+                merged.push_back(bone);
+            }
+        }
+        child->second.bones = std::move(merged);
+    };
+    while (!parents.empty()) {
+        resolve(parents.begin()->first, 0);
     }
 }
 
@@ -258,6 +309,11 @@ const Geometry* GeometryLibrary::find(const std::string& identifier) const
 {
     auto found = byIdentifier.find(identifier);
     return found == byIdentifier.end() ? nullptr : &found->second;
+}
+
+const Geometry* GeometryLibrary::first() const
+{
+    return byIdentifier.empty() ? nullptr : &byIdentifier.begin()->second;
 }
 
 std::vector<ModelQuad> buildGeometryQuads(const Geometry& geometry, const BlockTransform& transform, const std::function<uint32_t(const std::string&, int)>& material)

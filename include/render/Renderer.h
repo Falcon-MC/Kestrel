@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -74,6 +75,9 @@ struct WorldView {
     std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
+    const void* entityQuads = nullptr;
+    uint32_t entityQuadCount = 0;
+    std::array<float, 3> entityOrigin {};
 };
 
 /**
@@ -107,6 +111,44 @@ struct WorldConstants {
 };
 
 /**
+ * The side and near planes of a camera relative view projection; a sub-chunk
+ * is drawn only when its bounding box touches all of them.
+ */
+struct ChunkFrustum {
+    std::array<std::array<float, 4>, 5> planes {};
+
+    explicit ChunkFrustum(const WorldView& view)
+    {
+        const std::array<float, 16>& matrix = view.viewProjection;
+        for (size_t axis = 0; axis < 2; ++axis) {
+            for (size_t side = 0; side < 2; ++side) {
+                float sign = side == 0 ? 1.0f : -1.0f;
+                for (size_t column = 0; column < 4; ++column) {
+                    planes[axis * 2 + side][column] = matrix[column * 4 + 3] + sign * matrix[column * 4 + axis];
+                }
+            }
+        }
+        for (size_t column = 0; column < 4; ++column) {
+            planes[4][column] = matrix[column * 4 + 2];
+        }
+    }
+
+    bool contains(const WorldView& view, int32_t x, int32_t y, int32_t z) const
+    {
+        float cx = static_cast<float>(x + 8 - view.cameraX);
+        float cy = static_cast<float>(y + 8 - view.cameraY);
+        float cz = static_cast<float>(z + 8 - view.cameraZ);
+        for (const std::array<float, 4>& plane : planes) {
+            float radius = 8.0f * (std::abs(plane[0]) + std::abs(plane[1]) + std::abs(plane[2]));
+            if (plane[0] * cx + plane[1] * cy + plane[2] * cz + plane[3] < -radius) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+/**
  * The latest frame the GPU has finished: its submission number (counting
  * from one) and how many sub-chunks with opaque terrain it drew.
  */
@@ -128,6 +170,13 @@ public:
     virtual void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) = 0;
     virtual void removeChunkMesh(uint64_t id) = 0;
     virtual void clearChunkMeshes() = 0;
+
+    /**
+     * Entity textures: square RGBA layers sampled by entity quads, which set
+     * bit 5 of their shade word. Single layers are replaced for player skins.
+     */
+    virtual void uploadEntityTextures(const uint8_t* pixels, uint32_t size, uint32_t layers) = 0;
+    virtual void updateEntityTexture(uint32_t layer, const uint8_t* pixels) = 0;
 
     virtual void beginFrame(float r, float g, float b) = 0;
     virtual void drawWorld(const WorldView& view) = 0;

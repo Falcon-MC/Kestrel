@@ -4,13 +4,29 @@
 #include "Network/Client/ClientNetworkSystem.h"
 #include "Network/Session/RealmsService.h"
 #include "client/DebugLog.h"
+#include "Protocol/Packets/AddActorPacket.h"
+#include "Protocol/Packets/AddPlayerPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
 #include "Protocol/Packets/LevelEventPacket.h"
+#include "Protocol/Packets/MoveActorAbsolutePacket.h"
+#include "Protocol/Packets/MoveActorDeltaPacket.h"
+#include "Protocol/Packets/PlayerListPacket.h"
+#include "Protocol/Packets/RemoveActorPacket.h"
 #include "Protocol/Packets/PlayStatusPacket.h"
+#include "Protocol/Packets/InventoryContentPacket.h"
+#include "Protocol/Packets/InventorySlotPacket.h"
+#include "Protocol/Packets/ItemRegistryPacket.h"
+#include "Protocol/Packets/MobEffectPacket.h"
+#include "Protocol/Packets/MobEquipmentPacket.h"
+#include "Protocol/Packets/PlayerHotbarPacket.h"
 #include "Protocol/Packets/RequestChunkRadiusPacket.h"
+#include "Protocol/Packets/SetHealthPacket.h"
+#include "Protocol/Packets/SetPlayerGameTypePacket.h"
+#include "Protocol/Packets/UpdateAttributesPacket.h"
+#include "Protocol/Packets/SetActorDataPacket.h"
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
 #include "Protocol/Packets/SetTimePacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
@@ -33,6 +49,7 @@
 #include <fstream>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace kestrel {
 
@@ -55,6 +72,126 @@ constexpr int ProtocolVersion = 2193;
 constexpr const char* GameVersion = "1.26.51";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr unsigned int TimeoutMs = 30000;
+constexpr double PlayerEyeHeight = 1.62;
+constexpr int32_t ScaleDataId = 38;
+constexpr int32_t AirDataId = 7;
+constexpr int32_t MaxAirDataId = 42;
+constexpr int32_t InventoryContainer = 0;
+constexpr int32_t OffhandContainer = 119;
+constexpr int32_t ArmorContainer = 120;
+
+/**
+ * The icon texture an item's registry components name under minecraft:icon,
+ * either directly or as its default texture, searched at any depth.
+ */
+std::string componentIcon(const Tag& tag, int depth = 0)
+{
+    if (tag.getType() != Tag::Type::Compound || depth > 6) {
+        return {};
+    }
+    if (const Tag* icon = tag.get("minecraft:icon")) {
+        if (icon->getType() == Tag::Type::String) {
+            return icon->asString();
+        }
+        if (icon->getType() == Tag::Type::Compound) {
+            if (const Tag* texture = icon->get("texture"); texture && texture->getType() == Tag::Type::String) {
+                return texture->asString();
+            }
+            const Tag* textures = icon->get("textures");
+            if (textures && textures->getType() == Tag::Type::Compound) {
+                if (const Tag* fallback = textures->get("default"); fallback && fallback->getType() == Tag::Type::String) {
+                    return fallback->asString();
+                }
+            }
+        }
+    }
+    for (const std::string& key : { std::string("components"), std::string("item_properties") }) {
+        if (const Tag* child = tag.get(key)) {
+            if (std::string found = componentIcon(*child, depth + 1); !found.empty()) {
+                return found;
+            }
+        }
+    }
+    return {};
+}
+
+/**
+ * The HUD view of a network stack: identifier, count, aux, the Damage tag of
+ * tools and armor and the custom name under display.Name.
+ */
+HudItem hudItemOf(const ItemStack& stack)
+{
+    HudItem item;
+    if (stack.isAir() || stack.mCount <= 0) {
+        return item;
+    }
+    item.identifier = stack.mDefinition->getIdentifier();
+    item.count = stack.mCount;
+    item.aux = stack.mDamage;
+    item.icon = componentIcon(stack.mDefinition->getComponentData());
+    if (stack.mTag.getType() != Tag::Type::Compound) {
+        return item;
+    }
+    if (const Tag* damage = stack.mTag.get("Damage"); damage && damage->getType() == Tag::Type::Int) {
+        item.damage = damage->asInt();
+    }
+    const Tag* display = stack.mTag.get("display");
+    if (display && display->getType() == Tag::Type::Compound) {
+        if (const Tag* name = display->get("Name"); name && name->getType() == Tag::Type::String) {
+            item.customName = name->asString();
+        }
+    }
+    return item;
+}
+
+/**
+ * The entity scale carried by a metadata update, or fallback when the update
+ * does not set it.
+ */
+float metadataScale(const EntityDataMap& metadata, float fallback)
+{
+    for (const EntityDataEntry& entry : metadata.mEntries) {
+        if (entry.mId == ScaleDataId && entry.mFormat == EntityDataFormat::Float && entry.mFloatValue > 0.0f) {
+            return entry.mFloatValue;
+        }
+    }
+    return fallback;
+}
+
+/**
+ * Copies the entity state a metadata update carries (flags, variants, color,
+ * skin id) into the actor, keeping every value the update leaves out.
+ */
+void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
+{
+    for (const EntityDataEntry& entry : metadata.mEntries) {
+        switch (entry.mId) {
+        case 0:
+            actor.flags[0] = static_cast<uint64_t>(entry.mLongValue);
+            break;
+        case 92:
+            actor.flags[1] = static_cast<uint64_t>(entry.mLongValue);
+            break;
+        case 2:
+            actor.variant = entry.mIntValue;
+            break;
+        case 43:
+            actor.markVariant = entry.mIntValue;
+            break;
+        case 3:
+            actor.color = static_cast<uint8_t>(entry.mByteValue);
+            break;
+        case 104:
+            actor.skinId = entry.mIntValue;
+            break;
+        case 4:
+            actor.name = entry.mStringValue;
+            break;
+        default:
+            break;
+        }
+    }
+}
 
 const char* gameModeName(GameType type)
 {
@@ -205,6 +342,258 @@ SessionSnapshot Session::snapshot() const
     return current;
 }
 
+std::vector<SkinUpload> Session::takeSkinUploads()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<SkinUpload> uploads = std::move(pendingSkins);
+    pendingSkins.clear();
+    return uploads;
+}
+
+/**
+ * Places an entity at a network position. Players are sent at eye height, so
+ * their feet sit one eye height lower. Every move counts as a new sample for
+ * the renderer to glide toward, and a teleport tells it to jump instead.
+ */
+void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround)
+{
+    auto actor = actors.find(runtimeId);
+    if (actor == actors.end()) {
+        return;
+    }
+    ++actor->second.moves;
+    if (teleport) {
+        ++actor->second.teleports;
+    }
+    actor->second.onGround = onGround;
+    actor->second.x = x;
+    actor->second.y = y - (actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0);
+    actor->second.z = z;
+    actor->second.yaw = yaw;
+    actor->second.headYaw = headYaw;
+    actor->second.pitch = pitch;
+}
+
+/**
+ * Updates the local player's HUD state from inventory, equipment, attribute,
+ * health, game mode, effect and air packets.
+ */
+void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
+{
+    double now = secondsNow();
+    auto slotOf = [&](int32_t container, int32_t slot) -> HudItem* {
+        HudState& hud = current.hud;
+        if (container == InventoryContainer && slot >= 0 && slot < int32_t(hud.inventory.size())) {
+            return &hud.inventory[size_t(slot)];
+        }
+        if (container == ArmorContainer && slot >= 0 && slot < int32_t(hud.armor.size())) {
+            return &hud.armor[size_t(slot)];
+        }
+        if (container == OffhandContainer && slot == 0) {
+            return &hud.offhand;
+        }
+        return nullptr;
+    };
+    if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        for (size_t slot = 0; slot < content->mContents.size(); ++slot) {
+            if (HudItem* target = slotOf(content->mContainerId, int32_t(slot))) {
+                *target = hudItemOf(content->mContents[slot]);
+            }
+            if (content->mContainerId == InventoryContainer && slot < inventoryStacks.size()) {
+                inventoryStacks[slot] = content->mContents[slot];
+            }
+        }
+    } else if (auto single = std::dynamic_pointer_cast<InventorySlotPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (HudItem* target = slotOf(single->mContainerId, single->mSlot)) {
+            *target = hudItemOf(single->mItem);
+        }
+        if (single->mContainerId == InventoryContainer && single->mSlot >= 0 && size_t(single->mSlot) < inventoryStacks.size()) {
+            inventoryStacks[size_t(single->mSlot)] = single->mItem;
+        }
+    } else if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
+        if (static_cast<uint64_t>(equipment->mRuntimeActorId) == localRuntimeId && equipment->mContainerId == InventoryContainer && equipment->mHotbarSlot >= 0 && equipment->mHotbarSlot < 9) {
+            std::lock_guard<std::mutex> guard(mutex);
+            if (current.hud.selectedSlot != equipment->mHotbarSlot) {
+                current.hud.selectedSlot = equipment->mHotbarSlot;
+                current.hud.selectedChanged = now;
+            }
+        }
+    } else if (auto hotbar = std::dynamic_pointer_cast<PlayerHotbarPacket>(packet)) {
+        if (hotbar->mSelectHotbarSlot && hotbar->mSelectedHotbarSlot >= 0 && hotbar->mSelectedHotbarSlot < 9) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.hud.selectedSlot = hotbar->mSelectedHotbarSlot;
+            current.hud.selectedChanged = now;
+        }
+    } else if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
+        if (static_cast<uint64_t>(attributes->mRuntimeActorId) != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        HudState& hud = current.hud;
+        for (const AttributeData& attribute : attributes->mAttributes) {
+            if (!std::isfinite(attribute.mValue)) {
+                continue;
+            }
+            if (attribute.mName == "minecraft:health") {
+                if (hud.statsKnown && attribute.mValue < hud.health) {
+                    hud.lastHealthDrop = now;
+                }
+                hud.health = attribute.mValue;
+                hud.maxHealth = std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f ? attribute.mMaximum : 20.0f;
+                hud.statsKnown = true;
+            } else if (attribute.mName == "minecraft:player.hunger") {
+                hud.hunger = attribute.mValue;
+            } else if (attribute.mName == "minecraft:player.saturation") {
+                hud.saturation = attribute.mValue;
+            } else if (attribute.mName == "minecraft:absorption") {
+                hud.absorption = attribute.mValue;
+            } else if (attribute.mName == "minecraft:player.experience") {
+                hud.experience = std::clamp(attribute.mValue, 0.0f, 1.0f);
+            } else if (attribute.mName == "minecraft:player.level") {
+                hud.level = static_cast<int32_t>(attribute.mValue);
+            }
+        }
+    } else if (auto health = std::dynamic_pointer_cast<SetHealthPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (float(health->mHealth) < current.hud.health) {
+            current.hud.lastHealthDrop = now;
+        }
+        current.hud.health = float(health->mHealth);
+        current.hud.statsKnown = true;
+    } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.gameType = mode->mGamemode;
+    } else if (auto effect = std::dynamic_pointer_cast<MobEffectPacket>(packet)) {
+        if (effect->mRuntimeActorId != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        std::vector<HudEffect>& effects = current.hud.effects;
+        std::erase_if(effects, [&](const HudEffect& entry) {
+            return entry.id == effect->mEffectId;
+        });
+        if (effect->mEvent == MobEffectPacket::Event::Add || effect->mEvent == MobEffectPacket::Event::Modify) {
+            HudEffect entry;
+            entry.id = effect->mEffectId;
+            entry.amplifier = effect->mAmplifier;
+            entry.expires = effect->mDuration < 0 ? -1.0 : now + effect->mDuration / 20.0;
+            entry.ambient = effect->mAmbient;
+            effects.push_back(entry);
+        }
+    } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
+        if (static_cast<uint64_t>(data->mRuntimeActorId) != localRuntimeId) {
+            return;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        for (const EntityDataEntry& entry : data->mMetadata.mEntries) {
+            if (entry.mId == AirDataId && entry.mFormat == EntityDataFormat::Short) {
+                current.hud.air = entry.mShortValue;
+            } else if (entry.mId == MaxAirDataId && entry.mFormat == EntityDataFormat::Short) {
+                current.hud.maxAir = std::max<int32_t>(entry.mShortValue, 1);
+            }
+        }
+    }
+}
+
+/**
+ * Asks the network thread to hold another hotbar slot; the HUD shows it at
+ * once and the server hears about it with the next loop.
+ */
+void Session::selectHotbarSlot(int slot)
+{
+    if (slot < 0 || slot > 8) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (current.hud.selectedSlot == slot) {
+            return;
+        }
+        current.hud.selectedSlot = slot;
+        current.hud.selectedChanged = secondsNow();
+    }
+    requestedSlot = slot;
+}
+
+/**
+ * Tells the server which hotbar slot the local player now holds, carrying the
+ * stack in that slot.
+ */
+void Session::sendSelectedSlot(int slot)
+{
+    if (!connection || slot < 0 || slot > 8) {
+        return;
+    }
+    MobEquipmentPacket packet;
+    packet.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
+    packet.mItem = inventoryStacks[size_t(slot)];
+    packet.mInventorySlot = slot;
+    packet.mHotbarSlot = slot;
+    packet.mContainerId = InventoryContainer;
+    connection->send(packet);
+}
+
+/**
+ * Keeps a player's skin in a free skin slot, scaled to the entity texture
+ * size, and points that player's entity at it.
+ */
+void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
+{
+    const SkinImageData& image = skin.mSkinData;
+    if (image.mWidth <= 0 || image.mHeight <= 0 || image.mData.size() < size_t(image.mWidth) * size_t(image.mHeight) * 4) {
+        return;
+    }
+    uint32_t slot = NoSkin;
+    if (auto existing = skinByUuid.find(uuid); existing != skinByUuid.end()) {
+        slot = existing->second.first;
+    } else {
+        for (uint32_t candidate = 0; candidate < world::SkinSlots; ++candidate) {
+            if (slotOwners[candidate].empty()) {
+                slot = candidate;
+                break;
+            }
+        }
+    }
+    if (slot == NoSkin) {
+        return;
+    }
+    bool slim = skin.mSkinResourcePatch.find("Slim") != std::string::npos || skin.mSkinResourcePatch.find("slim") != std::string::npos;
+    slotOwners[slot] = uuid;
+    skinByUuid[uuid] = { slot, slim };
+
+    SkinUpload upload;
+    upload.slot = slot;
+    upload.rig = world::buildSkinRig(skin.mGeometryData, skin.mSkinResourcePatch);
+    upload.pixels.resize(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4);
+    for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
+        for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
+            size_t source = (size_t(y * uint32_t(image.mHeight) / world::EntityTextureSize) * size_t(image.mWidth) + x * uint32_t(image.mWidth) / world::EntityTextureSize) * 4;
+            std::memcpy(upload.pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4, image.mData.data() + source, 4);
+        }
+    }
+    for (auto& [runtime, actor] : actors) {
+        auto owner = uuidByRuntime.find(runtime);
+        if (owner != uuidByRuntime.end() && owner->second == uuid) {
+            actor.skinSlot = slot;
+            actor.slim = slim;
+        }
+    }
+    std::lock_guard<std::mutex> guard(mutex);
+    pendingSkins.push_back(std::move(upload));
+}
+
+void Session::releaseSkin(const std::string& uuid)
+{
+    auto skin = skinByUuid.find(uuid);
+    if (skin == skinByUuid.end()) {
+        return;
+    }
+    slotOwners[skin->second.first].clear();
+    skinByUuid.erase(skin);
+}
+
 std::vector<MeshUpdate> Session::takeMeshUpdates()
 {
     std::lock_guard<std::mutex> guard(mutex);
@@ -311,6 +700,21 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ChunkRadiusUpdated:
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
+    case MinecraftPacketIds::AddPlayer:
+    case MinecraftPacketIds::AddActor:
+    case MinecraftPacketIds::RemoveActor:
+    case MinecraftPacketIds::MoveActorAbsolute:
+    case MinecraftPacketIds::MoveActorDelta:
+    case MinecraftPacketIds::SetActorData:
+    case MinecraftPacketIds::InventoryContent:
+    case MinecraftPacketIds::InventorySlot:
+    case MinecraftPacketIds::MobEquipment:
+    case MinecraftPacketIds::PlayerHotbar:
+    case MinecraftPacketIds::UpdateAttributes:
+    case MinecraftPacketIds::SetHealth:
+    case MinecraftPacketIds::SetPlayerGameType:
+    case MinecraftPacketIds::MobEffect:
+    case MinecraftPacketIds::PlayerList:
     case MinecraftPacketIds::SetTime:
     case MinecraftPacketIds::GameRulesChanged:
     case MinecraftPacketIds::LevelEvent:
@@ -323,6 +727,7 @@ void Session::handleWorldPacket(const std::string& payload)
     if (!packet) {
         return;
     }
+    handleHudPacket(packet);
 
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         world.handle(*levelChunk);
@@ -348,6 +753,68 @@ void Session::handleWorldPacket(const std::string& payload)
             current.spawnPitch = move->mRotation.x;
             current.spawnYaw = move->mRotation.y;
             ++current.teleportCount;
+        } else {
+            bool teleport = move->mMode == MovePlayerMode::Teleport || move->mMode == MovePlayerMode::Respawn;
+            moveActor(static_cast<uint64_t>(move->mRuntimeActorId), move->mPosition.x, move->mPosition.y, move->mPosition.z, move->mRotation.y, move->mRotation.z, move->mRotation.x, teleport, move->mOnGround);
+        }
+    } else if (auto player = std::dynamic_pointer_cast<AddPlayerPacket>(packet)) {
+        uint64_t runtime = static_cast<uint64_t>(player->mRuntimeActorId);
+        if (runtime != localRuntimeId) {
+            ActorView actor;
+            actor.runtimeId = runtime;
+            actor.identifier = "minecraft:player";
+            std::string uuid = player->mUuid.toString();
+            uuidByRuntime[runtime] = uuid;
+            if (auto skin = skinByUuid.find(uuid); skin != skinByUuid.end()) {
+                actor.skinSlot = skin->second.first;
+                actor.slim = skin->second.second;
+            }
+            actor.scale = metadataScale(player->mMetadata, 1.0f);
+            applyActorMetadata(player->mMetadata, actor);
+            actors[runtime] = actor;
+            runtimeByUnique[player->mRuntimeActorId] = runtime;
+            moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true);
+        }
+    } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
+        uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
+        ActorView actor;
+        actor.runtimeId = runtime;
+        actor.identifier = added->mIdentifier;
+        actor.scale = metadataScale(added->mMetadata, 1.0f);
+        applyActorMetadata(added->mMetadata, actor);
+        actors[runtime] = actor;
+        runtimeByUnique[added->mUniqueActorId] = runtime;
+        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true);
+    } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
+        if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
+            actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);
+            applyActorMetadata(data->mMetadata, actor->second);
+        }
+    } else if (auto removed = std::dynamic_pointer_cast<RemoveActorPacket>(packet)) {
+        auto runtime = runtimeByUnique.find(removed->mUniqueActorId);
+        if (runtime != runtimeByUnique.end()) {
+            actors.erase(runtime->second);
+            uuidByRuntime.erase(runtime->second);
+            runtimeByUnique.erase(runtime);
+        }
+    } else if (auto absolute = std::dynamic_pointer_cast<MoveActorAbsolutePacket>(packet)) {
+        moveActor(static_cast<uint64_t>(absolute->mRuntimeActorId), absolute->mPosition.x, absolute->mPosition.y, absolute->mPosition.z, absolute->mRotation.y, absolute->mRotation.z, absolute->mRotation.x, absolute->mTeleported, absolute->mOnGround);
+    } else if (auto delta = std::dynamic_pointer_cast<MoveActorDeltaPacket>(packet)) {
+        auto actor = actors.find(delta->mRuntimeActorId);
+        if (actor != actors.end()) {
+            double eye = actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0;
+            moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : actor->second.x, delta->mHasY ? delta->mY : actor->second.y + eye,
+                delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
+                delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);
+        }
+    } else if (auto list = std::dynamic_pointer_cast<PlayerListPacket>(packet)) {
+        for (const PlayerListPacket::Entry& entry : list->mEntries) {
+            std::string uuid = entry.mUuid.toString();
+            if (entry.mAction == PlayerListPacket::Action::Remove) {
+                releaseSkin(uuid);
+                continue;
+            }
+            storeSkin(uuid, entry.mSkin);
         }
     } else if (auto time = std::dynamic_pointer_cast<SetTimePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
@@ -390,6 +857,9 @@ void Session::handleWorldPacket(const std::string& payload)
         }
     } else if (auto dimension = std::dynamic_pointer_cast<ChangeDimensionPacket>(packet)) {
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
+        actors.clear();
+        runtimeByUnique.clear();
+        uuidByRuntime.clear();
         std::lock_guard<std::mutex> guard(mutex);
         current.dimension = dimension->mDimension;
     }
@@ -594,6 +1064,17 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         return;
     }
     debugLog("dial done, chunk radius " + std::to_string(result.mConnection->getChunkRadius()) + ", spawn " + (result.mConnection->isSpawnReceived() ? "received" : "pending"));
+    blockDefinitions = BlockDefinitionRegistry {};
+    itemDefinitions = ItemDefinitionRegistry {};
+    if (const std::shared_ptr<ItemRegistryPacket>& registry = result.mConnection->getItemRegistry()) {
+        for (const ItemComponentEntry& entry : registry->mEntries) {
+            itemDefinitions.registerDefinition(std::make_shared<ItemDefinition>(entry.mIdentifier, entry.mRuntimeId, entry.mComponentBased, entry.mComponentData));
+        }
+    }
+    codecContext = std::make_unique<PacketCodecContext>(blockDefinitions, itemDefinitions);
+    result.mConnection->setCodecContext(codecContext.get());
+    inventoryStacks = {};
+    requestedSlot = -1;
     spawnInitialized = false;
     if (result.mConnection->isSpawnReceived()) {
         initializeLocalPlayer(*result.mConnection, result.mConnection->getStartGame() ? result.mConnection->getStartGame()->mRuntimeActorId : 0);
@@ -607,6 +1088,12 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.chunkRadius = connection->getChunkRadius();
         current.joinCount = ++joins;
         pendingUpdates.clear();
+        pendingSkins.clear();
+        actors.clear();
+        runtimeByUnique.clear();
+        uuidByRuntime.clear();
+        skinByUuid.clear();
+        slotOwners = {};
         if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
             current.spawnX = startGame->mPlayerPosition.x;
             current.spawnY = startGame->mPlayerPosition.y;
@@ -615,6 +1102,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             current.spawnYaw = startGame->mRotation.y;
             current.hashedIds = startGame->mBlockNetworkIdsHashed;
             localRuntimeId = startGame->mRuntimeActorId;
+            current.hud = HudState {};
+            current.hud.gameType = static_cast<int32_t>(startGame->mPlayerGameType == GameType::Default ? startGame->mLevelGameType : startGame->mPlayerGameType);
             current.levelName = startGame->mLevelName;
             current.gameMode = gameModeName(startGame->mPlayerGameType);
             current.dimension = startGame->mDimensionId;
@@ -727,6 +1216,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             sentRadius = wanted;
             debugLog("requested chunk radius " + std::to_string(wanted));
         }
+        if (int slot = requestedSlot.exchange(-1); slot >= 0) {
+            sendSelectedSlot(slot);
+        }
         scheduleMeshes();
         collectMeshes();
 
@@ -740,11 +1232,15 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.meshJobs = mesher->pending();
         current.cohortComplete = world.cohortLoaded();
         current.updatesPending = !pendingUpdates.empty();
+        current.actors.clear();
+        for (const auto& [runtime, actor] : actors) {
+            current.actors.push_back(actor);
+        }
         if (double now = secondsNow(); now - lastReadinessLog >= 1.0) {
             lastReadinessLog = now;
             debugLog("columns " + std::to_string(current.world.columns) + " subchunks " + std::to_string(current.world.subChunks) + " pending " + std::to_string(current.world.pendingSubChunks)
                 + " meshes " + std::to_string(meshes.size()) + " jobs " + std::to_string(current.meshJobs) + " cohort " + (current.cohortComplete ? "complete" : "incomplete")
-                + " updates " + (current.updatesPending ? "pending" : "none") + " radius " + std::to_string(current.chunkRadius) + " spawn " + (spawnInitialized ? "initialized" : "waiting") + " mesh ms " + std::to_string(mesher->averageMilliseconds()) + " workers " + std::to_string(mesher->workerCount()));
+                + " updates " + (current.updatesPending ? "pending" : "none") + " radius " + std::to_string(current.chunkRadius) + " spawn " + (spawnInitialized ? "initialized" : "waiting") + " actors " + std::to_string(actors.size()) + " skins " + std::to_string(skinByUuid.size()) + " mesh ms " + std::to_string(mesher->averageMilliseconds()) + " workers " + std::to_string(mesher->workerCount()));
         }
         if (assets) {
             int32_t bx = static_cast<int32_t>(std::floor(current.spawnX));

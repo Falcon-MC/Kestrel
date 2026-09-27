@@ -19,6 +19,7 @@ layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
 layout(location = 5) out vec3 outLight;
+layout(location = 6) flat out uint outEntity;
 
 const float lightCurve[16] = float[16](
     0.0, 0.01754386, 0.037037037, 0.05882353,
@@ -61,4 +62,5 @@ void main()
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
     outLight = cornerLight(inD.x, inD.y, corner);
+    outEntity = (words[11] >> 5) & 1u;
 }

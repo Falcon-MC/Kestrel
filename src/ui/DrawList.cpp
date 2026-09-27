@@ -26,7 +26,7 @@ void DrawList::fill(const Rect& logical, Color color)
     quad(x0, y0, x1, y1, whiteU, whiteV, whiteU, whiteV, color.packed());
 }
 
-void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color)
+void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color, float topShift, float bottomShift)
 {
     if (clip.w > 0.0f) {
         float cx0 = std::max(x0, clip.x);
@@ -52,10 +52,10 @@ void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, 
         v1 = nv1;
     }
     uint32_t base = static_cast<uint32_t>(vertexData.size());
-    vertexData.push_back({ x0, y0, u0, v0, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
-    vertexData.push_back({ x1, y0, u1, v0, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
-    vertexData.push_back({ x1, y1, u1, v1, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
-    vertexData.push_back({ x0, y1, u0, v1, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
+    vertexData.push_back({ x0 + topShift, y0, u0, v0, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
+    vertexData.push_back({ x1 + topShift, y0, u1, v0, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
+    vertexData.push_back({ x1 + bottomShift, y1, u1, v1, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
+    vertexData.push_back({ x0 + bottomShift, y1, u0, v1, color, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f });
     pushIndices(base);
 }
 

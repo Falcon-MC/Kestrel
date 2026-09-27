@@ -2,6 +2,7 @@
 
 #include "world/BiomeTints.h"
 #include "world/BlockRegistry.h"
+#include "world/EntityAnimation.h"
 #include "world/ServerPack.h"
 
 #include <array>
@@ -175,6 +176,64 @@ struct CustomBlock {
 
 using SequentialMap = std::vector<int32_t>;
 
+inline constexpr uint32_t EntityTextureSize = 128;
+inline constexpr uint32_t ItemIconSize = 32;
+inline constexpr uint32_t SkinSlots = 32;
+
+/**
+ * One geometry of an entity: quads in 1/256 block around its feet, facing
+ * north, unposed and tagged with the bone they follow, and its bone rig.
+ */
+struct EntityRig {
+    std::vector<ModelQuad> quads;
+    std::vector<uint16_t> quadBones;
+    std::vector<EntityBone> bones;
+};
+
+/**
+ * The model a player skin carries: the geometry its resource patch names out
+ * of the skin's own geometry data, or null when the skin has none.
+ */
+std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch);
+
+inline constexpr uint32_t NoEntityChoice = 0xFFFFFFFFu;
+
+/**
+ * A bone name pattern ('*' matches any run of characters, lowercase) and the
+ * Molang expression telling whether the matching bones are drawn.
+ */
+struct EntityPartRule {
+    std::string pattern;
+    molang::Script visible;
+};
+
+/**
+ * A render controller bound to one entity: its condition from the entity's
+ * list, the geometry and texture selectors, each an expression yielding an
+ * index into the rig or texture layer choices (NoEntityChoice when missing),
+ * and the part visibility rules in order, later rules winning.
+ */
+struct EntityRenderController {
+    molang::Script condition;
+    molang::Script geometry;
+    std::vector<uint32_t> geometryChoices;
+    molang::Script texture;
+    std::vector<uint32_t> textureChoices;
+    std::vector<EntityPartRule> parts;
+};
+
+/**
+ * An entity's model from its client definition: every geometry it references
+ * as a rig (the default one first), its render controllers, its scripts and
+ * the default entity texture layer it samples.
+ */
+struct EntityModel {
+    std::vector<EntityRig> rigs;
+    std::vector<EntityRenderController> controllers;
+    std::shared_ptr<const EntityScripts> scripts;
+    uint32_t layer = 0;
+};
+
 class BlockAssets {
 public:
     static std::shared_ptr<const BlockAssets> shared(std::string& error);
@@ -218,6 +277,39 @@ public:
     const BiomeTints& biomeTints() const
     {
         return biomes;
+    }
+
+    const EntityModel* entityModel(const std::string& identifier) const
+    {
+        auto found = entityModels.find(identifier);
+        return found == entityModels.end() ? nullptr : &found->second;
+    }
+
+    const AnimationLibrary& animationLibrary() const
+    {
+        return animations;
+    }
+
+    const std::vector<uint8_t>& entityTexturePixels() const
+    {
+        return entityPixels;
+    }
+
+    uint32_t entityTextureLayers() const
+    {
+        return static_cast<uint32_t>(entityPixels.size() / (size_t(EntityTextureSize) * EntityTextureSize * 4));
+    }
+
+    uint32_t skinLayerBase() const
+    {
+        return entityTextureLayers();
+    }
+
+    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
+
+    size_t itemTextureCount() const
+    {
+        return itemTextures.size() + itemFiles.size();
     }
 
     uint32_t sunLayer() const
@@ -267,6 +359,8 @@ private:
     };
 
     bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
+    void buildEntityModels(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs);
+    void buildInterfaceAssets(PackSource& pack);
     void buildBlockEntityTemplates(PackSource& pack, std::vector<std::vector<uint8_t>>& layers, std::vector<bool>& overlayLayers, std::map<std::string, uint32_t>& materialByKey,
         const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
@@ -280,8 +374,14 @@ private:
     std::vector<ModelTemplate> templates;
     std::vector<ModelQuad> quads;
     BlockEntityTemplates entityTemplates;
+    std::unordered_map<std::string, EntityModel> entityModels;
+    AnimationLibrary animations;
+    std::vector<uint8_t> entityPixels;
     TextureArray textureArray;
     BiomeTints biomes;
+    std::unordered_map<std::string, std::vector<std::vector<uint8_t>>> itemTextures;
+    std::unordered_map<std::string, uint32_t> blockByName;
+    std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
     size_t diagnosticCount = 0;

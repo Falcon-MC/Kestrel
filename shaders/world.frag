@@ -10,6 +10,7 @@ layout(push_constant) uniform Draw {
 
 layout(set = 0, binding = 0) uniform sampler2DArray blocks;
 layout(set = 0, binding = 1) uniform sampler2DArray blocksHigh;
+layout(set = 0, binding = 2) uniform sampler2DArray entities;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -17,6 +18,7 @@ layout(location = 2) in float inShade;
 layout(location = 3) in vec3 inRelative;
 layout(location = 4) flat in uint inTint;
 layout(location = 5) in vec3 inLight;
+layout(location = 6) flat in uint inEntity;
 
 layout(location = 0) out vec4 outColor;
 
@@ -66,13 +68,20 @@ vec4 applyTint(vec4 texel, uint tint)
 
 void main()
 {
-    vec4 texel = applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    vec4 texel = inEntity != 0u ? texture(entities, vec3(inUv, float(inMaterial & 0xfffu))) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
 #ifdef BLEND
     if (texel.a < 0.004) {
         discard;
     }
     outColor = vec4(shadeWorld(texel.rgb) * texel.a, texel.a);
 #else
+    if (inEntity != 0u) {
+        if (texel.a < 0.1) {
+            discard;
+        }
+        outColor = texel;
+        return;
+    }
     if (texel.a < 0.5) {
         discard;
     }

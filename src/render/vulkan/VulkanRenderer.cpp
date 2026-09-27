@@ -53,6 +53,7 @@ public:
         vkDeviceWaitIdle(device);
         destroyAtlas();
         destroyBlockTextures();
+        destroyEntityTextures();
         for (auto& [id, chunk] : chunks) {
             for (Buffer& buffer : chunk.buffers) {
                 destroyBuffer(buffer);
@@ -72,6 +73,7 @@ public:
         vkDestroySampler(device, blockSampler, nullptr);
         for (FrameBuffers& buffers : frameBuffers) {
             destroyBuffer(buffers.sky);
+            destroyBuffer(buffers.entities);
             destroyBuffer(buffers.vertices);
             destroyBuffer(buffers.indices);
         }
@@ -185,6 +187,120 @@ public:
             uint32_t first = page * BlockTexturePageLayers;
             uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
             uploadBlockTexturePage(textures, page, first, count);
+        }
+        if (entityImage == VK_NULL_HANDLE) {
+            uploadEntityTextures(nullptr, 0, 0);
+        }
+    }
+
+    void uploadEntityTextures(const uint8_t* pixels, uint32_t size, uint32_t layers) override
+    {
+        vkDeviceWaitIdle(device);
+        destroyEntityTextures();
+        std::vector<uint8_t> blank;
+        if (layers == 0) {
+            size = 1;
+            layers = 1;
+            blank.assign(4, 0);
+            pixels = blank.data();
+        }
+        entitySize = size;
+        entityLayers = layers;
+        VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        imageInfo.extent = { size, size, 1 };
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = layers;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        check(vkCreateImage(device, &imageInfo, nullptr, &entityImage), "vkCreateImage");
+        VkMemoryRequirements requirements;
+        vkGetImageMemoryRequirements(device, entityImage, &requirements);
+        VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        check(vkAllocateMemory(device, &allocation, nullptr, &entityMemory), "vkAllocateMemory");
+        vkBindImageMemory(device, entityImage, entityMemory, 0);
+        copyEntityLayers(pixels, 0, layers, VK_IMAGE_LAYOUT_UNDEFINED);
+
+        VkImageViewCreateInfo viewInfo { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        viewInfo.image = entityImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers };
+        check(vkCreateImageView(device, &viewInfo, nullptr, &entityView), "vkCreateImageView");
+
+        VkDescriptorImageInfo imageDescriptor {};
+        imageDescriptor.sampler = blockSampler;
+        imageDescriptor.imageView = entityView;
+        imageDescriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        write.dstSet = worldDescriptorSet;
+        write.dstBinding = BlockTexturePages;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imageDescriptor;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
+    void updateEntityTexture(uint32_t layer, const uint8_t* pixels) override
+    {
+        if (entityImage == VK_NULL_HANDLE || layer >= entityLayers) {
+            return;
+        }
+        vkDeviceWaitIdle(device);
+        copyEntityLayers(pixels, layer, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    /**
+     * Copies consecutive entity texture layers from tightly packed pixels and
+     * leaves them ready for sampling.
+     */
+    void copyEntityLayers(const uint8_t* pixels, uint32_t first, uint32_t count, VkImageLayout from)
+    {
+        VkDeviceSize bytes = VkDeviceSize(entitySize) * entitySize * 4 * count;
+        Buffer staging = createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memcpy(staging.mapped, pixels, size_t(bytes));
+        VkBufferImageCopy region {};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, first, count };
+        region.imageExtent = { entitySize, entitySize, 1 };
+
+        VkCommandBuffer command = beginOneTime();
+        VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        barrier.oldLayout = from;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = entityImage;
+        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, first, count };
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        vkCmdCopyBufferToImage(command, staging.buffer, entityImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        endOneTime(command);
+        destroyBuffer(staging);
+    }
+
+    void destroyEntityTextures()
+    {
+        if (entityView != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, entityView, nullptr);
+            entityView = VK_NULL_HANDLE;
+        }
+        if (entityImage != VK_NULL_HANDLE) {
+            vkDestroyImage(device, entityImage, nullptr);
+            entityImage = VK_NULL_HANDLE;
+        }
+        if (entityMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, entityMemory, nullptr);
+            entityMemory = VK_NULL_HANDLE;
         }
     }
 
@@ -360,23 +476,43 @@ public:
             vkCmdDraw(command, view.backgroundCount, 1, 0, 0);
         }
 
-        for (size_t stream : { size_t(0), size_t(1) }) {
-            bind(stream == 0 ? worldPipeline : modelPipeline);
-            for (const auto& [id, chunk] : chunks) {
-                drawStream(chunk, stream);
+        ChunkFrustum frustum(view);
+        std::vector<const ChunkBuffer*> visible;
+        visible.reserve(chunks.size());
+        for (const auto& [id, chunk] : chunks) {
+            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
+                visible.push_back(&chunk);
             }
         }
-        recordedOpaque = static_cast<uint32_t>(std::count_if(chunks.begin(), chunks.end(), [](const auto& entry) {
-            return entry.second.counts[0] || entry.second.counts[1];
+        for (size_t stream : { size_t(0), size_t(1) }) {
+            bind(stream == 0 ? worldPipeline : modelPipeline);
+            for (const ChunkBuffer* chunk : visible) {
+                drawStream(*chunk, stream);
+            }
+        }
+        recordedOpaque = static_cast<uint32_t>(std::count_if(visible.begin(), visible.end(), [](const ChunkBuffer* chunk) {
+            return chunk->counts[0] || chunk->counts[1];
         }));
 
+        if (view.entityQuadCount) {
+            FrameBuffers& buffers = frameBuffers[frame];
+            size_t bytes = size_t(view.entityQuadCount) * ModelQuadBytes;
+            ensure(buffers.entities, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            std::memcpy(buffers.entities.mapped, view.entityQuads, bytes);
+            bind(modelPipeline);
+            pushOrigin(view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(command, 0, 1, &buffers.entities.buffer, &offset);
+            vkCmdDraw(command, 6, view.entityQuadCount, 0, 0);
+        }
+
         std::vector<std::pair<double, const ChunkBuffer*>> ordered;
-        for (const auto& [id, chunk] : chunks) {
-            if (chunk.counts[2] || chunk.counts[3]) {
-                double dx = chunk.origin[0] + 8.0 - view.cameraX;
-                double dy = chunk.origin[1] + 8.0 - view.cameraY;
-                double dz = chunk.origin[2] + 8.0 - view.cameraZ;
-                ordered.emplace_back(dx * dx + dy * dy + dz * dz, &chunk);
+        for (const ChunkBuffer* chunk : visible) {
+            if (chunk->counts[2] || chunk->counts[3]) {
+                double dx = chunk->origin[0] + 8.0 - view.cameraX;
+                double dy = chunk->origin[1] + 8.0 - view.cameraY;
+                double dz = chunk->origin[2] + 8.0 - view.cameraZ;
+                ordered.emplace_back(dx * dx + dy * dy + dz * dz, chunk);
             }
         }
         std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
@@ -533,6 +669,7 @@ private:
         Buffer vertices;
         Buffer indices;
         Buffer sky;
+        Buffer entities;
     };
 
     static constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
@@ -658,19 +795,19 @@ private:
 
     void createWorldPipeline()
     {
-        std::array<VkDescriptorSetLayoutBinding, BlockTexturePages> bindings {};
-        for (uint32_t page = 0; page < BlockTexturePages; ++page) {
-            bindings[page].binding = page;
-            bindings[page].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            bindings[page].descriptorCount = 1;
-            bindings[page].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        std::array<VkDescriptorSetLayoutBinding, BlockTexturePages + 1> bindings {};
+        for (uint32_t binding = 0; binding < bindings.size(); ++binding) {
+            bindings[binding].binding = binding;
+            bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[binding].descriptorCount = 1;
+            bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layoutInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        layoutInfo.bindingCount = BlockTexturePages;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
         layoutInfo.pBindings = bindings.data();
         check(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &worldDescriptorLayout), "vkCreateDescriptorSetLayout");
 
-        VkDescriptorPoolSize size { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, BlockTexturePages };
+        VkDescriptorPoolSize size { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, BlockTexturePages + 1 };
         VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         poolInfo.maxSets = 1;
         poolInfo.poolSizeCount = 1;
@@ -1379,6 +1516,11 @@ private:
     std::array<VkImage, BlockTexturePages> blockImages {};
     std::array<VkDeviceMemory, BlockTexturePages> blockMemories {};
     std::array<VkImageView, BlockTexturePages> blockViews {};
+    VkImage entityImage = VK_NULL_HANDLE;
+    VkDeviceMemory entityMemory = VK_NULL_HANDLE;
+    VkImageView entityView = VK_NULL_HANDLE;
+    uint32_t entitySize = 0;
+    uint32_t entityLayers = 0;
     VkSampler blockSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout worldDescriptorLayout = VK_NULL_HANDLE;
     VkDescriptorPool worldDescriptorPool = VK_NULL_HANDLE;

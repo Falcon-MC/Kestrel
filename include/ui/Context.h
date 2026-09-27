@@ -39,6 +39,11 @@ public:
         return art;
     }
 
+    float pixelScale() const
+    {
+        return scale;
+    }
+
     const std::vector<Rect>& interactiveRects() const
     {
         return interactive;

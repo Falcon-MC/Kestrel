@@ -11,6 +11,7 @@
 #include "world/PackSource.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -2084,6 +2085,8 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
 
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
+    buildEntityModels(pack, packs);
+    buildInterfaceAssets(pack);
 
     std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
     PackSource behaviors(behaviorRoot);
@@ -2130,6 +2133,610 @@ float entityFloat(const Tag* data, const char* key)
     return value->getType() == Tag::Type::Float ? value->asFloat() : static_cast<float>(entityInt(data, key, 0));
 }
 
+}
+
+namespace {
+
+std::vector<uint64_t> engineVersion(const std::string& text)
+{
+    std::vector<uint64_t> numbers;
+    uint64_t current = 0;
+    bool inNumber = false;
+    for (char c : text) {
+        if (c >= '0' && c <= '9') {
+            current = current * 10 + uint64_t(c - '0');
+            inNumber = true;
+        } else if (inNumber) {
+            numbers.push_back(current);
+            current = 0;
+            inNumber = false;
+        }
+    }
+    if (inNumber) {
+        numbers.push_back(current);
+    }
+    return numbers;
+}
+
+std::vector<uint8_t> resizeNearest(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, uint32_t size)
+{
+    std::vector<uint8_t> out(size_t(size) * size * 4);
+    for (uint32_t y = 0; y < size; ++y) {
+        for (uint32_t x = 0; x < size; ++x) {
+            const uint8_t* source = rgba.data() + (size_t(y * height / size) * width + x * width / size) * 4;
+            std::copy(source, source + 4, out.data() + (size_t(y) * size + x) * 4);
+        }
+    }
+    return out;
+}
+
+std::string lowerName(std::string text);
+
+/**
+ * A client entity definition: its textures and geometries by lowercase short
+ * name, the default of each, and its render controllers with their condition
+ * source (empty when unconditional).
+ */
+struct ClientEntity {
+    std::string texture;
+    std::string geometry;
+    std::map<std::string, std::string> textures;
+    std::map<std::string, std::string> geometries;
+    std::vector<std::pair<std::string, std::string>> renderControllers;
+    std::vector<uint64_t> version;
+    std::shared_ptr<const EntityScripts> scripts;
+};
+
+std::map<std::string, std::string> readNamedStrings(const json::Value* table)
+{
+    std::map<std::string, std::string> out;
+    if (!table) {
+        return out;
+    }
+    for (const std::string& key : table->mKeys) {
+        const json::Value& value = *table->mObject.at(key);
+        if (value.isString()) {
+            out[lowerName(key)] = value.mString;
+        }
+    }
+    return out;
+}
+
+void readClientEntity(const std::string& text, std::map<std::string, ClientEntity>& out)
+{
+    std::unique_ptr<json::Value> document = json::parse(stripComments(text));
+    const json::Value* entity = document ? document->get("minecraft:client_entity") : nullptr;
+    const json::Value* description = entity ? entity->get("description") : nullptr;
+    const json::Value* identifier = description ? description->get("identifier") : nullptr;
+    if (!identifier || !identifier->isString()) {
+        return;
+    }
+    ClientEntity parsed;
+    parsed.textures = readNamedStrings(description->get("textures"));
+    parsed.geometries = readNamedStrings(description->get("geometry"));
+    if (parsed.textures.empty() || parsed.geometries.empty()) {
+        return;
+    }
+    auto texture = parsed.textures.find("default");
+    auto model = parsed.geometries.find("default");
+    parsed.texture = texture != parsed.textures.end() ? texture->second : parsed.textures.begin()->second;
+    parsed.geometry = model != parsed.geometries.end() ? model->second : parsed.geometries.begin()->second;
+    if (const json::Value* controllers = description->get("render_controllers"); controllers && controllers->isArray()) {
+        for (const std::unique_ptr<json::Value>& entry : controllers->mArray) {
+            if (entry->isString()) {
+                parsed.renderControllers.emplace_back(lowerName(entry->mString), std::string {});
+                continue;
+            }
+            for (const std::string& key : entry->mKeys) {
+                const json::Value& condition = *entry->mObject.at(key);
+                parsed.renderControllers.emplace_back(lowerName(key), condition.isString() ? condition.mString : std::string {});
+            }
+        }
+    }
+    parsed.scripts = readEntityScripts(*description);
+    if (const json::Value* version = description->get("min_engine_version"); version && version->isString()) {
+        parsed.version = engineVersion(version->mString);
+    }
+    auto existing = out.find(identifier->mString);
+    if (existing == out.end() || parsed.version >= existing->second.version) {
+        out[identifier->mString] = std::move(parsed);
+    }
+}
+
+std::array<float, 3> rotateEulerAround(std::array<float, 3> point, const std::array<float, 3>& pivot, const std::array<float, 3>& degrees)
+{
+    constexpr float Radians = 3.14159265f / 180.0f;
+    float sx = std::sin(degrees[0] * Radians);
+    float cx = std::cos(degrees[0] * Radians);
+    float sy = std::sin(degrees[1] * Radians);
+    float cy = std::cos(degrees[1] * Radians);
+    float sz = std::sin(degrees[2] * Radians);
+    float cz = std::cos(degrees[2] * Radians);
+    std::array<float, 3> value { point[0] - pivot[0], point[1] - pivot[1], point[2] - pivot[2] };
+    value = { value[0], value[1] * cx - value[2] * sx, value[1] * sx + value[2] * cx };
+    value = { value[0] * cy + value[2] * sy, value[1], -value[0] * sy + value[2] * cy };
+    value = { value[0] * cz - value[1] * sz, value[0] * sz + value[1] * cz, value[2] };
+    return { value[0] + pivot[0], value[1] + pivot[1], value[2] + pivot[2] };
+}
+
+std::string lowerName(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text;
+}
+
+/**
+ * Turns a geometry into an animatable model. Geometry files mirror the x axis
+ * and the x and y rotations, so pivots, cubes and rotations are flipped back
+ * into world handedness; each cube is turned around its own pivot and its
+ * quads stay unposed, tagged with their bone, with the box or per-face UV
+ * unwrap over the whole texture.
+ */
+void buildEntityRig(const Geometry& geometry, EntityRig& model)
+{
+    std::map<std::string, int32_t> indexByName;
+    for (const GeometryBone& bone : geometry.bones) {
+        indexByName.emplace(lowerName(bone.name), static_cast<int32_t>(model.bones.size()));
+        EntityBone rigBone;
+        rigBone.name = bone.name;
+        rigBone.pivot = { -bone.pivot[0], bone.pivot[1], bone.pivot[2] };
+        rigBone.rotation = { -bone.rotation[0], -bone.rotation[1], bone.rotation[2] };
+        model.bones.push_back(rigBone);
+    }
+    for (size_t index = 0; index < geometry.bones.size(); ++index) {
+        auto found = indexByName.find(lowerName(geometry.bones[index].parent));
+        if (found != indexByName.end() && found->second != static_cast<int32_t>(index)) {
+            model.bones[index].parent = found->second;
+        }
+    }
+    for (size_t index = 0; index < model.bones.size(); ++index) {
+        int32_t walker = model.bones[index].parent;
+        for (size_t steps = 0; walker >= 0; ++steps) {
+            if (walker == static_cast<int32_t>(index) || steps > model.bones.size()) {
+                model.bones[index].parent = -1;
+                break;
+            }
+            walker = model.bones[walker].parent;
+        }
+    }
+
+    static constexpr std::array<float, 3> FaceNormals[6] = { { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 } };
+    static constexpr std::array<float, 3> FaceRights[6] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 1, 0, 0 }, { 1, 0, 0 } };
+    static constexpr std::array<float, 3> FaceUps[6] = { { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
+    static constexpr float CornerSigns[4][2] = { { -1, 1 }, { 1, 1 }, { 1, -1 }, { -1, -1 } };
+    static constexpr uint32_t FaceIds[6] = { 5, 6, 3, 4, 2, 1 };
+    static constexpr int GeometrySides[6] = { 4, 5, 0, 1, 3, 2 };
+    float width = geometry.textureWidth > 0.0f ? geometry.textureWidth : 64.0f;
+    float height = geometry.textureHeight > 0.0f ? geometry.textureHeight : 64.0f;
+
+    for (size_t boneIndex = 0; boneIndex < geometry.bones.size(); ++boneIndex) {
+        const GeometryBone& bone = geometry.bones[boneIndex];
+        if (bone.neverRender) {
+            continue;
+        }
+        for (const GeometryCube& cube : bone.cubes) {
+            float inflate = cube.inflate + bone.inflate;
+            std::array<float, 3> min {
+                -(cube.origin[0] + cube.size[0]) - inflate,
+                cube.origin[1] - inflate,
+                cube.origin[2] - inflate,
+            };
+            std::array<float, 3> max {
+                -cube.origin[0] + inflate,
+                cube.origin[1] + cube.size[1] + inflate,
+                cube.origin[2] + cube.size[2] + inflate,
+            };
+            std::array<float, 3> cubePivot { -cube.pivot[0], cube.pivot[1], cube.pivot[2] };
+            std::array<float, 3> cubeRotation { -cube.rotation[0], -cube.rotation[1], cube.rotation[2] };
+            bool mirror = cube.mirror != bone.mirror;
+            float x = cube.size[0];
+            float y = cube.size[1];
+            float z = cube.size[2];
+            for (int face = 0; face < 6; ++face) {
+                std::array<float, 4> region {};
+                if (cube.boxUv) {
+                    float u = cube.uv[0];
+                    float v = cube.uv[1];
+                    const std::array<float, 4> boxRegions[6] = {
+                        { u + z, v + z, x, y },
+                        { u + z + x + z, v + z, x, y },
+                        { u + z + x, v + z, z, y },
+                        { u, v + z, z, y },
+                        { u + z, v, x, z },
+                        { u + z + x, v, x, z },
+                    };
+                    int source = face;
+                    if (mirror && (face == 2 || face == 3)) {
+                        source = face == 2 ? 3 : 2;
+                    }
+                    region = boxRegions[source];
+                } else {
+                    const GeometryFace& uv = cube.faces[GeometrySides[face]];
+                    if (!uv.present) {
+                        continue;
+                    }
+                    region = { uv.uv[0], uv.uv[1], uv.size[0], uv.size[1] };
+                }
+                float left = region[0] / width;
+                float right = (region[0] + region[2]) / width;
+                if (mirror) {
+                    std::swap(left, right);
+                }
+                float top = region[1] / height;
+                float bottom = (region[1] + region[3]) / height;
+                const std::array<std::array<float, 2>, 4> uvs { { { left, top }, { right, top }, { right, bottom }, { left, bottom } } };
+                const std::array<float, 3>& normal = FaceNormals[face];
+                const std::array<float, 3>& rightAxis = FaceRights[face];
+                const std::array<float, 3>& upAxis = FaceUps[face];
+                ModelQuad quad;
+                for (size_t corner = 0; corner < 4; ++corner) {
+                    std::array<float, 3> point {};
+                    for (int axis = 0; axis < 3; ++axis) {
+                        float center = (min[axis] + max[axis]) * 0.5f;
+                        float half = (max[axis] - min[axis]) * 0.5f;
+                        float offset = normal[axis] + rightAxis[axis] * CornerSigns[corner][0] + upAxis[axis] * CornerSigns[corner][1];
+                        point[axis] = center + offset * half;
+                    }
+                    point = rotateEulerAround(point, cubePivot, cubeRotation);
+                    for (int axis = 0; axis < 3; ++axis) {
+                        quad.positions[corner][axis] = static_cast<int16_t>(std::lround(point[axis] * 16.0f));
+                    }
+                    const std::array<float, 2>& uv = uvs[corner];
+                    quad.uvs[corner] = { static_cast<uint16_t>(std::clamp(uv[0], 0.0f, 15.0f) * 4096.0f), static_cast<uint16_t>(std::clamp(uv[1], 0.0f, 15.0f) * 4096.0f) };
+                }
+                quad.flags = FaceIds[face] | QuadTwoSided;
+                model.quads.push_back(quad);
+                model.quadBones.push_back(static_cast<uint16_t>(boneIndex));
+            }
+        }
+    }
+}
+
+using ControllerArrays = std::unordered_map<std::string, std::vector<std::string>>;
+
+/**
+ * A render controller as read from its file: the geometry and texture
+ * selectors rewritten into Molang yielding an index into their lowercase
+ * choice names (like texture.white), and the part visibility rules.
+ */
+struct RenderControllerSource {
+    molang::Script geometry;
+    std::vector<std::string> geometryChoices;
+    molang::Script texture;
+    std::vector<std::string> textureChoices;
+    std::vector<EntityPartRule> parts;
+};
+
+std::string rewriteSelector(const std::string& expression, const ControllerArrays& arrays, const std::string& kind, std::vector<std::string>& choices)
+{
+    auto isWord = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.';
+    };
+    std::string out;
+    size_t at = 0;
+    while (at < expression.size()) {
+        char c = expression[at];
+        if (c == '\'') {
+            size_t close = expression.find('\'', at + 1);
+            size_t end = close == std::string::npos ? expression.size() : close + 1;
+            out += expression.substr(at, end - at);
+            at = end;
+            continue;
+        }
+        if (!std::isalpha(static_cast<unsigned char>(c)) && c != '_') {
+            out += c;
+            ++at;
+            continue;
+        }
+        size_t start = at;
+        while (at < expression.size() && isWord(expression[at])) {
+            ++at;
+        }
+        std::string word = lowerName(expression.substr(start, at - start));
+        if (startsWith(word, "array.")) {
+            std::string index = "0";
+            size_t next = at;
+            while (next < expression.size() && std::isspace(static_cast<unsigned char>(expression[next]))) {
+                ++next;
+            }
+            if (next < expression.size() && expression[next] == '[') {
+                int depth = 0;
+                size_t close = next;
+                for (; close < expression.size(); ++close) {
+                    if (expression[close] == '[') {
+                        ++depth;
+                    } else if (expression[close] == ']' && --depth == 0) {
+                        break;
+                    }
+                }
+                index = rewriteSelector(expression.substr(next + 1, close - next - 1), arrays, kind, choices);
+                at = std::min(close + 1, expression.size());
+            }
+            auto found = arrays.find(word);
+            if (found == arrays.end() || found->second.empty()) {
+                out += "0";
+                continue;
+            }
+            std::string base = std::to_string(choices.size());
+            std::string count = std::to_string(found->second.size());
+            choices.insert(choices.end(), found->second.begin(), found->second.end());
+            out += "(" + base + " + math.mod(math.mod(math.floor(" + index + "), " + count + ") + " + count + ", " + count + "))";
+            continue;
+        }
+        if (startsWith(word, kind + ".")) {
+            auto found = std::find(choices.begin(), choices.end(), word);
+            size_t index = static_cast<size_t>(found - choices.begin());
+            if (found == choices.end()) {
+                choices.push_back(word);
+            }
+            out += std::to_string(index);
+            continue;
+        }
+        out += expression.substr(start, at - start);
+    }
+    return out;
+}
+
+ControllerArrays readControllerArrays(const json::Value* table)
+{
+    ControllerArrays out;
+    if (!table) {
+        return out;
+    }
+    for (const std::string& key : table->mKeys) {
+        const json::Value& list = *table->mObject.at(key);
+        if (!list.isArray()) {
+            continue;
+        }
+        std::vector<std::string>& entries = out[lowerName(key)];
+        for (const std::unique_ptr<json::Value>& entry : list.mArray) {
+            if (entry->isString()) {
+                entries.push_back(lowerName(entry->mString));
+            }
+        }
+    }
+    return out;
+}
+
+void readRenderControllers(const std::string& text, std::unordered_map<std::string, RenderControllerSource>& out)
+{
+    std::unique_ptr<json::Value> document = json::parse(stripComments(text));
+    const json::Value* controllers = document ? document->get("render_controllers") : nullptr;
+    if (!controllers) {
+        return;
+    }
+    for (const std::string& name : controllers->mKeys) {
+        const json::Value& controller = *controllers->mObject.at(name);
+        const json::Value* arrays = controller.get("arrays");
+        ControllerArrays textureArrays = readControllerArrays(arrays ? arrays->get("textures") : nullptr);
+        ControllerArrays geometryArrays = readControllerArrays(arrays ? arrays->get("geometries") : nullptr);
+        RenderControllerSource parsed;
+        std::string geometry = "Geometry.default";
+        if (const json::Value* value = controller.get("geometry"); value && value->isString()) {
+            geometry = value->mString;
+        }
+        parsed.geometry = molang::Script::compile(rewriteSelector(geometry, geometryArrays, "geometry", parsed.geometryChoices));
+        std::string texture = "Texture.default";
+        if (const json::Value* list = controller.get("textures"); list && list->isArray() && !list->mArray.empty() && list->mArray.front()->isString()) {
+            texture = list->mArray.front()->mString;
+        }
+        parsed.texture = molang::Script::compile(rewriteSelector(texture, textureArrays, "texture", parsed.textureChoices));
+        if (const json::Value* visibility = controller.get("part_visibility"); visibility && visibility->isArray()) {
+            for (const std::unique_ptr<json::Value>& entry : visibility->mArray) {
+                for (const std::string& pattern : entry->mKeys) {
+                    const json::Value& value = *entry->mObject.at(pattern);
+                    EntityPartRule rule;
+                    rule.pattern = lowerName(pattern);
+                    if (value.mType == json::Value::Type::Boolean) {
+                        rule.visible = molang::Script(value.mBoolean ? 1.0 : 0.0);
+                    } else if (value.isString()) {
+                        rule.visible = molang::Script::compile(value.mString, 1.0);
+                    } else {
+                        rule.visible = molang::Script(1.0);
+                    }
+                    parsed.parts.push_back(std::move(rule));
+                }
+            }
+        }
+        out[lowerName(name)] = std::move(parsed);
+    }
+}
+
+}
+
+std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch)
+{
+    if (geometryData.empty()) {
+        return nullptr;
+    }
+    std::string name;
+    if (std::unique_ptr<json::Value> patch = json::parse(stripComments(resourcePatch))) {
+        const json::Value* geometry = patch->get("geometry");
+        const json::Value* fallback = geometry ? geometry->get("default") : nullptr;
+        if (fallback && fallback->isString()) {
+            name = fallback->mString;
+        }
+    }
+    GeometryLibrary library;
+    library.parse(stripComments(geometryData));
+    library.resolveInheritance();
+    const Geometry* geometry = name.empty() ? nullptr : library.find(name);
+    if (!geometry) {
+        geometry = library.first();
+    }
+    if (!geometry) {
+        return nullptr;
+    }
+    auto rig = std::make_shared<EntityRig>();
+    buildEntityRig(*geometry, *rig);
+    if (rig->quads.empty()) {
+        return nullptr;
+    }
+    return rig;
+}
+
+/**
+ * Entity models from the client entity definitions of the vanilla pack and
+ * the server packs: each definition's default geometry as a bone rig, its
+ * default texture scaled into one entity texture layer and its scripts, plus
+ * one rig per geometry and one layer per texture its render controllers can
+ * select, and every animation and animation controller. The player also gets
+ * the slim humanoid model for skins that ask for it.
+ */
+void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs)
+{
+    GeometryLibrary library;
+    std::map<std::string, ClientEntity> definitions;
+    std::unordered_map<std::string, RenderControllerSource> controllerSources;
+    auto parseAnimations = [&](const std::string& text) {
+        if (std::unique_ptr<json::Value> document = json::parse(stripComments(text))) {
+            animations.parse(*document);
+        }
+    };
+    for (const char* archive : { "models", "models/entity" }) {
+        for (const std::string& name : pack.archiveEntries(archive)) {
+            std::string text;
+            if (pack.readArchived(archive, name, text)) {
+                library.parse(stripComments(text));
+            }
+        }
+    }
+    for (const std::string& name : pack.archiveEntries("entity")) {
+        std::string text;
+        if (pack.readArchived("entity", name, text)) {
+            readClientEntity(text, definitions);
+        }
+    }
+    for (const std::string& name : pack.archiveEntries("render_controllers")) {
+        std::string text;
+        if (pack.readArchived("render_controllers", name, text)) {
+            readRenderControllers(text, controllerSources);
+        }
+    }
+    for (const char* archive : { "animations", "animation_controllers" }) {
+        for (const std::string& name : pack.archiveEntries(archive)) {
+            std::string text;
+            if (pack.readArchived(archive, name, text)) {
+                parseAnimations(text);
+            }
+        }
+    }
+    for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
+        for (const auto& [path, content] : (*layer)->files) {
+            if (!endsWith(path, ".json")) {
+                continue;
+            }
+            if (startsWith(path, "models/")) {
+                library.parse(stripComments(content));
+            } else if (startsWith(path, "entity/")) {
+                readClientEntity(content, definitions);
+            } else if (startsWith(path, "animations/") || startsWith(path, "animation_controllers/")) {
+                parseAnimations(content);
+            } else if (startsWith(path, "render_controllers/")) {
+                readRenderControllers(content, controllerSources);
+            }
+        }
+    }
+
+    library.resolveInheritance();
+
+    std::map<std::string, uint32_t> layerByTexture;
+    auto textureLayer = [&](const std::string& path) -> std::optional<uint32_t> {
+        auto found = layerByTexture.find(path);
+        if (found != layerByTexture.end()) {
+            return found->second;
+        }
+        std::string encoded;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        std::vector<uint8_t> rgba;
+        if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, width, height, rgba) || width == 0 || height == 0) {
+            return std::nullopt;
+        }
+        uint32_t layer = entityTextureLayers();
+        std::vector<uint8_t> resized = resizeNearest(rgba, width, height, EntityTextureSize);
+        entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
+        layerByTexture.emplace(path, layer);
+        return layer;
+    };
+    auto modelOf = [&](const std::string& geometryName, const ClientEntity& definition, uint32_t layer) -> std::optional<EntityModel> {
+        const Geometry* geometry = library.find(geometryName);
+        if (!geometry) {
+            return std::nullopt;
+        }
+        EntityModel model;
+        model.rigs.emplace_back();
+        buildEntityRig(*geometry, model.rigs.back());
+        model.scripts = definition.scripts;
+        model.layer = layer;
+        std::map<std::string, uint32_t> rigByGeometry { { geometryName, 0 } };
+        auto rigOf = [&](const std::string& choice) -> uint32_t {
+            std::string key = choice.substr(std::string("geometry.").size());
+            auto named = definition.geometries.find(key);
+            if (named == definition.geometries.end()) {
+                return NoEntityChoice;
+            }
+            const std::string& id = key == "default" ? geometryName : named->second;
+            if (auto known = rigByGeometry.find(id); known != rigByGeometry.end()) {
+                return known->second;
+            }
+            const Geometry* found = library.find(id);
+            if (!found) {
+                return NoEntityChoice;
+            }
+            uint32_t index = static_cast<uint32_t>(model.rigs.size());
+            model.rigs.emplace_back();
+            buildEntityRig(*found, model.rigs.back());
+            rigByGeometry.emplace(id, index);
+            return index;
+        };
+        auto layerOf = [&](const std::string& choice) -> uint32_t {
+            auto named = definition.textures.find(choice.substr(std::string("texture.").size()));
+            if (named == definition.textures.end()) {
+                return NoEntityChoice;
+            }
+            std::optional<uint32_t> found = textureLayer(named->second);
+            return found ? *found : NoEntityChoice;
+        };
+        for (const auto& [name, condition] : definition.renderControllers) {
+            auto source = controllerSources.find(name);
+            if (source == controllerSources.end()) {
+                continue;
+            }
+            EntityRenderController controller;
+            if (!condition.empty()) {
+                controller.condition = molang::Script::compile(condition, 1.0);
+            }
+            controller.geometry = source->second.geometry;
+            controller.texture = source->second.texture;
+            controller.parts = source->second.parts;
+            for (const std::string& choice : source->second.geometryChoices) {
+                controller.geometryChoices.push_back(rigOf(choice));
+            }
+            for (const std::string& choice : source->second.textureChoices) {
+                controller.textureChoices.push_back(layerOf(choice));
+            }
+            model.controllers.push_back(std::move(controller));
+        }
+        return model;
+    };
+
+    for (const auto& [identifier, definition] : definitions) {
+        std::optional<uint32_t> layer = textureLayer(definition.texture);
+        if (!layer) {
+            continue;
+        }
+        if (std::optional<EntityModel> model = modelOf(definition.geometry, definition, *layer)) {
+            entityModels.emplace(identifier, std::move(*model));
+        }
+        if (identifier == "minecraft:player") {
+            if (std::optional<EntityModel> slim = modelOf("geometry.humanoid.customSlim", definition, *layer)) {
+                entityModels.emplace(identifier + "#slim", std::move(*slim));
+            }
+        }
+    }
 }
 
 /**
@@ -2283,6 +2890,307 @@ uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* 
     default:
         return NoModelTemplate;
     }
+}
+
+namespace {
+
+std::vector<std::string> itemTexturePaths(const json::Value& definition)
+{
+    std::vector<std::string> paths;
+    const json::Value* textures = definition.get("textures");
+    if (!textures) {
+        return paths;
+    }
+    auto pathOf = [](const json::Value& value) -> std::string {
+        if (value.isString()) {
+            return value.mString;
+        }
+        const json::Value* path = value.isObject() ? value.get("path") : nullptr;
+        return path && path->isString() ? path->mString : std::string();
+    };
+    if (textures->isArray()) {
+        for (const auto& entry : textures->mArray) {
+            paths.push_back(pathOf(*entry));
+        }
+    } else {
+        paths.push_back(pathOf(*textures));
+    }
+    return paths;
+}
+
+/**
+ * Draws a block as an inventory icon: its top, south and east faces as an
+ * isometric cube, shaded brighter on top and darker on the right.
+ */
+std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, const std::array<std::array<uint8_t, 3>, 3>& tints)
+{
+    constexpr float Size = static_cast<float>(ItemIconSize);
+    struct Face {
+        std::array<float, 2> origin;
+        std::array<float, 2> axisU;
+        std::array<float, 2> axisV;
+        float shade;
+    };
+    const float h = Size * 0.5f;
+    const float q = Size * 0.25f;
+    const std::array<Face, 3> projected { {
+        { { 0.0f, q }, { h, -q }, { h, q }, 1.0f },
+        { { 0.0f, q }, { h, q }, { 0.0f, h }, 0.8f },
+        { { h, h }, { h, -q }, { 0.0f, h }, 0.62f },
+    } };
+    std::vector<uint8_t> out(size_t(ItemIconSize) * ItemIconSize * 4, 0);
+    for (size_t face = 0; face < 3; ++face) {
+        if (!faces[face]) {
+            continue;
+        }
+        const Face& f = projected[face];
+        float determinant = f.axisU[0] * f.axisV[1] - f.axisU[1] * f.axisV[0];
+        if (std::abs(determinant) < 1.0e-6f) {
+            continue;
+        }
+        for (uint32_t y = 0; y < ItemIconSize; ++y) {
+            for (uint32_t x = 0; x < ItemIconSize; ++x) {
+                float px = x + 0.5f - f.origin[0];
+                float py = y + 0.5f - f.origin[1];
+                float u = (px * f.axisV[1] - py * f.axisV[0]) / determinant;
+                float v = (f.axisU[0] * py - f.axisU[1] * px) / determinant;
+                if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) {
+                    continue;
+                }
+                uint32_t tu = std::min(uint32_t(u * TextureSize), TextureSize - 1);
+                uint32_t tv = std::min(uint32_t(v * TextureSize), TextureSize - 1);
+                const uint8_t* texel = faces[face] + (size_t(tv) * TextureSize + tu) * 4;
+                if (texel[3] < 128) {
+                    continue;
+                }
+                uint8_t* pixel = out.data() + (size_t(y) * ItemIconSize + x) * 4;
+                for (int channel = 0; channel < 3; ++channel) {
+                    pixel[channel] = static_cast<uint8_t>(std::clamp(texel[channel] * f.shade * tints[face][channel] / 255.0f, 0.0f, 255.0f));
+                }
+                pixel[3] = 255;
+            }
+        }
+    }
+    return out;
+}
+
+}
+
+/**
+ * Loads every item texture named by item_texture.json or found under
+ * textures/items, scaled to the icon size, and indexes the default state of
+ * every block by name for block item icons.
+ */
+void BlockAssets::buildInterfaceAssets(PackSource& pack)
+{
+    struct Decoded {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        std::vector<uint8_t> rgba;
+    };
+    std::map<std::string, Decoded> decoded;
+    auto load = [&](const std::string& path, uint32_t& width, uint32_t& height) -> const std::vector<uint8_t>* {
+        auto found = decoded.find(path);
+        if (found == decoded.end()) {
+            Decoded image;
+            std::string encoded;
+            if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, image.width, image.height, image.rgba) || image.width == 0 || image.height == 0) {
+                image = Decoded {};
+            }
+            found = decoded.emplace(path, std::move(image)).first;
+        }
+        width = found->second.width;
+        height = found->second.height;
+        return found->second.rgba.empty() ? nullptr : &found->second.rgba;
+    };
+    std::vector<std::string> atlases = pack.readTextLayers("textures/item_texture.json");
+    if (std::string archived; pack.readArchived("textures", "item_texture.json", archived)) {
+        atlases.push_back(std::move(archived));
+    }
+    for (const std::string& name : pack.archiveEntries("textures/items")) {
+        size_t dot = name.rfind('.');
+        std::string stem = name.substr(0, dot);
+        if (dot == std::string::npos || name.find('/') != std::string::npos || itemFiles.count(stem)) {
+            continue;
+        }
+        uint32_t width = 0;
+        uint32_t height = 0;
+        const std::vector<uint8_t>* rgba = load("textures/items/" + stem, width, height);
+        if (rgba && width == height) {
+            itemFiles.emplace(stem, resizeNearest(*rgba, width, height, ItemIconSize));
+        }
+    }
+    for (const std::string& text : atlases) {
+        std::unique_ptr<json::Value> parsed = json::parse(stripComments(text));
+        const json::Value* data = parsed ? parsed->get("texture_data") : nullptr;
+        if (!data || !data->isObject()) {
+            continue;
+        }
+        for (const std::string& alias : data->mKeys) {
+            std::string identifier = alias.find(':') == std::string::npos ? "minecraft:" + alias : alias;
+            if (itemTextures.count(identifier)) {
+                continue;
+            }
+            std::vector<std::vector<uint8_t>> variants;
+            for (const std::string& path : itemTexturePaths(*data->get(alias))) {
+                uint32_t width = 0;
+                uint32_t height = 0;
+                const std::vector<uint8_t>* rgba = path.empty() ? nullptr : load(path, width, height);
+                if (!rgba || width != height) {
+                    variants.emplace_back();
+                    continue;
+                }
+                variants.push_back(resizeNearest(*rgba, width, height, ItemIconSize));
+            }
+            itemTextures.emplace(identifier, std::move(variants));
+        }
+    }
+
+    for (const BlockRecord& record : registry.records()) {
+        blockByName.try_emplace(record.name, record.networkHash);
+    }
+}
+
+/**
+ * The inventory icon of an item: its item texture for the aux variant, or for
+ * block items an isometric cube of the block's default state. Empty when the
+ * item has neither.
+ */
+std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const
+{
+    static const std::pair<const char*, const char*> Renames[] = {
+        { "totem_of_undying", "totem" },
+        { "compass", "compass_item" },
+        { "recovery_compass", "recovery_compass_item" },
+        { "clock", "clock_item" },
+        { "golden_apple", "apple_golden" },
+        { "enchanted_golden_apple", "apple_golden" },
+        { "writable_book", "book_writable" },
+        { "written_book", "book_written" },
+        { "enchanted_book", "book_enchanted" },
+        { "filled_map", "map_filled" },
+        { "empty_map", "map_empty" },
+        { "glass_bottle", "potion_bottle_empty" },
+        { "potion", "potion_bottle_drinkable" },
+        { "splash_potion", "potion_bottle_splash" },
+        { "lingering_potion", "potion_bottle_lingering" },
+        { "fire_charge", "fireball" },
+        { "glistering_melon_slice", "melon_speckled" },
+        { "melon_slice", "melon" },
+        { "cooked_beef", "beef_cooked" },
+        { "cooked_chicken", "chicken_cooked" },
+        { "cooked_porkchop", "porkchop_cooked" },
+        { "cooked_mutton", "mutton_cooked" },
+        { "cooked_rabbit", "rabbit_cooked" },
+        { "cooked_cod", "fish_cooked" },
+        { "cooked_salmon", "fish_salmon_cooked" },
+        { "cod", "fish_raw" },
+        { "salmon", "fish_salmon_raw" },
+        { "tropical_fish", "fish_clownfish_raw" },
+        { "pufferfish", "fish_pufferfish_raw" },
+        { "porkchop", "porkchop_raw" },
+        { "beef", "beef_raw" },
+        { "chicken", "chicken_raw" },
+        { "mutton", "mutton_raw" },
+        { "rabbit", "rabbit_raw" },
+        { "experience_bottle", "experience_bottle" },
+        { "snowball", "snowball" },
+        { "ender_eye", "ender_eye" },
+        { "nether_star", "nether_star" },
+        { "gunpowder", "gunpowder" },
+        { "wheat_seeds", "seeds_wheat" },
+        { "pumpkin_seeds", "seeds_pumpkin" },
+        { "melon_seeds", "seeds_melon" },
+        { "beetroot_seeds", "seeds_beetroot" },
+        { "firework_rocket", "fireworks" },
+        { "firework_star", "fireworks_charge" },
+        { "chest_minecart", "minecart_chest" },
+        { "hopper_minecart", "minecart_hopper" },
+        { "tnt_minecart", "minecart_tnt" },
+        { "command_block_minecart", "minecart_command_block" },
+        { "carrot_on_a_stick", "carrot_on_a_stick" },
+        { "spider_eye", "spider_eye" },
+        { "fermented_spider_eye", "spider_eye_fermented" },
+        { "golden_carrot", "carrot_golden" },
+        { "turtle_scute", "turtle_shell_piece" },
+        { "rabbit_foot", "rabbit_foot" },
+    };
+    std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
+    std::vector<std::string> names;
+    if (!iconHint.empty()) {
+        names.push_back(iconHint);
+    }
+    names.push_back(shortName);
+    for (const auto& [from, to] : Renames) {
+        if (shortName == from) {
+            names.push_back(to);
+        }
+    }
+    for (const auto& [from, to] : { std::pair<const char*, const char*> { "wooden_", "wood_" }, { "golden_", "gold_" } }) {
+        size_t length = std::char_traits<char>::length(from);
+        if (shortName.rfind(from, 0) == 0) {
+            names.push_back(to + shortName.substr(length));
+        }
+    }
+    for (const std::string& name : names) {
+        auto found = itemTextures.find(name.find(':') == std::string::npos ? "minecraft:" + name : name);
+        if (found == itemTextures.end() || found->second.empty()) {
+            continue;
+        }
+        size_t variant = aux >= 0 && size_t(aux) < found->second.size() ? size_t(aux) : 0;
+        if (!found->second[variant].empty()) {
+            return found->second[variant];
+        }
+        if (!found->second.front().empty()) {
+            return found->second.front();
+        }
+    }
+    for (const std::string& name : names) {
+        if (auto file = itemFiles.find(name); file != itemFiles.end()) {
+            return file->second;
+        }
+    }
+    auto block = blockByName.find(identifier);
+    if (block == blockByName.end()) {
+        return {};
+    }
+    const BlockVisual& look = visual(block->second, true);
+    const std::vector<uint8_t>& texels = textureArray.mips[0];
+    size_t layerBytes = size_t(TextureSize) * TextureSize * 4;
+    auto facePixels = [&](size_t side, std::array<uint8_t, 3>& tint) -> const uint8_t* {
+        tint = { 255, 255, 255 };
+        uint32_t material = look.faces[side];
+        if (material >= materialTable.size()) {
+            return nullptr;
+        }
+        const Material& entry = materialTable[material];
+        if (entry.tint & TintKindMask) {
+            tint = { 124, 189, 107 };
+        }
+        size_t offset = size_t(entry.layer) * layerBytes;
+        return offset + layerBytes <= texels.size() ? texels.data() + offset : nullptr;
+    };
+    std::array<std::array<uint8_t, 3>, 3> tints {};
+    if (!look.emitsCubeGeometry() || (look.flags & FlagDiagnostic)) {
+        const uint8_t* flat = facePixels(5, tints[0]);
+        if (!flat) {
+            return {};
+        }
+        std::vector<uint8_t> icon(size_t(ItemIconSize) * ItemIconSize * 4);
+        for (uint32_t y = 0; y < ItemIconSize; ++y) {
+            for (uint32_t x = 0; x < ItemIconSize; ++x) {
+                const uint8_t* texel = flat + (size_t(y * TextureSize / ItemIconSize) * TextureSize + x * TextureSize / ItemIconSize) * 4;
+                uint8_t* pixel = icon.data() + (size_t(y) * ItemIconSize + x) * 4;
+                for (int channel = 0; channel < 3; ++channel) {
+                    pixel[channel] = static_cast<uint8_t>(texel[channel] * tints[0][channel] / 255);
+                }
+                pixel[3] = texel[3];
+            }
+        }
+        return icon;
+    }
+    std::array<const uint8_t*, 3> faces { facePixels(3, tints[0]), facePixels(5, tints[1]), facePixels(1, tints[2]) };
+    return isometricIcon(faces, tints);
 }
 
 }
