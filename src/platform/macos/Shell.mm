@@ -19,4 +19,10 @@ bool copyText(const std::string& text)
     return [pasteboard setString:[NSString stringWithUTF8String:text.c_str()] forType:NSPasteboardTypeString];
 }
 
+std::string pasteText()
+{
+    NSString* text = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+    return text ? std::string([text UTF8String]) : std::string();
+}
+
 }

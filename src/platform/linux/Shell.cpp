@@ -28,4 +28,10 @@ bool copyText(const std::string& text)
     return true;
 }
 
+std::string pasteText()
+{
+    const char* text = glfwGetClipboardString(nullptr);
+    return text ? std::string(text) : std::string();
+}
+
 }

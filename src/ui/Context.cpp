@@ -119,6 +119,16 @@ void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& 
     image(rect, region, tint);
 }
 
+void Context::setLayer(float offsetX, float offsetY, float opacity)
+{
+    drawList.setLayer(std::round(offsetX * scale), std::round(offsetY * scale), opacity);
+}
+
+void Context::clearLayer()
+{
+    drawList.clearLayer();
+}
+
 void Context::spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint)
 {
     const Sprite& source = art.sprite(name);

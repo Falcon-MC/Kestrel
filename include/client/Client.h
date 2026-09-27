@@ -3,6 +3,7 @@
 #include "client/Account.h"
 #include "client/Camera.h"
 #include "client/Profiler.h"
+#include "client/ServerPinger.h"
 #include "client/Session.h"
 #include "world/EntityAnimation.h"
 #include "world/Mesher.h"
@@ -105,6 +106,7 @@ private:
     HudState hudState;
     std::map<std::string, bool> itemIcons;
     Profiler profiler;
+    ServerPinger pinger;
     uint64_t actorFrame = 0;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
 };

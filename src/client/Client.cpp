@@ -296,6 +296,21 @@ int Client::run()
             Profiler::Section section(profiler, "hud");
             handleHotbarInput();
             menu.setHud(buildHudView());
+            if (!worldShown) {
+                for (const menu::SavedServer& server : store.servers()) {
+                    pinger.request(server.address);
+                }
+                std::map<std::string, menu::ServerStatus> status;
+                for (const auto& [address, ping] : pinger.results()) {
+                    menu::ServerStatus& entry = status[address];
+                    entry.checked = ping.state != PingState::Checking;
+                    entry.online = ping.state == PingState::Online;
+                    entry.motd = ping.motd;
+                    entry.players = ping.players;
+                    entry.maxPlayers = ping.maxPlayers;
+                }
+                menu.setServerStatus(std::move(status));
+            }
         }
 
         float scale = guiScale();
