@@ -1,6 +1,7 @@
 #include "world/MeshScheduler.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace kestrel::world {
 
@@ -19,7 +20,8 @@ MeshScheduler::~MeshScheduler()
     {
         std::lock_guard<std::mutex> guard(mutex);
         stopping = true;
-        jobs.clear();
+        queued.clear();
+        order.clear();
     }
     wake.notify_all();
     for (std::thread& worker : workers) {
@@ -27,11 +29,19 @@ MeshScheduler::~MeshScheduler()
     }
 }
 
+/**
+ * Queues a mesh job. A sub-chunk already waiting keeps its place in the queue
+ * and only its newest input is meshed, so a burst of neighbour updates costs
+ * one job instead of one per update.
+ */
 void MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids)
 {
     {
         std::lock_guard<std::mutex> guard(mutex);
-        jobs.push_back({ key, generation, std::move(input), std::move(assets), std::move(ids) });
+        auto [entry, inserted] = queued.insert_or_assign(key, Job { key, generation, std::move(input), std::move(assets), std::move(ids) });
+        if (inserted) {
+            order.push_back(key);
+        }
     }
     wake.notify_one();
 }
@@ -44,16 +54,23 @@ std::vector<MeshResult> MeshScheduler::takeResults()
     return ready;
 }
 
+double MeshScheduler::averageMilliseconds() const
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    return meshCount ? meshMilliseconds / double(meshCount) : 0.0;
+}
+
 size_t MeshScheduler::pending() const
 {
     std::lock_guard<std::mutex> guard(mutex);
-    return jobs.size() + running;
+    return queued.size() + running;
 }
 
 void MeshScheduler::clear()
 {
     std::lock_guard<std::mutex> guard(mutex);
-    jobs.clear();
+    queued.clear();
+    order.clear();
     results.clear();
 }
 
@@ -64,20 +81,28 @@ void MeshScheduler::work()
         {
             std::unique_lock<std::mutex> lock(mutex);
             wake.wait(lock, [this] {
-                return stopping || !jobs.empty();
+                return stopping || !order.empty();
             });
             if (stopping) {
                 return;
             }
-            job = std::move(jobs.front());
-            jobs.pop_front();
+            auto entry = queued.find(order.front());
+            order.pop_front();
+            job = std::move(entry->second);
+            queued.erase(entry);
             ++running;
         }
 
+        auto started = std::chrono::steady_clock::now();
         MeshResult result { job.key, job.generation, meshSubChunk(*job.assets, job.ids, job.input) };
+        double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 
         std::lock_guard<std::mutex> guard(mutex);
         --running;
+        if (!result.mesh.empty()) {
+            meshMilliseconds += elapsed;
+            ++meshCount;
+        }
         results.push_back(std::move(result));
     }
 }

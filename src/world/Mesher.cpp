@@ -336,34 +336,27 @@ public:
     static constexpr int32_t Offset = int32_t(Side);
 
     LightField(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
+        : assets(assets)
+        , ids(ids)
+        , input(input)
     {
-        size_t volume = size_t(Extent) * Extent * Extent;
-        filter.assign(volume, 0);
-        emission.assign(volume, 0);
-        occluder.assign(volume, 0);
-        block.assign(volume, 0);
-        sky.assign(volume, 0);
-        loadBlocks(assets, ids, input);
-        solveBlock();
-        if (input.skyLight) {
-            solveSky(assets, ids, input);
-        } else {
-            std::fill(sky.begin(), sky.end(), uint8_t(0));
-        }
     }
 
     uint8_t blockAt(int32_t x, int32_t y, int32_t z) const
     {
+        solve();
         return inside(x, y, z) ? block[index(x, y, z)] : 0;
     }
 
     uint8_t skyAt(int32_t x, int32_t y, int32_t z) const
     {
+        solve();
         return inside(x, y, z) ? sky[index(x, y, z)] : 0;
     }
 
     bool occludes(int32_t x, int32_t y, int32_t z) const
     {
+        solve();
         return inside(x, y, z) && occluder[index(x, y, z)] != 0;
     }
 
@@ -443,6 +436,29 @@ public:
     }
 
 private:
+    /**
+     * Solves the field on first use, so a sub-chunk that emits no face never
+     * pays for it.
+     */
+    void solve() const
+    {
+        if (solved) {
+            return;
+        }
+        solved = true;
+        size_t volume = size_t(Extent) * Extent * Extent;
+        filter.assign(volume, 0);
+        emission.assign(volume, 0);
+        occluder.assign(volume, 0);
+        block.assign(volume, 0);
+        sky.assign(volume, 0);
+        loadBlocks(assets, ids, input);
+        solveBlock();
+        if (input.skyLight) {
+            solveSky(assets, ids, input);
+        }
+    }
+
     static bool inside(int32_t x, int32_t y, int32_t z)
     {
         return x >= -Offset && y >= -Offset && z >= -Offset && x < Extent - Offset && y < Extent - Offset && z < Extent - Offset;
@@ -460,7 +476,7 @@ private:
         x = int32_t(cell / (size_t(Extent) * Extent)) - Offset;
     }
 
-    void loadBlocks(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
+    void loadBlocks(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input) const
     {
         for (int32_t dx = -1; dx <= 1; ++dx) {
             for (int32_t dy = -1; dy <= 1; ++dy) {
@@ -497,7 +513,7 @@ private:
         }
     }
 
-    void propagate(std::vector<uint8_t>& levels, std::vector<uint32_t>& queue)
+    void propagate(std::vector<uint8_t>& levels, std::vector<uint32_t>& queue) const
     {
         static constexpr int32_t Steps[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
         for (size_t head = 0; head < queue.size(); ++head) {
@@ -527,7 +543,7 @@ private:
         }
     }
 
-    void solveBlock()
+    void solveBlock() const
     {
         std::vector<uint32_t> queue;
         for (size_t cell = 0; cell < emission.size(); ++cell) {
@@ -577,7 +593,7 @@ private:
         return blocked;
     }
 
-    void solveSky(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
+    void solveSky(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input) const
     {
         std::vector<uint32_t> queue;
         std::vector<uint8_t> blocked = blockedColumns(assets, ids, input);
@@ -605,11 +621,15 @@ private:
         propagate(sky, queue);
     }
 
-    std::vector<uint8_t> filter;
-    std::vector<uint8_t> emission;
-    std::vector<uint8_t> occluder;
-    std::vector<uint8_t> block;
-    std::vector<uint8_t> sky;
+    const BlockAssets& assets;
+    const IdMapping& ids;
+    const MeshInput& input;
+    mutable bool solved = false;
+    mutable std::vector<uint8_t> filter;
+    mutable std::vector<uint8_t> emission;
+    mutable std::vector<uint8_t> occluder;
+    mutable std::vector<uint8_t> block;
+    mutable std::vector<uint8_t> sky;
 };
 
 std::array<std::array<int32_t, 3>, 4> cubeFaceCorners(Face face)
