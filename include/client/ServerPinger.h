@@ -27,6 +27,7 @@ struct ServerPing {
     std::string version;
     int players = 0;
     int maxPlayers = 0;
+    int latencyMs = -1;
 };
 
 /**

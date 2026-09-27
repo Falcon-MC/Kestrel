@@ -75,9 +75,8 @@ std::string localized(const json::Value* strings, const std::string& language)
 }
 
 /**
- * Picks the icon, the showcase screenshots and the game card pictures out of
- * an item's images. The catalog is loose about types, so icons and banners
- * filed as screenshots are skipped by their tag.
+ * Picks the icon, the detail banner and the game card pictures. A banner can
+ * be filed as a screenshot; prefer its tag over the generic image type.
  */
 void readImages(const json::Value* images, const json::Value* games, FeaturedServer& server)
 {
@@ -85,6 +84,7 @@ void readImages(const json::Value* images, const json::Value* games, FeaturedSer
         return;
     }
     std::string thumbnail;
+    std::string banner;
     std::vector<std::string> activities;
     std::map<std::string, std::string> byTag;
     for (const std::unique_ptr<json::Value>& image : images->mArray) {
@@ -95,7 +95,9 @@ void readImages(const json::Value* images, const json::Value* games, FeaturedSer
             continue;
         }
         byTag.emplace(tag, url);
-        if (type == "Icon") {
+        if (tag == "Banner" || type == "Banner") {
+            banner = url;
+        } else if (type == "Icon") {
             server.iconUrl = url;
         } else if (type == "Thumbnail") {
             thumbnail = url;
@@ -108,7 +110,9 @@ void readImages(const json::Value* images, const json::Value* games, FeaturedSer
     if (server.iconUrl.empty()) {
         server.iconUrl = thumbnail;
     }
-    if (server.showcaseUrls.empty()) {
+    if (!banner.empty()) {
+        server.showcaseUrls = { banner };
+    } else if (server.showcaseUrls.empty()) {
         server.showcaseUrls = std::move(activities);
     }
     if (!games) {
@@ -336,7 +340,8 @@ void FeaturedServers::downloadImage(const ImageJob& job)
         if (!ui::decodeImage(response.mBody, width, height, rgba) || width == 0 || height == 0) {
             return;
         }
-        bitmap = cover(rgba, width, height, ShowcaseWidth, ShowcaseHeight);
+        float fit = std::min({ 1.0f, float(ShowcaseWidth) / width, float(ShowcaseHeight) / height });
+        bitmap = cover(rgba, width, height, std::max(1u, uint32_t(width * fit)), std::max(1u, uint32_t(height * fit)));
     } else {
         bitmap = { IconSize, IconSize, {} };
         if (!ui::decodeSquareImage(response.mBody, IconSize, bitmap.rgba)) {

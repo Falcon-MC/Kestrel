@@ -99,6 +99,8 @@ struct ServerStatus {
     bool checked = false;
     bool online = false;
     std::string motd;
+    int players = 0;
+    int latencyMs = -1;
 };
 
 struct FeaturedGameEntry {
@@ -512,6 +514,7 @@ private:
     void title(ui::Context& ui, float width, float height);
     void pause(ui::Context& ui, float width, float height);
     void progressDialog(ui::Context& ui, float width, float height);
+    void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
     void playerModel(ui::Context& ui, float centerX, float top, float pixel);
@@ -592,6 +595,7 @@ private:
     std::vector<FeaturedEntry> featured;
     bool featuredLoading = true;
     size_t showcaseIndex = 0;
+    bool serverAddressShown = false;
     std::chrono::steady_clock::time_point showcaseShown = std::chrono::steady_clock::now();
     Field selectedField = Field::None;
     bool selectAllPending = false;
@@ -616,6 +620,10 @@ private:
     AccountInfo account;
     AccountRequest accountRequest = AccountRequest::None;
     SessionInfo session;
+    bool errorDetailsShown = false;
+    float errorReasonScroll = 0.0f;
+    float errorInfoScroll = 0.0f;
+    std::string errorDiagnostics;
     std::string cameraInfo;
     bool debugShown = false;
     HudView hud;
