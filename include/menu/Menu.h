@@ -8,6 +8,7 @@
 #include "ui/Types.h"
 
 #include <chrono>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -77,6 +78,19 @@ enum class Field {
     ServerName,
     ServerAddress,
     ServerPort,
+    SocialSearch,
+};
+
+/**
+ * What a saved server answered to the last ping: still checking, reachable
+ * with its message of the day and player counts, or unreachable.
+ */
+struct ServerStatus {
+    bool checked = false;
+    bool online = false;
+    std::string motd;
+    int players = 0;
+    int maxPlayers = 0;
 };
 
 struct ConnectRequest {
@@ -233,6 +247,11 @@ public:
         cameraInfo = std::move(text);
     }
 
+    void setServerStatus(std::map<std::string, ServerStatus> status)
+    {
+        serverStatus = std::move(status);
+    }
+
     void setHud(HudView view)
     {
         hud = std::move(view);
@@ -373,11 +392,23 @@ private:
     std::string editName;
     std::string editAddress;
     std::string editPort;
+    std::string socialSearch;
+    std::map<std::string, ServerStatus> serverStatus;
+    Field selectedField = Field::None;
+    bool selectAllPending = false;
+    std::string lastFieldClick;
+    std::chrono::steady_clock::time_point lastFieldClickAt {};
     std::string displayName = "Steve";
     std::string toastMessage;
     std::chrono::steady_clock::time_point toastUntil;
     std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
     std::array<bool, 6> panoramaReady {};
+    std::chrono::steady_clock::time_point screenChanged {};
+    std::chrono::steady_clock::time_point dialogChanged {};
+    std::chrono::steady_clock::time_point socialChanged {};
+    float screenDirection = 1.0f;
+    Dialog shownDialog = Dialog::None;
+    bool socialShown = false;
     std::optional<ConnectRequest> pending;
     ChromeInfo chrome;
     ChromeAction chromeAction = ChromeAction::None;

@@ -22,6 +22,9 @@ constexpr float TitleButtonHeight = 30.0f;
 constexpr float TitleButtonStep = 32.0f;
 constexpr float CornerButtonHeight = 24.0f;
 constexpr uint32_t PanoramaSize = 512;
+constexpr float ScreenTransitionSeconds = 0.25f;
+constexpr float DialogTransitionSeconds = 0.15f;
+constexpr float ScreenSlide = 24.0f;
 constexpr Color DialogInk { 0x4c, 0x4c, 0x4c, 255 };
 constexpr Color Backing { 0, 0, 0, 150 };
 
@@ -208,18 +211,40 @@ void Menu::frame(Context& ui, float width, float height)
         panorama(ui, width, height);
     }
 
+    auto now = std::chrono::steady_clock::now();
+    if (dialog != shownDialog) {
+        shownDialog = dialog;
+        dialogChanged = now;
+    }
+    if (socialOpen != socialShown) {
+        socialShown = socialOpen;
+        socialChanged = now;
+    }
+    auto eased = [&](std::chrono::steady_clock::time_point since, float seconds) {
+        float t = std::clamp(std::chrono::duration<float>(now - since).count() / seconds, 0.0f, 1.0f);
+        return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+    };
+
     bool loading = !inGame() && (dialog == Dialog::Connecting || dialog == Dialog::ConnectionError || dialog == Dialog::SignIn);
     if (!loading) {
+        float shown = inGame() && screen == Screen::Title ? 1.0f : eased(screenChanged, ScreenTransitionSeconds);
+        ui.setLayer((1.0f - shown) * ScreenSlide * screenDirection, 0.0f, shown);
         screenContent(ui, width, height);
+        ui.clearLayer();
     }
 
     ui.setBlocked(false);
     if (socialOpen && !loading) {
+        float shown = eased(socialChanged, ScreenTransitionSeconds);
+        ui.setLayer((1.0f - shown) * 190.0f, 0.0f, shown);
         socialDrawer(ui, width, height);
+        ui.clearLayer();
     }
 
     bool confirmed = false;
     bool cancelled = false;
+    float dialogShown = eased(dialogChanged, DialogTransitionSeconds);
+    ui.setLayer(0.0f, (1.0f - dialogShown) * 8.0f, dialogShown);
     switch (dialog) {
     case Dialog::None:
         break;
@@ -248,6 +273,7 @@ void Menu::frame(Context& ui, float width, float height)
         }
         break;
     }
+    ui.clearLayer();
     if (confirmed || cancelled) {
         dialog = Dialog::None;
     }
@@ -581,8 +607,15 @@ void Menu::progressDialog(Context& ui, float width, float height)
     constexpr float DialogWidth = 286.67f;
     constexpr float DialogHeight = 97.33f;
     Rect frame { std::round((width - DialogWidth) * 0.5f), std::round(height * 0.5f - 49.0f), DialogWidth, DialogHeight };
-    float logoTop = std::max(8.0f, frame.y - 145.33f);
-    logo(ui, width * 0.5f, logoTop, std::min(width - 32.0f, std::max(120.0f, (frame.y - 12.0f - logoTop) * 4.4f)));
+    const Sprite& word = ui.skin().sprite("ui/title");
+    float logoWidth = std::min(width - 32.0f, 378.5f);
+    float logoHeight = word.valid && word.width > 0.0f ? logoWidth * word.height / word.width : 64.0f;
+    float logoTop = frame.y - 56.0f - logoHeight;
+    if (logoTop < 8.0f) {
+        logoTop = 8.0f;
+        logoWidth = std::max(120.0f, (frame.y - 64.0f) * logoWidth / std::max(logoHeight, 1.0f));
+    }
+    logo(ui, width * 0.5f, logoTop, logoWidth);
 
     std::string heading;
     std::string body;
@@ -644,7 +677,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
         constexpr std::string_view Waiting = "Loading server...";
         float waitingWidth = ui.measure(Waiting, TextStyle::Pixel);
         float buttonCenter = std::floor(well.x + (well.w - 64.0f) * 0.5f) + 32.0f;
-        ui.text(Waiting, TextStyle::Pixel, std::round(buttonCenter - waitingWidth * 0.5f), buttonY - 27.0f, White);
+        ui.text(Waiting, TextStyle::Pixel, std::round(buttonCenter - waitingWidth * 0.5f), buttonY - 33.0f, White);
     }
     if (progress) {
         const Sprite& bar = ui.skin().sprite("ui/loading_bar");
@@ -796,12 +829,57 @@ void Menu::handleKeys(Context& ui)
     if (input.pressedKey == Key::F11) {
         chromeAction = ChromeAction::Fullscreen;
     }
-    if (!input.text.empty()) {
-        type(input.text);
+    if (selectAllPending) {
+        selectAllPending = false;
+        selectedField = field;
     }
-    if (input.backspace) {
-        if (std::string* target = focusedText()) {
-            popUtf8(*target);
+    if (field != selectedField) {
+        selectedField = Field::None;
+    }
+    if (std::string* target = focusedText(); target && input.isHeld(Key::Control)) {
+        bool selected = selectedField == field;
+        if (input.pressedKey == Key::A) {
+            selectedField = field;
+        } else if (input.pressedKey == Key::C) {
+            platform::copyText(*target);
+        } else if (input.pressedKey == Key::X) {
+            platform::copyText(*target);
+            target->clear();
+            selectedField = Field::None;
+        } else if (input.pressedKey == Key::V) {
+            std::string pasted = platform::pasteText();
+            std::u32string codepoints;
+            size_t i = 0;
+            while (i < pasted.size()) {
+                codepoints.push_back(nextCodepoint(pasted, i));
+            }
+            type(codepoints);
+        } else if (input.backspace) {
+            if (selected) {
+                target->clear();
+            } else {
+                while (!target->empty() && target->back() == ' ') {
+                    target->pop_back();
+                }
+                while (!target->empty() && target->back() != ' ') {
+                    popUtf8(*target);
+                }
+            }
+            selectedField = Field::None;
+        }
+    } else {
+        if (!input.text.empty()) {
+            type(input.text);
+        }
+        if (input.backspace) {
+            if (std::string* target = focusedText()) {
+                if (selectedField == field) {
+                    target->clear();
+                    selectedField = Field::None;
+                } else {
+                    popUtf8(*target);
+                }
+            }
         }
     }
     if (input.tab && screen == Screen::ServerForm) {
@@ -842,7 +920,14 @@ void Menu::type(std::u32string_view text)
     if (!target) {
         return;
     }
+    if (selectedField == field) {
+        target->clear();
+        selectedField = Field::None;
+    }
     for (char32_t cp : text) {
+        if (cp < 32 || cp == 127) {
+            continue;
+        }
         if (target->size() >= MaxFieldLength) {
             break;
         }
@@ -862,6 +947,8 @@ std::string* Menu::focusedText()
         return &editAddress;
     case Field::ServerPort:
         return &editPort;
+    case Field::SocialSearch:
+        return &socialSearch;
     case Field::None:
         break;
     }
@@ -870,6 +957,10 @@ std::string* Menu::focusedText()
 
 void Menu::navigate(Screen target)
 {
+    if (target != screen) {
+        screenChanged = std::chrono::steady_clock::now();
+        screenDirection = 1.0f;
+    }
     screen = target;
     field = Field::None;
     listScroll = 0.0f;
@@ -890,6 +981,7 @@ void Menu::goBack()
     } else {
         navigate(Screen::Title);
     }
+    screenDirection = -1.0f;
 }
 
 void Menu::connect(const ServerRow& row)

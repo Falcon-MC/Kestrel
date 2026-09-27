@@ -166,6 +166,17 @@ float Menu::scrollArea(Context& ui, const Rect& area, float& offset, float conte
 bool Menu::textField(Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const Rect& rect, bool focused)
 {
     Interaction state = ui.interact(id, rect);
+    if (state.clicked) {
+        auto now = std::chrono::steady_clock::now();
+        if (lastFieldClick == id && now - lastFieldClickAt < std::chrono::milliseconds(400)) {
+            selectAllPending = true;
+            lastFieldClick.clear();
+        } else {
+            lastFieldClick = std::string(id);
+            lastFieldClickAt = now;
+            selectedField = Field::None;
+        }
+    }
     ui.border(rect, "baseTextField", focused ? "Focused" : state.hovered ? "Hovered" : "Default");
     float x = rect.x + css(14.0f);
     float y = std::round(rect.y + (rect.h - ui.lineHeight(TextStyle::Ui)) * 0.5f + css(2.0f));
@@ -173,8 +184,12 @@ bool Menu::textField(Context& ui, std::string_view id, std::string_view placehol
     if (value.empty() && !focused) {
         ui.text(placeholder, TextStyle::Ui, x, y, Muted1, room);
     } else {
+        bool selected = focused && selectedField != Field::None && selectedField == field && !value.empty();
+        if (selected) {
+            ui.fill({ x - 1.0f, y - 1.0f, std::min(ui.measure(value, TextStyle::Ui), room) + 2.0f, ui.lineHeight(TextStyle::Ui) + 1.0f }, { 0x3c, 0x8a, 0xd6, 255 });
+        }
         ui.text(value, TextStyle::Ui, x, y, White, room);
-        if (focused) {
+        if (focused && !selected) {
             float caret = x + std::min(ui.measure(value, TextStyle::Ui), room) + 0.5f;
             ui.fill({ caret, y, 1.0f, ui.lineHeight(TextStyle::Ui) - 1.0f }, Caret);
         }
@@ -272,7 +287,6 @@ void Menu::play(Context& ui, float width, float height)
 
 void Menu::worldsTab(Context& ui, const Rect& area)
 {
-    ui.fill(area, { 0, 0, 0, 200 });
     Rect bar { area.x, area.y + 4.0f, area.w, 22.0f };
     ui.pressableButton("worlds:layout", "pressableElevatedSecondary", "", { bar.x + 1.0f, bar.y, 22.0f, bar.h });
     ui.sprite({ bar.x + 8.0f, bar.y + 6.0f, 8.0f, 8.0f }, "hbui/List", InkDark);
@@ -433,7 +447,14 @@ void Menu::serversTab(Context& ui, const Rect& area)
     y += 8.0f;
     std::vector<ServerRow> savedWithDetail = saved;
     for (ServerRow& row : savedWithDetail) {
-        row.detail = row.address;
+        auto status = serverStatus.find(row.address);
+        if (status == serverStatus.end() || !status->second.checked) {
+            row.detail = "Checking connection...";
+        } else if (!status->second.online) {
+            row.detail = "\xC2\xA7" "cUnable to connect to world";
+        } else {
+            row.detail = status->second.motd + "\xC2\xA7" "r (" + std::to_string(status->second.players) + "/" + std::to_string(status->second.maxPlayers) + ")";
+        }
     }
     section("Other Servers (" + std::to_string(saved.size()) + ")", savedWithDetail);
     ui.clearClip();
@@ -750,7 +771,9 @@ void Menu::socialDrawer(Context& ui, float width, float height)
     ui.fill(inner, PanelDark);
 
     Rect search { inner.x + 2.0f, inner.y + 2.0f, inner.w - 29.0f, 22.67f };
-    textField(ui, "social:search", "Search for people", {}, search, false);
+    if (textField(ui, "social:search", "Search for people", socialSearch, search, field == Field::SocialSearch)) {
+        field = Field::SocialSearch;
+    }
     Rect close { search.right() + 2.0f, search.y, 23.0f, 22.67f };
     if (ui.pressable("social:close", "pressableElevatedSecondary", close).clicked) {
         socialOpen = false;

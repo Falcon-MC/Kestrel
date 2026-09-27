@@ -45,6 +45,9 @@ public:
         return scale;
     }
 
+    void setLayer(float offsetX, float offsetY, float opacity);
+    void clearLayer();
+
     void spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint);
 
     const std::vector<Rect>& interactiveRects() const

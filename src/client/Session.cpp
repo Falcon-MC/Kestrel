@@ -395,6 +395,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
         return nullptr;
     };
     if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
+        debugLog("inventory content container " + std::to_string(content->mContainerId) + ", " + std::to_string(content->mContents.size()) + " slots");
         std::lock_guard<std::mutex> guard(mutex);
         for (size_t slot = 0; slot < content->mContents.size(); ++slot) {
             if (HudItem* target = slotOf(content->mContainerId, int32_t(slot))) {

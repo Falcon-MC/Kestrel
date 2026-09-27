@@ -46,6 +46,21 @@ public:
         clip = {};
     }
 
+    // Shifts everything drawn afterwards by pixels and fades it, for screen transitions.
+    void setLayer(float offsetX, float offsetY, float opacity)
+    {
+        layerX = offsetX;
+        layerY = offsetY;
+        layerOpacity = opacity;
+    }
+
+    void clearLayer()
+    {
+        layerX = 0.0f;
+        layerY = 0.0f;
+        layerOpacity = 1.0f;
+    }
+
     const std::vector<UiVertex>& vertices() const
     {
         return vertexData;
@@ -58,6 +73,7 @@ public:
 
 private:
     void pushIndices(uint32_t base);
+    uint32_t layered(uint32_t color) const;
 
     std::vector<UiVertex> vertexData;
     std::vector<uint32_t> indexData;
@@ -65,6 +81,9 @@ private:
     float whiteU = 0.0f;
     float whiteV = 0.0f;
     Rect clip {};
+    float layerX = 0.0f;
+    float layerY = 0.0f;
+    float layerOpacity = 1.0f;
 };
 
 }

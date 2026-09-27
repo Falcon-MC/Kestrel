@@ -53,4 +53,24 @@ bool copyText(const std::string& text)
     return copied;
 }
 
+std::string pasteText()
+{
+    if (!OpenClipboard(nullptr)) {
+        return {};
+    }
+    std::string text;
+    if (HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* wide = static_cast<const wchar_t*>(GlobalLock(data))) {
+            int length = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+            if (length > 1) {
+                text.resize(static_cast<size_t>(length - 1));
+                WideCharToMultiByte(CP_UTF8, 0, wide, -1, text.data(), length, nullptr, nullptr);
+            }
+            GlobalUnlock(data);
+        }
+    }
+    CloseClipboard();
+    return text;
+}
+
 }
