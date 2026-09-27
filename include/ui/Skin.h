@@ -50,7 +50,7 @@ public:
     std::string_view themeValue(std::string_view name) const;
     float themeLength(std::string_view name, float fallback = 0.0f) const;
     const BorderImage& border(std::string_view component, std::string_view state);
-    void setDynamic(const std::string& name, Bitmap bitmap);
+    void setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice = {});
     void clearDynamic(const std::string& name);
 
     bool dirty() const

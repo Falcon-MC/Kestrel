@@ -3,6 +3,7 @@
 #include "Protocol/PacketCodecContext.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
 #include "world/MeshScheduler.h"
 #include "world/WorldStream.h"
@@ -50,6 +51,8 @@ struct ActorView {
     float headYaw = 0.0f;
     float pitch = 0.0f;
     float scale = 1.0f;
+    float height = 0.0f;
+    bool alwaysShowName = false;
     std::array<uint64_t, 3> flags{};
     int variant = 0;
     int markVariant = 0;
@@ -168,6 +171,43 @@ struct SoundRequest {
     float pitch = 1.0f;
 };
 
+/**
+ * A text packet as the server sent it. The client translates and formats it
+ * with the language the menus use, so it stays raw until then.
+ */
+struct ChatMessage {
+    enum class Kind {
+        Raw,
+        Chat,
+        Translation,
+        Popup,
+        JukeboxPopup,
+        Tip,
+        System,
+        Whisper,
+        Announcement,
+        WhisperJson,
+        Json,
+        AnnouncementJson,
+    };
+
+    Kind kind = Kind::Raw;
+    std::string source;
+    std::string message;
+    std::vector<std::string> parameters;
+    bool translate = false;
+};
+
+/**
+ * The objective shown in the sidebar slot: its display name and the lines in
+ * the order the objective sorts them, at most the fifteen the game shows.
+ */
+struct SidebarView {
+    bool visible = false;
+    std::string title;
+    std::vector<std::pair<std::string, int32_t>> lines;
+};
+
 struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
@@ -231,6 +271,9 @@ struct SessionSnapshot {
     bool cohortComplete = false;
     bool updatesPending = false;
     std::vector<ActorView> actors;
+    std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
+    std::vector<std::string> players;
+    SidebarView sidebar;
     HudState hud;
     PlayerView player;
 };
@@ -253,6 +296,13 @@ public:
     std::vector<MeshUpdate> takeMeshUpdates();
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
+    std::vector<ChatMessage> takeChatMessages();
+
+    /**
+     * Queues a line typed into chat: commands (starting with a slash) go out
+     * as command requests, anything else as a chat message.
+     */
+    void sendChat(std::string text);
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
     void setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
     void answerResourcePacks(bool download);
@@ -263,6 +313,10 @@ public:
 private:
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
     void handleSoundPacket(const std::shared_ptr<Packet>& packet);
+    void handleChatPacket(const std::shared_ptr<Packet>& packet);
+    void handleScorePacket(const std::shared_ptr<Packet>& packet);
+    void rebuildSidebar();
+    void flushChat();
     void queueSound(SoundRequest request);
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
@@ -314,6 +368,20 @@ private:
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, std::string> uuidByRuntime;
     std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
+    std::map<std::string, std::string> playerNames;
+    std::map<int64_t, std::string> playerNamesByActor;
+
+    struct ScoreLine {
+        std::string objective;
+        int32_t score = 0;
+        std::string name;
+        int64_t actorId = -1;
+        bool player = false;
+    };
+
+    std::map<std::string, std::string> objectives;
+    std::map<std::string, std::pair<std::string, int32_t>> displaySlots;
+    std::map<int64_t, ScoreLine> scores;
     std::array<std::string, world::SkinSlots> slotOwners;
     std::vector<SkinUpload> pendingSkins;
     std::set<int> seenPackets;
@@ -332,6 +400,9 @@ private:
     double nextMotionTick = 0.0;
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
+    std::vector<ChatMessage> pendingChat;
+    std::vector<std::string> outgoingChat;
+    std::string localXuid;
     float walkedDistance = 0.0f;
     float nextStepDistance = 1.0f;
     float fallStartY = 0.0f;

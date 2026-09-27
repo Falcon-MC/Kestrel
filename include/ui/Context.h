@@ -94,6 +94,8 @@ public:
     void textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth = 0.0f);
     void textCentered(std::string_view value, TextStyle style, const Rect& rect, Color color);
     float paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color);
+    void pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color);
+    float paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     float paragraphHeight(std::string_view value, TextStyle style, float width) const;
 
     bool classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled = true);
@@ -104,6 +106,7 @@ public:
 
 private:
     bool clipped(const Rect& rect) const;
+    float shadowOffset(TextStyle style) const;
 
     DrawList& drawList;
     const Font& font;

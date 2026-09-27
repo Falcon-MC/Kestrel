@@ -18,6 +18,7 @@ using namespace ui::theme;
 namespace {
 
 constexpr size_t MaxFieldLength = 96;
+constexpr size_t MaxChatLength = 512;
 constexpr float TitleButtonWidth = 148.0f;
 constexpr float TitleButtonHeight = 30.0f;
 constexpr float TitleButtonStep = 32.0f;
@@ -163,6 +164,9 @@ void Menu::setSession(SessionInfo info)
         }
         break;
     case SessionStatus::Idle:
+        if (dialog == Dialog::Chat) {
+            closeChat();
+        }
         if (dialog == Dialog::Connecting || dialog == Dialog::Pause) {
             dialog = Dialog::None;
         }
@@ -257,6 +261,9 @@ void Menu::frame(Context& ui, float width, float height)
         break;
     case Dialog::Pause:
         pause(ui, width, height);
+        break;
+    case Dialog::Chat:
+        chatScreen(ui, width, height);
         break;
     case Dialog::Connecting:
     case Dialog::ConnectionError:
@@ -795,6 +802,8 @@ void Menu::gameView(Context& ui, float width, float height)
     if (!session.lastWorldError.empty()) {
         lines.push_back(session.lastWorldError);
     }
+    drawNameTags(ui, hud.nameTags);
+
     float y = 2.0f;
     for (const std::string& line : lines) {
         if (!line.empty()) {
@@ -805,6 +814,10 @@ void Menu::gameView(Context& ui, float width, float height)
     }
 
     drawHud(ui, hud, 0.0f, 0.0f, width, height);
+    if (hudUi && hud.sidebarVisible) {
+        hudUi->draw(ui, "scoreboard.scoreboard_sidebar", { 0.0f, 0.0f, width, height }, hud.sidebar);
+    }
+    chatFeed(ui, y, width, height);
 
     float cx = std::floor(width * 0.5f - 7.5f);
     float cy = std::floor(height * 0.5f - 7.5f);
@@ -838,6 +851,9 @@ void Menu::handleKeys(Context& ui)
 
     if (input.pressedKey == Key::F11) {
         chromeAction = ChromeAction::Fullscreen;
+    }
+    if (handleChatKeys(input)) {
+        return;
     }
     if (selectAllPending) {
         selectAllPending = false;
@@ -903,6 +919,8 @@ void Menu::handleKeys(Context& ui)
     }
     if (socialOpen) {
         socialOpen = false;
+    } else if (dialog == Dialog::Chat) {
+        closeChat();
     } else if (dialog == Dialog::Pause) {
         dialog = Dialog::None;
     } else if (dialog == Dialog::SignIn) {
@@ -938,7 +956,7 @@ void Menu::type(std::u32string_view text)
         if (cp < 32 || cp == 127) {
             continue;
         }
-        if (target->size() >= MaxFieldLength) {
+        if (target->size() >= (field == Field::Chat ? MaxChatLength : MaxFieldLength)) {
             break;
         }
         if (field == Field::ServerPort && (cp < U'0' || cp > U'9' || target->size() >= 5)) {
@@ -959,6 +977,8 @@ std::string* Menu::focusedText()
         return &editPort;
     case Field::SocialSearch:
         return &socialSearch;
+    case Field::Chat:
+        return dialog == Dialog::Chat ? &chatDraft : nullptr;
     case Field::None:
         break;
     }

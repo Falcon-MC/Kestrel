@@ -57,4 +57,15 @@ private:
 
 bool decodeBitmap(const std::string& encoded, Bitmap& out);
 
+/**
+ * Reads the nineslice_size of a texture's .json companion into slice.
+ */
+void readNineSlice(const std::string& json, NineSlice& slice);
+
+/**
+ * The bitmap box filtered down to width, keeping its aspect; unchanged when
+ * it is already that narrow.
+ */
+Bitmap shrinkBitmap(const Bitmap& source, uint32_t width);
+
 }

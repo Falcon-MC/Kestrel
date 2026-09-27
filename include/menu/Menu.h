@@ -1,5 +1,6 @@
 #pragma once
 
+#include "menu/ChatCommands.h"
 #include "menu/Hud.h"
 #include "menu/ServerStore.h"
 #include "platform/Keys.h"
@@ -8,7 +9,9 @@
 #include "ui/Types.h"
 
 #include <chrono>
+#include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -74,6 +77,7 @@ enum class Dialog {
     SignIn,
     Connecting,
     ConnectionError,
+    Chat,
 };
 
 enum class Field {
@@ -82,6 +86,7 @@ enum class Field {
     ServerAddress,
     ServerPort,
     SocialSearch,
+    Chat,
 };
 
 /**
@@ -351,6 +356,15 @@ public:
      * is worth downloading.
      */
 
+    /**
+     * The game's HUD controls, merged with the server's packs, that the
+     * scoreboard sidebar is drawn from.
+     */
+    void setHudUi(std::shared_ptr<const ui::JsonUi> definitions)
+    {
+        hudUi = std::move(definitions);
+    }
+
     void setHud(HudView view)
     {
         hud = std::move(view);
@@ -409,6 +423,33 @@ public:
     std::optional<ConnectRequest> takeConnectRequest();
     void notify(std::string message);
 
+    /**
+     * A received line for the chat log; the HUD shows it for a while and the
+     * chat screen keeps the last hundred.
+     */
+    void addChatLine(std::string text);
+    void clearChat();
+
+    void setCommands(std::shared_ptr<const std::vector<ChatCommand>> list)
+    {
+        commands = std::move(list);
+    }
+
+    void setPlayers(std::vector<std::string> names)
+    {
+        players = std::move(names);
+    }
+
+    /**
+     * Lines sent from the chat screen since the last call, commands included.
+     */
+    std::vector<std::string> takeChatMessages()
+    {
+        std::vector<std::string> messages = std::move(chatOutgoing);
+        chatOutgoing.clear();
+        return messages;
+    }
+
 private:
     enum class ServerGroup {
         Featured,
@@ -428,6 +469,11 @@ private:
     struct Selection {
         ServerGroup group = ServerGroup::Saved;
         size_t index = 0;
+    };
+
+    struct ChatLine {
+        std::string text;
+        std::chrono::steady_clock::time_point arrived;
     };
 
     // Screens drawn with the classic textures.
@@ -457,6 +503,8 @@ private:
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
+    void chatFeed(ui::Context& ui, float top, float width, float height);
+    void chatScreen(ui::Context& ui, float width, float height);
 
     bool textField(ui::Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const ui::Rect& rect, bool focused);
     bool toggle(ui::Context& ui, std::string_view id, const ui::Rect& rect, bool on);
@@ -471,6 +519,13 @@ private:
     std::optional<ServerRow> selectedRow() const;
 
     void handleKeys(ui::Context& ui);
+    bool handleChatKeys(const InputState& input);
+    void openChat(std::string draft);
+    void closeChat();
+    void submitChat();
+    void recallChat(int step);
+    void completeChat(bool backwards);
+    void commandPanel(ui::Context& ui, float width, float bottom, float top);
     void type(std::u32string_view text);
     std::string* focusedText();
     void navigate(Screen target);
@@ -528,6 +583,7 @@ private:
     SessionInfo session;
     std::string cameraInfo;
     HudView hud;
+    std::shared_ptr<const ui::JsonUi> hudUi;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
     float listScroll = 0.0f;
@@ -538,6 +594,18 @@ private:
     float pageContent = 0.0f;
     bool disconnectRequested = false;
     std::optional<bool> packAnswer;
+    std::deque<ChatLine> chatLines;
+    std::string chatDraft;
+    std::vector<std::string> chatHistory;
+    std::optional<size_t> chatRecall;
+    std::vector<std::string> chatOutgoing;
+    float chatScroll = 0.0f;
+    std::shared_ptr<const std::vector<ChatCommand>> commands;
+    std::vector<std::string> players;
+    std::vector<CommandSuggestion> chatCycle;
+    size_t chatCycleIndex = 0;
+    std::string chatCycleBase;
+    std::string chatCycleDraft;
     float scale = 1.0f;
     int chunkDistance = DefaultRenderDistance;
     int fpsLimit = DefaultMaxFps;
