@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,17 @@ public:
     // default8 for ASCII, then one glyph_XX sheet per high byte of the code point.
     static constexpr size_t PixelPageCount = 257;
 
+    /**
+     * The part of its cell a glyph covers, in source pixels; empty when right
+     * is not past left.
+     */
+    struct GlyphBox {
+        uint16_t left = 0;
+        uint16_t top = 0;
+        uint16_t right = 0;
+        uint16_t bottom = 0;
+    };
+
     bool load(GameAssets& assets, Skin& skin);
     void bake(float scale);
 
@@ -76,7 +88,7 @@ public:
      * Pixel font text with every font pixel magnify menu units wide, for text
      * that sits in the world and shrinks with distance.
      */
-    void drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color) const;
+    void drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow = false) const;
 
     /**
      * The skin sprite of a pixel font sheet: font/default8 for index 0, then
@@ -91,10 +103,13 @@ public:
     void reloadPixelPages();
 
     /**
-     * The width a glyph sheet had before it was shrunk for the atlas, which
-     * is what sets how big its glyphs are drawn; 0 uses the sheet as loaded.
+     * Draws a sheet from glyphs stored one by one (skin sprites named by
+     * pixelGlyphName) instead of from the sheet, so a pack's HD sheet keeps
+     * its detail without taking its whole size in the atlas.
      */
-    void setPixelPageSourceWidth(size_t index, uint32_t width);
+    void setPixelPageGlyphs(size_t index, uint32_t cell, const std::array<GlyphBox, 256>& boxes);
+    void clearPixelPageGlyphs();
+    static std::string pixelGlyphName(size_t index, uint32_t code);
     size_t wrap(std::string_view text, TextStyle style, float width, std::vector<std::string_view>& lines) const;
 
 private:
@@ -122,9 +137,18 @@ private:
         std::array<uint8_t, 256> end {};
         uint32_t cell = 8;
         float height = 8.0f;
+        float top = 0.0f;
         bool loaded = false;
         bool tried = false;
         std::string sprite;
+        bool split = false;
+        std::array<std::array<uint16_t, 2>, 256> rows {};
+        std::vector<std::string> glyphSprites;
+    };
+
+    struct SplitPage {
+        uint32_t cell = 16;
+        std::array<GlyphBox, 256> boxes {};
     };
 
     const Glyph* glyph(const Face& face, char32_t cp) const;
@@ -136,13 +160,14 @@ private:
     float pixelAdvance(char32_t cp) const;
     const BitmapPage* pixelPage(char32_t cp, size_t* index = nullptr) const;
     void readPixelPage(size_t index) const;
+    static void placePage(size_t index, BitmapPage& page);
     bool pack(uint32_t height, float scale);
 
     Skin* skin = nullptr;
     std::array<std::vector<unsigned char>, 5> sources;
     std::array<Face, static_cast<size_t>(TextStyle::Count)> faces;
     mutable std::array<BitmapPage, PixelPageCount> pages;
-    std::array<uint32_t, PixelPageCount> sourceWidths {};
+    std::array<std::optional<SplitPage>, PixelPageCount> splitPages;
     std::vector<uint8_t> pixels;
     float scale = 1.0f;
     std::array<float, 2> white {};

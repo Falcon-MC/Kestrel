@@ -64,6 +64,7 @@ private:
     void syncChat();
     void applyServerPacks(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
     void loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    void cutGlyphs(size_t index, const ui::Bitmap& sheet);
     void loadHudUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
     ui::UiData sidebarData() const;
     float nightVisionStrength() const;

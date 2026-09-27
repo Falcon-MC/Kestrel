@@ -94,7 +94,7 @@ public:
     void textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth = 0.0f);
     void textCentered(std::string_view value, TextStyle style, const Rect& rect, Color color);
     float paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color);
-    void pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color);
+    void pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color, bool shadow = false);
     float paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     float paragraphHeight(std::string_view value, TextStyle style, float width) const;
 

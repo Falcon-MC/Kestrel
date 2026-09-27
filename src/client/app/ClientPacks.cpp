@@ -4,12 +4,14 @@
 #include "ui/GameAssets.h"
 #include "util/JsonText.h"
 
+#include <algorithm>
+
 namespace kestrel {
 
 namespace {
 
-// Keeps HD glyph sheets and textures from filling the UI atlas; glyphs keep their size, see Font.
-constexpr uint32_t MaxGlyphSheet = 512;
+// Keeps huge glyphs and textures from filling the UI atlas; glyphs keep their drawn size, see Font.
+constexpr uint32_t MaxGlyphSprite = 256;
 constexpr uint32_t MaxPackTexture = 1024;
 
 // The HUD files Kestrel draws from, besides the ones a pack lists in its _ui_defs.json.
@@ -44,12 +46,14 @@ void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::Pac
 
 /**
  * Every glyph sheet a pack ships replaces the vanilla one, the first pack in
- * the stack winning.
+ * the stack winning. Each glyph is cut out of its cell and stored on its own,
+ * which keeps HD sheets sharp while only the glyphs they really have take
+ * atlas space.
  */
 void Client::loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
 {
-    for (size_t index = 0; index < ui::Font::PixelPageCount; ++index) {
-        font.setPixelPageSourceWidth(index, 0);
+    font.clearPixelPageGlyphs();
+    for (size_t index = 1; index < ui::Font::PixelPageCount; ++index) {
         std::string name = ui::Font::pixelPageName(index);
         for (const std::shared_ptr<const world::PackFiles>& pack : packs) {
             const std::string* encoded = pack->find(name + ".png");
@@ -57,16 +61,55 @@ void Client::loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackF
                 continue;
             }
             ui::Bitmap sheet;
-            if (ui::decodeBitmap(*encoded, sheet)) {
-                font.setPixelPageSourceWidth(index, sheet.width);
-                skin.setDynamic(name, ui::shrinkBitmap(sheet, MaxGlyphSheet));
-                packSprites.push_back(name);
+            if (ui::decodeBitmap(*encoded, sheet) && sheet.width == sheet.height && sheet.width >= 16 && sheet.width % 16 == 0) {
+                cutGlyphs(index, sheet);
                 debugLog("pack glyph sheet " + name + " " + std::to_string(sheet.width) + "px");
             }
             break;
         }
     }
     font.reloadPixelPages();
+}
+
+void Client::cutGlyphs(size_t index, const ui::Bitmap& sheet)
+{
+    uint32_t cell = sheet.width / 16;
+    std::array<ui::Font::GlyphBox, 256> boxes {};
+    for (uint32_t code = 0; code < 256; ++code) {
+        uint32_t originX = (code % 16) * cell;
+        uint32_t originY = (code / 16) * cell;
+        uint32_t left = cell;
+        uint32_t top = cell;
+        uint32_t right = 0;
+        uint32_t bottom = 0;
+        for (uint32_t y = 0; y < cell; ++y) {
+            const uint8_t* row = sheet.rgba.data() + (static_cast<size_t>(originY + y) * sheet.width + originX) * 4;
+            for (uint32_t x = 0; x < cell; ++x) {
+                if (row[x * 4 + 3] > 0) {
+                    left = std::min(left, x);
+                    right = std::max(right, x + 1);
+                    top = std::min(top, y);
+                    bottom = std::max(bottom, y + 1);
+                }
+            }
+        }
+        if (right <= left || bottom <= top) {
+            continue;
+        }
+        ui::Bitmap glyph;
+        glyph.width = right - left;
+        glyph.height = bottom - top;
+        glyph.rgba.resize(static_cast<size_t>(glyph.width) * glyph.height * 4);
+        for (uint32_t y = 0; y < glyph.height; ++y) {
+            const uint8_t* source = sheet.rgba.data() + (static_cast<size_t>(originY + top + y) * sheet.width + originX + left) * 4;
+            std::copy(source, source + static_cast<size_t>(glyph.width) * 4, glyph.rgba.data() + static_cast<size_t>(y) * glyph.width * 4);
+        }
+        std::string sprite = ui::Font::pixelGlyphName(index, code);
+        skin.setDynamic(sprite, ui::shrinkBitmap(glyph, MaxGlyphSprite));
+        packSprites.push_back(std::move(sprite));
+        boxes[code] = { static_cast<uint16_t>(left), static_cast<uint16_t>(top), static_cast<uint16_t>(right), static_cast<uint16_t>(bottom) };
+    }
+    font.setPixelPageGlyphs(index, cell, boxes);
 }
 
 /**
