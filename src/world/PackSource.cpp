@@ -35,6 +35,31 @@ uint32_t readLe32(const std::string& data, size_t offset)
     return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) | (uint32_t(bytes[3]) << 24);
 }
 
+/**
+ * The numbers of a version folder name such as 1.26.51.1, so versions sort
+ * by value: 1.26 is newer than 1.9.
+ */
+std::vector<uint64_t> versionNumbers(const std::string& name)
+{
+    std::vector<uint64_t> numbers;
+    uint64_t current = 0;
+    bool inNumber = false;
+    for (char c : name) {
+        if (c >= '0' && c <= '9') {
+            current = current * 10 + uint64_t(c - '0');
+            inNumber = true;
+        } else if (inNumber) {
+            numbers.push_back(current);
+            current = 0;
+            inNumber = false;
+        }
+    }
+    if (inNumber) {
+        numbers.push_back(current);
+    }
+    return numbers;
+}
+
 }
 
 fs::path PackSource::locateVanilla()
@@ -66,7 +91,7 @@ fs::path PackSource::locateVanilla()
             for (const fs::directory_entry& version : fs::directory_iterator(root, error)) {
                 for (const char* layout : { "assets/resource_packs/vanilla", "assets/assets/resource_packs/vanilla" }) {
                     fs::path pack = version.path() / layout;
-                    if (fs::exists(pack / "blocks.json", error) && (newest.empty() || version.path().filename() > newestVersion)) {
+                    if (fs::exists(pack / "blocks.json", error) && (newest.empty() || versionNumbers(version.path().filename().string()) > versionNumbers(newestVersion.string()))) {
                         newest = pack;
                         newestVersion = version.path().filename();
                     }
