@@ -149,6 +149,39 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
     return false;
 }
 
+std::vector<std::string> PackSource::archiveEntries(const std::string& archiveName)
+{
+    std::vector<std::string> names;
+    for (const fs::path& layer : stack) {
+        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+        if (!source) {
+            continue;
+        }
+        for (const auto& [name, location] : source->entries) {
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                names.push_back(name);
+            }
+        }
+    }
+    return names;
+}
+
+bool PackSource::readArchived(const std::string& archiveName, const std::string& name, std::string& out)
+{
+    for (const fs::path& layer : stack) {
+        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+        if (!source) {
+            continue;
+        }
+        auto found = source->entries.find(name);
+        if (found != source->entries.end()) {
+            out.assign(source->data, source->dataStart + found->second.first, found->second.second);
+            return true;
+        }
+    }
+    return false;
+}
+
 const PackSource::Archive* PackSource::archive(const fs::path& file)
 {
     auto cached = archives.find(file);

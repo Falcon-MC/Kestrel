@@ -40,6 +40,31 @@ bool chunkInView(int32_t radius, int32_t chunkX, int32_t chunkZ, int32_t centerX
     return static_cast<float>(dx * dx + dz * dz) < threshold * threshold;
 }
 
+bool decodeBiomes(ByteReader& reader, int32_t count, std::vector<std::shared_ptr<const PalettedStorage>>& out, std::string& error)
+{
+    out.clear();
+    for (int32_t i = 0; i < count; ++i) {
+        uint8_t header = 0;
+        if (!reader.readByte(header, error, "biome palette header")) {
+            return false;
+        }
+        if (header == 0xFF) {
+            if (out.empty()) {
+                error = "biome copy marker without a previous storage";
+                return false;
+            }
+            out.push_back(out.back());
+            continue;
+        }
+        PalettedStorage storage;
+        if (!PalettedStorage::decodeWithHeader(reader, header, storage, error)) {
+            return false;
+        }
+        out.push_back(std::make_shared<const PalettedStorage>(std::move(storage)));
+    }
+    return true;
+}
+
 }
 
 void WorldStream::reset(int32_t newDimension, int32_t chunkX, int32_t chunkZ)
@@ -85,6 +110,14 @@ void WorldStream::handle(const LevelChunkPacket& packet)
     if (packet.mRequestSubChunks) {
         int32_t count = packet.mSubChunkLimit < 0 ? range.subChunkCount : std::min(packet.mSubChunkLimit, range.subChunkCount);
         chunks.markLoaded(key);
+        ByteReader reader(reinterpret_cast<const uint8_t*>(packet.mData.data()), packet.mData.size());
+        std::vector<std::shared_ptr<const PalettedStorage>> biomes;
+        std::string error;
+        if (decodeBiomes(reader, range.subChunkCount, biomes, error)) {
+            chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
+        } else {
+            recordError("LevelChunk biomes " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + error);
+        }
         if (count > 0) {
             requestColumn(key, range.baseSubChunkY, count);
         }
@@ -114,9 +147,20 @@ void WorldStream::handle(const LevelChunkPacket& packet)
         offset += consumed;
     }
 
+    ByteReader reader(data + offset, packet.mData.size() - offset);
+    std::vector<std::shared_ptr<const PalettedStorage>> biomes;
+    std::string biomeError;
+    bool hasBiomes = decodeBiomes(reader, range.subChunkCount, biomes, biomeError);
+    if (!hasBiomes) {
+        recordError("LevelChunk biomes " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + biomeError);
+    }
+
     pending.erase(key);
     chunks.evict(key);
     chunks.markLoaded(key);
+    if (hasBiomes) {
+        chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
+    }
     for (uint32_t i = 0; i < decoded.size(); ++i) {
         chunks.commit({ key.dimension, key.x, range.baseSubChunkY + static_cast<int32_t>(i), key.z }, std::move(decoded[i]));
     }

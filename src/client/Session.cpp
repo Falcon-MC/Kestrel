@@ -234,6 +234,11 @@ void Session::scheduleMeshes()
         for (size_t face = 0; face < 6; ++face) {
             input.neighbours[face] = world.store().subChunk({ key.dimension, key.x + Offsets[face][0], key.y + Offsets[face][1], key.z + Offsets[face][2] });
         }
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            for (int32_t dx = -1; dx <= 1; ++dx) {
+                input.biomes[size_t((dz + 1) * 3 + (dx + 1))] = world.store().biomes({ key.dimension, key.x + dx, key.y, key.z + dz });
+            }
+        }
         mesher->submit(key, generation, std::move(input), assets, ids);
     }
 }

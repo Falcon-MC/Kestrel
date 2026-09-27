@@ -1,7 +1,10 @@
 #include "world/Mesher.h"
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <optional>
+#include <unordered_map>
 
 namespace kestrel::world {
 
@@ -232,7 +235,95 @@ Columns exposedColumns(Face face, const PaletteFacts& facts, const VisibilityMas
     return exposed;
 }
 
-void greedySlice(const PaletteFacts& facts, Face face, uint32_t slice, std::array<uint32_t, Side>& rows, std::vector<PackedQuad>& opaque, std::vector<PackedQuad>& translucent)
+float srgbToLinear(uint32_t channel)
+{
+    float value = static_cast<float>(channel) / 255.0f;
+    return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
+
+uint32_t linearToSrgb(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    float encoded = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+    return static_cast<uint32_t>(encoded * 255.0f + 0.5f);
+}
+
+/**
+ * Biome tint of one block: a 3x3 horizontal box blend in linear color, with
+ * the birch, evergreen and dry foliage variants taken from the block itself.
+ */
+class TintSampler {
+public:
+    TintSampler(const BlockAssets& assets, const MeshInput& input)
+        : assets(assets)
+        , input(input)
+    {
+    }
+
+    uint32_t tintWord(uint32_t materialId, uint32_t x, uint32_t y, uint32_t z)
+    {
+        const std::vector<Material>& materials = assets.materials();
+        if (materialId >= materials.size() || materials[materialId].tintKind() == TintKind::None) {
+            return 0;
+        }
+        const Material& material = materials[materialId];
+        uint32_t domain = material.tint & (TintKindMask | TintVariantMask);
+        uint32_t key = (static_cast<uint32_t>(linearIndex(x, y, z)) << 4) | domain;
+        auto found = cache.find(key);
+        uint32_t rgb = 0;
+        if (found != cache.end()) {
+            rgb = found->second;
+        } else {
+            rgb = blend(material.tintKind(), material.foliageVariant(), int32_t(x), int32_t(y), int32_t(z));
+            cache.emplace(key, rgb);
+        }
+        return QuadTinted | ((material.tint & TintOverlay) ? QuadTintOverlay : 0u) | rgb;
+    }
+
+private:
+    uint32_t biomeAt(int32_t x, int32_t y, int32_t z) const
+    {
+        int32_t dx = x < 0 ? -1 : (x >= int32_t(Side) ? 1 : 0);
+        int32_t dz = z < 0 ? -1 : (z >= int32_t(Side) ? 1 : 0);
+        const std::shared_ptr<const PalettedStorage>* storage = &input.biomes[size_t((dz + 1) * 3 + (dx + 1))];
+        if (*storage) {
+            x -= dx * int32_t(Side);
+            z -= dz * int32_t(Side);
+        } else {
+            storage = &input.biomes[4];
+            x = std::clamp(x, 0, int32_t(Side) - 1);
+            z = std::clamp(z, 0, int32_t(Side) - 1);
+        }
+        if (!*storage) {
+            return 0xFFFFFFFFu;
+        }
+        return (*storage)->runtimeId(uint32_t(x), uint32_t(y), uint32_t(z));
+    }
+
+    uint32_t blend(TintKind kind, FoliageVariant variant, int32_t x, int32_t y, int32_t z) const
+    {
+        const BiomeTints& tints = assets.biomeTints();
+        if (kind == TintKind::Foliage && variant != FoliageVariant::Default) {
+            return tints.colors(biomeAt(x, y, z)).domain(kind, variant);
+        }
+        float sum[3] = {};
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            for (int32_t dx = -1; dx <= 1; ++dx) {
+                uint32_t rgb = tints.colors(biomeAt(x + dx, y, z + dz)).domain(kind, variant);
+                sum[0] += srgbToLinear((rgb >> 16) & 0xFF);
+                sum[1] += srgbToLinear((rgb >> 8) & 0xFF);
+                sum[2] += srgbToLinear(rgb & 0xFF);
+            }
+        }
+        return (linearToSrgb(sum[0] / 9.0f) << 16) | (linearToSrgb(sum[1] / 9.0f) << 8) | linearToSrgb(sum[2] / 9.0f);
+    }
+
+    const BlockAssets& assets;
+    const MeshInput& input;
+    std::unordered_map<uint32_t, uint32_t> cache;
+};
+
+void greedySlice(const PaletteFacts& facts, TintSampler& tints, Face face, uint32_t slice, std::array<uint32_t, Side>& rows, std::vector<PackedQuad>& opaque, std::vector<PackedQuad>& translucent)
 {
     size_t faceIndex = static_cast<size_t>(face);
     for (uint32_t v = 0; v < Side; ++v) {
@@ -240,13 +331,17 @@ void greedySlice(const PaletteFacts& facts, Face face, uint32_t slice, std::arra
             uint32_t u = static_cast<uint32_t>(std::countr_zero(rows[v]));
             auto origin = blockCoordinate(face, slice, u, v);
             uint32_t material = facts.at(origin[0], origin[1], origin[2]).faces[faceIndex];
+            uint32_t tint = tints.tintWord(material, origin[0], origin[1], origin[2]);
+            auto matches = [&](uint32_t x, uint32_t y, uint32_t z) {
+                return facts.at(x, y, z).faces[faceIndex] == material && (tint == 0 || tints.tintWord(material, x, y, z) == tint);
+            };
 
             uint32_t shifted = rows[v] >> u;
             uint32_t binaryWidth = std::min<uint32_t>(static_cast<uint32_t>(std::countr_one(shifted)), Side - u);
             uint32_t width = 1;
             while (width < binaryWidth) {
                 auto [x, y, z] = blockCoordinate(face, slice, u + width, v);
-                if (facts.at(x, y, z).faces[faceIndex] != material) {
+                if (!matches(x, y, z)) {
                     break;
                 }
                 ++width;
@@ -258,7 +353,7 @@ void greedySlice(const PaletteFacts& facts, Face face, uint32_t slice, std::arra
                 bool same = true;
                 for (uint32_t offset = 0; offset < width && same; ++offset) {
                     auto [x, y, z] = blockCoordinate(face, slice, u + offset, v + height);
-                    same = facts.at(x, y, z).faces[faceIndex] == material;
+                    same = matches(x, y, z);
                 }
                 if (!same) {
                     break;
@@ -270,7 +365,7 @@ void greedySlice(const PaletteFacts& facts, Face face, uint32_t slice, std::arra
                 rows[row] &= ~span;
             }
             bool isTranslucent = facts.at(origin[0], origin[1], origin[2]).flags & FlagTranslucent;
-            (isTranslucent ? translucent : opaque).push_back(PackedQuad::make(origin[0], origin[1], origin[2], face, width, height, material));
+            (isTranslucent ? translucent : opaque).push_back(PackedQuad::make(origin[0], origin[1], origin[2], face, width, height, material, tint));
         }
     }
 }
@@ -477,7 +572,7 @@ Face rotateFace(Face face, uint32_t rotation)
     return face;
 }
 
-void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, uint32_t rotation, std::vector<ModelQuadGpu>& out)
+void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, uint32_t rotation, uint32_t tint, std::vector<ModelQuadGpu>& out)
 {
     ModelQuadGpu gpu;
     std::array<int16_t, 12> positions {};
@@ -502,11 +597,13 @@ void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, ui
     }
     gpu.words[10] = quad.material;
     std::optional<Face> face = faceFromId(quad.flags & QuadFaceMask);
-    gpu.words[11] = face ? uint32_t(rotateFace(*face, rotation)) + 1 : 0;
+    uint32_t shade = face ? uint32_t(rotateFace(*face, rotation)) + 1 : 0;
+    uint32_t rgb = (tint & QuadTinted) ? std::max(tint & 0xFFFFFFu, 1u) : 0u;
+    gpu.words[11] = shade | (rgb << 8);
     out.push_back(gpu);
 }
 
-void meshModels(const BlockAssets& assets, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
+void meshModels(const BlockAssets& assets, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, TintSampler& tints, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
 {
     if (const BlockVisual* uniform = facts.uniformVisual(); uniform && !uniform->hasModel()) {
         return;
@@ -539,7 +636,7 @@ void meshModels(const BlockAssets& assets, const PaletteFacts& facts, const std:
                                 continue;
                             }
                         }
-                        emitModelQuad(quad, x, y, z, rotation, (visual.flags & FlagTranslucent) ? translucent : opaque);
+                        emitModelQuad(quad, x, y, z, rotation, tints.tintWord(quad.material, x, y, z), (visual.flags & FlagTranslucent) ? translucent : opaque);
                     }
                 }
             }
@@ -567,6 +664,7 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
         neighbours[i] = &neighbourFacts[i];
     }
 
+    TintSampler tints(assets, input);
     VisibilityMasks masks(facts);
     for (Face face : AllFaces) {
         Columns columns = exposedColumns(face, facts, masks, *neighbours[static_cast<size_t>(face)]);
@@ -577,10 +675,10 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
                     rows[v] |= ((columns[v][u] >> slice) & 1u) << u;
                 }
             }
-            greedySlice(facts, face, slice, rows, mesh.cubes, mesh.translucentCubes);
+            greedySlice(facts, tints, face, slice, rows, mesh.cubes, mesh.translucentCubes);
         }
     }
-    meshModels(assets, facts, neighbours, mesh.models, mesh.translucentModels);
+    meshModels(assets, facts, neighbours, tints, mesh.models, mesh.translucentModels);
     return mesh;
 }
 

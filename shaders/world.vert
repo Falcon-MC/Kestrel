@@ -8,12 +8,13 @@ layout(push_constant) uniform Draw {
     vec4 sun;
 } draw;
 
-layout(location = 0) in uvec2 inQuad;
+layout(location = 0) in uvec3 inQuad;
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
 layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
+layout(location = 4) flat out uint outTint;
 
 vec3 quadCorner(uint face, uint corner, vec3 o, float w, float h)
 {
@@ -75,4 +76,5 @@ void main()
     outMaterial = inQuad.y;
     outShade = faceShade[face];
     outRelative = position;
+    outTint = inQuad.z;
 }

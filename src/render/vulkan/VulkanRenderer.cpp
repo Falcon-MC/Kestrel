@@ -693,8 +693,8 @@ private:
         stages[1].module = fragmentModule;
         stages[1].pName = "main";
 
-        VkVertexInputBindingDescription vertexBinding { 0, 8, VK_VERTEX_INPUT_RATE_INSTANCE };
-        VkVertexInputAttributeDescription attribute { 0, 0, VK_FORMAT_R32G32_UINT, 0 };
+        VkVertexInputBindingDescription vertexBinding { 0, CubeQuadBytes, VK_VERTEX_INPUT_RATE_INSTANCE };
+        VkVertexInputAttributeDescription attribute { 0, 0, VK_FORMAT_R32G32B32_UINT, 0 };
         VkPipelineVertexInputStateCreateInfo vertexInput { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &vertexBinding;

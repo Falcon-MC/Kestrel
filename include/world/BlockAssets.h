@@ -1,5 +1,6 @@
 #pragma once
 
+#include "world/BiomeTints.h"
 #include "world/BlockRegistry.h"
 
 #include <array>
@@ -83,12 +84,30 @@ struct BlockVisual {
  * layers starting at layer. The GPU word packs layer (12 bits), UV rotation,
  * frame interpolation, frame count - 1 (7 bits) and ticks per frame - 1 (11 bits).
  */
+enum MaterialTint : uint8_t {
+    TintKindMask = 0x3,
+    TintVariantShift = 2,
+    TintVariantMask = 0xC,
+    TintOverlay = 1 << 4,
+};
+
 struct Material {
     uint32_t layer = 0;
     bool rotateUv = false;
     uint32_t frameCount = 1;
     uint32_t ticksPerFrame = 1;
     bool interpolate = false;
+    uint8_t tint = 0;
+
+    TintKind tintKind() const
+    {
+        return static_cast<TintKind>(tint & TintKindMask);
+    }
+
+    FoliageVariant foliageVariant() const
+    {
+        return static_cast<FoliageVariant>((tint & TintVariantMask) >> TintVariantShift);
+    }
 
     uint32_t gpuWord() const
     {
@@ -134,6 +153,11 @@ public:
     const std::vector<ModelQuad>& modelQuads() const
     {
         return quads;
+    }
+
+    const BiomeTints& biomeTints() const
+    {
+        return biomes;
     }
 
     uint32_t sunLayer() const
@@ -190,6 +214,7 @@ private:
     std::vector<ModelTemplate> templates;
     std::vector<ModelQuad> quads;
     TextureArray textureArray;
+    BiomeTints biomes;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
     std::vector<uint8_t> clouds;

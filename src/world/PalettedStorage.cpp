@@ -56,6 +56,11 @@ bool PalettedStorage::decode(ByteReader& reader, PalettedStorage& out, std::stri
     if (!reader.readByte(header, error, "palette header")) {
         return false;
     }
+    return decodeWithHeader(reader, header, out, error);
+}
+
+bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error)
+{
     if ((header & 1) == 0) {
         error = "disk palette found in network sub-chunk data";
         return false;

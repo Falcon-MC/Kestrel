@@ -98,7 +98,7 @@ SamplerState blockSampler : register(s0);
 
 struct WorldIn
 {
-    uint2 quad : QUAD;
+    uint3 quad : QUAD;
     uint vertexId : SV_VertexID;
 };
 
@@ -109,6 +109,7 @@ struct WorldOut
     nointerpolation uint material : TEXCOORD1;
     float shade : TEXCOORD2;
     float3 relative : TEXCOORD3;
+    nointerpolation uint tint : TEXCOORD4;
 };
 
 float3 quadCorner(uint face, uint corner, float3 o, float w, float h)
@@ -171,6 +172,7 @@ WorldOut vs_world(WorldIn input)
     output.material = input.quad.y;
     output.shade = faceShade[face];
     output.relative = position;
+    output.tint = input.quad.z;
     return output;
 }
 
@@ -202,8 +204,10 @@ WorldOut vs_model(ModelIn input)
     output.position = mul(viewProjection, float4(position, 1.0));
     output.uv = float2(uvWord & 0xffff, uvWord >> 16) / 4096.0;
     output.material = words[10];
-    output.shade = faceShade[min(words[11], 6u)];
+    output.shade = faceShade[min(words[11] & 0xff, 6u)];
     output.relative = position;
+    uint rgb = words[11] >> 8;
+    output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     return output;
 }
 
@@ -229,9 +233,21 @@ float3 shadeWorld(float3 rgb, float shade, float3 relative)
     return lerp(color, fog.rgb, amount);
 }
 
+float4 applyTint(float4 texel, uint tint)
+{
+    if ((tint & 0x80000000) == 0) {
+        return texel;
+    }
+    float3 color = float3((tint >> 16) & 0xff, (tint >> 8) & 0xff, tint & 0xff) / 255.0;
+    if ((tint & 0x40000000) != 0) {
+        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), 1.0);
+    }
+    return float4(texel.rgb * color, texel.a);
+}
+
 float4 ps_world(WorldOut input) : SV_Target
 {
-    float4 texel = sampleMaterial(input.material, input.uv);
+    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
     if (texel.a < 0.5) {
         discard;
     }
@@ -240,7 +256,7 @@ float4 ps_world(WorldOut input) : SV_Target
 
 float4 ps_blend(WorldOut input) : SV_Target
 {
-    float4 texel = sampleMaterial(input.material, input.uv);
+    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
     if (texel.a < 0.004) {
         discard;
     }
@@ -993,7 +1009,7 @@ private:
         ComPtr<ID3DBlob> pixelShader = compile(WorldShader, sizeof(WorldShader) - 1, "ps_world", "ps_5_0");
 
         D3D12_INPUT_ELEMENT_DESC layout[] = {
-            { "QUAD", 0, DXGI_FORMAT_R32G32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+            { "QUAD", 0, DXGI_FORMAT_R32G32B32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         };
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineDesc {};

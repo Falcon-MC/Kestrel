@@ -29,6 +29,33 @@ std::shared_ptr<const SubChunk> ChunkStore::subChunk(const SubChunkKey& key) con
     return entry == column->second.subChunks.end() ? nullptr : entry->second;
 }
 
+std::shared_ptr<const PalettedStorage> ChunkStore::biomes(const SubChunkKey& key) const
+{
+    auto column = columnsByKey.find(key.chunk());
+    if (column == columnsByKey.end()) {
+        return nullptr;
+    }
+    int64_t offset = int64_t(key.y) - column->second.biomeBaseY;
+    if (offset < 0 || offset >= int64_t(column->second.biomes.size())) {
+        return nullptr;
+    }
+    return column->second.biomes[size_t(offset)];
+}
+
+void ChunkStore::setBiomes(const ChunkKey& key, int32_t baseY, std::vector<std::shared_ptr<const PalettedStorage>> storages)
+{
+    Column& column = columnsByKey[key];
+    column.biomeBaseY = baseY;
+    column.biomes = std::move(storages);
+    for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            for (size_t i = 0; i < column.biomes.size(); ++i) {
+                dirty.insert({ key.dimension, key.x + dx, baseY + int32_t(i), key.z + dz });
+            }
+        }
+    }
+}
+
 bool ChunkStore::isLoaded(const ChunkKey& key) const
 {
     return columnsByKey.contains(key);

@@ -14,6 +14,7 @@ layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
 layout(location = 2) in float inShade;
 layout(location = 3) in vec3 inRelative;
+layout(location = 4) flat in uint inTint;
 
 layout(location = 0) out vec4 outColor;
 
@@ -39,9 +40,21 @@ vec3 shadeWorld(vec3 rgb)
     return mix(color, draw.fog.rgb, amount);
 }
 
+vec4 applyTint(vec4 texel, uint tint)
+{
+    if ((tint & 0x80000000u) == 0u) {
+        return texel;
+    }
+    vec3 color = vec3(float((tint >> 16) & 0xffu), float((tint >> 8) & 0xffu), float(tint & 0xffu)) / 255.0;
+    if ((tint & 0x40000000u) != 0u) {
+        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
+    }
+    return vec4(texel.rgb * color, texel.a);
+}
+
 void main()
 {
-    vec4 texel = sampleMaterial(inMaterial, inUv);
+    vec4 texel = applyTint(sampleMaterial(inMaterial, inUv), inTint);
 #ifdef BLEND
     if (texel.a < 0.004) {
         discard;

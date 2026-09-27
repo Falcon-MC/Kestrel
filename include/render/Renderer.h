@@ -21,7 +21,7 @@ struct BlockTextureUpload {
 };
 
 /**
- * Cube quads are 8 bytes each; model quads are 48 bytes (twelve words) each.
+ * Cube quads are 12 bytes each; model quads are 48 bytes (twelve words) each.
  */
 struct ChunkMeshUpload {
     const void* cubes = nullptr;
@@ -34,7 +34,7 @@ struct ChunkMeshUpload {
     uint32_t translucentModelCount = 0;
 };
 
-inline constexpr uint32_t CubeQuadBytes = 8;
+inline constexpr uint32_t CubeQuadBytes = 12;
 inline constexpr uint32_t ModelQuadBytes = 48;
 
 enum SkyVertexFlag : uint32_t {

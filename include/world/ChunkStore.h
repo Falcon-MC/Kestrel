@@ -42,9 +42,11 @@ bool vanillaDimensionRange(int32_t dimension, DimensionRange& out);
 class ChunkStore {
 public:
     std::shared_ptr<const SubChunk> subChunk(const SubChunkKey& key) const;
+    std::shared_ptr<const PalettedStorage> biomes(const SubChunkKey& key) const;
     bool isLoaded(const ChunkKey& key) const;
 
     void markLoaded(const ChunkKey& key);
+    void setBiomes(const ChunkKey& key, int32_t baseY, std::vector<std::shared_ptr<const PalettedStorage>> storages);
     void commit(const SubChunkKey& key, SubChunk subChunk);
     bool updateBlocks(const SubChunkKey& key, const std::vector<BlockUpdate>& updates);
     void evict(const ChunkKey& key);
@@ -58,6 +60,8 @@ public:
 private:
     struct Column {
         std::map<int32_t, std::shared_ptr<const SubChunk>> subChunks;
+        int32_t biomeBaseY = 0;
+        std::vector<std::shared_ptr<const PalettedStorage>> biomes;
     };
 
     void markDirty(const SubChunkKey& key);

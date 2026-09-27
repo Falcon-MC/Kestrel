@@ -70,7 +70,7 @@ constexpr char WorldShader[] = R"(
 using namespace metal;
 
 struct WorldIn {
-    uint2 quad [[attribute(0)]];
+    uint3 quad [[attribute(0)]];
 };
 
 struct DrawData {
@@ -87,7 +87,20 @@ struct WorldOut {
     uint material [[flat]];
     float shade;
     float3 relative;
+    uint tint [[flat]];
 };
+
+float4 applyTint(float4 texel, uint tint)
+{
+    if ((tint & 0x80000000u) == 0) {
+        return texel;
+    }
+    float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
+    if ((tint & 0x40000000u) != 0) {
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
+    }
+    return float4(texel.rgb * color, texel.a);
+}
 
 float3 quadCorner(uint face, uint corner, float3 o, float w, float h)
 {
@@ -149,6 +162,7 @@ vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]
     out.material = in.quad.y;
     out.shade = faceShade[face];
     out.relative = position;
+    out.tint = in.quad.z;
     return out;
 }
 
@@ -178,8 +192,10 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     out.position = draw.viewProjection * float4(position, 1.0);
     out.uv = float2(float(uvWord & 0xffff), float(uvWord >> 16)) / 4096.0;
     out.material = words[10];
-    out.shade = faceShade[min(words[11], 6u)];
+    out.shade = faceShade[min(words[11] & 0xffu, 6u)];
     out.relative = position;
+    uint rgb = words[11] >> 8;
+    out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     return out;
 }
 
@@ -207,7 +223,7 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
 
 fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = sampleMaterial(blocks, blockSampler, draw, in.material, in.uv);
+    float4 texel = applyTint(sampleMaterial(blocks, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.004) {
         discard_fragment();
     }
@@ -275,7 +291,7 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
 
 fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = sampleMaterial(blocks, blockSampler, draw, in.material, in.uv);
+    float4 texel = applyTint(sampleMaterial(blocks, blockSampler, draw, in.material, in.uv), in.tint);
     if (texel.a < 0.5) {
         discard_fragment();
     }
@@ -529,10 +545,10 @@ private:
         }
 
         MTLVertexDescriptor* vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
-        vertexDescriptor.attributes[0].format = MTLVertexFormatUInt2;
+        vertexDescriptor.attributes[0].format = MTLVertexFormatUInt3;
         vertexDescriptor.attributes[0].offset = 0;
         vertexDescriptor.attributes[0].bufferIndex = 0;
-        vertexDescriptor.layouts[0].stride = 8;
+        vertexDescriptor.layouts[0].stride = CubeQuadBytes;
         vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerInstance;
         vertexDescriptor.layouts[0].stepRate = 1;
 

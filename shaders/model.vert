@@ -16,6 +16,7 @@ layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
 layout(location = 2) out float outShade;
 layout(location = 3) out vec3 outRelative;
+layout(location = 4) flat out uint outTint;
 
 void main()
 {
@@ -37,6 +38,8 @@ void main()
     gl_Position.y = -gl_Position.y;
     outUv = vec2(float(uvWord & 0xffffu), float(uvWord >> 16)) / 4096.0;
     outMaterial = words[10];
-    outShade = faceShade[min(words[11], 6u)];
+    outShade = faceShade[min(words[11] & 0xffu, 6u)];
     outRelative = position;
+    uint rgb = words[11] >> 8;
+    outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
 }

@@ -29,6 +29,8 @@ public:
     bool readText(const std::string& relative, std::string& out) const;
     std::vector<std::string> readTextLayers(const std::string& relative) const;
     bool readTexture(const std::string& texturePath, std::string& out);
+    std::vector<std::string> archiveEntries(const std::string& archive);
+    bool readArchived(const std::string& archive, const std::string& name, std::string& out);
 
 private:
     struct Archive {

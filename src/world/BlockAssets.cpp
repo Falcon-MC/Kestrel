@@ -675,6 +675,32 @@ void applyTint(std::vector<uint8_t>& pixels, uint32_t rgb)
     }
 }
 
+uint8_t blockTint(const std::string& name, int face)
+{
+    constexpr uint8_t Grass = uint8_t(TintKind::Grass);
+    constexpr uint8_t Foliage = uint8_t(TintKind::Foliage);
+    if (name == "grass_block") {
+        static constexpr uint8_t Faces[6] = { Grass | TintOverlay, Grass | TintOverlay, 0, Grass, Grass | TintOverlay, Grass | TintOverlay };
+        return Faces[face];
+    }
+    if (name == "water" || name == "flowing_water") {
+        return uint8_t(TintKind::Water);
+    }
+    if (name == "oak_leaves" || name == "dark_oak_leaves" || name == "jungle_leaves" || name == "acacia_leaves" || name == "mangrove_leaves" || name == "vine") {
+        return Foliage;
+    }
+    if (name == "birch_leaves") {
+        return Foliage | (uint8_t(FoliageVariant::Birch) << TintVariantShift);
+    }
+    if (name == "spruce_leaves") {
+        return Foliage | (uint8_t(FoliageVariant::Evergreen) << TintVariantShift);
+    }
+    if (name == "short_grass" || name == "tall_grass" || name == "fern" || name == "large_fern") {
+        return Grass;
+    }
+    return 0;
+}
+
 bool isTranslucentName(const std::string& name)
 {
     return contains(name, "stained_glass") || name == "water" || name == "flowing_water" || name == "ice" || name == "slime"
@@ -726,7 +752,7 @@ std::vector<uint8_t> diagnosticTexture()
     return out;
 }
 
-void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers)
+void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers, const std::vector<bool>& overlayLayers)
 {
     array.layers = static_cast<uint32_t>(layers.size());
     uint32_t size = TextureSize;
@@ -741,6 +767,7 @@ void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& lay
             }
             uint32_t parent = size * 2;
             const uint8_t* source = array.mips[level - 1].data() + layer * parent * parent * 4;
+            bool overlay = layer < overlayLayers.size() && overlayLayers[layer];
             for (uint32_t y = 0; y < size; ++y) {
                 for (uint32_t x = 0; x < size; ++x) {
                     uint32_t alphaSum = 0;
@@ -750,13 +777,14 @@ void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& lay
                             const uint8_t* texel = source + ((size_t(y) * 2 + dy) * parent + x * 2 + dx) * 4;
                             alphaSum += texel[3];
                             for (int c = 0; c < 3; ++c) {
-                                colour[c] += uint32_t(texel[c]) * texel[3];
+                                colour[c] += uint32_t(texel[c]) * (overlay ? 255u : texel[3]);
                             }
                         }
                     }
                     uint8_t* out = destination + (size_t(y) * size + x) * 4;
+                    uint32_t weight = overlay ? 4u * 255u : alphaSum;
                     for (int c = 0; c < 3; ++c) {
-                        out[c] = alphaSum ? static_cast<uint8_t>(colour[c] / alphaSum) : 0;
+                        out[c] = weight ? static_cast<uint8_t>(colour[c] / weight) : 0;
                     }
                     out[3] = static_cast<uint8_t>(alphaSum / 4);
                 }
@@ -974,7 +1002,8 @@ bool BlockAssets::build(std::string& error)
         return decodedFrames.emplace(path, std::move(frames)).first->second;
     };
 
-    auto materialFor = [&](const std::string& textureKey, bool rotate, size_t variant = 0, uint32_t tint = 0) -> uint32_t {
+    std::vector<bool> overlayLayers;
+    auto materialFor = [&](const std::string& textureKey, bool rotate, size_t variant = 0, uint32_t tint = 0, uint8_t tintFlags = 0) -> uint32_t {
         const Flipbook* flipbook = nullptr;
         for (const Flipbook& candidate : flipbooks) {
             if (candidate.atlasTile == textureKey && (candidate.atlasIndex < 0 || size_t(candidate.atlasIndex) == variant)) {
@@ -992,7 +1021,7 @@ bool BlockAssets::build(std::string& error)
             return DiagnosticMaterial;
         }
 
-        std::string key = path + '|' + std::to_string(rotate) + '|' + std::to_string(tint) + '|' + std::to_string(flipbook != nullptr);
+        std::string key = path + '|' + std::to_string(rotate) + '|' + std::to_string(tint) + '|' + std::to_string(flipbook != nullptr) + '|' + std::to_string(tintFlags);
         auto materialFound = materialByKey.find(key);
         if (materialFound != materialByKey.end()) {
             return materialFound->second;
@@ -1023,10 +1052,13 @@ bool BlockAssets::build(std::string& error)
                     applyTint(pixels, tint);
                 }
                 layers.push_back(std::move(pixels));
+                overlayLayers.resize(layers.size(), false);
+                overlayLayers.back() = (tintFlags & TintOverlay) != 0;
             }
             material.frameCount = static_cast<uint32_t>(timeline.size());
             material.ticksPerFrame = flipbook ? std::clamp<uint32_t>(flipbook->ticksPerFrame, 1, 2048) : 1;
             material.interpolate = flipbook && flipbook->blendFrames;
+            material.tint = tintFlags;
             id = static_cast<uint32_t>(materialTable.size());
             materialTable.push_back(material);
         }
@@ -1144,7 +1176,7 @@ bool BlockAssets::build(std::string& error)
                 visual.flags = static_cast<uint8_t>((visual.flags & ~FlagOccludesFullFace) | FlagCullSame);
             }
         }
-        uint32_t tint = contains(name, "water") && family == Family::Liquid ? 0x44AFF5u : 0u;
+        uint32_t tint = contains(name, "water") && family == Family::Liquid ? 0xFFFFFFu : 0u;
 
         const json::Value* entry = blockEntry(name);
         if (!entry) {
@@ -1186,7 +1218,7 @@ bool BlockAssets::build(std::string& error)
             bool complete = true;
             for (int face = 0; face < 6; ++face) {
                 std::string key = faceKeyFor(face);
-                materials[face] = key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states));
+                materials[face] = key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), 0, blockTint(name, face));
                 complete &= materials[face] != DiagnosticMaterial;
             }
             auto uniform = [&](int face) {
@@ -1517,7 +1549,7 @@ bool BlockAssets::build(std::string& error)
             static constexpr Face order[] = { Face::West, Face::East, Face::Down, Face::Up, Face::North, Face::South };
             bool rotate = false;
             std::string key = textures ? resolveTextureKey(textures, order[face], axis, facing, rotate) : fallbackKey;
-            visual.faces[face] = key.empty() ? DiagnosticMaterial : materialFor(key, rotate, 0, tint);
+            visual.faces[face] = key.empty() ? DiagnosticMaterial : materialFor(key, rotate, 0, tint, blockTint(name, face));
             resolved &= visual.faces[face] != DiagnosticMaterial;
         }
         if (!resolved) {
@@ -1563,7 +1595,12 @@ bool BlockAssets::build(std::string& error)
         }
     }
 
-    buildMips(textureArray, layers);
+    std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
+    PackSource behaviors(behaviorRoot);
+    biomes.load(pack, behaviors);
+
+    overlayLayers.resize(layers.size(), false);
+    buildMips(textureArray, layers, overlayLayers);
     return true;
 }
 
