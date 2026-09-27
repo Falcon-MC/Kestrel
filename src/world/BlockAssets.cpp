@@ -1645,7 +1645,10 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                         pushTemplate(models::stair(materials, upside, shape), TemplateStair);
                     }
                 });
-                variant = ((static_cast<uint32_t>(weirdo.value_or(0)) + 2) & 3) | (upside ? 4u : 0u);
+                // weirdo_direction runs east, west, south, north, unlike the south, west, north, east of direction.
+                static constexpr uint32_t WeirdoFacing[4] = { 3, 1, 0, 2 };
+                uint32_t facing = WeirdoFacing[static_cast<uint32_t>(weirdo.value_or(0)) & 3];
+                variant = ((facing + 2) & 3) | (upside ? 4u : 0u);
                 break;
             }
             case ModelKind::Fence: {
