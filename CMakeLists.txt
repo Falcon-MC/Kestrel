@@ -78,6 +78,8 @@ kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt" Kestr
         "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockCollisionTable.h")
 kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png" KestrelAppIconData kAppIconPng
         "${CMAKE_CURRENT_BINARY_DIR}/generated/AppIconPng.h")
+kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/kestrel.png" KestrelTitleData kTitlePng
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/TitlePng.h")
 
 find_package(ZLIB REQUIRED)
 

@@ -2,6 +2,8 @@
 
 #include "ui/Theme.h"
 
+#include "TitlePng.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +12,50 @@
 namespace kestrel::ui {
 
 namespace {
+
+constexpr uint32_t TitleWidth = 800;
+
+/**
+ * Shrinks a bitmap to the given width with a box filter over premultiplied
+ * colors, keeping its aspect ratio.
+ */
+Bitmap shrink(const Bitmap& source, uint32_t width)
+{
+    if (source.width <= width) {
+        return source;
+    }
+    Bitmap out;
+    out.width = width;
+    out.height = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<uint64_t>(source.height) * width / source.width));
+    out.rgba.resize(static_cast<size_t>(out.width) * out.height * 4);
+    for (uint32_t y = 0; y < out.height; ++y) {
+        uint32_t y0 = y * source.height / out.height;
+        uint32_t y1 = std::max(y0 + 1, (y + 1) * source.height / out.height);
+        for (uint32_t x = 0; x < out.width; ++x) {
+            uint32_t x0 = x * source.width / out.width;
+            uint32_t x1 = std::max(x0 + 1, (x + 1) * source.width / out.width);
+            double sum[4] {};
+            for (uint32_t sy = y0; sy < y1; ++sy) {
+                for (uint32_t sx = x0; sx < x1; ++sx) {
+                    const uint8_t* p = source.rgba.data() + (static_cast<size_t>(sy) * source.width + sx) * 4;
+                    double alpha = p[3] / 255.0;
+                    sum[0] += p[0] * alpha;
+                    sum[1] += p[1] * alpha;
+                    sum[2] += p[2] * alpha;
+                    sum[3] += p[3];
+                }
+            }
+            double count = static_cast<double>((x1 - x0) * (y1 - y0));
+            double alpha = sum[3] / count / 255.0;
+            uint8_t* q = out.rgba.data() + (static_cast<size_t>(y) * out.width + x) * 4;
+            for (int c = 0; c < 3; ++c) {
+                q[c] = alpha > 0.0 ? static_cast<uint8_t>(std::clamp(sum[c] / count / alpha, 0.0, 255.0)) : 0;
+            }
+            q[3] = static_cast<uint8_t>(std::clamp(sum[3] / count, 0.0, 255.0));
+        }
+    }
+    return out;
+}
 
 // Reads every "--name:value" custom property, which is all the menu theme stylesheet holds.
 void parseTheme(const std::string& css, std::unordered_map<std::string, std::string>& out)
@@ -136,7 +182,14 @@ Skin::Entry& Skin::load(std::string_view name)
 
     Entry entry;
     bool loaded = false;
-    if (name.rfind("ui/", 0) == 0) {
+    if (name == "kestrel/title") {
+        std::string encoded(reinterpret_cast<const char*>(KestrelTitleData::kTitlePng), KestrelTitleData::kTitlePngSize);
+        Bitmap decoded;
+        loaded = decodeBitmap(encoded, decoded);
+        if (loaded) {
+            entry.bitmap = shrink(decoded, TitleWidth);
+        }
+    } else if (name.rfind("ui/", 0) == 0) {
         loaded = assets.readTexture("textures/" + std::string(name), entry.bitmap, &entry.sprite.slice);
     } else if (name.rfind("hbui/", 0) == 0) {
         loaded = assets.readHbuiImage(name.substr(5), entry.bitmap);

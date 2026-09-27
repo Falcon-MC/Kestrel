@@ -400,12 +400,12 @@ void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
         ui.sprite({ std::floor(centerX - w * 0.5f), y, w, w * art.height / art.width }, "dynamic/title");
         return;
     }
-    const Sprite& word = ui.skin().sprite("ui/title");
+    const Sprite& word = ui.skin().sprite("kestrel/title");
     if (!word.valid) {
         return;
     }
     float w = std::min(maxWidth, 378.5f);
-    ui.sprite({ centerX - w * 0.5f, y, w, w * word.height / word.width }, "ui/title");
+    ui.sprite({ centerX - w * 0.5f, y, w, w * word.height / word.width }, "kestrel/title");
 }
 
 // Kestrel doesn't have the player's skin, so the default Steve stands in, seen from the front.
@@ -619,7 +619,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
     constexpr float DialogWidth = 286.67f;
     constexpr float DialogHeight = 97.33f;
     Rect frame { std::round((width - DialogWidth) * 0.5f), std::round(height * 0.5f - 49.0f), DialogWidth, DialogHeight };
-    const Sprite& word = ui.skin().sprite("ui/title");
+    const Sprite& word = ui.skin().sprite("kestrel/title");
     float logoWidth = std::min(width - 32.0f, 378.5f);
     float logoHeight = word.valid && word.width > 0.0f ? logoWidth * word.height / word.width : 64.0f;
     float logoTop = frame.y - 56.0f - logoHeight;
