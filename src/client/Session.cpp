@@ -135,6 +135,50 @@ std::vector<MeshUpdate> Session::takeMeshUpdates()
     return updates;
 }
 
+void Session::setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    lookOrigin = origin;
+    lookDirection = direction;
+}
+
+std::string Session::traceTarget()
+{
+    constexpr double Reach = 32.0;
+    std::array<int64_t, 3> cell {};
+    std::array<int64_t, 3> step {};
+    std::array<double, 3> next {};
+    std::array<double, 3> delta {};
+    for (int axis = 0; axis < 3; ++axis) {
+        double origin = lookOrigin[axis];
+        double direction = lookDirection[axis];
+        cell[axis] = static_cast<int64_t>(std::floor(origin));
+        step[axis] = direction > 0.0 ? 1 : (direction < 0.0 ? -1 : 0);
+        delta[axis] = direction != 0.0 ? std::abs(1.0 / direction) : 1e30;
+        double boundary = direction > 0.0 ? double(cell[axis] + 1) - origin : origin - double(cell[axis]);
+        next[axis] = direction != 0.0 ? boundary * delta[axis] : 1e30;
+    }
+
+    double travelled = 0.0;
+    while (travelled <= Reach) {
+        world::SubChunkKey key { current.dimension, int32_t(cell[0] >> 4), int32_t(cell[1] >> 4), int32_t(cell[2] >> 4) };
+        if (std::shared_ptr<const world::SubChunk> sub = world.store().subChunk(key)) {
+            uint32_t value = sub->runtimeId(0, uint32_t(cell[0] & 15), uint32_t(cell[1] & 15), uint32_t(cell[2] & 15));
+            const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+            std::string name = assets->describe(value, ids.hashed, ids.sequential.get());
+            bool fluid = name.find("water") != std::string::npos || name.find("lava") != std::string::npos;
+            if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !fluid) {
+                return name + "  (" + std::to_string(cell[0]) + ", " + std::to_string(cell[1]) + ", " + std::to_string(cell[2]) + ")";
+            }
+        }
+        int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2) : (next[1] < next[2] ? 1 : 2);
+        travelled = next[axis];
+        next[axis] += delta[axis];
+        cell[axis] += step[axis];
+    }
+    return "nothing";
+}
+
 void Session::handleWorldPacket(const std::string& payload)
 {
     MinecraftPacketIds id;
@@ -453,6 +497,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             } else {
                 current.blockAtPlayer = "no sub-chunk (air)";
             }
+            current.targetBlock = traceTarget();
             current.airSequential = assets->airSequentialId();
             current.airHash = assets->airNetworkHash();
             current.unresolvedLookups = assets->unresolvedLookups();

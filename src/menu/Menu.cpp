@@ -573,6 +573,7 @@ void Menu::gameView(Context& ui, const Area& area)
     std::vector<std::string> lines {
         session.levelName.empty() ? session.name : session.levelName,
         cameraInfo,
+        "Looking at " + (session.targetBlock.empty() ? std::string("nothing") : session.targetBlock),
         "Chunks " + std::to_string(session.columns) + "  \xC2\xB7  sub-chunks " + std::to_string(session.subChunks) + "  \xC2\xB7  pending " + std::to_string(session.pendingSubChunks),
         "Meshes " + std::to_string(session.meshes) + "  \xC2\xB7  quads " + std::to_string(session.meshQuads) + "  \xC2\xB7  jobs " + std::to_string(session.meshJobs),
         "Textures " + std::to_string(session.textureLayers) + "  \xC2\xB7  decode errors " + std::to_string(session.worldErrors),
@@ -589,7 +590,7 @@ void Menu::gameView(Context& ui, const Area& area)
     Rect panel { Pad, HeaderHeight + Pad, 520.0f, 20.0f + lineHeight * static_cast<float>(lines.size()) };
     ui.fill(panel, { 10, 8, 14, 150 }, 12.0f);
     for (size_t i = 0; i < lines.size(); ++i) {
-        Color color = i == 0 ? Text : i >= 6 ? Danger : Muted;
+        Color color = i == 0 ? Text : i >= 7 ? Danger : Muted;
         ui.text(lines[i], i == 0 ? TextStyle::Label : TextStyle::Caption, panel.x + 12.0f, panel.y + 10.0f + lineHeight * static_cast<float>(i), color, panel.w - 24.0f);
     }
 

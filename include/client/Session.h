@@ -4,6 +4,7 @@
 #include "world/MeshScheduler.h"
 #include "world/WorldStream.h"
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <cstdint>
@@ -66,6 +67,7 @@ struct SessionSnapshot {
     uint32_t airHash = 0;
     uint64_t unresolvedLookups = 0;
     uint32_t lastUnresolved = 0;
+    std::string targetBlock;
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
@@ -87,6 +89,7 @@ public:
 
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
+    void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
 
 private:
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
@@ -94,6 +97,7 @@ private:
     void handleWorldPacket(const std::string& payload);
     void scheduleMeshes();
     void collectMeshes();
+    std::string traceTarget();
 
     std::thread worker;
     std::atomic<bool> cancelled { false };
@@ -111,6 +115,8 @@ private:
     std::vector<MeshUpdate> pendingUpdates;
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
+    std::array<double, 3> lookOrigin {};
+    std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
 };
 
 }

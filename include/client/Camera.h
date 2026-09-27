@@ -18,6 +18,7 @@ public:
     void placeAt(double x, double y, double z, float minecraftYawDegrees, float minecraftPitchDegrees);
     void update(const InputState& input, const KeyBindings& bindings, float deltaSeconds, bool captured);
     Mat4 viewProjection(float aspect) const;
+    std::array<float, 3> forward() const;
 
     double x() const
     {

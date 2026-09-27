@@ -127,6 +127,7 @@ struct SessionInfo {
     size_t diagnosticVisuals = 0;
     std::string assetsError;
     std::string registryInfo;
+    std::string targetBlock;
     std::string error;
 };
 

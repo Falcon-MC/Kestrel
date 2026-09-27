@@ -57,6 +57,12 @@ void FreeCamera::update(const InputState& input, const KeyBindings& bindings, fl
     pz += (-right * sinYaw - forward * cosYaw) * step;
 }
 
+std::array<float, 3> FreeCamera::forward() const
+{
+    float cosPitch = std::cos(pitch);
+    return { -std::sin(yaw) * cosPitch, std::sin(pitch), -std::cos(yaw) * cosPitch };
+}
+
 Mat4 FreeCamera::viewProjection(float aspect) const
 {
     float cosPitch = std::cos(pitch);

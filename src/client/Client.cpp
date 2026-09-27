@@ -68,6 +68,7 @@ int Client::run()
         char cameraText[96];
         std::snprintf(cameraText, sizeof(cameraText), "Camera %.1f, %.1f, %.1f", camera.x(), camera.y(), camera.z());
         menu.setCameraInfo(cameraText);
+        session.setLookRay({ camera.x(), camera.y(), camera.z() }, camera.forward());
 
         float scale = window->contentScale() * menu.interfaceScale();
         bool rebaked = scale != bakedScale;
@@ -357,6 +358,7 @@ void Client::syncSession()
         snapshot.hashedIds ? "hashed" : "sequential", snapshot.customBlocks, snapshot.customPermutations, snapshot.airSequential,
         static_cast<unsigned long long>(snapshot.unresolvedLookups), snapshot.blockAtPlayer.c_str());
     info.registryInfo = registry;
+    info.targetBlock = std::move(snapshot.targetBlock);
     info.error = std::move(snapshot.error);
     menu.setSession(std::move(info));
 }
