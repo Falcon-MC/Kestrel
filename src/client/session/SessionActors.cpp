@@ -108,11 +108,11 @@ std::vector<SkinUpload> Session::takeSkinUploads()
 }
 
 /**
- * Places an entity at a network position. Players are sent at eye height, so
- * their feet sit one eye height lower. Every move counts as a new sample for
+ * Spawn packets give feet positions; player movement packets give eye positions.
+ * Every move counts as a new sample for
  * the renderer to glide toward, and a teleport tells it to jump instead.
  */
-void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround)
+void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition)
 {
     auto actor = actors.find(runtimeId);
     if (actor == actors.end()) {
@@ -124,7 +124,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     }
     actor->second.onGround = onGround;
     actor->second.x = x;
-    actor->second.y = y - (actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
+    actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
     actor->second.z = z;
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;

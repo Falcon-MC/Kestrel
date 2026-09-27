@@ -70,6 +70,8 @@ vec4 applyTint(vec4 texel, uint tint)
 void main()
 {
     vec4 texel = inEntity != 0u ? texture(entities, vec3(inUv, float(inMaterial & 0xfffu))) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
+    if ((inEntity & 4u) != 0u) texel.rgb = mix(texel.rgb, vec3(1.0, 0.0, 0.0), 0.5);
 #ifdef BLEND
     if (texel.a < 0.004) {
         discard;

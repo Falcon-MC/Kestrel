@@ -355,7 +355,7 @@ std::string Font::pixelGlyphName(size_t index, uint32_t code)
  * hold 16 pixel cells with letters drawn at twice the size of default8, so
  * they are drawn at half a unit per pixel with their cell centered on the
  * line. The private use sheets (E0 to F8, where packs put icons and bars) are
- * drawn at one unit per pixel centered two units under the top of the line,
+ * drawn at one unit per pixel centered on the eight-unit line,
  * which is how ViaBedrock matches the game.
  */
 void Font::placePage(size_t index, BitmapPage& page)
@@ -363,7 +363,7 @@ void Font::placePage(size_t index, BitmapPage& page)
     bool privateUse = index >= 1 + 0xE0 && index <= 1 + 0xF8;
     float cell = static_cast<float>(page.cell);
     page.height = index == 0 ? 8.0f : privateUse ? cell : cell * 0.5f;
-    page.top = index == 0 ? 0.0f : privateUse ? 2.0f - page.height * 0.5f : (8.0f - page.height) * 0.5f;
+    page.top = index == 0 ? 0.0f : privateUse ? 4.0f - page.height * 0.5f : (8.0f - page.height) * 0.5f;
 }
 
 void Font::readPixelPage(size_t index) const

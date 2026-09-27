@@ -382,6 +382,7 @@ void Session::tickMotion()
     current.player.current = { feet.x, feet.y, feet.z };
     current.player.tickTime = now;
     current.player.sneaking = tick.sneaking;
+    current.player.onGround = tick.onGround;
     current.player.sprinting = tick.sprinting;
     current.player.swimming = tick.swimming;
     current.player.flying = tick.flying;

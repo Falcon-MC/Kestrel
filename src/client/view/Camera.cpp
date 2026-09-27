@@ -131,7 +131,11 @@ Mat4 FreeCamera::viewProjection(float aspect) const
         0.0f, 0.0f, farPlane / (nearPlane - farPlane), -1.0f,
         0.0f, 0.0f, nearPlane * farPlane / (nearPlane - farPlane), 0.0f,
     };
-    return multiply(projection, view);
+    float hurt = std::clamp(hurtProgress, 0.0f, 1.0f);
+    float roll = -std::sin(hurt * hurt * hurt * hurt * 3.14159265f) * 14.0f * 3.14159265f / 180.0f;
+    float c = std::cos(roll), s = std::sin(roll);
+    Mat4 tilt { c, s, 0.0f, 0.0f, -s, c, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+    return multiply(projection, multiply(tilt, view));
 }
 
 }

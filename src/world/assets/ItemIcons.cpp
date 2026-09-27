@@ -376,27 +376,7 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         return materialPixels(look.faces[side], tint);
     };
     if (look.hasModel() && look.blockEntity == EntityNone && look.modelTemplate < templates.size()) {
-        const ModelTemplate& model = templates[look.modelTemplate];
-        std::vector<ModelQuad> shape;
-        if (model.flags & (TemplateFenceWood | TemplateFenceNether)) {
-            // The world template is a lone post, the item shows two posts joined by rails.
-            constexpr uint32_t EastWest = 2 | 8;
-            for (int16_t shift : { -96, 96 }) {
-                for (ModelQuad quad : models::fencePost(look.faces[models::South])) {
-                    for (auto& corner : quad.positions) {
-                        corner[0] = static_cast<int16_t>(corner[0] + shift);
-                    }
-                    shape.push_back(quad);
-                }
-            }
-            std::vector<ModelQuad> arms = models::fenceArms(look.faces[models::South], EastWest);
-            shape.insert(shape.end(), arms.begin(), arms.end());
-        } else if (model.flags & TemplateWall) {
-            constexpr uint32_t PostWithShortSides = (1u << 8) | (1u << 2) | (1u << 6);
-            shape = models::wall(look.faces, PostWithShortSides);
-        } else if (!(model.flags & TemplatePane)) {
-            shape.assign(quads.begin() + model.quadStart, quads.begin() + std::min<size_t>(quads.size(), model.quadStart + model.quadCount));
-        }
+        std::vector<ModelQuad> shape = itemGeometry(identifier);
         std::vector<uint8_t> icon = modelIcon(shape, materialPixels);
         for (size_t alpha = 3; alpha < icon.size(); alpha += 4) {
             if (icon[alpha]) {
@@ -443,6 +423,34 @@ const BlockVisual* BlockAssets::itemCube(const std::string& identifier) const
         return nullptr;
     }
     return look;
+}
+
+std::vector<ModelQuad> BlockAssets::itemGeometry(const std::string& identifier) const
+{
+    const BlockVisual* look = itemVisual(identifier);
+    if (!look || !look->hasModel() || look->blockEntity != EntityNone || look->modelTemplate >= templates.size()) return {};
+    std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
+    if (itemFiles.contains(shortName) || itemTextures.contains(identifier)) return {};
+    const ModelTemplate& model = templates[look->modelTemplate];
+    if (model.flags & TemplatePane) return {};
+    if (model.flags & TemplateWall) return models::wall(look->faces, (1u << 8) | (1u << 2) | (1u << 6));
+    if (model.flags & (TemplateFenceWood | TemplateFenceNether)) {
+        std::vector<ModelQuad> shape;
+        for (int16_t shift : { -96, 96 }) {
+            for (ModelQuad quad : models::fencePost(look->faces[models::South])) {
+                for (auto& corner : quad.positions) corner[0] = static_cast<int16_t>(corner[0] + shift);
+                shape.push_back(quad);
+            }
+        }
+        auto arms = models::fenceArms(look->faces[models::South], 2 | 8);
+        shape.insert(shape.end(), arms.begin(), arms.end());
+        return shape;
+    }
+    size_t end = std::min<size_t>(quads.size(), size_t(model.quadStart) + model.quadCount);
+    if (model.quadStart >= end) return {};
+    if (std::all_of(quads.begin() + model.quadStart, quads.begin() + end,
+            [](const ModelQuad& quad) { return (quad.flags & QuadTwoSided) != 0; })) return {};
+    return { quads.begin() + model.quadStart, quads.begin() + end };
 }
 
 }

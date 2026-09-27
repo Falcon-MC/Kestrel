@@ -15,13 +15,11 @@ namespace {
 
 constexpr float Pi = 3.14159265f;
 constexpr double SwingSeconds = 0.3;
-constexpr double EquipSeconds = 0.15;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr float HandFovDegrees = 70.0f;
 constexpr float HeldCubeSize = 0.5f;
-constexpr float HeldItemSize = 0.8f;
-constexpr std::array<float, 3> HeldOffset { 0.12f, -0.23f, 0.0f };
+constexpr float HeldItemSize = 0.65f;
 constexpr uint32_t ItemGrid = world::ItemIconSize;
 
 using Vec3 = std::array<float, 3>;
@@ -47,6 +45,37 @@ Vec3 add(const Vec3& a, const Vec3& b)
 Vec3 scaled(const Vec3& a, float s)
 {
     return { a[0] * s, a[1] * s, a[2] * s };
+}
+
+std::array<float, 9> inverseBasis(const world::BoneMatrix& m)
+{
+    float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], i = m[10];
+    float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (std::abs(det) < 1.0e-8f) return { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    float s = 1.0f / det;
+    return { (e*i-f*h)*s, (c*h-b*i)*s, (b*f-c*e)*s,
+        (f*g-d*i)*s, (a*i-c*g)*s, (c*d-a*f)*s,
+        (d*h-e*g)*s, (b*g-a*h)*s, (a*e-b*d)*s };
+}
+
+world::BoneMatrix relativeFrame(const world::BoneMatrix& body, const world::BoneMatrix& item)
+{
+    auto inverse = inverseBasis(body);
+    world::BoneMatrix frame {};
+    for (size_t row = 0; row < 3; ++row) {
+        for (size_t column = 0; column < 4; ++column) {
+            for (size_t k = 0; k < 3; ++k) {
+                frame[row * 4 + column] += inverse[row * 3 + k] * (item[k * 4 + column] - (column == 3 ? body[k * 4 + 3] : 0.0f));
+            }
+        }
+    }
+    return frame;
+}
+
+Vec3 transformPoint(const world::BoneMatrix& m, const Vec3& p)
+{
+    return { m[0]*p[0]+m[1]*p[1]+m[2]*p[2]+m[3],
+        m[4]*p[0]+m[5]*p[1]+m[6]*p[2]+m[7], m[8]*p[0]+m[9]*p[1]+m[10]*p[2]+m[11] };
 }
 
 /**
@@ -145,14 +174,18 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     float attackTime = swingProgress();
 
     int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
-    const HudItem& held = hudState.inventory[static_cast<size_t>(slot)];
-    std::string heldName = held.empty() ? std::string() : held.identifier;
-    std::string heldIdentity = heldName + "#" + std::to_string(held.aux);
-    if (heldIdentity != lastHeldIdentity) {
+    const HudItem& selected = hudState.inventory[static_cast<size_t>(slot)];
+    std::string heldIdentity = selected.identifier + "#" + std::to_string(selected.aux) + "#" + selected.icon;
+    float elapsed = handUpdatedAt > 0.0 ? static_cast<float>(std::clamp(now - handUpdatedAt, 0.0, 0.1)) : 0.0f;
+    handUpdatedAt = now;
+    bool changing = heldIdentity != lastHeldIdentity;
+    handEquip = std::clamp(handEquip + (changing ? -8.0f : 8.0f) * elapsed, 0.0f, 1.0f);
+    if (!changing || handEquip <= 0.1f) {
+        handItem = selected;
         lastHeldIdentity = heldIdentity;
-        heldChangedAt = now;
     }
-    float armHeight = static_cast<float>(std::clamp((now - heldChangedAt) / EquipSeconds, 0.0, 1.0));
+    const HudItem& held = handItem;
+    std::string heldName = held.empty() ? std::string() : held.identifier;
 
     float yaw = camera.minecraftYaw();
     float pitch = camera.minecraftPitch();
@@ -167,13 +200,16 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.now = now;
     input.worldTime = currentWorldTime(timeState);
     input.identifier = "minecraft:player";
-    input.onGround = true;
+    input.onGround = playerView.onGround;
+    input.health = hudState.health;
+    input.maxHealth = hudState.maxHealth;
+    input.hurtTime = hudState.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - hudState.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
     input.mainHandItem = heldName;
     input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
     input.engineVariables = {
         { "is_first_person", 1.0 },
         { "attack_time", attackTime },
-        { "player_arm_height", armHeight },
+        { "player_arm_height", handEquip },
         { "is_holding_right", heldName.empty() ? 0.0 : 1.0 },
         { "is_holding_left", 0.0 },
         { "bob_animation", 1.0 },
@@ -264,27 +300,47 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         for (size_t corner = 0; corner < 4; ++corner) {
             corners[corner] = modelToWorld(matrices[bone], { float(quad.positions[corner][0]), float(quad.positions[corner][1]), float(quad.positions[corner][2]) });
         }
-        out.push_back(packQuad(corners, quad.uvs, skinLayer,(quad.flags & world::QuadFaceMask) | EntityQuadFlag));
+        out.push_back(packQuad(corners, quad.uvs, skinLayer,(quad.flags & world::QuadFaceMask) | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
     }
     if (heldName.empty() || itemBone < 0) {
         return;
     }
 
     const world::EntityBone& anchor = rig.bones[static_cast<size_t>(itemBone)];
-    Vec3 center = modelToWorld(matrices[static_cast<size_t>(itemBone)], scaled(anchor.pivot, 16.0f));
-    float root = std::sqrt(attackTime);
-    Vec3 swingTurn {
-        -std::sin(root * 25.0f * Pi / 180.0f) * 70.0f,
-        -std::sin(root * 75.0f * Pi / 180.0f) * 15.0f,
-        -std::sin(root * 80.0f * Pi / 180.0f) * 35.0f,
-    };
+    world::AnimationInput rest = input;
+    rest.x = rest.y = rest.z = rest.now = rest.worldTime = 0.0;
+    rest.yaw = rest.headYaw = rest.pitch = 0.0f;
+    rest.onGround = true;
+    rest.hurtTime = 0.0f;
+    for (auto& [name, value] : rest.engineVariables) {
+        if (name == "attack_time" || name == "bob_animation" || name == "player_x_rotation") value = 0.0;
+        if (name == "player_arm_height") value = 1.0;
+    }
+    handRestAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, rest);
+    const auto& restMatrices = handRestAnimator.matrices();
+    if (restMatrices.size() != matrices.size()) return;
+    auto currentFrame = relativeFrame(body, matrices[static_cast<size_t>(itemBone)]);
+    auto restFrame = relativeFrame(restMatrices[static_cast<size_t>(bodyBone)], restMatrices[static_cast<size_t>(itemBone)]);
+    auto restInverse = inverseBasis(restFrame);
+    Vec3 displacement = add(transformPoint(currentFrame, anchor.pivot), scaled(transformPoint(restFrame, anchor.pivot), -1.0f));
+    float modelScale = handAnimator.scale() / 16.0f;
     auto place = [&](const Vec3& local, bool cube) {
-        Vec3 pose = cube ? Vec3 { 12.0f, -35.0f, 0.0f } : Vec3 { 0.0f, -70.0f, 20.0f };
-        Vec3 turned = add(rotate(rotate(local, pose), swingTurn), HeldOffset);
+        Vec3 pose = cube ? Vec3 { 12.0f, -35.0f, 0.0f }
+            : held.handEquipped ? Vec3 { 0.0f, -30.0f, 75.0f } : Vec3 { 0.0f, -30.0f, 0.0f };
+        Vec3 p = rotate(local, pose);
+        Vec3 bodyPoint { -p[0], p[1], -p[2] };
+        Vec3 unposed {};
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t k = 0; k < 3; ++k) unposed[row] += restInverse[row * 3 + k] * bodyPoint[k];
+        }
+        Vec3 animated = add(transformPoint(currentFrame, unposed), { -currentFrame[3], -currentFrame[7], -currentFrame[11] });
+        Vec3 turned { 0.56f - animated[0] - displacement[0] * modelScale,
+            (held.handEquipped ? -0.36f : -0.48f) + animated[1] + displacement[1] * modelScale,
+            -0.85f - animated[2] - displacement[2] * modelScale };
         Vec3 world = add(add(scaled(axes[0], turned[0] * handZoom), scaled(axes[1], turned[1] * handZoom)), scaled(axes[2], turned[2]));
-        return add(center, scaled(world, 256.0f));
+        return add(eyePoint, scaled(world, 256.0f));
     };
-    appendHeldItem(place, out);
+    appendHeldItem(held, place, out);
 }
 
 /**
@@ -317,7 +373,7 @@ void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vecto
         }, scale);
         return Vec3 { base[0] + cosine * posed[0] + sine * posed[2], base[1] + posed[1], base[2] - sine * posed[0] + cosine * posed[2] };
     };
-    appendHeldItem(place, out);
+    appendHeldItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], place, out);
 }
 
 float Client::swingProgress()
@@ -336,114 +392,133 @@ float Client::swingProgress()
  * the item, in blocks around its center, to 1/256 block around the draw
  * origin; it is told whether the item is a cube so it can pose it.
  */
-void Client::appendHeldItem(const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out)
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out)
 {
-    int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
-    const HudItem& held = hudState.inventory[static_cast<size_t>(slot)];
     if (held.empty() || !blockAssets) {
         return;
     }
     const std::string& heldName = held.identifier;
-    const world::BlockVisual* cube = blockAssets->itemCube(heldName);
-    auto emit = [&](const std::array<Vec3, 4>& local, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord) {
-        std::array<Vec3, 4> corners;
-        std::array<Vec3, 4> reversed;
-        std::array<std::array<uint16_t, 2>, 4> reversedUvs;
-        for (size_t corner = 0; corner < 4; ++corner) {
-            corners[corner] = place(local[corner], cube != nullptr);
-            reversed[3 - corner] = corners[corner];
-            reversedUvs[3 - corner] = uvs[corner];
-        }
-        out.push_back(packQuad(corners, uvs, material, shadeWord));
-        out.push_back(packQuad(reversed, reversedUvs, material, shadeWord));
-    };
-    const std::array<std::array<uint16_t, 2>, 4> fullUv { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
+    std::string meshKey = heldName + "#" + std::to_string(held.aux) + "#" + held.icon;
+    auto buildMesh = [&] {
+        const world::BlockVisual* cube = blockAssets->itemCube(heldName);
+        std::vector<world::ModelQuad> shape = blockAssets->itemGeometry(heldName);
+        heldItemBlock = cube != nullptr || !shape.empty();
+        auto emit = [&](const std::array<Vec3, 4>& local, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord) {
+            heldItemMesh.push_back({ local, uvs, material, shadeWord });
+        };
+        const std::array<std::array<uint16_t, 2>, 4> fullUv { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
 
-    if (cube) {
-        float h = HeldCubeSize * 0.5f;
-        struct Side {
-            world::Face face;
-            std::array<Vec3, 4> corners;
-        };
-        const Side sides[] = {
-            { world::Face::PositiveY, { { { -h, h, -h }, { h, h, -h }, { h, h, h }, { -h, h, h } } } },
-            { world::Face::NegativeY, { { { -h, -h, h }, { h, -h, h }, { h, -h, -h }, { -h, -h, -h } } } },
-            { world::Face::PositiveZ, { { { -h, h, h }, { h, h, h }, { h, -h, h }, { -h, -h, h } } } },
-            { world::Face::NegativeZ, { { { h, h, -h }, { -h, h, -h }, { -h, -h, -h }, { h, -h, -h } } } },
-            { world::Face::PositiveX, { { { h, h, h }, { h, h, -h }, { h, -h, -h }, { h, -h, h } } } },
-            { world::Face::NegativeX, { { { -h, h, -h }, { -h, h, h }, { -h, -h, h }, { -h, -h, -h } } } },
-        };
-        const std::vector<world::Material>& materials = blockAssets->materials();
-        for (const Side& side : sides) {
-            uint32_t material = cube->faces[static_cast<size_t>(side.face)];
-            if (material >= materials.size()) {
-                continue;
+        if (!shape.empty()) {
+            const auto& materials = blockAssets->materials();
+            for (const world::ModelQuad& quad : shape) {
+                if (quad.material >= materials.size()) continue;
+                std::array<Vec3, 4> corners;
+                for (size_t i = 0; i < 4; ++i) {
+                    for (size_t axis = 0; axis < 3; ++axis) corners[i][axis] = (float(quad.positions[i][axis]) / 256.0f - 0.5f) * HeldCubeSize;
+                }
+                const auto& material = materials[quad.material];
+                uint32_t tint = material.tintKind() != world::TintKind::None ? world::ItemTint : 0u;
+                emit(corners, quad.uvs, material.gpuWord(), (quad.flags & world::QuadFaceMask) | (tint << 8));
             }
-            uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
-            emit(side.corners, fullUv, materials[material].gpuWord(), (uint32_t(side.face) + 1) | (tint << 8));
+            return;
         }
-        return;
-    }
 
-    uint32_t layer = heldItemLayer();
-    std::string key = heldName + "#" + std::to_string(held.aux) + "#" + held.icon;
-    std::vector<uint8_t>& icon = heldIcon;
-    if (key != heldItemKey) {
-        heldItemKey = key;
-        icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
-        std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
-        if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
-            for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
-                for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
-                    size_t source = (size_t(y * ItemGrid / world::EntityTextureSize) * ItemGrid + x * ItemGrid / world::EntityTextureSize) * 4;
-                    std::copy_n(icon.data() + source, 4, pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4);
+        if (cube) {
+            float h = HeldCubeSize * 0.5f;
+            struct Side {
+                world::Face face;
+                std::array<Vec3, 4> corners;
+            };
+            const Side sides[] = {
+                { world::Face::PositiveY, { { { -h, h, -h }, { h, h, -h }, { h, h, h }, { -h, h, h } } } },
+                { world::Face::NegativeY, { { { -h, -h, h }, { h, -h, h }, { h, -h, -h }, { -h, -h, -h } } } },
+                { world::Face::PositiveZ, { { { -h, h, h }, { h, h, h }, { h, -h, h }, { -h, -h, h } } } },
+                { world::Face::NegativeZ, { { { h, h, -h }, { -h, h, -h }, { -h, -h, -h }, { h, -h, -h } } } },
+                { world::Face::PositiveX, { { { h, h, h }, { h, h, -h }, { h, -h, -h }, { h, -h, h } } } },
+                { world::Face::NegativeX, { { { -h, h, -h }, { -h, h, h }, { -h, -h, h }, { -h, -h, -h } } } },
+            };
+            const std::vector<world::Material>& materials = blockAssets->materials();
+            for (const Side& side : sides) {
+                uint32_t material = cube->faces[static_cast<size_t>(side.face)];
+                if (material >= materials.size()) {
+                    continue;
+                }
+                uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
+                emit(side.corners, fullUv, materials[material].gpuWord(), (uint32_t(side.face) + 1) | (tint << 8));
+            }
+            return;
+        }
+
+        uint32_t layer = heldItemLayer();
+        std::string key = heldName + "#" + std::to_string(held.aux) + "#" + held.icon;
+        std::vector<uint8_t>& icon = heldIcon;
+        if (key != heldItemKey) {
+            heldItemKey = key;
+            icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
+            std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
+            if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
+                for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
+                    for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
+                        size_t source = (size_t(y * ItemGrid / world::EntityTextureSize) * ItemGrid + x * ItemGrid / world::EntityTextureSize) * 4;
+                        std::copy_n(icon.data() + source, 4, pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4);
+                    }
+                }
+            }
+            renderer->updateEntityTexture(layer, pixels.data());
+        }
+        if (icon.size() != size_t(ItemGrid) * ItemGrid * 4) {
+            return;
+        }
+        float h = HeldItemSize * 0.5f;
+        float pixel = HeldItemSize / static_cast<float>(ItemGrid);
+        float depth = HeldItemSize / 32.0f;
+        uint32_t shade = EntityQuadFlag | (1u << 8);
+        emit({ { { -h, h, depth }, { h, h, depth }, { h, -h, depth }, { -h, -h, depth } } }, fullUv, layer, shade | 6);
+        emit({ { { -h, h, -depth }, { h, h, -depth }, { h, -h, -depth }, { -h, -h, -depth } } }, fullUv, layer, shade | 5);
+        auto opaque = [&](int32_t x, int32_t y) {
+            if (x < 0 || y < 0 || x >= int32_t(ItemGrid) || y >= int32_t(ItemGrid)) {
+                return false;
+            }
+            return icon[(size_t(y) * ItemGrid + size_t(x)) * 4 + 3] >= 26;
+        };
+        for (int32_t y = 0; y < int32_t(ItemGrid); ++y) {
+            for (int32_t x = 0; x < int32_t(ItemGrid); ++x) {
+                if (!opaque(x, y)) {
+                    continue;
+                }
+                float left = -h + x * pixel;
+                float right = left + pixel;
+                float top = h - y * pixel;
+                float bottom = top - pixel;
+                uint16_t u0 = static_cast<uint16_t>((x + 0.25f) * 4096 / ItemGrid);
+                uint16_t u1 = static_cast<uint16_t>((x + 0.75f) * 4096 / ItemGrid);
+                uint16_t v0 = static_cast<uint16_t>((y + 0.25f) * 4096 / ItemGrid);
+                uint16_t v1 = static_cast<uint16_t>((y + 0.75f) * 4096 / ItemGrid);
+                std::array<std::array<uint16_t, 2>, 4> texel { { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } } };
+                if (!opaque(x - 1, y)) {
+                    emit({ { { left, top, -depth }, { left, top, depth }, { left, bottom, depth }, { left, bottom, -depth } } }, texel, layer, shade | 3);
+                }
+                if (!opaque(x + 1, y)) {
+                    emit({ { { right, top, depth }, { right, top, -depth }, { right, bottom, -depth }, { right, bottom, depth } } }, texel, layer, shade | 4);
+                }
+                if (!opaque(x, y - 1)) {
+                    emit({ { { left, top, -depth }, { right, top, -depth }, { right, top, depth }, { left, top, depth } } }, texel, layer, shade | 2);
+                }
+                if (!opaque(x, y + 1)) {
+                    emit({ { { left, bottom, depth }, { right, bottom, depth }, { right, bottom, -depth }, { left, bottom, -depth } } }, texel, layer, shade | 1);
                 }
             }
         }
-        renderer->updateEntityTexture(layer, pixels.data());
-    }
-    if (icon.size() != size_t(ItemGrid) * ItemGrid * 4) {
-        return;
-    }
-    float h = HeldItemSize * 0.5f;
-    float pixel = HeldItemSize / static_cast<float>(ItemGrid);
-    float depth = HeldItemSize / 32.0f;
-    uint32_t shade = EntityQuadFlag;
-    emit({ { { -h, h, depth }, { h, h, depth }, { h, -h, depth }, { -h, -h, depth } } }, fullUv, layer, shade | 6);
-    emit({ { { -h, h, -depth }, { h, h, -depth }, { h, -h, -depth }, { -h, -h, -depth } } }, fullUv, layer, shade | 5);
-    auto opaque = [&](int32_t x, int32_t y) {
-        if (x < 0 || y < 0 || x >= int32_t(ItemGrid) || y >= int32_t(ItemGrid)) {
-            return false;
-        }
-        return icon[(size_t(y) * ItemGrid + size_t(x)) * 4 + 3] >= 26;
     };
-    for (int32_t y = 0; y < int32_t(ItemGrid); ++y) {
-        for (int32_t x = 0; x < int32_t(ItemGrid); ++x) {
-            if (!opaque(x, y)) {
-                continue;
-            }
-            float left = -h + x * pixel;
-            float right = left + pixel;
-            float top = h - y * pixel;
-            float bottom = top - pixel;
-            uint16_t u0 = static_cast<uint16_t>(x * 4096 / ItemGrid);
-            uint16_t u1 = static_cast<uint16_t>(u0 + 4096 / ItemGrid / 2);
-            uint16_t v0 = static_cast<uint16_t>(y * 4096 / ItemGrid);
-            uint16_t v1 = static_cast<uint16_t>(v0 + 4096 / ItemGrid / 2);
-            std::array<std::array<uint16_t, 2>, 4> texel { { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } } };
-            if (!opaque(x - 1, y)) {
-                emit({ { { left, top, -depth }, { left, top, depth }, { left, bottom, depth }, { left, bottom, -depth } } }, texel, layer, shade | 3);
-            }
-            if (!opaque(x + 1, y)) {
-                emit({ { { right, top, depth }, { right, top, -depth }, { right, bottom, -depth }, { right, bottom, depth } } }, texel, layer, shade | 4);
-            }
-            if (!opaque(x, y - 1)) {
-                emit({ { { left, top, -depth }, { right, top, -depth }, { right, top, depth }, { left, top, depth } } }, texel, layer, shade | 2);
-            }
-            if (!opaque(x, y + 1)) {
-                emit({ { { left, bottom, depth }, { right, bottom, depth }, { right, bottom, -depth }, { left, bottom, -depth } } }, texel, layer, shade | 1);
-            }
-        }
+    if (meshKey != heldItemKey) {
+        heldItemMesh.clear();
+        buildMesh();
+        heldItemKey = meshKey;
+    }
+    for (const HeldItemFace& face : heldItemMesh) {
+        std::array<Vec3, 4> corners;
+        for (size_t i = 0; i < 4; ++i) corners[i] = place(face.corners[i], heldItemBlock);
+        out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
     }
 }
 

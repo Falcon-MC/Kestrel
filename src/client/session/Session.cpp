@@ -32,6 +32,7 @@
 #include "Protocol/Packets/PlayerHotbarPacket.h"
 #include "Protocol/Packets/RequestChunkRadiusPacket.h"
 #include "Protocol/Packets/SetHealthPacket.h"
+#include "Protocol/Packets/ActorEventPacket.h"
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "Protocol/Packets/SetActorDataPacket.h"
@@ -621,6 +622,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::PlayerHotbar:
     case MinecraftPacketIds::UpdateAttributes:
     case MinecraftPacketIds::SetHealth:
+    case MinecraftPacketIds::ActorEvent:
     case MinecraftPacketIds::SetPlayerGameType:
     case MinecraftPacketIds::MobEffect:
     case MinecraftPacketIds::PlayerList:
@@ -662,6 +664,18 @@ void Session::handleWorldPacket(const std::string& payload)
     handleChatPacket(packet);
     handleScorePacket(packet);
     handleFormPacket(packet);
+
+    if (auto event = std::dynamic_pointer_cast<ActorEventPacket>(packet);
+        event && event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) {
+        double now = secondsNow();
+        if (auto actor = actors.find(event->mRuntimeActorId); actor != actors.end()) {
+            actor->second.lastHurt = now;
+        }
+        if (event->mRuntimeActorId == localRuntimeId) {
+            std::lock_guard<std::mutex> guard(mutex);
+            if (now - current.hud.lastHurt > 0.1) current.hud.lastHurt = now;
+        }
+    }
 
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         world.handle(*levelChunk);
@@ -711,7 +725,7 @@ void Session::handleWorldPacket(const std::string& payload)
             applyActorMetadata(player->mMetadata, actor);
             actors[runtime] = actor;
             runtimeByUnique[player->mRuntimeActorId] = runtime;
-            moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true);
+            moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true, true);
         }
     } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
         uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
@@ -722,7 +736,7 @@ void Session::handleWorldPacket(const std::string& payload)
         applyActorMetadata(added->mMetadata, actor);
         actors[runtime] = actor;
         runtimeByUnique[added->mUniqueActorId] = runtime;
-        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true);
+        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
             actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);

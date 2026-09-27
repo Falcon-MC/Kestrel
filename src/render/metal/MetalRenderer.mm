@@ -222,7 +222,7 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, in.d.y, corner);
-    out.entity = (words[11] >> 5) & 3;
+    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
     return out;
 }
 
@@ -262,6 +262,8 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
 fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
     float4 texel = in.entity != 0 ? entities.sample(blockSampler, in.uv, in.material & 0xfff) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
+    if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (texel.a < 0.004) {
         discard_fragment();
     }
@@ -320,6 +322,8 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
 fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
     float4 texel = in.entity != 0 ? entities.sample(blockSampler, in.uv, in.material & 0xfff) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
+    if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (in.entity != 0) {
         if (texel.a < 0.1) {
             discard_fragment();
