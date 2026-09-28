@@ -43,10 +43,10 @@ void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, 
     y1 += layerY;
     color = layered(color);
     if (clip.w > 0.0f) {
-        float cx0 = std::max(x0, clip.x);
-        float cy0 = std::max(y0, clip.y);
-        float cx1 = std::min(x1, clip.right());
-        float cy1 = std::min(y1, clip.bottom());
+        float cx0 = std::max(x0, clip.x + layerX);
+        float cy0 = std::max(y0, clip.y + layerY);
+        float cx1 = std::min(x1, clip.right() + layerX);
+        float cy1 = std::min(y1, clip.bottom() + layerY);
         if (cx1 <= cx0 || cy1 <= cy0) {
             return;
         }
