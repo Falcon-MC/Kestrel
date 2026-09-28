@@ -16,6 +16,39 @@ using namespace jsonui;
 
 namespace {
 
+/**
+ * Whether this frame brings no input a screen reacts to: no click, drag,
+ * wheel, key or typed text.
+ */
+bool quiet(const Context& ui)
+{
+    const InputState& in = ui.input();
+    return !in.mousePressed && !in.mouseDown && !in.mouseReleased && !in.rightMousePressed && !in.rightMouseDown
+        && in.wheel == 0.0f && in.text.empty() && in.pressedKey == Key::None && !in.backspace && !in.enter && !in.escape && !in.tab;
+}
+
+/**
+ * Whether a control or any below it still has an animation running or a
+ * control fading out, which change what is drawn from frame to frame.
+ */
+bool animating(const Node& node)
+{
+    if (node.destroyed) {
+        return true;
+    }
+    for (const AnimTrack& track : node.anims) {
+        if (track.start >= 0.0 && !track.finished) {
+            return true;
+        }
+    }
+    for (const std::unique_ptr<Node>& child : node.children) {
+        if (animating(*child)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 constexpr float MinScrollBox = 8.0f;
 constexpr float WheelStep = 1.6f;
 constexpr size_t DefaultMaxLength = 256;
@@ -922,8 +955,19 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     r.ui = &ui;
     r.data = &data;
     r.now = secondsNow();
-    r.madeThisFrame = 0;
     Node& root = *r.root;
+
+    if (r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
+        && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
+        && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidData == data) {
+        for (Node* node : r.painted) {
+            r.paint(*node);
+        }
+        ui.clearClip();
+        r.data = nullptr;
+        return;
+    }
+    r.madeThisFrame = 0;
 
     r.update(root, 0, nullptr);
     r.sweep(root);
@@ -931,6 +975,8 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     if (!root.shown) {
         r.order.clear();
         r.byId.clear();
+        r.painted.clear();
+        r.laidOut = false;
         r.data = nullptr;
         return;
     }
@@ -998,6 +1044,13 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
         r.paint(*node);
     }
     ui.clearClip();
+    r.painted = std::move(painted);
+    r.laidOut = true;
+    r.laidArea = area;
+    r.laidData = data;
+    r.laidMouseX = ui.mouseX();
+    r.laidMouseY = ui.mouseY();
+    r.laidBlocked = ui.isBlocked();
     r.data = nullptr;
 }
 

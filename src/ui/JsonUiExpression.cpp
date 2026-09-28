@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
+#include <memory>
+#include <unordered_map>
 
 namespace kestrel::ui::jsonui {
 
@@ -36,17 +39,71 @@ UiValue toValue(const json::Value* value)
 
 namespace {
 
-class Expression {
-public:
-    using Lookup = UiLookup;
+constexpr size_t MaxCachedExpressions = 8192;
 
-    Expression(std::string_view source, const Lookup& lookup)
+enum class Op {
+    Constant,
+    Lookup,
+    Not,
+    Negate,
+    Or,
+    And,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+};
+
+/**
+ * One step of a parsed binding expression: a constant, a binding or variable
+ * to look up, or an operator over one or two operands.
+ */
+struct ExprNode {
+    Op op = Op::Constant;
+    UiValue constant;
+    std::string name;
+    std::unique_ptr<ExprNode> left;
+    std::unique_ptr<ExprNode> right;
+};
+
+using NodePtr = std::unique_ptr<ExprNode>;
+
+NodePtr leaf(UiValue value)
+{
+    auto node = std::make_unique<ExprNode>();
+    node->constant = std::move(value);
+    return node;
+}
+
+NodePtr binary(Op op, NodePtr left, NodePtr right)
+{
+    auto node = std::make_unique<ExprNode>();
+    node->op = op;
+    node->left = std::move(left);
+    node->right = std::move(right);
+    return node;
+}
+
+/**
+ * Parses the game's binding expressions once into a tree: or, and,
+ * comparisons, sums, products, not and minus over numbers, quoted strings,
+ * true, false, parentheses and #binding or $variable names.
+ */
+class Parser {
+public:
+    explicit Parser(std::string_view source)
         : text(source)
-        , lookup(lookup)
     {
     }
 
-    UiValue evaluate()
+    NodePtr parse()
     {
         return orExpression();
     }
@@ -83,142 +140,103 @@ private:
         return true;
     }
 
-    UiValue orExpression()
+    NodePtr orExpression()
     {
-        UiValue left = andExpression();
+        NodePtr left = andExpression();
         while (word("or")) {
-            UiValue right = andExpression();
-            left = UiValue::of(left.truthy() || right.truthy());
+            left = binary(Op::Or, std::move(left), andExpression());
         }
         return left;
     }
 
-    UiValue andExpression()
+    NodePtr andExpression()
     {
-        UiValue left = comparison();
+        NodePtr left = comparison();
         while (word("and")) {
-            UiValue right = comparison();
-            left = UiValue::of(left.truthy() && right.truthy());
+            left = binary(Op::And, std::move(left), comparison());
         }
         return left;
     }
 
-    static bool equal(const UiValue& a, const UiValue& b)
+    NodePtr comparison()
     {
-        if (a.kind == UiValue::Kind::String || b.kind == UiValue::Kind::String) {
-            return a.toText() == b.toText();
-        }
-        return a.toNumber() == b.toNumber();
-    }
-
-    UiValue comparison()
-    {
-        UiValue left = sum();
+        NodePtr left = sum();
         skip();
-        if (symbol(">=")) {
-            return UiValue::of(left.toNumber() >= sum().toNumber());
-        }
-        if (symbol("<=")) {
-            return UiValue::of(left.toNumber() <= sum().toNumber());
-        }
-        if (symbol("!=")) {
-            return UiValue::of(!equal(left, sum()));
-        }
-        if (symbol("=")) {
-            return UiValue::of(equal(left, sum()));
-        }
-        if (symbol(">")) {
-            return UiValue::of(left.toNumber() > sum().toNumber());
-        }
-        if (symbol("<")) {
-            return UiValue::of(left.toNumber() < sum().toNumber());
+        static constexpr std::pair<std::string_view, Op> Comparisons[] = {
+            { ">=", Op::GreaterEqual }, { "<=", Op::LessEqual }, { "!=", Op::NotEqual },
+            { "=", Op::Equal }, { ">", Op::Greater }, { "<", Op::Less },
+        };
+        for (const auto& [token, op] : Comparisons) {
+            if (symbol(token)) {
+                return binary(op, std::move(left), sum());
+            }
         }
         return left;
     }
 
-    UiValue sum()
+    NodePtr sum()
     {
-        UiValue left = product();
+        NodePtr left = product();
         while (true) {
             if (symbol("+")) {
-                UiValue right = product();
-                left = left.kind == UiValue::Kind::String || right.kind == UiValue::Kind::String ? UiValue::of(left.toText() + right.toText()) : UiValue::of(left.toNumber() + right.toNumber());
+                left = binary(Op::Add, std::move(left), product());
             } else if (symbol("-")) {
-                UiValue right = product();
-                if (left.kind == UiValue::Kind::String || right.kind == UiValue::Kind::String) {
-                    std::string result = left.toText();
-                    std::string removed = right.toText();
-                    for (size_t found; !removed.empty() && (found = result.find(removed)) != std::string::npos;) {
-                        result.erase(found, removed.size());
-                    }
-                    left = UiValue::of(std::move(result));
-                } else {
-                    left = UiValue::of(left.toNumber() - right.toNumber());
-                }
+                left = binary(Op::Subtract, std::move(left), product());
             } else {
                 return left;
             }
         }
     }
 
-    UiValue product()
+    NodePtr product()
     {
-        UiValue left = unary();
+        NodePtr left = unary();
         while (true) {
             if (symbol("*")) {
-                UiValue right = unary();
-                std::string pattern = left.toText();
-                if (left.kind == UiValue::Kind::String && pattern.size() > 3 && pattern.compare(0, 2, "%.") == 0 && pattern.back() == 's') {
-                    size_t count = static_cast<size_t>(std::strtoul(pattern.c_str() + 2, nullptr, 10));
-                    left = UiValue::of(right.toText().substr(0, count));
-                } else {
-                    left = UiValue::of(left.toNumber() * right.toNumber());
-                }
+                left = binary(Op::Multiply, std::move(left), unary());
             } else if (symbol("/")) {
-                double right = unary().toNumber();
-                left = UiValue::of(right != 0.0 ? left.toNumber() / right : 0.0);
+                left = binary(Op::Divide, std::move(left), unary());
             } else if (symbol("%")) {
-                double right = unary().toNumber();
-                left = UiValue::of(right != 0.0 ? std::fmod(left.toNumber(), right) : 0.0);
+                left = binary(Op::Modulo, std::move(left), unary());
             } else {
                 return left;
             }
         }
     }
 
-    UiValue unary()
+    NodePtr unary()
     {
         // Packs are untrusted, and deep enough nesting would run the stack out.
         if (++nesting > MaxDepth) {
             at = text.size();
-            return {};
+            return leaf({});
         }
-        UiValue value = prefixed();
+        NodePtr value = prefixed();
         --nesting;
         return value;
     }
 
-    UiValue prefixed()
+    NodePtr prefixed()
     {
         if (word("not")) {
-            return UiValue::of(!unary().truthy());
+            return binary(Op::Not, unary(), nullptr);
         }
         if (symbol("-")) {
-            return UiValue::of(-unary().toNumber());
+            return binary(Op::Negate, unary(), nullptr);
         }
         return primary();
     }
 
-    UiValue primary()
+    NodePtr primary()
     {
         skip();
         if (at >= text.size()) {
-            return {};
+            return leaf({});
         }
         char c = text[at];
         if (c == '(') {
             ++at;
-            UiValue inner = orExpression();
+            NodePtr inner = orExpression();
             symbol(")");
             return inner;
         }
@@ -226,7 +244,7 @@ private:
             size_t end = text.find('\'', at + 1);
             std::string value(text.substr(at + 1, end == std::string_view::npos ? std::string_view::npos : end - at - 1));
             at = end == std::string_view::npos ? text.size() : end + 1;
-            return UiValue::of(std::move(value));
+            return leaf(UiValue::of(std::move(value)));
         }
         if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
             size_t end = at;
@@ -235,39 +253,158 @@ private:
             }
             double value = std::strtod(std::string(text.substr(at, end - at)).c_str(), nullptr);
             at = end;
-            return UiValue::of(value);
+            return leaf(UiValue::of(value));
         }
         if (word("true")) {
-            return UiValue::of(true);
+            return leaf(UiValue::of(true));
         }
         if (word("false")) {
-            return UiValue::of(false);
+            return leaf(UiValue::of(false));
         }
         if (c == '#' || c == '$') {
             size_t start = at++;
             while (at < text.size() && (std::isalnum(static_cast<unsigned char>(text[at])) || text[at] == '_' || text[at] == '.' || text[at] == '|')) {
                 ++at;
             }
-            return lookup(std::string(text.substr(start, at - start)));
+            auto node = std::make_unique<ExprNode>();
+            node->op = Op::Lookup;
+            node->name = std::string(text.substr(start, at - start));
+            return node;
         }
         ++at;
-        return {};
+        return leaf({});
     }
 
     std::string_view text;
-    const Lookup& lookup;
     size_t at = 0;
     int nesting = 0;
 };
+
+bool equal(const UiValue& a, const UiValue& b)
+{
+    if (a.kind == UiValue::Kind::String || b.kind == UiValue::Kind::String) {
+        return a.toText() == b.toText();
+    }
+    return a.toNumber() == b.toNumber();
+}
+
+UiValue run(const ExprNode& node, const UiLookup& lookup)
+{
+    auto left = [&]() { return run(*node.left, lookup); };
+    auto right = [&]() { return run(*node.right, lookup); };
+    switch (node.op) {
+    case Op::Constant:
+        return node.constant;
+    case Op::Lookup:
+        return lookup(node.name);
+    case Op::Not:
+        return UiValue::of(!left().truthy());
+    case Op::Negate:
+        return UiValue::of(-left().toNumber());
+    case Op::Or: {
+        UiValue a = left();
+        UiValue b = right();
+        return UiValue::of(a.truthy() || b.truthy());
+    }
+    case Op::And: {
+        UiValue a = left();
+        UiValue b = right();
+        return UiValue::of(a.truthy() && b.truthy());
+    }
+    case Op::Equal: {
+        UiValue a = left();
+        return UiValue::of(equal(a, right()));
+    }
+    case Op::NotEqual: {
+        UiValue a = left();
+        return UiValue::of(!equal(a, right()));
+    }
+    case Op::Less: {
+        double a = left().toNumber();
+        return UiValue::of(a < right().toNumber());
+    }
+    case Op::LessEqual: {
+        double a = left().toNumber();
+        return UiValue::of(a <= right().toNumber());
+    }
+    case Op::Greater: {
+        double a = left().toNumber();
+        return UiValue::of(a > right().toNumber());
+    }
+    case Op::GreaterEqual: {
+        double a = left().toNumber();
+        return UiValue::of(a >= right().toNumber());
+    }
+    case Op::Add: {
+        UiValue a = left();
+        UiValue b = right();
+        return a.kind == UiValue::Kind::String || b.kind == UiValue::Kind::String ? UiValue::of(a.toText() + b.toText()) : UiValue::of(a.toNumber() + b.toNumber());
+    }
+    case Op::Subtract: {
+        UiValue a = left();
+        UiValue b = right();
+        if (a.kind == UiValue::Kind::String || b.kind == UiValue::Kind::String) {
+            std::string result = a.toText();
+            std::string removed = b.toText();
+            for (size_t found; !removed.empty() && (found = result.find(removed)) != std::string::npos;) {
+                result.erase(found, removed.size());
+            }
+            return UiValue::of(std::move(result));
+        }
+        return UiValue::of(a.toNumber() - b.toNumber());
+    }
+    case Op::Multiply: {
+        UiValue a = left();
+        UiValue b = right();
+        std::string pattern = a.toText();
+        if (a.kind == UiValue::Kind::String && pattern.size() > 3 && pattern.compare(0, 2, "%.") == 0 && pattern.back() == 's') {
+            size_t count = static_cast<size_t>(std::strtoul(pattern.c_str() + 2, nullptr, 10));
+            return UiValue::of(b.toText().substr(0, count));
+        }
+        return UiValue::of(a.toNumber() * b.toNumber());
+    }
+    case Op::Divide: {
+        double a = left().toNumber();
+        double b = right().toNumber();
+        return UiValue::of(b != 0.0 ? a / b : 0.0);
+    }
+    case Op::Modulo: {
+        double a = left().toNumber();
+        double b = right().toNumber();
+        return UiValue::of(b != 0.0 ? std::fmod(a, b) : 0.0);
+    }
+    }
+    return {};
+}
+
+/**
+ * The parsed tree of an expression, parsed the first time it is met: the
+ * same bindings are evaluated every frame for as long as a screen shows.
+ */
+const ExprNode& compiled(std::string_view source)
+{
+    thread_local std::unordered_map<std::string, NodePtr> cache;
+    auto found = cache.find(std::string(source));
+    if (found != cache.end()) {
+        return *found->second;
+    }
+    if (cache.size() >= MaxCachedExpressions) {
+        cache.clear();
+    }
+    return *cache.emplace(std::string(source), Parser(source).parse()).first->second;
+}
 
 }
 
 UiValue evaluate(std::string_view source, const UiLookup& lookup)
 {
-    Expression expression(source, lookup);
-    return expression.evaluate();
+    return run(compiled(source), lookup);
 }
 
+/**
+ * A size or offset term list. Strings are parsed once and kept, since the
+ * layout reads every control's size and offset each frame.
+ */
 Extent parseExtent(const json::Value* value, TermKind fallback)
 {
     if (!value) {
@@ -275,6 +412,16 @@ Extent parseExtent(const json::Value* value, TermKind fallback)
     }
     if (value->isNumber()) {
         return { { TermKind::Pixel, static_cast<float>(value->number()) } };
+    }
+    thread_local std::unordered_map<std::string, Extent> cache;
+    std::string key = value->string();
+    key.push_back('\x1f');
+    key.push_back(static_cast<char>('0' + static_cast<int>(fallback)));
+    if (auto found = cache.find(key); found != cache.end()) {
+        return found->second;
+    }
+    if (cache.size() >= MaxCachedExpressions) {
+        cache.clear();
     }
     std::string source;
     for (char c : value->string()) {
@@ -323,6 +470,7 @@ Extent parseExtent(const json::Value* value, TermKind fallback)
     if (terms.empty()) {
         terms.push_back({ fallback, 1.0f });
     }
+    cache.emplace(std::move(key), terms);
     return terms;
 }
 

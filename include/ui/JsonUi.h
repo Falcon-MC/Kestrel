@@ -41,6 +41,7 @@ struct UiValue {
     bool truthy() const;
     double toNumber() const;
     std::string toText() const;
+    bool operator==(const UiValue&) const = default;
 };
 
 using UiRow = std::unordered_map<std::string, UiValue>;
@@ -54,6 +55,7 @@ struct UiFactoryItem {
     std::string control;
     UiRow variables;
     uint64_t serial = 0;
+    bool operator==(const UiFactoryItem&) const = default;
 };
 
 /**
@@ -70,6 +72,7 @@ struct UiData {
     UiRow globals;
     std::unordered_map<std::string, std::vector<UiRow>> collections;
     std::unordered_map<std::string, std::vector<UiFactoryItem>> factories;
+    bool operator==(const UiData&) const = default;
 };
 
 inline constexpr const char* UiFactoryControl = "@control_id";
