@@ -43,6 +43,8 @@ struct EntityImage {
 };
 
 std::vector<EntityBox> chestBoxes(bool twoBlocks, float offsetX);
+std::vector<EntityBox> chestBodyBoxes(bool twoBlocks, float offsetX);
+std::vector<EntityBox> chestLidBoxes(bool twoBlocks, float offsetX);
 std::vector<EntityBox> bedBoxes(bool head);
 std::vector<EntityBox> skullBoxes(bool wall);
 std::vector<EntityBox> piglinHeadBoxes(bool wall);
