@@ -1104,9 +1104,16 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             const Tag* mappings = instances ? instances->get("mappings") : nullptr;
             bool translucent = false;
             bool cutout = false;
+            const json::Value* legacyEntry = blockEntry(custom.name);
+            const json::Value* legacyTextures = legacyEntry ? legacyEntry->get("textures") : nullptr;
             auto instanceMaterial = [&](const std::string& instanceName, int side) -> uint32_t {
                 if (!materialMap || materialMap->getType() != Tag::Type::Compound) {
-                    return DiagnosticMaterial;
+                    if (!legacyTextures) {
+                        return DiagnosticMaterial;
+                    }
+                    bool rotate = false;
+                    std::string key = resolveTextureKey(legacyTextures, FaceOrder[side], Axis::Y, std::nullopt, rotate);
+                    return key.empty() ? DiagnosticMaterial : materialFor(key, false);
                 }
                 std::vector<std::string> candidates;
                 if (!instanceName.empty()) {
