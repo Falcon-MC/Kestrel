@@ -283,6 +283,21 @@ enum class ChromeAction {
     Close,
 };
 
+/**
+ * The promotion the game's treatment packs put on the start screen: an
+ * animated badge cut from a strip of frames, a caption on a flyout and a
+ * button that opens its page.
+ */
+struct TitlePromo {
+    bool loaded = false;
+    bool valid = false;
+    uint32_t frames = 1;
+    float fps = 1.0f;
+    float frameWidth = 0.0f;
+    float frameHeight = 0.0f;
+    std::string caption;
+};
+
 class Menu {
 public:
     explicit Menu(ServerStore& store);
@@ -561,6 +576,7 @@ private:
     // Screens drawn with the classic textures.
     void panorama(ui::Context& ui, float width, float height);
     void title(ui::Context& ui, float width, float height);
+    void titlePromo(ui::Context& ui, float left, float bottom);
     void pause(ui::Context& ui, float width, float height);
     void progressDialog(ui::Context& ui, float width, float height);
     void connectionError(ui::Context& ui, float width, float height);
@@ -657,6 +673,7 @@ private:
     std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
     std::string splashText;
     std::array<bool, 6> panoramaReady {};
+    TitlePromo promo;
     std::chrono::steady_clock::time_point screenChanged {};
     std::chrono::steady_clock::time_point dialogChanged {};
     std::chrono::steady_clock::time_point socialChanged {};
