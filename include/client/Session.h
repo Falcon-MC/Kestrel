@@ -145,6 +145,7 @@ struct HudState {
     int32_t maxAir = 300;
     double lastHealthDrop = 0.0;
     double lastHurt = 0.0;
+    double lastSwing = 0.0;
     std::vector<HudEffect> effects;
 };
 

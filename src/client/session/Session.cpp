@@ -11,6 +11,7 @@
 #include "ui/Image.h"
 #include "world/PackSource.h"
 #include "Protocol/Packets/AddActorPacket.h"
+#include "Protocol/Packets/AnimatePacket.h"
 #include "Protocol/Packets/AddPlayerPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
@@ -606,6 +607,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
     case MinecraftPacketIds::AddActor:
+    case MinecraftPacketIds::Animate:
     case MinecraftPacketIds::RemoveActor:
     case MinecraftPacketIds::MoveActorAbsolute:
     case MinecraftPacketIds::MoveActorDelta:

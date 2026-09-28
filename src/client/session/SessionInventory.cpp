@@ -60,6 +60,21 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
 {
     if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
+        if (content->mContainerId == 0) {
+            // A full inventory is a resync, including when a proxy switches servers.
+            // Retire old predictions before applying it so a late response or close
+            // cannot restore stacks from the previous server.
+            if (inventoryBefore) {
+                for (int slot : inventoryChangedSlots) inventoryModel.slots[slot] = (*inventoryBefore)[slot];
+            }
+            inventoryBefore.reset();
+            inventoryChangedSlots.clear();
+            pendingInventoryRequest = 0;
+            inventoryCommands.clear();
+            inventoryClosing = false;
+        }
+        debugLog("inventory content window " + std::to_string(content->mContainerId)
+            + " stacks " + std::to_string(content->mContents.size()));
         if (content->mContainerId == inventoryModel.windowId && inventoryModel.windowId != 0 && content->mContents.size() <= 54)
             inventoryModel.containerSize = int(content->mContents.size());
         int length = content->mContainerId == 0 ? 36 : content->mContainerId == 120 ? 4 : content->mContainerId == 119 ? 1
@@ -82,6 +97,9 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         }
     } else if (auto open = std::dynamic_pointer_cast<ContainerOpenPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
+        // Opening a block container confirms a successful use even on servers
+        // that do not echo an Animate packet to the player using it.
+        if (open->mType != ContainerType::Inventory) current.hud.lastSwing = secondsNow();
         inventoryModel.windowId = uint8_t(open->mWindowId);
         inventoryModel.type = open->mType;
         inventoryModel.containerSize = containerSize(open->mType);

@@ -1,6 +1,7 @@
 #include "SessionData.h"
 
 #include "Network/BedrockConnection.h"
+#include "Protocol/Packets/AnimatePacket.h"
 #include "Protocol/Packets/DeathInfoPacket.h"
 #include "Protocol/Packets/InventoryContentPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
@@ -121,9 +122,22 @@ HudItem hudItemOf(const ItemStack& stack)
 void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
 {
     double now = secondsNow();
-    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
+    if (auto animation = std::dynamic_pointer_cast<AnimatePacket>(packet)) {
+        if (animation->mRuntimeActorId == localRuntimeId && animation->mAction == AnimatePacket::Action::SwingArm) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.hud.lastSwing = now;
+        }
+    } else if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
         if (static_cast<uint64_t>(equipment->mRuntimeActorId) == localRuntimeId && equipment->mContainerId == InventoryContainer && equipment->mHotbarSlot >= 0 && equipment->mHotbarSlot < 9) {
             std::lock_guard<std::mutex> guard(mutex);
+            // Equipment is authoritative too: fast transfers may replace the held
+            // stack before the destination sends the rest of the inventory.
+            int slot = inventoryModel.packetSlot(equipment->mContainerId, equipment->mInventorySlot);
+            if (slot >= 0) {
+                inventoryModel.slots[slot] = equipment->mItem;
+                if (inventoryBefore) (*inventoryBefore)[slot] = equipment->mItem;
+                publishInventory();
+            }
             if (current.hud.selectedSlot != equipment->mHotbarSlot) {
                 current.hud.selectedSlot = equipment->mHotbarSlot;
                 current.hud.selectedChanged = now;
