@@ -741,6 +741,7 @@ void Menu::title(Context& ui, float width, float height)
     float labelY = std::floor(height - CornerMargin - 9.0f);
     float cornerLeft = CornerMargin - 1.0f;
     float bottom = std::floor(labelY - 1.0f - CornerMargin - CornerButtonHeight);
+    titlePromo(ui, cornerLeft, bottom - 4.0f);
     if (iconButton(ui, "title:inbox", "", "ui/mail_icon", { cornerLeft, bottom, 23.0f, CornerButtonHeight }, 15.0f)) {
         notify("TODO: Inbox");
     }
