@@ -68,6 +68,7 @@ private:
         bool placed = false;
         uint32_t x = 0;
         uint32_t y = 0;
+        uint64_t lastUse = 0;
     };
 
     Entry& load(std::string_view name);
@@ -82,6 +83,7 @@ private:
     uint32_t cursorY = ImageTop;
     uint32_t shelfHeight = 0;
     bool reclaimable = false;
+    uint64_t useClock = 1;
 };
 
 }
