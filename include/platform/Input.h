@@ -15,6 +15,7 @@ struct InputState {
     bool mouseReleased = false;
     bool rightMouseDown = false;
     bool rightMousePressed = false;
+    bool middleMousePressed = false;
     float wheel = 0.0f;
     float mouseDeltaX = 0.0f;
     float mouseDeltaY = 0.0f;
@@ -46,6 +47,7 @@ struct InputState {
     {
         mousePressed = false;
         rightMousePressed = false;
+        middleMousePressed = false;
         mouseReleased = false;
         wheel = 0.0f;
         mouseDeltaX = 0.0f;

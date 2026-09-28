@@ -58,6 +58,10 @@ public:
                 input.rightMousePressed |= action == GLFW_PRESS;
                 return;
             }
+            if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+                input.middleMousePressed |= action == GLFW_PRESS;
+                return;
+            }
             if (button != GLFW_MOUSE_BUTTON_LEFT) {
                 return;
             }
