@@ -187,6 +187,10 @@ Skin::Entry& Skin::load(std::string_view name)
 {
     auto found = entries.find(std::string(name));
     if (found != entries.end()) {
+        if (found->second.lastUse + 1 < useClock && !found->second.placed && !found->second.bitmap.rgba.empty()) {
+            changed = true;
+        }
+        found->second.lastUse = useClock;
         return found->second;
     }
 
@@ -217,6 +221,7 @@ Skin::Entry& Skin::load(std::string_view name)
     if (loaded) {
         changed = true;
     }
+    entry.lastUse = useClock;
     return entries.emplace(std::string(name), std::move(entry)).first->second;
 }
 
@@ -300,18 +305,40 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
             break;
         }
     }
-    if (full && reclaimable) {
+    if (full) {
         reclaimable = false;
         cursorX = 0;
         cursorY = ImageTop;
         shelfHeight = 0;
+        std::vector<Entry*> byUse;
         for (auto& [name, entry] : entries) {
             entry.placed = false;
+            if (!entry.bitmap.rgba.empty()) {
+                byUse.push_back(&entry);
+            }
         }
-        for (Entry* entry : unplaced()) {
+        std::sort(byUse.begin(), byUse.end(), [](const Entry* a, const Entry* b) {
+            return a->lastUse > b->lastUse;
+        });
+        const uint64_t capacity = uint64_t(AtlasSize) * (AtlasSize - ImageTop) * 9 / 10;
+        uint64_t used = 0;
+        std::vector<Entry*> kept;
+        for (Entry* entry : byUse) {
+            uint64_t area = uint64_t(entry->bitmap.width + 2) * (entry->bitmap.height + 2);
+            if (used + area > capacity) {
+                continue;
+            }
+            used += area;
+            kept.push_back(entry);
+        }
+        std::sort(kept.begin(), kept.end(), [](const Entry* a, const Entry* b) {
+            return a->bitmap.height > b->bitmap.height;
+        });
+        for (Entry* entry : kept) {
             place(*entry);
         }
     }
+    ++useClock;
 
     // A one texel gutter copied from the edge keeps nearest sampling from bleeding into neighbours.
     constexpr uint32_t Gutter = 1;
