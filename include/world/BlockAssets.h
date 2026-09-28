@@ -190,7 +190,7 @@ inline constexpr uint32_t ItemIconSize = 32;
  * carried texture of its own.
  */
 inline constexpr uint32_t ItemTint = 0x79C05A;
-inline constexpr uint32_t SkinSlots = 32;
+inline constexpr uint32_t SkinSlots = 64;
 
 /**
  * One geometry of an entity: quads in 1/256 block around its feet, facing
@@ -211,6 +211,15 @@ struct EntityRig {
 std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch);
 
 inline constexpr uint32_t NoEntityChoice = 0xFFFFFFFFu;
+
+/**
+ * A worn armor piece as the humanoid armor models draw it: the model for its
+ * slot (helmet, chestplate, leggings, boots) and its material's texture layer.
+ */
+struct ArmorLook {
+    const EntityRig* rig = nullptr;
+    uint32_t layer = 0;
+};
 
 /**
  * A bone name pattern ('*' matches any run of characters, lowercase) and the
@@ -328,6 +337,12 @@ public:
         return found == entityModels.end() ? nullptr : &found->second;
     }
 
+    /**
+     * How armor in the given slot looks, or no rig for items without an
+     * armor texture (elytra, heads, pumpkins).
+     */
+    ArmorLook armorLook(size_t slot, const std::string& identifier) const;
+
     const AnimationLibrary& animationLibrary() const
     {
         return animations;
@@ -442,6 +457,8 @@ private:
     std::vector<ModelQuad> quads;
     BlockEntityTemplates entityTemplates;
     std::unordered_map<std::string, EntityModel> entityModels;
+    std::array<EntityRig, 4> armorRigs;
+    std::unordered_map<std::string, uint32_t> armorLayers;
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> entityTiles;

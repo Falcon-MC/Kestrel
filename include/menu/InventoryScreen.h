@@ -30,7 +30,6 @@ private:
     bool craftableOnly = false;
     bool searchFocused = false;
     bool dragging = false;
-    bool dragRight = false;
     int dragStart = -1;
     std::vector<int> dragSlots;
     int tab = 0;

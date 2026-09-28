@@ -14,7 +14,6 @@ constexpr float HotbarWidth = 182.0f;
 constexpr uint8_t HotbarCapAlpha = 166;
 constexpr int32_t MaxHeartRows = 10;
 constexpr ui::Color White { 255, 255, 255, 255 };
-constexpr ui::Color TextShadow { 63, 63, 63, 255 };
 constexpr ui::Color LevelColor { 128, 255, 0, 255 };
 constexpr ui::Color LevelShadow { 32, 63, 0, 255 };
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
@@ -112,9 +111,11 @@ struct Layout {
         ui.fill(rect(gx, gy, gw, gh), color);
     }
 
-    void text(const std::string& value, float lx, float ly, ui::Color color) const
+    void text(const std::string& value, float gx, float gy, ui::Color color) const
     {
-        ui.textShadowed(value, ui::TextStyle::Pixel, lx, ly, color, { TextShadow.r, TextShadow.g, TextShadow.b, color.a });
+        float x = originX + gx * unit, y = originY + gy * unit;
+        ui.pixelTextScaled(value, x + unit, y + unit, unit, color, true);
+        ui.pixelTextScaled(value, x, y, unit, color);
     }
 };
 
@@ -161,10 +162,7 @@ void drawSlotContents(const Layout& layout, const HudSlot& slot, float gx, float
     }
     if (slot.count > 1) {
         std::string value = std::to_string(slot.count);
-        float width = layout.ui.measure(value, ui::TextStyle::Pixel);
-        float height = layout.ui.lineHeight(ui::TextStyle::Pixel);
-        ui::Rect cell = layout.rect(gx, gy, 17.0f, 17.0f);
-        layout.text(value, cell.right() - width, cell.bottom() - height, White);
+        layout.text(value, gx + 17.0f - layout.ui.measure(value, ui::TextStyle::Pixel), gy + 9.0f, White);
     }
 }
 
@@ -190,11 +188,9 @@ void drawHotbar(const Layout& layout)
 
     if (view.labelAlpha > 0.0f && !view.selectedName.empty()) {
         float width = layout.ui.measure(view.selectedName, ui::TextStyle::Pixel);
-        float height = layout.ui.lineHeight(ui::TextStyle::Pixel);
-        float above = view.showStats ? 49.0f : 25.0f;
-        ui::Rect anchor = layout.rect(0.0f, layout.guiHeight - above, 0.0f, 0.0f);
-        float x = std::floor(layout.originX + (layout.guiWidth * layout.unit - width) * 0.5f);
-        layout.text(view.selectedName, x, std::floor(anchor.y - height), { 255, 255, 255, static_cast<uint8_t>(std::clamp(view.labelAlpha, 0.0f, 1.0f) * 255.0f) });
+        float above = view.showStats ? 58.0f : 34.0f;
+        uint8_t alpha = static_cast<uint8_t>(std::clamp(view.labelAlpha, 0.0f, 1.0f) * 255.0f);
+        layout.text(view.selectedName, std::floor((layout.guiWidth - width) * 0.5f), layout.guiHeight - above, { 255, 255, 255, alpha });
     }
 }
 

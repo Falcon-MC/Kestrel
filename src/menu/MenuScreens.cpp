@@ -857,6 +857,11 @@ void Menu::settingsPage(Context& ui, const Rect& area)
                 scale = InterfaceScales[i];
             }
         }
+        rowY = y;
+        settingsRow(ui, x, y, w, tr("options.hidepaperdoll", "Hide paper doll"), "Hides the small player model in the top left corner of the HUD", 31.33f);
+        if (toggle(ui, "video:paperdoll", { x + w - 12.0f - 38.0f, rowY + 7.67f, 38.0f, 16.0f }, hidePaperDoll)) {
+            hidePaperDoll = !hidePaperDoll;
+        }
         todoRow(ui, x, y, w, tr("options.gamma", "Brightness"));
         break;
     }

@@ -126,6 +126,23 @@ GeometryCube parseCube(const json::Value& value)
     return cube;
 }
 
+/**
+ * Applies a legacy child geometry's bone over its parent's bone of the same
+ * name: only what the child spells out changes, so armor can inflate the
+ * humanoid's bones without repeating their cubes.
+ */
+void mergeBone(GeometryBone& base, const GeometryBone& child)
+{
+    if (child.reset) base.cubes.clear();
+    if (child.parentSet) base.parent = child.parent;
+    if (child.pivotSet) base.pivot = child.pivot;
+    if (child.rotationSet) base.rotation = child.rotation;
+    if (child.mirrorSet) base.mirror = child.mirror;
+    if (child.inflateSet) base.inflate = child.inflate;
+    if (child.neverRenderSet) base.neverRender = child.neverRender;
+    if (child.cubesSet) base.cubes = child.cubes;
+}
+
 void parseBones(const json::Value* bones, Geometry& geometry)
 {
     if (!bones || !bones->isArray()) {
@@ -138,19 +155,29 @@ void parseBones(const json::Value* bones, Geometry& geometry)
         }
         if (const json::Value* parent = bone->get("parent"); parent && parent->isString()) {
             parsed.parent = parent->string();
+            parsed.parentSet = true;
         }
         parsed.pivot = readVec3(bone->get("pivot"));
+        parsed.pivotSet = bone->get("pivot") != nullptr;
         parsed.rotation = readVec3(bone->get("rotation"));
+        parsed.rotationSet = bone->get("rotation") != nullptr;
         if (const json::Value* mirror = bone->get("mirror"); mirror && mirror->mType == json::Value::Type::Boolean) {
             parsed.mirror = mirror->mBoolean;
+            parsed.mirrorSet = true;
         }
         if (const json::Value* inflate = bone->get("inflate"); inflate && inflate->isNumber()) {
             parsed.inflate = static_cast<float>(inflate->mNumber);
+            parsed.inflateSet = true;
         }
         if (const json::Value* hidden = bone->get("neverRender"); hidden && hidden->mType == json::Value::Type::Boolean) {
             parsed.neverRender = hidden->mBoolean;
+            parsed.neverRenderSet = true;
+        }
+        if (const json::Value* reset = bone->get("reset"); reset && reset->mType == json::Value::Type::Boolean) {
+            parsed.reset = reset->mBoolean;
         }
         if (const json::Value* cubes = bone->get("cubes"); cubes && cubes->isArray()) {
+            parsed.cubesSet = true;
             for (const auto& cube : cubes->mArray) {
                 parsed.cubes.push_back(parseCube(*cube));
             }
@@ -302,7 +329,7 @@ void GeometryLibrary::resolveInheritance()
                 return existing.name == bone.name;
             });
             if (same != merged.end()) {
-                *same = bone;
+                mergeBone(*same, bone);
             } else {
                 merged.push_back(bone);
             }

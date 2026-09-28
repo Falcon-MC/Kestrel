@@ -5,6 +5,7 @@
 #include "ui/Localization.h"
 #include "ui/Theme.h"
 #include "ui/Utf8.h"
+#include "world/ItemInfo.h"
 
 #include <algorithm>
 #include <cmath>
@@ -566,9 +567,10 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         std::array<std::array<float, 2>, 4> texels;
         float depth;
         float light;
+        std::string_view texture;
     };
     std::vector<Face> faces;
-    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate) {
+    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate, std::string_view texture, bool mirror) {
         float x0 = part.min[0] - inflate;
         float y0 = part.min[1] - inflate;
         float z0 = part.min[2] - inflate;
@@ -585,7 +587,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             std::array<float, 4> region;
             Vec normal;
         };
-        const Side sides[6] = {
+        Side sides[6] = {
             { { { { x0, y1, z1 }, { x1, y1, z1 }, { x1, y0, z1 }, { x0, y0, z1 } } }, { u + d, v + d, w, h }, { 0.0f, 0.0f, 1.0f } },
             { { { { x1, y1, z0 }, { x0, y1, z0 }, { x0, y0, z0 }, { x1, y0, z0 } } }, { u + d + w + d, v + d, w, h }, { 0.0f, 0.0f, -1.0f } },
             { { { { x0, y1, z0 }, { x0, y1, z1 }, { x0, y0, z1 }, { x0, y0, z0 } } }, { u, v + d, d, h }, { -1.0f, 0.0f, 0.0f } },
@@ -593,6 +595,13 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             { { { { x0, y1, z0 }, { x1, y1, z0 }, { x1, y1, z1 }, { x0, y1, z1 } } }, { u + d, v, w, d }, { 0.0f, 1.0f, 0.0f } },
             { { { { x0, y0, z1 }, { x1, y0, z1 }, { x1, y0, z0 }, { x0, y0, z0 } } }, { u + d + w, v, w, d }, { 0.0f, -1.0f, 0.0f } },
         };
+        if (mirror) {
+            std::swap(sides[2].region, sides[3].region);
+            for (Side& side : sides) {
+                side.region[0] += side.region[2];
+                side.region[2] = -side.region[2];
+            }
+        }
         for (const Side& side : sides) {
             Vec normal = transform(side.normal, part.head);
             Vec origin = transform({ 0.0f, 0.0f, 0.0f }, part.head);
@@ -611,19 +620,59 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             face.texels = { { { r[0], r[1] }, { r[0] + r[2], r[1] }, { r[0] + r[2], r[1] + r[3] }, { r[0], r[1] + r[3] } } };
             face.depth = depth * 0.25f + inflate;
             face.light = 0.6f + 0.4f * std::clamp(facing[2] * 0.8f + facing[1] * 0.4f, 0.0f, 1.0f);
+            face.texture = texture;
             faces.push_back(face);
         }
     };
     for (const Part& part : Parts) {
-        addBox(part, part.uv, 0.0f);
-        addBox(part, part.overlay, part.head ? 0.5f : 0.25f);
+        addBox(part, part.uv, 0.0f, Skin, false);
+        addBox(part, part.overlay, part.head ? 0.5f : 0.25f, Skin, false);
+    }
+
+    // The vanilla armor models: each piece inflates some of the parts above
+    // and wraps them in its 64x32 armor texture, left limbs mirrored.
+    struct ArmorBox {
+        size_t slot;
+        size_t part;
+        std::array<float, 2> uv;
+        float inflate;
+        bool mirror;
+    };
+    constexpr ArmorBox ArmorBoxes[] = {
+        { 0, 0, { 0.0f, 0.0f }, 1.0f, false },
+        { 0, 0, { 32.0f, 0.0f }, 1.5f, false },
+        { 1, 1, { 16.0f, 16.0f }, 1.01f, false },
+        { 1, 2, { 40.0f, 16.0f }, 1.0f, false },
+        { 1, 3, { 40.0f, 16.0f }, 1.0f, true },
+        { 2, 1, { 16.0f, 16.0f }, 0.5f, false },
+        { 2, 4, { 0.0f, 16.0f }, 0.5f, false },
+        { 2, 5, { 0.0f, 16.0f }, 0.5f, true },
+        { 3, 4, { 0.0f, 16.0f }, 1.0f, false },
+        { 3, 5, { 0.0f, 16.0f }, 1.0f, true },
+    };
+    std::array<std::string, 4> armor;
+    if (inGame()) {
+        for (size_t slot = 0; slot < armor.size(); ++slot) {
+            const HudItem& piece = inventory.state.slots[inventory::Armor + slot];
+            if (!piece.empty()) {
+                armor[slot] = world::itemArmorTexture(piece.identifier, slot);
+            }
+            if (!armor[slot].empty() && !ui.skin().sprite(armor[slot]).valid) {
+                armor[slot].clear();
+            }
+        }
+    }
+    for (const ArmorBox& box : ArmorBoxes) {
+        if (!armor[box.slot].empty()) {
+            addBox(Parts[box.part], box.uv, box.inflate, armor[box.slot], box.mirror);
+        }
     }
     std::stable_sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) {
         return a.depth < b.depth;
     });
     for (const Face& face : faces) {
         uint8_t shade = static_cast<uint8_t>(std::clamp(face.light, 0.0f, 1.0f) * 255.0f);
-        ui.spriteQuad(face.points, Skin, face.texels, { shade, shade, shade, 255 });
+        ui.spriteQuad(face.points, face.texture, face.texels, { shade, shade, shade, 255 });
     }
 }
 
@@ -1092,7 +1141,8 @@ void Menu::gameView(Context& ui, float width, float height)
         return;
     }
 
-    float y = 2.0f;
+    // hud_screen.json keeps a 50 unit paper_doll_padding over the chat while the doll shows.
+    float y = hud.paperDoll ? 52.0f : 2.0f;
     if (debugShown) {
         y = debugColumn(ui, debugView.left, width, false);
         debugColumn(ui, debugView.right, width, true);

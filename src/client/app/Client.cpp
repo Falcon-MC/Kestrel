@@ -49,6 +49,9 @@ Client::Client()
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
     window = Window::create("Kestrel", 1280, 760);
+    if (savedFullscreen) {
+        window->toggleFullscreen();
+    }
     renderer = Renderer::create(*window);
     startSeconds = secondsNow();
     soundEngine = std::make_unique<audio::SoundEngine>();
@@ -286,7 +289,7 @@ int Client::run()
             ui::Localization::shared().load(vanillaSounds, menu.language());
             saveSettings();
         }
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || menu.soundVolumes() != savedVolumes) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.soundVolumes() != savedVolumes) {
             saveSettings();
         }
         if (menu.quitRequested()) {
@@ -328,13 +331,20 @@ int Client::run()
             std::vector<world::ModelQuadGpu> entityQuads;
             {
                 Profiler::Section section(profiler, "entities");
-                if (perspective != PerspectiveFirst && playerView.active) {
-                    actorViews.push_back(localActorView(deltaSeconds));
+                std::optional<ActorView> self;
+                if (playerView.active) {
+                    self = localActorView(deltaSeconds);
+                    if (perspective != PerspectiveFirst) {
+                        actorViews.push_back(*self);
+                    }
                 }
                 std::vector<world::ModelQuadGpu> blendedQuads;
                 std::vector<world::ModelQuadGpu> handQuads;
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
                 appendFirstPerson(entityOrigin, handQuads);
+                if (self) {
+                    appendPaperDoll(*self, entityOrigin, handQuads);
+                }
                 view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());
                 view.entityBlendCount = static_cast<uint32_t>(blendedQuads.size());
                 view.handQuadCount = static_cast<uint32_t>(handQuads.size());
@@ -769,12 +779,14 @@ void Client::syncSession()
         handUpdatedAt = 0.0;
         handEquip = 0.0f;
         handRestAnimator = world::EntityAnimator();
+        paperDollAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
         for (const auto& [slot, pixels] : skinPixels) {
             renderer->updateEntityTexture(assets->skinLayerBase() + slot, pixels.data());
         }
         if (blockAssets != assets) {
             partMatches.clear();
+            armorBoneMatches.clear();
             animators.clear();
             for (const auto& [name, rendered] : itemIcons) {
                 skin.clearDynamic(name);
@@ -825,6 +837,7 @@ void Client::syncSession()
         skinPixels[skin.slot] = std::move(skin.pixels);
         skinRigs[skin.slot] = std::move(skin.rig);
         partMatches.clear();
+        armorBoneMatches.clear();
     }
     timeState.daylightCycle = snapshot.daylightCycle;
     timeState.chunkRadius = snapshot.chunkRadius;

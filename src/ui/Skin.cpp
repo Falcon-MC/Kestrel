@@ -1,5 +1,6 @@
 #include "ui/Skin.h"
 
+#include "ui/Image.h"
 #include "ui/Theme.h"
 
 #include "TitlePng.h"
@@ -207,6 +208,9 @@ Skin::Entry& Skin::load(std::string_view name)
         loaded = assets.readArchived("font", std::string(name.substr(5)) + ".png", encoded) && decodeBitmap(encoded, entry.bitmap);
     } else if (name.rfind("textures/", 0) == 0) {
         loaded = assets.readTexture(std::string(name), entry.bitmap, &entry.sprite.slice, &entry.sprite.texels);
+        if (loaded && name.rfind("textures/models/armor/leather_", 0) == 0) {
+            applyDyeMask(entry.bitmap.rgba, LeatherColor);
+        }
     }
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);

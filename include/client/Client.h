@@ -84,10 +84,14 @@ private:
     ActorView localActorView(float deltaSeconds);
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
+    const world::EntityModel* localPlayerModel(const world::EntityRig*& rig, uint32_t& skinLayer) const;
     float swingProgress();
     void startSwing(double now);
     void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
-    void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out);
+    void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
+    void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out);
+    bool paperDollVisible();
+    void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
@@ -117,6 +121,8 @@ private:
     int savedRenderDistance = menu::DefaultRenderDistance;
     int savedMaxFps = menu::DefaultMaxFps;
     int savedFov = menu::DefaultFov;
+    bool savedPaperDollHidden = false;
+    bool savedFullscreen = false;
     std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;
     uint64_t avatarRevision = 0;
@@ -170,6 +176,8 @@ private:
     uint64_t actorFrame = 0;
     world::EntityAnimator handAnimator;
     world::EntityAnimator handRestAnimator;
+    world::EntityAnimator paperDollAnimator;
+    double paperDollShownAt = 0.0;
     std::unordered_map<uint64_t, float> swimAmounts;
     double lastActorTime = 0.0;
     static constexpr int PerspectiveFirst = 0;
@@ -199,6 +207,7 @@ private:
     std::vector<HeldItemFace> heldItemMesh;
     bool heldItemBlock = false;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
+    std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;
     int framesCounted = 0;
     int framesPerSecond = 0;
