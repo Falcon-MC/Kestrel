@@ -32,12 +32,14 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
 
 /**
  * Changes the held hotbar slot with the number keys and the mouse wheel while
- * the game has the mouse, and passes clicks on to the session: left hits,
- * right uses the held item.
+ * the game has the mouse, and passes clicks on to the session: left hits and
+ * keeps mining while held, right uses the held item.
  */
 void Client::handleHotbarInput()
 {
-    if (!menu.capturesMouse() || !worldShown) {
+    bool playing = menu.capturesMouse() && worldShown;
+    session.setAttackHeld(playing && window->input().mouseDown);
+    if (!playing) {
         return;
     }
     const InputState& input = window->input();

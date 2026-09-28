@@ -2,6 +2,7 @@
 
 #include "audio/SoundEngine.h"
 #include "client/Account.h"
+#include "client/BlockParticles.h"
 #include "client/Camera.h"
 #include "client/FeaturedServers.h"
 #include "client/Profiler.h"
@@ -92,6 +93,7 @@ private:
     void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out);
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendBlockOverlays(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
@@ -163,6 +165,9 @@ private:
     std::vector<std::string> packSprites;
     bool hudUiLoaded = false;
     SidebarView sidebarView;
+    std::optional<BlockSelection> selectionView;
+    std::vector<BlockCrack> crackViews;
+    BlockParticles blockParticles;
     Profiler profiler;
     ServerPinger pinger;
     std::unique_ptr<FeaturedServers> featured;

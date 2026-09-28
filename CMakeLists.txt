@@ -76,6 +76,8 @@ endfunction()
 
 kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/block_collisions.txt" KestrelBlockCollisionData kBlockCollisions
         "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockCollisionTable.h")
+kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/block_breaking.txt" KestrelBlockBreakingData kBlockBreaking
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockBreakingTable.h")
 kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png" KestrelAppIconData kAppIconPng
         "${CMAKE_CURRENT_BINARY_DIR}/generated/AppIconPng.h")
 kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/kestrel.png" KestrelTitleData kTitlePng

@@ -50,6 +50,10 @@ void Session::handleSoundPacket(const std::shared_ptr<Packet>& packet)
         SoundRequest request;
         request.name = event->mSound;
         Vector3f at = event->mHasFirePosition ? event->mFirePosition : event->mPosition;
+        std::array<int32_t, 3> cell { int32_t(std::floor(at.x)), int32_t(std::floor(at.y)), int32_t(std::floor(at.z)) };
+        if ((request.name == "hit" || request.name == "break") && locallyBroken(cell)) {
+            return;
+        }
         request.position = { at.x, at.y, at.z };
         request.actor = event->mActorType;
         request.baby = event->mIsBabyMob;

@@ -340,16 +340,22 @@ int Client::run()
                 }
                 std::vector<world::ModelQuadGpu> blendedQuads;
                 std::vector<world::ModelQuadGpu> handQuads;
+                std::vector<world::ModelQuadGpu> overlayQuads;
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
+                blockParticles.update(secondsNow());
+                blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
                 appendFirstPerson(entityOrigin, handQuads);
                 if (self) {
                     appendPaperDoll(*self, entityOrigin, handQuads);
                 }
+                appendBlockOverlays(entityOrigin, overlayQuads);
                 view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());
                 view.entityBlendCount = static_cast<uint32_t>(blendedQuads.size());
                 view.handQuadCount = static_cast<uint32_t>(handQuads.size());
+                view.overlayQuadCount = static_cast<uint32_t>(overlayQuads.size());
                 entityQuads.insert(entityQuads.end(), blendedQuads.begin(), blendedQuads.end());
                 entityQuads.insert(entityQuads.end(), handQuads.begin(), handQuads.end());
+                entityQuads.insert(entityQuads.end(), overlayQuads.begin(), overlayQuads.end());
             }
             view.entityQuads = entityQuads.data();
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
@@ -805,6 +811,7 @@ void Client::syncSession()
         opaqueChunks.clear();
     }
     if (snapshot.state != SessionState::Joined) {
+        blockParticles.clear();
         menu.inventoryPanel().reset();
         menu.formPanel().reset();
         terrainReleased = false;
@@ -827,6 +834,11 @@ void Client::syncSession()
     }
     hudState = std::move(snapshot.hud);
     sidebarView = std::move(snapshot.sidebar);
+    selectionView = std::move(snapshot.selection);
+    crackViews = std::move(snapshot.cracks);
+    for (const ParticleBurst& burst : session.takeParticleBursts()) {
+        blockParticles.spawn(burst);
+    }
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {
             renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());

@@ -364,6 +364,8 @@ void Session::tickMotion()
         teleportHandled = false;
     }
     flag(PlayerAuthInputData::BlockBreakingDelayEnabled);
+    tickBreaking(packet, tick);
+    tickCracks();
     connection->send(packet);
     connection->flush();
     lastMotionInput = input;

@@ -79,18 +79,27 @@ struct WorldView {
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
     /**
-     * Entity quads in three runs: entityQuadCount opaque ones, then
+     * Entity quads in four runs: entityQuadCount opaque ones, then
      * entityBlendCount alpha blended ones drawn after translucent terrain,
      * then handQuadCount first person ones drawn last in a sliver of the depth
-     * range so walls never cut into the hand.
+     * range so walls never cut into the hand, then overlayQuadCount block
+     * cracks and outline edges. Overlays are placed in 1/1024 block and
+     * multiply the color under them: entity quads shade it like 40% black, the rest
+     * double what their texture covers, like the game's Cracks material.
      */
     const void* entityQuads = nullptr;
     uint32_t entityQuadCount = 0;
     uint32_t entityBlendCount = 0;
     uint32_t handQuadCount = 0;
+    uint32_t overlayQuadCount = 0;
     std::array<float, 3> entityOrigin {};
 
     uint32_t entityTotal() const
+    {
+        return entityQuadCount + entityBlendCount + handQuadCount + overlayQuadCount;
+    }
+
+    uint32_t overlayStart() const
     {
         return entityQuadCount + entityBlendCount + handQuadCount;
     }

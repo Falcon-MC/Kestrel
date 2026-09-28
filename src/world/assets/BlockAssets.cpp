@@ -1207,6 +1207,12 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             layers.push_back(tileOf(rgba, width, (phase % 4) * size, (phase / 4) * size, size));
         }
     }
+    for (uint32_t stage = 0; stage < DestroyStages; ++stage) {
+        if (loadImage("textures/environment/destroy_stage_" + std::to_string(stage), width, height, rgba)) {
+            destroyStages[stage] = static_cast<uint32_t>(layers.size());
+            layers.push_back(tileOf(rgba, width, 0, 0, std::min(width, height)));
+        }
+    }
 
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
     buildEntityModels(pack, packs);
