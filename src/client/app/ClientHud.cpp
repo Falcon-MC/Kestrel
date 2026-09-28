@@ -46,7 +46,7 @@ void Client::handleHotbarInput()
     }
     if (input.rightMousePressed) {
         session.requestInteraction(true);
-        swingStart = secondsNow();
+        startSwing(secondsNow());
     }
     if (input.pressedKey == menu.keyBindings().drop()) {
         session.requestInventory({ InventoryAction::Drop, hudState.selectedSlot, 0, input.isHeld(Key::Control), {} });
