@@ -14,6 +14,8 @@ namespace {
 
 constexpr double Pi = 3.14159265358979323846;
 constexpr int MaxDepth = 8;
+constexpr double TickSeconds = 0.05;
+constexpr int MaxCatchUpTicks = 5;
 
 using util::lowercase;
 
@@ -850,7 +852,6 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     if (!initialized) {
         firstSeen = input.now;
         lastUpdate = input.now;
-        lastMoveTime = input.now;
         lastPosition = { input.x, input.y, input.z };
         lastYaw = input.yaw;
         variables["gliding_speed_value"] = 1.0;
@@ -864,26 +865,30 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     deltaTime = std::clamp(input.now - lastUpdate, 0.0, 0.25);
     lastUpdate = input.now;
 
-    std::array<double, 3> moved { input.x - lastPosition[0], input.y - lastPosition[1], input.z - lastPosition[2] };
-    double distance = std::sqrt(moved[0] * moved[0] + moved[1] * moved[1] + moved[2] * moved[2]);
-    if (distance > 1.0e-5) {
-        double span = std::clamp(input.now - lastMoveTime, 0.05, 0.5);
-        if (distance > 8.0) {
-            velocity = {};
-        } else {
-            velocity = { moved[0] / span, moved[1] / span, moved[2] / span };
-            walkDistance += std::sqrt(moved[0] * moved[0] + moved[2] * moved[2]);
-        }
-        lastMoveTime = input.now;
-        lastPosition = { input.x, input.y, input.z };
-    } else if (input.now - lastMoveTime > 0.2) {
-        velocity = {};
+    tickClock += deltaTime;
+    int ticks = 0;
+    while (tickClock >= TickSeconds && ticks < MaxCatchUpTicks) {
+        tickClock -= TickSeconds;
+        ++ticks;
     }
-    double ticks = deltaTime * 20.0;
-    double horizontal = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]) / 20.0;
-    double target = std::min(horizontal * 4.0, 1.0);
-    limbAmount += (target - limbAmount) * (1.0 - std::pow(0.6, ticks));
-    limbDistance += limbAmount * ticks;
+    tickClock = std::min(tickClock, TickSeconds);
+    if (ticks > 0) {
+        std::array<double, 3> moved { input.x - lastPosition[0], input.y - lastPosition[1], input.z - lastPosition[2] };
+        if (moved[0] * moved[0] + moved[1] * moved[1] + moved[2] * moved[2] > 64.0) {
+            moved = {};
+        }
+        velocity = { moved[0] / ticks / TickSeconds, moved[1] / ticks / TickSeconds, moved[2] / ticks / TickSeconds };
+        double step = std::sqrt(moved[0] * moved[0] + moved[2] * moved[2]) / ticks;
+        double target = std::min(step * 4.0, 1.0);
+        for (int tick = 0; tick < ticks; ++tick) {
+            previousLimbAmount = limbAmount;
+            limbAmount += (target - limbAmount) * 0.4;
+            limbDistance += limbAmount;
+        }
+        previousWalkDistance = walkDistance + step * (ticks - 1);
+        walkDistance += step * ticks;
+        lastPosition = { input.x, input.y, input.z };
+    }
     yawSpeed = deltaTime > 0.0 ? wrapDegrees(input.yaw - lastYaw) / deltaTime : 0.0;
     lastYaw = input.yaw;
 
@@ -971,11 +976,12 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "delta_time") {
         return deltaTime;
     }
+    double partialTick = tickClock / TickSeconds;
     if (name == "modified_distance_moved") {
-        return limbDistance;
+        return limbDistance - limbAmount * (1.0 - partialTick);
     }
     if (name == "modified_move_speed") {
-        return limbAmount;
+        return previousLimbAmount + (limbAmount - previousLimbAmount) * partialTick;
     }
     if (name == "ground_speed") {
         return speed;
@@ -984,7 +990,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return velocity[1];
     }
     if (name == "walk_distance" || name == "distance_moved") {
-        return walkDistance;
+        return previousWalkDistance + (walkDistance - previousWalkDistance) * partialTick;
     }
     if (name == "distance_from_camera" || name == "rotation_to_camera") {
         double dx = current.cameraX - current.x;

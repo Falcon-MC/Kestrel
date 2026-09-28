@@ -250,11 +250,13 @@ private:
     double lastUpdate = 0.0;
     double deltaTime = 0.0;
     double animTime = 0.0;
-    double lastMoveTime = 0.0;
+    double tickClock = 0.0;
     std::array<double, 3> lastPosition {};
     std::array<double, 3> velocity {};
+    double previousLimbAmount = 0.0;
     double limbAmount = 0.0;
     double limbDistance = 0.0;
+    double previousWalkDistance = 0.0;
     double walkDistance = 0.0;
     double lastYaw = 0.0;
     double yawSpeed = 0.0;
