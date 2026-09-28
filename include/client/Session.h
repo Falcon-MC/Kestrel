@@ -497,6 +497,7 @@ private:
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
     void useOnBlock(const BlockHit& block);
+    bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);
     void tickHeldUse();
     uint32_t blockAt(int32_t x, int32_t y, int32_t z, uint32_t layer = 0);
