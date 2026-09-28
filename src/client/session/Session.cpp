@@ -101,6 +101,8 @@ constexpr const char* ExperiencePrefix = "experience_id/";
 constexpr const char* RealmsUrl = "https://bedrock.frontendlegacy.realms.minecraft-services.net";
 constexpr const char* RealmsRelyingParty = "https://pocket.realms.minecraft.net/";
 constexpr unsigned int TimeoutMs = 30000;
+// The block outline follows the crosshair, so the loop never sleeps long enough for it to lag behind.
+constexpr int OutlineRefreshMs = 10;
 
 /**
  * Sends the game's Steve texture as the player's skin, so other players and
@@ -938,6 +940,7 @@ void Session::handleWorldPacket(const std::string& payload)
             initializeLocalPlayer(*connection, localRuntimeId);
         }
     } else if (auto event = std::dynamic_pointer_cast<LevelEventPacket>(packet)) {
+        handleBreakingEvent(*event);
         std::lock_guard<std::mutex> guard(mutex);
         switch (event->mEventId) {
         case LevelEventPacket::StartRain:
@@ -1429,7 +1432,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     while (!cancelled) {
         int waitMs = 50;
         if (spawnInitialized && nextMotionTick > 0.0) {
-            waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 1, 50);
+            waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 1, OutlineRefreshMs);
         }
         bool received = connection->readRaw(payload, waitMs, &cancelled);
         if (received) {
@@ -1471,6 +1474,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         scheduleMeshes();
         collectMeshes();
         finishDimensionChange();
+        if (assets) {
+            publishBreaking();
+        }
 
         std::lock_guard<std::mutex> guard(mutex);
         if (received) {

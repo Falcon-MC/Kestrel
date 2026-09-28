@@ -8,6 +8,13 @@ layout(push_constant) uniform Draw {
     vec4 sun;
 } draw;
 
+// Overlays sit close to the camera and need finer steps than terrain to keep thin outlines steady.
+#ifdef OVERLAY
+const float PositionScale = 1024.0;
+#else
+const float PositionScale = 256.0;
+#endif
+
 layout(location = 0) in uvec4 inA;
 layout(location = 1) in uvec4 inB;
 layout(location = 2) in uvec4 inC;
@@ -45,7 +52,7 @@ void main()
         uint component = corner * 3u + i;
         uint word = words[component / 2u];
         int value = (component & 1u) != 0u ? (int(word) >> 16) : (int(word << 16) >> 16);
-        local[i] = float(value) / 256.0;
+        local[i] = float(value) / PositionScale;
     }
     uint uvWord = words[6u + corner];
 

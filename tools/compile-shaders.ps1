@@ -13,7 +13,9 @@ $stages = @(
     @{ File = "world.frag"; Name = "BlendFragment"; Define = "BLEND" },
     @{ File = "model.vert"; Name = "ModelVertex" },
     @{ File = "sky.vert"; Name = "SkyVertex" },
-    @{ File = "sky.frag"; Name = "SkyFragment" }
+    @{ File = "sky.frag"; Name = "SkyFragment" },
+    @{ File = "model.vert"; Name = "OverlayVertex"; Define = "OVERLAY" },
+    @{ File = "world.frag"; Name = "OverlayFragment"; Define = "OVERLAY" }
 )
 foreach ($stage in $stages) {
     $spirv = Join-Path $temp ($stage.Name + ".spv")

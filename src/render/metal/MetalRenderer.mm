@@ -194,7 +194,7 @@ struct ModelIn {
     uint4 d [[attribute(3)]];
 };
 
-vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float positionScale)
 {
     const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
     const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
@@ -205,7 +205,7 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
         uint component = corner * 3 + i;
         uint word = words[component / 2];
         int value = (component & 1) != 0 ? (int(word) >> 16) : (int(word << 16) >> 16);
-        local[i] = float(value) / 256.0;
+        local[i] = float(value) / positionScale;
     }
     uint uvWord = words[6 + corner];
 
@@ -224,6 +224,16 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     out.light = cornerLight(in.d.x, in.d.y, corner);
     out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
     return out;
+}
+
+vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    return placeModel(in, vertexId, draw, 256.0);
+}
+
+vertex WorldOut overlay_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    return placeModel(in, vertexId, draw, 1024.0);
 }
 
 float4 sampleLayer(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, float2 uv, uint layer)
@@ -317,6 +327,18 @@ fragment float4 sky_fragment(SkyOut in [[stage_in]], texture2d_array<float> bloc
         return float4(color.rgb * color.a, 0.0);
     }
     return float4(color.rgb * color.a, color.a);
+}
+
+fragment float4 overlay_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+{
+    if (in.entity != 0) {
+        return float4(0.3, 0.3, 0.3, 1.0);
+    }
+    float4 crack = sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv);
+    if (crack.a < 0.5) {
+        discard_fragment();
+    }
+    return float4(crack.rgb, 1.0);
 }
 
 fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
@@ -555,6 +577,8 @@ public:
             drawStream(*chunk, 2);
         }
         drawEntities(modelBlendPipeline, view.entityQuadCount, view.entityBlendCount, 1.0);
+        [encoder setDepthStencilState:decalDepth];
+        drawEntities(overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0);
         [encoder setDepthStencilState:worldDepth];
         drawEntities(modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
@@ -740,7 +764,16 @@ private:
         descriptor.fragmentFunction = [library newFunctionWithName:@"sky_fragment"];
         descriptor.vertexDescriptor = skyDescriptor;
         skyPipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
-        if (!blendPipeline || !modelBlendPipeline || !skyPipeline) {
+
+        attachment.sourceRGBBlendFactor = MTLBlendFactorDestinationColor;
+        attachment.destinationRGBBlendFactor = MTLBlendFactorSourceColor;
+        attachment.sourceAlphaBlendFactor = MTLBlendFactorZero;
+        attachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+        descriptor.vertexFunction = [library newFunctionWithName:@"overlay_vertex"];
+        descriptor.fragmentFunction = [library newFunctionWithName:@"overlay_fragment"];
+        descriptor.vertexDescriptor = modelDescriptor;
+        overlayPipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+        if (!blendPipeline || !modelBlendPipeline || !skyPipeline || !overlayPipeline) {
             throw std::runtime_error(std::string("Blend pipeline creation failed: ") + (error ? error.localizedDescription.UTF8String : ""));
         }
 
@@ -753,6 +786,11 @@ private:
         overlayDepthDescriptor.depthCompareFunction = MTLCompareFunctionLess;
         overlayDepthDescriptor.depthWriteEnabled = NO;
         overlayDepth = [device newDepthStencilStateWithDescriptor:overlayDepthDescriptor];
+
+        MTLDepthStencilDescriptor* decalDepthDescriptor = [MTLDepthStencilDescriptor new];
+        decalDepthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
+        decalDepthDescriptor.depthWriteEnabled = NO;
+        decalDepth = [device newDepthStencilStateWithDescriptor:decalDepthDescriptor];
 
         MTLDepthStencilDescriptor* uiDepthDescriptor = [MTLDepthStencilDescriptor new];
         uiDepthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
@@ -838,8 +876,10 @@ private:
     id<MTLRenderPipelineState> modelPipeline;
     id<MTLRenderPipelineState> blendPipeline;
     id<MTLRenderPipelineState> modelBlendPipeline;
+    id<MTLRenderPipelineState> overlayPipeline;
     id<MTLRenderPipelineState> skyPipeline;
     id<MTLDepthStencilState> overlayDepth;
+    id<MTLDepthStencilState> decalDepth;
     id<MTLDepthStencilState> worldDepth;
     id<MTLDepthStencilState> uiDepth;
     id<MTLSamplerState> blockSampler;

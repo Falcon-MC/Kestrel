@@ -66,6 +66,7 @@ public:
         vkDestroyPipeline(device, modelPipeline, nullptr);
         vkDestroyPipeline(device, blendPipeline, nullptr);
         vkDestroyPipeline(device, modelBlendPipeline, nullptr);
+        vkDestroyPipeline(device, overlayPipeline, nullptr);
         vkDestroyPipeline(device, skyPipeline, nullptr);
         vkDestroyPipelineLayout(device, worldLayout, nullptr);
         vkDestroyDescriptorPool(device, worldDescriptorPool, nullptr);
@@ -536,6 +537,7 @@ public:
             drawStream(*chunk, 2);
         }
         drawEntities(modelBlendPipeline, view.entityQuadCount, view.entityBlendCount, 1.0f);
+        drawEntities(overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0f);
         drawEntities(modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
@@ -1010,6 +1012,28 @@ private:
         info.pVertexInputState = &skyInput;
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &skyPipeline), "vkCreateGraphicsPipelines");
 
+        VkShaderModuleCreateInfo overlayVertexInfo { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+        overlayVertexInfo.codeSize = sizeof(shaders::OverlayVertex);
+        overlayVertexInfo.pCode = shaders::OverlayVertex;
+        VkShaderModule overlayVertexModule;
+        check(vkCreateShaderModule(device, &overlayVertexInfo, nullptr, &overlayVertexModule), "vkCreateShaderModule");
+        VkShaderModuleCreateInfo overlayFragmentInfo { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+        overlayFragmentInfo.codeSize = sizeof(shaders::OverlayFragment);
+        overlayFragmentInfo.pCode = shaders::OverlayFragment;
+        VkShaderModule overlayFragmentModule;
+        check(vkCreateShaderModule(device, &overlayFragmentInfo, nullptr, &overlayFragmentModule), "vkCreateShaderModule");
+        stages[0].module = overlayVertexModule;
+        stages[1].module = overlayFragmentModule;
+        info.pVertexInputState = &modelInput;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+        blend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        depthState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &overlayPipeline), "vkCreateGraphicsPipelines");
+
+        vkDestroyShaderModule(device, overlayVertexModule, nullptr);
+        vkDestroyShaderModule(device, overlayFragmentModule, nullptr);
         vkDestroyShaderModule(device, skyVertexModule, nullptr);
         vkDestroyShaderModule(device, skyFragmentModule, nullptr);
         vkDestroyShaderModule(device, blendModule, nullptr);
@@ -1559,6 +1583,7 @@ private:
     VkPipeline modelPipeline = VK_NULL_HANDLE;
     VkPipeline blendPipeline = VK_NULL_HANDLE;
     VkPipeline modelBlendPipeline = VK_NULL_HANDLE;
+    VkPipeline overlayPipeline = VK_NULL_HANDLE;
     VkPipeline skyPipeline = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
     std::vector<RetiredBuffer> retired;

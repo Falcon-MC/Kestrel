@@ -211,7 +211,7 @@ struct ModelIn
     uint vertexId : SV_VertexID;
 };
 
-WorldOut vs_model(ModelIn input)
+WorldOut placeModel(ModelIn input, float positionScale)
 {
     static const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
     static const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
@@ -222,7 +222,7 @@ WorldOut vs_model(ModelIn input)
         uint component = corner * 3 + i;
         uint word = words[component / 2];
         int value = (component & 1) != 0 ? (int(word) >> 16) : (int(word << 16) >> 16);
-        local[i] = float(value) / 256.0;
+        local[i] = float(value) / positionScale;
     }
     uint uvWord = words[6 + corner];
 
@@ -241,6 +241,16 @@ WorldOut vs_model(ModelIn input)
     output.light = cornerLight(input.d.x, input.d.y, corner);
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 15 : 0;
     return output;
+}
+
+WorldOut vs_model(ModelIn input)
+{
+    return placeModel(input, 256.0);
+}
+
+WorldOut vs_overlay(ModelIn input)
+{
+    return placeModel(input, 1024.0);
 }
 
 float4 sampleLayer(float2 uv, uint layer)
@@ -327,6 +337,18 @@ float4 ps_blend(WorldOut input) : SV_Target
         return float4(texel.rgb * texel.a, (input.entity & 2) != 0 ? 0.0 : texel.a);
     }
     return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light) * texel.a, texel.a);
+}
+
+float4 ps_overlay(WorldOut input) : SV_Target
+{
+    if (input.entity != 0) {
+        return float4(0.3, 0.3, 0.3, 1.0);
+    }
+    float4 crack = sampleMaterial(input.material, input.uv);
+    if (crack.a < 0.5) {
+        discard;
+    }
+    return float4(crack.rgb, 1.0);
 }
 
 struct SkyIn
@@ -971,6 +993,7 @@ public:
             drawStream(*chunk, 2);
         }
         drawEntities(modelBlendPipeline.Get(), view.entityQuadCount, view.entityBlendCount, 1.0f);
+        drawEntities(overlayPipeline.Get(), view.overlayStart(), view.overlayQuadCount, 1.0f);
         drawEntities(modelPipeline.Get(), view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
@@ -1314,6 +1337,18 @@ private:
         pipelineDesc.PS = { skyPixel->GetBufferPointer(), skyPixel->GetBufferSize() };
         pipelineDesc.InputLayout = { skyLayout, static_cast<UINT>(std::size(skyLayout)) };
         check(device->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&skyPipeline)), "CreateGraphicsPipelineState");
+
+        ComPtr<ID3DBlob> overlayVertex = compile(WorldShader, sizeof(WorldShader) - 1, "vs_overlay", "vs_5_0");
+        ComPtr<ID3DBlob> overlayPixel = compile(WorldShader, sizeof(WorldShader) - 1, "ps_overlay", "ps_5_0");
+        pipelineDesc.VS = { overlayVertex->GetBufferPointer(), overlayVertex->GetBufferSize() };
+        pipelineDesc.PS = { overlayPixel->GetBufferPointer(), overlayPixel->GetBufferSize() };
+        pipelineDesc.InputLayout = { modelLayout, static_cast<UINT>(std::size(modelLayout)) };
+        blend.SrcBlend = D3D12_BLEND_DEST_COLOR;
+        blend.DestBlend = D3D12_BLEND_SRC_COLOR;
+        blend.SrcBlendAlpha = D3D12_BLEND_ZERO;
+        blend.DestBlendAlpha = D3D12_BLEND_ONE;
+        pipelineDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        check(device->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&overlayPipeline)), "CreateGraphicsPipelineState");
     }
 
     void createDepth()
@@ -1409,6 +1444,7 @@ private:
     ComPtr<ID3D12PipelineState> modelPipeline;
     ComPtr<ID3D12PipelineState> blendPipeline;
     ComPtr<ID3D12PipelineState> modelBlendPipeline;
+    ComPtr<ID3D12PipelineState> overlayPipeline;
     ComPtr<ID3D12PipelineState> skyPipeline;
     std::array<ComPtr<ID3D12Resource>, BlockTexturePages> blockTextures;
     std::array<ComPtr<ID3D12Resource>, EntityTexturePages> entityTextures;

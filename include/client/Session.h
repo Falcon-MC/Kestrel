@@ -6,6 +6,7 @@
 #include "client/Inventory.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
+#include "world/BlockCollisions.h"
 #include "world/MeshScheduler.h"
 #include "world/WorldStream.h"
 
@@ -22,9 +23,11 @@
 #include <thread>
 
 class BedrockConnection;
+class LevelEventPacket;
 class MinecraftAuthentication;
 class Packet;
 class PacketViolationWarningPacket;
+class PlayerAuthInputPacket;
 class SerializedSkin;
 
 namespace kestrel {
@@ -55,6 +58,49 @@ struct BlockHit {
     int32_t face = 0;
     std::array<double, 3> point {};
     double distance = 0.0;
+};
+
+/**
+ * The box outlined around the block under the crosshair, in world
+ * coordinates.
+ */
+struct BlockSelection {
+    std::array<int32_t, 3> cell {};
+    std::array<double, 3> min {};
+    std::array<double, 3> max {};
+};
+
+/**
+ * A block someone is breaking: its look, the boxes of its shape relative to
+ * its cell, which the cracks cover when it has no model, and how far along
+ * the breaking is, from 0 to 1.
+ */
+struct BlockCrack {
+    std::array<int32_t, 3> cell {};
+    world::BlockVisual visual;
+    std::vector<world::CollisionBox> boxes;
+    float progress = 0.0f;
+};
+
+/**
+ * Particles a block throws off: the burst of a broken block or the chip
+ * knocked off the face being mined. Material is a block texture word and
+ * tint 0xRRGGBB (0 for none); the shape and the obstacles the particles
+ * bounce on are relative to the cell.
+ */
+struct ParticleBurst {
+    enum class Kind {
+        Destroy,
+        Crack,
+    };
+
+    Kind kind = Kind::Destroy;
+    std::array<int32_t, 3> cell {};
+    int32_t face = 0;
+    uint32_t material = 0;
+    uint32_t tint = 0;
+    world::CollisionBox shape;
+    std::shared_ptr<const std::vector<world::CollisionBox>> obstacles;
 };
 
 /**
@@ -294,6 +340,8 @@ struct SessionSnapshot {
     uint64_t unresolvedLookups = 0;
     uint32_t lastUnresolved = 0;
     std::optional<TargetBlock> targetBlock;
+    std::optional<BlockSelection> selection;
+    std::vector<BlockCrack> cracks;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -362,6 +410,13 @@ public:
      * item, a left click hits the entity under the crosshair.
      */
     void requestInteraction(bool use);
+
+    /**
+     * Whether the attack button is held down in game, which keeps mining the
+     * block under the crosshair.
+     */
+    void setAttackHeld(bool held);
+    std::vector<ParticleBurst> takeParticleBursts();
     void requestInventory(InventoryCommand command);
 
     /**
@@ -406,7 +461,18 @@ private:
     bool skinWorn(const std::string& uuid) const;
     std::optional<TargetBlock> traceTarget();
     std::optional<BlockHit> traceBlock(double reach);
+    const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
+    uint32_t blockAt(int32_t x, int32_t y, int32_t z, uint32_t layer = 0);
+    std::vector<world::CollisionBox> shapeBoxes(uint32_t value, int32_t x, int32_t y, int32_t z);
+    world::CollisionBox selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z);
+    void tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick);
+    void destroyPredicted(PlayerAuthInputPacket& packet, int32_t face);
+    void emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& cell, uint32_t value, int32_t face);
+    void handleBreakingEvent(const LevelEventPacket& event);
+    bool locallyBroken(const std::array<int32_t, 3>& cell) const;
+    void tickCracks();
+    void publishBreaking();
     double boomFraction();
     uint8_t mediumAt(const std::array<double, 3>& position);
 
@@ -476,6 +542,30 @@ private:
     bool dimensionAckReceived = false;
     std::atomic<bool> useRequested { false };
     std::atomic<bool> attackRequested { false };
+    std::atomic<bool> attackHeld { false };
+
+    struct LocalBreak {
+        bool active = false;
+        std::array<int32_t, 3> cell {};
+        int32_t face = 0;
+        uint32_t value = 0;
+        float progress = 0.0f;
+        uint32_t ticks = 0;
+    };
+
+    struct RemoteCrack {
+        uint32_t value = 0;
+        float progress = 0.0f;
+        float speed = 0.0f;
+    };
+
+    LocalBreak breaking;
+    bool attackOnEntity = false;
+    bool attackHeldBefore = false;
+    int32_t destroyDelay = 0;
+    std::map<std::array<int32_t, 3>, RemoteCrack> remoteCracks;
+    std::map<std::array<int32_t, 3>, double> recentBreaks;
+    std::vector<ParticleBurst> pendingBursts;
     PlayerMotion motion;
     MotionInput motionInput;
     MotionInput lastMotionInput;

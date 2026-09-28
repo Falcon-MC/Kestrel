@@ -69,6 +69,18 @@ vec4 applyTint(vec4 texel, uint tint)
 
 void main()
 {
+#ifdef OVERLAY
+    // Outline edges darken what is under them like 40% black, cracks multiply it twice over.
+    if (inEntity != 0u) {
+        outColor = vec4(0.3, 0.3, 0.3, 1.0);
+        return;
+    }
+    vec4 crack = sampleMaterial(inMaterial, inUv);
+    if (crack.a < 0.5) {
+        discard;
+    }
+    outColor = vec4(crack.rgb, 1.0);
+#else
     vec4 texel = inEntity != 0u ? texture(entities, vec3(inUv, float(inMaterial & 0xfffu))) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
     if ((inEntity & 4u) != 0u) texel.rgb = mix(texel.rgb, vec3(1.0, 0.0, 0.0), 0.5);
@@ -93,5 +105,6 @@ void main()
         discard;
     }
     outColor = vec4(shadeWorld(texel.rgb), 1.0);
+#endif
 #endif
 }

@@ -22,12 +22,14 @@ constexpr float DefaultActorHeight = 1.8f;
 
 /**
  * Where a ray first enters a box, as a distance along the ray, or nothing
- * when it misses or the box is behind.
+ * when it misses or the box is behind. The axis it enters across is stored
+ * in entryAxis, -1 when the ray starts inside.
  */
-std::optional<double> enterBox(const std::array<double, 3>& origin, const std::array<double, 3>& direction, const std::array<double, 3>& low, const std::array<double, 3>& high)
+std::optional<double> enterBox(const std::array<double, 3>& origin, const std::array<double, 3>& direction, const std::array<double, 3>& low, const std::array<double, 3>& high, int* entryAxis = nullptr)
 {
     double entry = 0.0;
     double exit = std::numeric_limits<double>::max();
+    int axisOfEntry = -1;
     for (size_t axis = 0; axis < 3; ++axis) {
         if (std::abs(direction[axis]) < 1.0e-12) {
             if (origin[axis] < low[axis] || origin[axis] > high[axis]) {
@@ -37,11 +39,17 @@ std::optional<double> enterBox(const std::array<double, 3>& origin, const std::a
         }
         double first = (low[axis] - origin[axis]) / direction[axis];
         double second = (high[axis] - origin[axis]) / direction[axis];
-        entry = std::max(entry, std::min(first, second));
+        if (std::min(first, second) > entry) {
+            entry = std::min(first, second);
+            axisOfEntry = int(axis);
+        }
         exit = std::min(exit, std::max(first, second));
     }
     if (entry > exit) {
         return std::nullopt;
+    }
+    if (entryAxis) {
+        *entryAxis = axisOfEntry;
     }
     return entry;
 }
@@ -54,9 +62,10 @@ void Session::requestInteraction(bool use)
 }
 
 /**
- * The first solid block along the look ray within reach: its cell, the face
- * the ray enters through (down, up, north, south, west, east) and the point
- * it hits.
+ * The first block along the look ray within reach whose outline box the ray
+ * passes through: its cell, the face of that box the ray enters through
+ * (down, up, north, south, west, east) and the point it hits. Rays slip past
+ * the empty part of slabs, torches and the like, as in the game.
  */
 std::optional<BlockHit> Session::traceBlock(double reach)
 {
@@ -77,21 +86,25 @@ std::optional<BlockHit> Session::traceBlock(double reach)
         next[axis] = direction != 0.0 ? boundary * delta[axis] : 1e30;
     }
     static constexpr int32_t Faces[3][2] = { { 4, 5 }, { 0, 1 }, { 2, 3 } };
-    int lastAxis = -1;
+    std::array<double, 3> direction { lookDirection[0], lookDirection[1], lookDirection[2] };
     double travelled = 0.0;
     while (travelled <= reach) {
-        world::SubChunkKey key { current.dimension, int32_t(cell[0] >> 4), int32_t(cell[1] >> 4), int32_t(cell[2] >> 4) };
-        if (std::shared_ptr<const world::SubChunk> sub = world.store().subChunk(key)) {
-            uint32_t value = sub->runtimeId(0, uint32_t(cell[0] & 15), uint32_t(cell[1] & 15), uint32_t(cell[2] & 15));
-            const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
-            if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid) {
+        uint32_t value = blockAt(int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
+        const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+        if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid) {
+            world::CollisionBox box = selectionBox(value, int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
+            std::array<double, 3> low { double(cell[0]) + box.minX, double(cell[1]) + box.minY, double(cell[2]) + box.minZ };
+            std::array<double, 3> high { double(cell[0]) + box.maxX, double(cell[1]) + box.maxY, double(cell[2]) + box.maxZ };
+            int axis = -1;
+            std::optional<double> entry = enterBox(lookOrigin, direction, low, high, &axis);
+            if (entry && *entry <= reach) {
                 BlockHit hit;
                 hit.cell = { int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]) };
                 hit.value = value;
-                hit.distance = travelled;
-                hit.face = lastAxis < 0 ? 1 : Faces[lastAxis][step[lastAxis] < 0 ? 1 : 0];
-                for (int axis = 0; axis < 3; ++axis) {
-                    hit.point[axis] = lookOrigin[axis] + lookDirection[axis] * travelled;
+                hit.distance = *entry;
+                hit.face = axis < 0 ? 1 : Faces[axis][direction[axis] < 0.0 ? 1 : 0];
+                for (int i = 0; i < 3; ++i) {
+                    hit.point[i] = lookOrigin[i] + direction[i] * *entry;
                 }
                 hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
                 return hit;
@@ -101,9 +114,31 @@ std::optional<BlockHit> Session::traceBlock(double reach)
         travelled = next[axis];
         next[axis] += delta[axis];
         cell[axis] += step[axis];
-        lastAxis = axis;
     }
     return std::nullopt;
+}
+
+/**
+ * The nearest other entity whose box the ray enters within reach, with the
+ * distance along the ray it is hit at.
+ */
+const ActorView* Session::traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const
+{
+    const ActorView* target = nullptr;
+    distance = reach;
+    for (const auto& [runtimeId, actor] : actors) {
+        if (runtimeId == localRuntimeId) {
+            continue;
+        }
+        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5;
+        double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
+        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y, actor.z - half }, { actor.x + half, actor.y + height, actor.z + half });
+        if (entry && *entry < distance) {
+            distance = *entry;
+            target = &actor;
+        }
+    }
+    return target;
 }
 
 /**
@@ -127,21 +162,10 @@ void Session::interact(bool use)
         slot = std::clamp(current.hud.selectedSlot, 0, 8);
     }
     std::optional<BlockHit> block = traceBlock(InteractReach);
-    double limit = block ? block->distance : InteractReach;
-
-    const ActorView* target = nullptr;
-    double nearest = limit;
-    for (const auto& [runtimeId, actor] : actors) {
-        if (runtimeId == localRuntimeId) {
-            continue;
-        }
-        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5;
-        double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
-        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y, actor.z - half }, { actor.x + half, actor.y + height, actor.z + half });
-        if (entry && *entry < nearest) {
-            nearest = *entry;
-            target = &actor;
-        }
+    double nearest = 0.0;
+    const ActorView* target = traceActor(origin, direction, block ? block->distance : InteractReach, nearest);
+    if (!use) {
+        attackOnEntity = target != nullptr;
     }
 
     InventoryTransactionPacket packet;

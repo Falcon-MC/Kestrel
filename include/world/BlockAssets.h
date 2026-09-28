@@ -5,6 +5,7 @@
 #include "world/EntityAnimation.h"
 #include "world/ServerPack.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <functional>
@@ -36,6 +37,7 @@ inline constexpr uint32_t TextureSize = 16;
 inline constexpr uint32_t TextureMipLevels = 5;
 inline constexpr size_t MaxTextureLayers = 4096;
 inline constexpr uint32_t NoModelTemplate = 0xFFFFFFFFu;
+inline constexpr uint32_t DestroyStages = 10;
 
 enum ModelTemplateFlag : uint32_t {
     TemplateStair = 1 << 0,
@@ -399,6 +401,15 @@ public:
         return moonPhases[phase % 8];
     }
 
+    /**
+     * The crack texture drawn over a block being broken, stage 0 to 9, or 0
+     * when the pack has none.
+     */
+    uint32_t destroyStageLayer(uint32_t stage) const
+    {
+        return destroyStages[std::min(stage, DestroyStages - 1)];
+    }
+
     uint32_t templateFlags(const BlockVisual& visual) const
     {
         return visual.hasModel() && visual.modelTemplate < templates.size() ? templates[visual.modelTemplate].flags : 0;
@@ -472,6 +483,7 @@ private:
     std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
+    std::array<uint32_t, DestroyStages> destroyStages {};
     size_t diagnosticCount = 0;
     uint32_t airSequential = 0;
     uint32_t airHash = 0;
