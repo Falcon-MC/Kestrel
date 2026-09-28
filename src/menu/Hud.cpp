@@ -289,6 +289,8 @@ ui::UiData hudData(const HudView& view)
     ui::UiData data = view.sidebar;
     ui::UiRow& g = data.globals;
     bool survival = view.showStats;
+    bool hotbarShown = view.showHotbar && !view.hidden(HudElement::HotBar);
+    bool experience = survival && !view.hidden(HudElement::ProgressBar);
     g["#hud_visible"] = flag(view.visible);
     g["#hud_alpha"] = number(1.0);
     g["#hud_propagate_alpha"] = flag(false);
@@ -296,29 +298,29 @@ ui::UiData hudData(const HudView& view)
     g["#hud_visible_centered_gui_elements"] = flag(true);
     g["#hud_visible_centered_touch"] = flag(false);
     g["#hud_visible_not_centered"] = flag(false);
-    g["#hotbar_visible"] = flag(view.showHotbar);
+    g["#hotbar_visible"] = flag(hotbarShown);
     g["#hotbar_visible_not_centered"] = flag(false);
     g["#hotbar_visible_not_centered_resizable"] = flag(false);
-    g["#hotbar_with_xp_bar"] = flag(view.showHotbar && survival);
-    g["#hotbar_no_xp_bar"] = flag(view.showHotbar && !survival);
+    g["#hotbar_with_xp_bar"] = flag(hotbarShown && experience);
+    g["#hotbar_no_xp_bar"] = flag(hotbarShown && !experience);
     g["#hotbar_with_locator_bar"] = flag(false);
     g["#hotbar_elipses_left_visible"] = flag(false);
     g["#hotbar_elipses_right_visible"] = flag(false);
     g["#hotbar_grid_dimensions"] = text("9,1");
     g["#is_spectator_mode"] = flag(!view.showHotbar);
     g["#show_survival_ui"] = flag(survival);
-    g["#is_armor_visible"] = flag(survival && view.armor > 0);
-    g["#is_not_riding_bubbles"] = flag(survival && view.air < view.maxAir);
+    g["#is_armor_visible"] = flag(survival && view.armor > 0 && !view.hidden(HudElement::Armor));
+    g["#is_not_riding_bubbles"] = flag(survival && view.air < view.maxAir && !view.hidden(HudElement::AirBubbles));
     g["#is_riding_bubbles"] = flag(false);
     g["#horse_hearts_touch"] = flag(false);
     g["#creative_horse_hearts"] = flag(false);
     g["#survival_horse_hearts"] = flag(false);
     g["#level_number"] = text(std::to_string(view.level));
-    g["#level_number_visible"] = flag(survival && view.level > 0);
+    g["#level_number_visible"] = flag(experience && view.level > 0);
     // clip_ratio is the part cut away, so a quarter full bar clips three quarters.
     g["#exp_progress"] = number(1.0 - std::clamp(static_cast<double>(view.experience), 0.0, 1.0));
     g["#paper_doll_visible"] = flag(view.paperDoll);
-    g["#status_effects_visible"] = flag(true);
+    g["#status_effects_visible"] = flag(!view.hidden(HudElement::StatusEffects));
     g["#scoreboard_sidebar_visible"] = flag(view.sidebarVisible);
     g["#player_position_visible"] = flag(false);
     g["#number_of_days_played_visible"] = flag(false);
@@ -425,15 +427,15 @@ void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& re
             drawDurability(ui, rect, total > 0.0 ? static_cast<float>(current / total) : 0.0f, alpha);
         }
     } else if (renderer == "heart_renderer") {
-        drawHearts(ui, view, rect.x, rect.y, tint);
+        if (!view.hidden(HudElement::Health)) drawHearts(ui, view, rect.x, rect.y, tint);
     } else if (renderer == "armor_renderer") {
-        drawArmor(ui, view, rect.x, rect.y, tint);
+        if (!view.hidden(HudElement::Armor)) drawArmor(ui, view, rect.x, rect.y, tint);
     } else if (renderer == "hunger_renderer") {
-        drawHunger(ui, view, rect.right(), rect.y, tint);
+        if (!view.hidden(HudElement::Hunger)) drawHunger(ui, view, rect.right(), rect.y, tint);
     } else if (renderer == "bubbles_renderer") {
-        drawBubbles(ui, view, rect.right(), rect.y, tint);
+        if (!view.hidden(HudElement::AirBubbles)) drawBubbles(ui, view, rect.right(), rect.y, tint);
     } else if (renderer == "mob_effects_renderer") {
-        drawEffects(ui, view, rect.right(), alpha);
+        if (!view.hidden(HudElement::StatusEffects)) drawEffects(ui, view, rect.right(), alpha);
     }
 }
 

@@ -40,6 +40,27 @@ std::vector<std::string> itemTexturePaths(const json::Value& definition)
 }
 
 /**
+ * The icon a resource pack item definition names under minecraft:icon, as a
+ * plain name or as its texture or default texture.
+ */
+std::string definitionIcon(const json::Value& components)
+{
+    const json::Value* icon = components.get("minecraft:icon");
+    if (!icon) {
+        return {};
+    }
+    if (icon->isString()) {
+        return icon->mString;
+    }
+    if (const json::Value* texture = icon->get("texture"); texture && texture->isString()) {
+        return texture->mString;
+    }
+    const json::Value* textures = icon->get("textures");
+    const json::Value* fallback = textures ? textures->get("default") : nullptr;
+    return fallback && fallback->isString() ? fallback->mString : std::string();
+}
+
+/**
  * Draws a block as an inventory icon: its top, south and east faces as an
  * isometric cube, shaded brighter on top and darker on the right.
  */
@@ -185,8 +206,28 @@ std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture text
  * textures/items, scaled to the icon size, and indexes the default state of
  * every block by name for block item icons.
  */
-void BlockAssets::buildInterfaceAssets(PackSource& pack)
+void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs)
 {
+    // Legacy items from server packs keep their icon in the resource pack
+    // definition; the item registry sends no components for them.
+    for (const std::shared_ptr<const PackFiles>& layer : packs) {
+        for (const auto& [path, content] : layer->files) {
+            if (path.rfind("items/", 0) != 0 || !path.ends_with(".json")) {
+                continue;
+            }
+            std::unique_ptr<json::Value> parsed = json::parse(util::stripJsonComments(content));
+            const json::Value* item = parsed ? parsed->get("minecraft:item") : nullptr;
+            const json::Value* description = item ? item->get("description") : nullptr;
+            const json::Value* identifier = description ? description->get("identifier") : nullptr;
+            const json::Value* components = item ? item->get("components") : nullptr;
+            if (!identifier || !identifier->isString() || !components) {
+                continue;
+            }
+            if (std::string icon = definitionIcon(*components); !icon.empty()) {
+                itemIconNames.try_emplace(identifier->mString, std::move(icon));
+            }
+        }
+    }
     struct Decoded {
         uint32_t width = 0;
         uint32_t height = 0;
@@ -210,7 +251,7 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack)
         return found->second.rgba.empty() ? nullptr : &found->second.rgba;
     };
     std::vector<std::string> atlases = pack.readTextLayers("textures/item_texture.json");
-    if (std::string archived; pack.readArchived("textures", "item_texture.json", archived)) {
+    if (std::string archived; pack.readBaseArchived("textures", "item_texture.json", archived)) {
         atlases.push_back(std::move(archived));
     }
     for (const std::string& name : pack.archiveEntries("textures/items")) {
@@ -345,6 +386,12 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
     std::vector<std::string> names;
     if (!iconHint.empty()) {
         names.push_back(iconHint);
+    }
+    if (auto named = itemIconNames.find(identifier); named != itemIconNames.end()) {
+        names.push_back(named->second);
+    }
+    if (identifier.find(':') != std::string::npos) {
+        names.push_back(identifier);
     }
     names.push_back(shortName);
     for (const auto& [from, to] : Renames) {

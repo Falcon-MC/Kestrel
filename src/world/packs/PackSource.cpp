@@ -222,6 +222,11 @@ bool PackSource::readArchived(const std::string& archiveName, const std::string&
             return true;
         }
     }
+    return readBaseArchived(archiveName, name, out);
+}
+
+bool PackSource::readBaseArchived(const std::string& archiveName, const std::string& name, std::string& out)
+{
     for (size_t layer = 0; layer < stack.size(); ++layer) {
         const Archive* source = archive(layer, archiveName);
         if (!source) {

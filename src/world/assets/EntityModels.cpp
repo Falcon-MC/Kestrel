@@ -547,30 +547,32 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             animations.parse(*document);
         }
     };
+    // Server packs come after, file by file, so a pack's player.animation.json
+    // adds to the game's animations instead of hiding the whole file.
     for (const char* archive : { "models", "models/entity" }) {
         for (const std::string& name : pack.archiveEntries(archive)) {
             std::string text;
-            if (pack.readArchived(archive, name, text)) {
+            if (pack.readBaseArchived(archive, name, text)) {
                 library.parse(stripJsonComments(text));
             }
         }
     }
     for (const std::string& name : pack.archiveEntries("entity")) {
         std::string text;
-        if (pack.readArchived("entity", name, text)) {
+        if (pack.readBaseArchived("entity", name, text)) {
             readClientEntity(text, definitions);
         }
     }
     for (const std::string& name : pack.archiveEntries("render_controllers")) {
         std::string text;
-        if (pack.readArchived("render_controllers", name, text)) {
+        if (pack.readBaseArchived("render_controllers", name, text)) {
             readRenderControllers(text, controllerSources);
         }
     }
     for (const char* archive : { "animations", "animation_controllers" }) {
         for (const std::string& name : pack.archiveEntries(archive)) {
             std::string text;
-            if (pack.readArchived(archive, name, text)) {
+            if (pack.readBaseArchived(archive, name, text)) {
                 parseAnimations(text);
             }
         }
@@ -595,6 +597,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
     library.resolveInheritance();
 
     std::map<std::string, uint32_t> layerByTexture;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> sizeByLayer;
     auto textureLayer = [&](const std::string& path) -> std::optional<uint32_t> {
         auto found = layerByTexture.find(path);
         if (found != layerByTexture.end()) {
@@ -632,6 +635,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             entityTiles.emplace(layer, std::make_pair(tilesX, tilesY));
         }
         layerByTexture.emplace(path, layer);
+        sizeByLayer.emplace(layer, std::make_pair(width, height));
         return layer;
     };
     auto modelOf = [&](const std::string& geometryName, const ClientEntity& definition, uint32_t layer) -> std::optional<EntityModel> {
@@ -639,9 +643,22 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         if (!geometry) {
             return std::nullopt;
         }
+        // Legacy geometry like geometry.humanoid.custom never says how big its
+        // texture is; the game maps it onto the texture it gets, the 64x64 Steve.
+        auto buildRig = [&](const Geometry& source, EntityRig& rig) {
+            auto size = sizeByLayer.find(layer);
+            if (source.textureSizeSet || size == sizeByLayer.end()) {
+                buildEntityRig(source, rig);
+                return;
+            }
+            Geometry sized = source;
+            sized.textureWidth = static_cast<float>(size->second.first);
+            sized.textureHeight = static_cast<float>(size->second.second);
+            buildEntityRig(sized, rig);
+        };
         EntityModel model;
         model.rigs.emplace_back();
-        buildEntityRig(*geometry, model.rigs.back());
+        buildRig(*geometry, model.rigs.back());
         model.scripts = definition.scripts;
         model.layer = layer;
         std::map<std::string, uint32_t> rigByGeometry { { geometryName, 0 } };
@@ -661,7 +678,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
             uint32_t index = static_cast<uint32_t>(model.rigs.size());
             model.rigs.emplace_back();
-            buildEntityRig(*found, model.rigs.back());
+            buildRig(*found, model.rigs.back());
             rigByGeometry.emplace(id, index);
             return index;
         };
@@ -695,6 +712,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             if (startsWith(material, "material.")) {
                 if (auto named = definition.materials.find(material.substr(std::string("material.").size())); named != definition.materials.end()) {
                     controller.blend = blendOf(named->second);
+                    controller.oneSided = named->second.find("one_sided") != std::string::npos;
                 }
             }
             model.controllers.push_back(std::move(controller));

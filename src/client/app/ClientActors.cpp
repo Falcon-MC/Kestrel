@@ -388,7 +388,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             static_cast<float>((camera.y() - origin[1]) * 256.0),
             static_cast<float>((camera.z() - origin[2]) * 256.0),
         };
-        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend) {
+        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : matrices.size();
             if (bone < hidden.size() && hidden[bone]) {
@@ -417,7 +417,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 corners[corner].position = { baseX + turnedX, baseY + y, baseZ + turnedZ };
                 corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
             }
-            if (quad.flags & world::QuadInward) {
+            bool inward = (quad.flags & world::QuadInward) != 0;
+            if (inward || oneSided) {
                 std::array<float, 3> edgeA {}, edgeB {}, toCamera {};
                 for (size_t axis = 0; axis < 3; ++axis) {
                     edgeA[axis] = corners[1].position[axis] - corners[0].position[axis];
@@ -425,7 +426,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     toCamera[axis] = cameraLocal[axis] - corners[0].position[axis];
                 }
                 float facing = (edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1]) * toCamera[0] + (edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2]) * toCamera[1] + (edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]) * toCamera[2];
-                if (facing <= 0.0f) {
+                // Quads wind with their normal into the cube, so an outer face shows
+                // when the camera sits on the other side of it.
+                if (inward ? facing <= 0.0f : facing >= 0.0f) {
                     return;
                 }
             }
@@ -445,7 +448,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
                     const world::CombinedQuadSource& from = model->combinedSources[quad];
                     if (from.controller == index && from.rig == picked) {
-                        emit(quad, layer, hidden, source.blend);
+                        emit(quad, layer, hidden, source.blend, source.oneSided);
                     }
                 }
             }
@@ -453,8 +456,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             uint32_t layer = actor.skinSlot != NoSkin ? blockAssets->skinLayerBase() + actor.skinSlot : textureOf(controller);
             std::vector<uint8_t> hidden = controller ? hiddenBones(*controller) : std::vector<uint8_t> {};
             world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
+            bool oneSided = controller && controller->oneSided;
             for (size_t index = 0; index < rig.quads.size(); ++index) {
-                emit(index, layer, hidden, blend);
+                emit(index, layer, hidden, blend, oneSided);
             }
         }
         auto toWorld = [&](const std::array<float, 3>& posed) {
