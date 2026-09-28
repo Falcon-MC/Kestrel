@@ -130,10 +130,15 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
     } else if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet)) {
         if (static_cast<uint64_t>(equipment->mRuntimeActorId) == localRuntimeId && equipment->mContainerId == InventoryContainer && equipment->mHotbarSlot >= 0 && equipment->mHotbarSlot < 9) {
             std::lock_guard<std::mutex> guard(mutex);
-            // Equipment is authoritative too: fast transfers may replace the held
-            // stack before the destination sends the rest of the inventory.
+            // Equipment replaces the held stack when it names another item: fast
+            // transfers may do so before the destination sends the rest of the
+            // inventory. The count stays the inventory's, since servers echo the
+            // held stack as it was when a placement began.
             int slot = inventoryModel.packetSlot(equipment->mContainerId, equipment->mInventorySlot);
-            if (slot >= 0) {
+            const ItemStack& held = slot >= 0 ? inventoryModel.slots[slot] : equipment->mItem;
+            bool sameItem = held.isAir() == equipment->mItem.isAir()
+                && (held.isAir() || held.mDefinition->getRuntimeId() == equipment->mItem.mDefinition->getRuntimeId());
+            if (slot >= 0 && !sameItem) {
                 inventoryModel.slots[slot] = equipment->mItem;
                 if (inventoryBefore) (*inventoryBefore)[slot] = equipment->mItem;
                 publishInventory();
