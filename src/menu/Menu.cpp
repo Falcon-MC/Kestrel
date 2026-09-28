@@ -290,6 +290,7 @@ void Menu::frame(Context& ui, float width, float height)
     if (inventory.active) {
         ui.setBlocked(false);
         inventory.draw(ui, width, height, [&](float x, float y, float pixel) { playerModel(ui, x, y, pixel, true); });
+        toasts.draw(ui, width, height);
         return;
     }
     if (!inGame() && forms.active()) {
@@ -298,6 +299,7 @@ void Menu::frame(Context& ui, float width, float height)
     if (forms.active()) {
         ui.setBlocked(false);
         forms.draw(ui, width, height);
+        toasts.draw(ui, width, height);
         return;
     }
 
@@ -390,6 +392,7 @@ void Menu::frame(Context& ui, float width, float height)
         dimensionScreen(ui, width, height);
     }
     toast(ui, width, height);
+    toasts.draw(ui, width, height);
     handleKeys(ui);
 }
 
@@ -1115,7 +1118,7 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
 
 namespace {
 
-float debugColumn(Context& ui, const std::vector<std::string>& lines, float width, bool alignRight)
+void debugColumn(Context& ui, const std::vector<std::string>& lines, float width, bool alignRight)
 {
     constexpr Color Backdrop { 80, 80, 80, 144 };
     constexpr Color Ink { 224, 224, 224, 255 };
@@ -1129,7 +1132,6 @@ float debugColumn(Context& ui, const std::vector<std::string>& lines, float widt
         }
         y += 10.0f;
     }
-    return y;
 }
 
 }
@@ -1141,18 +1143,11 @@ void Menu::gameView(Context& ui, float width, float height)
         return;
     }
 
-    // hud_screen.json keeps a 50 unit paper_doll_padding over the chat while the doll shows.
-    float y = hud.paperDoll ? 52.0f : 2.0f;
     if (debugShown) {
-        y = debugColumn(ui, debugView.left, width, false);
+        debugColumn(ui, debugView.left, width, false);
         debugColumn(ui, debugView.right, width, true);
     }
-
-    drawHud(ui, hud, 0.0f, 0.0f, width, height);
-    if (hudUi && hud.sidebarVisible) {
-        hudUi->draw(ui, "scoreboard.scoreboard_sidebar", { 0.0f, 0.0f, width, height }, hud.sidebar);
-    }
-    chatFeed(ui, y, width, height);
+    drawHudScreen(ui, width, height);
 
     if (!hud.crosshair) {
         return;
@@ -1160,6 +1155,44 @@ void Menu::gameView(Context& ui, float width, float height)
     float cx = std::floor(width * 0.5f - 7.5f);
     float cy = std::floor(height * 0.5f - 7.5f);
     ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });
+}
+
+void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
+{
+    jsonUi = std::move(definitions);
+    hudScreen.reset();
+    forms.setDefinitions(jsonUi);
+}
+
+/**
+ * hud_screen.json over the whole view, fed the way the game's HUD screen
+ * controller feeds it, its custom renderers drawn from the HUD view.
+ */
+void Menu::drawHudScreen(Context& ui, float width, float height)
+{
+    if (!jsonUi || !hud.visible) {
+        return;
+    }
+    if (!hudScreen) {
+        hudScreen = std::make_unique<ui::JsonUiScreen>(jsonUi, "hud.hud_screen");
+        hudScreen->setRenderer([this](Context& context, const std::string& renderer, const Rect& rect, float alpha, const ui::UiLookup& lookup) {
+            drawHudRenderer(context, hud, renderer, rect, alpha, lookup);
+        });
+        shownSubtitle = hud.title.subtitleSerial;
+    }
+    if (hud.title.subtitleSerial != shownSubtitle) {
+        shownSubtitle = hud.title.subtitleSerial;
+        hudScreen->fire("anim_subtitle_text_alpha_in_play_event");
+    }
+    hud.chat = hudChat();
+    ui::UiData data = hudData(hud);
+    // The HUD never takes the mouse, so the controls under it stay idle.
+    bool blocked = ui.isBlocked();
+    ui.setBlocked(true);
+    hudScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    drawBossBars(ui, hud, width, height);
+    ui.setBlocked(blocked);
+    hudScreen->takeEvents();
 }
 
 void Menu::toast(Context& ui, float width, float height)

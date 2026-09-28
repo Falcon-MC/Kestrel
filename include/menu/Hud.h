@@ -51,6 +51,45 @@ struct NameTag {
     bool sneaking = false;
 };
 
+/**
+ * Text one of the HUD's factories shows: the item name or a popup over the
+ * hotbar, the tip above it or the action bar. hud_screen.json fades it in
+ * and out; a new serial makes the control again, starting that over, and a
+ * zero serial shows nothing. Hold is how long it stays before fading, the
+ * $wait_duration of the item text.
+ */
+struct HudText {
+    std::string text;
+    uint64_t serial = 0;
+    float hold = 1.0f;
+};
+
+/**
+ * The title the server set, with the fade times in seconds of the title
+ * packet that showed it. Every title shown gets a new serial, and a subtitle
+ * arriving while it shows a new subtitleSerial, which plays the subtitle's
+ * own fade in.
+ */
+struct HudTitle {
+    std::string title;
+    std::string subtitle;
+    uint64_t serial = 0;
+    uint64_t subtitleSerial = 0;
+    bool subtitleWithTitle = false;
+    float fadeIn = 0.5f;
+    float stay = 3.5f;
+    float fadeOut = 1.0f;
+};
+
+/**
+ * A chat line the HUD shows until it fades; the serial tells lines apart so
+ * each keeps its own fade.
+ */
+struct HudChatLine {
+    std::string text;
+    uint64_t serial = 0;
+};
+
 enum class HeartKind {
     Normal,
     Poison,
@@ -70,8 +109,13 @@ struct HudView {
     std::array<HudSlot, 9> hotbar {};
     HudSlot offhand;
     int32_t selected = 0;
-    std::string selectedName;
-    float labelAlpha = 0.0f;
+    // The item name and popups share one factory, so the newest replaces the other.
+    HudText itemText;
+    bool jukebox = false;
+    HudText tip;
+    HudText actionbar;
+    HudTitle title;
+    std::vector<HudChatLine> chat;
     float health = 20.0f;
     float maxHealth = 20.0f;
     float absorption = 0.0f;
@@ -94,11 +138,26 @@ struct HudView {
 };
 
 /**
- * Draws the hotbar, hearts, armor, hunger, air bubbles, experience bar,
- * selected item name and status effects over a width by height area, laid
- * out in the same logical coordinates as the rest of the interface.
+ * What hud_screen.json binds to, the way the game's HUD screen controller
+ * fills it in from the view: globals, the hotbar and chat collections and the
+ * title, action bar and item text factories.
  */
-void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width, float height);
+ui::UiData hudData(const HudView& view);
+
+/**
+ * Draws one of the HUD's custom renderers at the place hud_screen.json laid
+ * it out: slot backgrounds, item icons, durability bars, hearts, armor,
+ * hunger, air bubbles and status effects.
+ */
+void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup);
+
+/**
+ * The boss bars laid out like the game's boss grid: one 182 by 20 cell per
+ * bar down from two pixels under the top, as many as fit in three tenths of
+ * the screen, the title centered on top and the bar ten pixels lower, tinted
+ * with the bar's color and filled to the boss's health.
+ */
+void drawBossBars(ui::Context& ui, const HudView& view, float width, float height);
 
 /**
  * Draws the name tags in the order given, each line centered on a

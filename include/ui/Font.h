@@ -36,6 +36,8 @@ enum class TextStyle {
     ErrorTab,
     // Minecraft Seven sized to the pixel font, for what default8 has no cell for.
     PixelFallback,
+    // Minecraft Ten at the size of the pixel font, for JSON UI labels with font_type MinecraftTen.
+    TenLabel,
     Count,
 };
 
@@ -93,6 +95,12 @@ public:
      * that sits in the world and shrinks with distance.
      */
     void drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow = false) const;
+
+    /**
+     * Text in any style with every unit magnify menu units wide, the way JSON
+     * UI labels scale by font_size and font_scale_factor.
+     */
+    void drawScaled(DrawList& list, std::string_view text, TextStyle style, float x, float y, float magnify, Color color, bool shadow = false) const;
     // Centered multiline label in font pixels, independent of the UI atlas scale.
     void drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const;
 
@@ -124,6 +132,12 @@ public:
     void clearPixelPageGlyphs();
     static std::string pixelGlyphName(size_t index, uint32_t code);
     size_t wrap(std::string_view text, TextStyle style, float width, std::vector<std::string_view>& lines) const;
+
+    /**
+     * The section sign codes in effect at the end of text, for the next line
+     * of a label to start with.
+     */
+    static std::string formattingAt(std::string_view text);
 
 private:
     struct Glyph {
@@ -168,7 +182,7 @@ private:
     float advance(TextStyle style, char32_t cp) const;
     float boldStep(TextStyle style) const;
     char32_t scrambled(TextStyle style, char32_t cp, uint32_t seed) const;
-    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow = false) const;
+    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow = false, float magnify = 1.0f) const;
     void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify = 1.0f) const;
     float pixelAdvance(char32_t cp) const;
     const Glyph* pixelFallback(char32_t cp) const;

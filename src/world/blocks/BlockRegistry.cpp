@@ -9,6 +9,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <mutex>
 #include <cstring>
 
 namespace kestrel::world {
@@ -70,7 +71,7 @@ uint64_t BlockRegistry::nameHash(const std::string& name)
     return hash;
 }
 
-bool BlockRegistry::load(std::string& error)
+bool BlockRegistry::parse(Data& out, std::string& error)
 {
     std::string decompressed;
     if (!gunzip(KestrelBlockPaletteData::kBlockPaletteNbt, KestrelBlockPaletteData::kBlockPaletteNbtSize, decompressed)) {
@@ -115,10 +116,10 @@ bool BlockRegistry::load(std::string& error)
         return nameHash(left.name) < nameHash(right.name);
     });
 
-    entries = std::move(ordered);
+    out.entries = std::move(ordered);
 
     std::unordered_set<std::string> paletteNames;
-    for (const BlockRecord& record : entries) {
+    for (const BlockRecord& record : out.entries) {
         paletteNames.insert(record.name);
     }
     std::string definitionsData;
@@ -129,27 +130,50 @@ bool BlockRegistry::load(std::string& error)
             settings.mMaxListSize = 65536;
             stream.setEncodingSettings(settings);
             Tag definitions = NbtIo::readTag(stream, NbtVariant::BigEndian);
-            collectDefinitionNames(definitions, paletteNames, dataDriven);
+            collectDefinitionNames(definitions, paletteNames, out.dataDriven);
         } catch (const std::exception&) {
-            dataDriven.clear();
+            out.dataDriven.clear();
         }
     }
 
-    byHash.clear();
-    byHash.reserve(entries.size());
-    for (uint32_t i = 0; i < entries.size(); ++i) {
-        byHash.emplace(entries[i].networkHash, i);
+    out.byHash.reserve(out.entries.size());
+    for (uint32_t i = 0; i < out.entries.size(); ++i) {
+        out.byHash.emplace(out.entries[i].networkHash, i);
     }
+    return true;
+}
+
+/**
+ * The palette is embedded, so every registry is the same one: it is parsed
+ * once and shared, since each server join builds its block assets anew.
+ */
+bool BlockRegistry::load(std::string& error)
+{
+    static std::mutex mutex;
+    static std::shared_ptr<const Data> shared;
+    static std::string failure;
+    std::lock_guard<std::mutex> guard(mutex);
+    if (!shared && failure.empty()) {
+        auto parsed = std::make_shared<Data>();
+        if (parse(*parsed, failure)) {
+            shared = std::move(parsed);
+        }
+    }
+    if (!shared) {
+        error = failure;
+        return false;
+    }
+    data = shared;
     return true;
 }
 
 int32_t BlockRegistry::resolve(uint32_t networkValue, bool hashed) const
 {
     if (hashed) {
-        auto found = byHash.find(networkValue);
-        return found == byHash.end() ? -1 : static_cast<int32_t>(found->second);
+        auto found = data->byHash.find(networkValue);
+        return found == data->byHash.end() ? -1 : static_cast<int32_t>(found->second);
     }
-    return networkValue < entries.size() ? static_cast<int32_t>(networkValue) : -1;
+    return networkValue < data->entries.size() ? static_cast<int32_t>(networkValue) : -1;
 }
 
 }

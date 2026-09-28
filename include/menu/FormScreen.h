@@ -1,9 +1,11 @@
 #pragma once
 
+#include "ui/JsonUi.h"
 #include "ui/Types.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,9 +38,11 @@ struct FormAnswer {
 inline constexpr const char* FormImageLoading = "loading";
 
 /**
- * Server forms drawn the way the game's server_form.json lays them out: the
- * long form for simple and modal forms, the custom form for the rest. The
- * newest form sits on top and the ones under it come back as it closes.
+ * Server forms drawn from the game's server_form.json, restyled by whatever
+ * packs the server sent: the long form for simple and modal forms, the custom
+ * form for the rest, fed the way the game's server form screen controller
+ * feeds them. The newest form sits on top and the ones under it come back as
+ * it closes.
  */
 class FormScreen {
 public:
@@ -53,6 +57,7 @@ public:
         return !forms.empty();
     }
 
+    void setDefinitions(std::shared_ptr<const ui::JsonUi> definitions);
     void open(uint32_t id, const std::string& json);
     void reject(uint32_t id);
     void closeAll();
@@ -102,39 +107,19 @@ private:
         std::string content;
         std::string submit;
         std::vector<Element> elements;
-        double openedAt = 0.0;
-        float scroll = 0.0f;
-        int dropdown = -1;
-        float dropdownScroll = 0.0f;
-        int focused = -1;
     };
 
-    struct Tooltip {
-        std::string text;
-        ui::Rect anchor;
-    };
-
-    float elementHeight(ui::Context& ui, const Element& element, float width, bool spaced) const;
-    void drawElement(ui::Context& ui, Form& form, size_t index, const ui::Rect& rect, bool spaced);
-    bool formButton(ui::Context& ui, size_t index, const Element& element, const ui::Rect& rect);
-    void drawTooltipBulb(ui::Context& ui, const Element& element, float right, float top);
-    void drawDropdown(ui::Context& ui, Form& form, const ui::Rect& toggle, const ui::Rect& bounds);
-    void drawTooltip(ui::Context& ui, const ui::Rect& area);
-    float scrollBar(ui::Context& ui, const ui::Rect& track, float offset, float view, float content, bool& dragging);
-    void editText(ui::Context& ui, Element& element);
+    ui::UiData formData(const Form& form) const;
+    void handle(Form& form, const ui::UiEvent& event);
     void submit(Form& form, std::optional<std::string> data);
     std::string response(const Form& form) const;
 
     std::vector<Form> forms;
     std::vector<FormAnswer> answers;
-    std::optional<Tooltip> tooltip;
-    ui::Rect dropdownToggle;
-    ui::Rect currentClip;
-    float tooltipWidth = 0.0f;
-    int dragging = -1;
-    bool scrollDragging = false;
-    bool dropdownScrollDragging = false;
-    float dragGrab = 0.0f;
+    std::shared_ptr<const ui::JsonUi> definitions;
+    std::unique_ptr<ui::JsonUiScreen> screen;
+    uint32_t shownForm = 0;
+    size_t shownDepth = 0;
 };
 
 }

@@ -298,6 +298,44 @@ struct ChatMessage {
 };
 
 /**
+ * The action bar text a title packet sets, as raw JSON text when json is set.
+ */
+struct ActionbarText {
+    std::string text;
+    bool json = false;
+};
+
+/**
+ * What a title packet asks of the title and subtitle: clear or reset them,
+ * set either text (raw JSON text when json is set) or set the fade times in
+ * ticks.
+ */
+struct TitleRequest {
+    enum class Kind {
+        Clear,
+        Reset,
+        Title,
+        Subtitle,
+        Times,
+    };
+
+    Kind kind = Kind::Clear;
+    std::string text;
+    bool json = false;
+    int32_t fadeIn = 0;
+    int32_t stay = 0;
+    int32_t fadeOut = 0;
+};
+
+/**
+ * A toast the server asks for: the title and the line shown under it.
+ */
+struct ToastRequest {
+    std::string title;
+    std::string content;
+};
+
+/**
  * A form from the server: its id and JSON, or with close set, the server
  * asking every open form to go away.
  */
@@ -372,7 +410,6 @@ struct SessionSnapshot {
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
-    std::string transferTarget;
     bool packPrompt = false;
     size_t packCount = 0;
     bool packSkippable = true;
@@ -418,6 +455,9 @@ public:
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
     std::vector<ChatMessage> takeChatMessages();
+    std::optional<ActionbarText> takeActionbar();
+    std::vector<TitleRequest> takeTitles();
+    std::vector<ToastRequest> takeToasts();
     std::vector<FormRequest> takeForms();
 
     /**
@@ -431,12 +471,6 @@ public:
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
     void requestRespawn();
-
-    /**
-     * The server the current one sent the player to, as a join target, once:
-     * the session has left and the caller connects there.
-     */
-    std::optional<std::string> takeTransfer();
     void setMotionInput(const MotionInput& input);
 
     /**
@@ -495,6 +529,9 @@ private:
     void sendSelectedSlot(int slot);
     void sendRespawnRequest();
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
+    std::optional<std::string> join(const std::string& target, MinecraftAuthentication* authentication, const std::string& offlineName);
+    void resetSnapshot(std::string name, std::string target);
+    std::shared_ptr<const world::PackFiles> cachedPack(const std::string& path);
     void fail(const std::string& error);
     void handleWorldPacket(const std::string& payload);
     void handleViolation(const PacketViolationWarningPacket& violation);
@@ -539,6 +576,9 @@ private:
     std::unique_ptr<BedrockConnection> connection;
     world::WorldStream world;
     std::shared_ptr<const world::BlockAssets> assets;
+    std::string assetsKey;
+    std::map<std::string, std::shared_ptr<const world::PackFiles>> packCache;
+    std::optional<std::string> transferTarget;
     bool hashedNetworkIds = false;
     world::IdMapping ids;
     std::unique_ptr<world::MeshScheduler> mesher;
@@ -594,7 +634,6 @@ private:
     bool inventoryClosing = false;
     std::atomic<int> requestedSlot { -1 };
     std::atomic<bool> respawnRequested { false };
-    bool transferring = false;
     bool respawnPending = false;
     bool dimensionAckReceived = false;
     std::atomic<bool> useRequested { false };
@@ -651,6 +690,9 @@ private:
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;
+    std::optional<ActionbarText> pendingActionbar;
+    std::vector<TitleRequest> pendingTitles;
+    std::vector<ToastRequest> pendingToasts;
     std::vector<std::string> outgoingChat;
 
     struct FormAnswer {

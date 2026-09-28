@@ -108,6 +108,7 @@ private:
     std::filesystem::path cacheFile;
     std::unique_ptr<MinecraftAuthentication> authentication;
     std::thread worker;
+    std::thread warmer;
     std::atomic<bool> cancelled { false };
     mutable std::mutex mutex;
     AccountSnapshot current;

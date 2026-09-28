@@ -54,6 +54,17 @@ struct ActorMotion {
     double lastSample = 0.0;
 };
 
+/**
+ * Server text the HUD fades out: when it arrived and how long it holds before
+ * fading, and for popups whether a jukebox sent it.
+ */
+struct HudMessage {
+    std::string text;
+    double shown = -1.0;
+    float hold = 0.0f;
+    bool jukebox = false;
+};
+
 class Client {
 public:
     Client();
@@ -69,10 +80,13 @@ private:
     void syncForms();
     std::string formImage(const menu::FormImage& image);
     void syncChat();
+    void showHudText(const ChatMessage& message, std::string body);
+    void applyTitle(TitleRequest request);
     void applyServerPacks(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
     void loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
     void cutGlyphs(size_t index, const ui::Bitmap& sheet);
-    void loadHudUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    void loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs);
+    bool loadPackTexture(const std::string& texture);
     ui::UiData sidebarData() const;
     float nightVisionStrength() const;
     void updateAudio(const SessionSnapshot& snapshot);
@@ -164,8 +178,13 @@ private:
     std::map<std::string, bool> itemIcons;
     std::vector<std::shared_ptr<const world::PackFiles>> artPacks;
     std::vector<std::string> packSprites;
-    bool hudUiLoaded = false;
+    bool jsonUiLoaded = false;
     SidebarView sidebarView;
+    HudMessage popupMessage;
+    HudMessage tipMessage;
+    HudMessage actionbarMessage;
+    menu::HudTitle titleView;
+    uint64_t titleSerial = 0;
     std::optional<BlockSelection> selectionView;
     std::vector<BlockCrack> crackViews;
     std::vector<ChestLidView> chestLidViews;

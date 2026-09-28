@@ -3,6 +3,7 @@
 #include "Core/NBT/Tag.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,22 +23,28 @@ public:
 
     const std::vector<BlockRecord>& records() const
     {
-        return entries;
+        return data->entries;
     }
 
     int32_t resolve(uint32_t networkValue, bool hashed) const;
 
     bool isDataDriven(const std::string& name) const
     {
-        return dataDriven.contains(name);
+        return data->dataDriven.contains(name);
     }
 
     static uint64_t nameHash(const std::string& name);
 
 private:
-    std::vector<BlockRecord> entries;
-    std::unordered_map<uint32_t, uint32_t> byHash;
-    std::unordered_set<std::string> dataDriven;
+    struct Data {
+        std::vector<BlockRecord> entries;
+        std::unordered_map<uint32_t, uint32_t> byHash;
+        std::unordered_set<std::string> dataDriven;
+    };
+
+    static bool parse(Data& out, std::string& error);
+
+    std::shared_ptr<const Data> data = std::make_shared<const Data>();
 };
 
 }
