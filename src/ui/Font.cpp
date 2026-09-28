@@ -49,6 +49,7 @@ constexpr std::array<FaceSpec, static_cast<size_t>(TextStyle::Count)> Specs { {
     { Noto, 24.0f },
     { Noto, 20.0f },
     { Seven, 8.0f * 10.0f / theme::Rem },
+    { Ten, 10.0f * 10.0f / theme::Rem },
 } };
 
 constexpr uint32_t AtlasWidth = Skin::AtlasSize;
@@ -714,15 +715,15 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
     }
 }
 
-void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow) const
+void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow, float magnify) const
 {
     if (style == TextStyle::Pixel) {
-        emitPixel(list, text, x, y, color, shadow);
+        emitPixel(list, text, x, y, color, shadow, magnify);
         return;
     }
     const Face& source = faces[static_cast<size_t>(style)];
     float pen = std::round(x * scale);
-    float baseline = std::round(y * scale) + source.ascent;
+    float baseline = std::round(y * scale) + source.ascent * magnify;
     uint32_t tick = obfuscationTick();
     Formatting state;
     state.color = color;
@@ -736,17 +737,21 @@ void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x,
         if (!g) {
             continue;
         }
-        float bold = state.bold ? std::max(1.0f, std::round(scale)) : 0.0f;
+        float bold = state.bold ? std::max(1.0f, std::round(scale * magnify)) : 0.0f;
         if (g->x1 > g->x0) {
             uint32_t packed = (shadow ? shaded(state.color) : state.color).packed();
-            float topShift = state.italic ? -g->y0 * ItalicSlant : 0.0f;
-            float bottomShift = state.italic ? -g->y1 * ItalicSlant : 0.0f;
-            list.quad(pen + g->x0, baseline + g->y0, pen + g->x1, baseline + g->y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
+            float x0 = pen + g->x0 * magnify;
+            float x1 = pen + g->x1 * magnify;
+            float y0 = baseline + g->y0 * magnify;
+            float y1 = baseline + g->y1 * magnify;
+            float topShift = state.italic ? -g->y0 * magnify * ItalicSlant : 0.0f;
+            float bottomShift = state.italic ? -g->y1 * magnify * ItalicSlant : 0.0f;
+            list.quad(x0, y0, x1, y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
             if (state.bold) {
-                list.quad(pen + bold + g->x0, baseline + g->y0, pen + bold + g->x1, baseline + g->y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
+                list.quad(x0 + bold, y0, x1 + bold, y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
             }
         }
-        pen += g->advance + bold;
+        pen += g->advance * magnify + bold;
     }
 }
 
@@ -813,6 +818,11 @@ size_t Font::wrap(std::string_view text, TextStyle style, float width, std::vect
     return lines.size();
 }
 
+std::string Font::formattingAt(std::string_view text)
+{
+    return activeFormatting(text);
+}
+
 float Font::drawWrapped(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color) const
 {
     std::vector<std::string_view> lines;
@@ -825,6 +835,11 @@ float Font::drawWrapped(DrawList& list, std::string_view text, TextStyle style, 
         carried = activeFormatting(line);
     }
     return static_cast<float>(lines.size()) * height;
+}
+
+void Font::drawScaled(DrawList& list, std::string_view text, TextStyle style, float x, float y, float magnify, Color color, bool shadow) const
+{
+    emit(list, text, style, x, y, color, shadow, magnify);
 }
 
 void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float y, float magnify, Color color, bool shadow) const

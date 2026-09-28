@@ -6,8 +6,10 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace kestrel::world {
@@ -56,12 +58,21 @@ private:
         size_t dataStart = 0;
     };
 
-    const Archive* archive(const std::filesystem::path& file);
+    struct LooseFiles {
+        std::unordered_set<std::string> files;
+        std::unordered_set<std::string> folders;
+    };
+
+    const Archive* archive(size_t layer, const std::string& name);
+    const LooseFiles& looseFiles(size_t layer);
+    const std::vector<size_t>& layersWith(const std::string& folder);
 
     std::filesystem::path base;
     std::vector<std::filesystem::path> stack;
     std::vector<std::shared_ptr<const PackFiles>> overlays;
-    std::map<std::filesystem::path, std::unique_ptr<Archive>> archives;
+    std::unordered_map<std::string, std::unique_ptr<Archive>> archives;
+    std::vector<std::optional<LooseFiles>> looseIndex;
+    std::unordered_map<std::string, std::vector<size_t>> folderLayers;
 };
 
 }

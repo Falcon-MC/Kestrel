@@ -275,8 +275,6 @@ int Client::run()
 
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
             session.connect(request->name, request->address, account.signedInAuthentication(), menu.playerName());
-        } else if (std::optional<std::string> transfer = session.takeTransfer()) {
-            session.connect(*transfer, *transfer, account.signedInAuthentication(), menu.playerName());
         }
         if (menu.takeRespawnRequest()) {
             session.requestRespawn();
@@ -436,7 +434,8 @@ std::string Client::formImage(const menu::FormImage& image)
             break;
         }
     }
-    return skin.bitmap(path) ? path : std::string();
+    // The server's packs come before the game's own textures, as they do in game.
+    return loadPackTexture(path) || skin.bitmap(path) ? path : std::string();
 }
 
 void Client::syncFeatured()
@@ -759,6 +758,10 @@ void Client::syncSession()
         seenJoin = snapshot.joinCount;
         seenTeleport = snapshot.teleportCount;
         menu.clearChat();
+        popupMessage = {};
+        tipMessage = {};
+        actionbarMessage = {};
+        titleView = {};
         renderer->clearChunkMeshes();
         opaqueChunks.clear();
         terrainReleased = false;

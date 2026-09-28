@@ -248,6 +248,11 @@ void Context::pixelTextScaled(std::string_view value, float x, float y, float ma
     font.drawPixelScaled(drawList, value, x, y, magnify, color, shadow);
 }
 
+void Context::textScaled(std::string_view value, TextStyle style, float x, float y, float magnify, Color color, bool shadow)
+{
+    font.drawScaled(drawList, value, style, x, y, magnify, color, shadow);
+}
+
 void Context::nameTag(std::string_view value, float x, float y, float magnify, float depth, bool sneaking)
 {
     // Project a camera-facing plane without snapping its moving vertices to screen pixels.

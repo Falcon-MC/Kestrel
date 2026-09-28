@@ -23,7 +23,6 @@ constexpr size_t MaxFeedLines = 50;
 constexpr size_t MaxChatHistory = 100;
 constexpr float FeedLifetimeSeconds = 10.0f;
 constexpr float FeedFadeSeconds = 1.0f;
-constexpr float FeedBackgroundOpacity = 0.7f;
 constexpr float ChatTopBarHeight = 23.0f;
 constexpr float ChatBottomBarHeight = 27.0f;
 constexpr float SendButtonWidth = 44.0f;
@@ -90,7 +89,7 @@ CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand
 
 void Menu::addChatLine(std::string text)
 {
-    chatLines.push_back({ std::move(text), std::chrono::steady_clock::now() });
+    chatLines.push_back({ std::move(text), std::chrono::steady_clock::now(), ++chatSerial });
     while (chatLines.size() > MaxChatLines) {
         chatLines.pop_front();
     }
@@ -231,43 +230,22 @@ bool Menu::handleChatKeys(const InputState& input)
  * the left 40% of the screen, each fading out after its lifetime, no taller
  * than half the screen.
  */
-void Menu::chatFeed(Context& ui, float top, float width, float height)
+/**
+ * The lines the HUD chat still shows, oldest first: hud_screen.json keeps a
+ * line for its lifetime, fades it over a second and holds at most fifty.
+ */
+std::vector<HudChatLine> Menu::hudChat() const
 {
-    struct Entry {
-        const ChatLine* line = nullptr;
-        float height = 0.0f;
-        float alpha = 1.0f;
-    };
-
-    float itemWidth = std::floor(width * 0.4f) - 2.0f;
-    float textWidth = itemWidth - 5.0f;
-    float budget = height * 0.5f;
-    if (textWidth <= 0.0f) {
-        return;
-    }
+    std::vector<HudChatLine> lines;
     auto now = std::chrono::steady_clock::now();
-    std::vector<Entry> entries;
-    float total = 0.0f;
-    for (auto it = chatLines.rbegin(); it != chatLines.rend() && entries.size() < MaxFeedLines; ++it) {
-        float age = std::chrono::duration<float>(now - it->arrived).count();
-        if (age >= FeedLifetimeSeconds + FeedFadeSeconds) {
+    for (auto it = chatLines.rbegin(); it != chatLines.rend() && lines.size() < MaxFeedLines; ++it) {
+        if (std::chrono::duration<float>(now - it->arrived).count() >= FeedLifetimeSeconds + FeedFadeSeconds) {
             break;
         }
-        float lineHeight = ui.paragraphHeight(it->text, TextStyle::Pixel, textWidth);
-        if (total + lineHeight > budget) {
-            break;
-        }
-        float t = std::clamp((age - FeedLifetimeSeconds) / FeedFadeSeconds, 0.0f, 1.0f);
-        entries.push_back({ &*it, lineHeight, 1.0f - t * t * t * t });
-        total += lineHeight;
+        lines.push_back({ it->text, it->serial });
     }
-
-    float y = top;
-    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
-        ui.fill({ 0.0f, y, itemWidth, it->height }, { 0, 0, 0, static_cast<uint8_t>(FeedBackgroundOpacity * it->alpha * 255.0f) });
-        ui.paragraphShadowed(it->line->text, TextStyle::Pixel, 2.0f, y, textWidth, { 255, 255, 255, static_cast<uint8_t>(it->alpha * 255.0f) });
-        y += it->height;
-    }
+    std::reverse(lines.begin(), lines.end());
+    return lines;
 }
 
 /**

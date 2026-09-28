@@ -1,6 +1,7 @@
 #include "SessionData.h"
 
 #include "Core/Json/Json.h"
+#include "Core/NBT/NbtIo.h"
 #include "Protocol/BlockStateHasher.h"
 #include "BlockUpgradeSchemas.h"
 #include "Core/BlockState/BlockStateUpgrader.h"
@@ -21,7 +22,6 @@
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/BlockEventPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
-#include "Protocol/Packets/TransferPacket.h"
 #include "Protocol/Packets/DimensionDataPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
 #include "Protocol/Packets/LevelEventPacket.h"
@@ -63,6 +63,7 @@
 #include "Protocol/Packets/PlaySoundPacket.h"
 #include "Protocol/Packets/StopSoundPacket.h"
 #include "Protocol/Packets/SetActorMotionPacket.h"
+#include "Protocol/Packets/TransferPacket.h"
 #include "Protocol/Packets/UpdateAbilitiesPacket.h"
 #include "world/BlockCollisions.h"
 
@@ -401,20 +402,26 @@ void Session::connect(std::string name, std::string target, MinecraftAuthenticat
 {
     disconnect();
     cancelled = false;
-    {
-        std::lock_guard<std::mutex> guard(mutex);
-        current = SessionSnapshot {};
-        current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 || !realmInviteCode(target).empty() ? SessionState::Resolving : SessionState::Connecting;
-        current.name = std::move(name);
-        current.target = target;
-        pendingChat.clear();
-        outgoingChat.clear();
-        pendingForms.clear();
-        outgoingForms.clear();
-    }
+    resetSnapshot(std::move(name), target);
     worker = std::thread([this, target = std::move(target), authentication, offlineName = std::move(offlineName)]() mutable {
         run(std::move(target), authentication, std::move(offlineName));
     });
+}
+
+void Session::resetSnapshot(std::string name, std::string target)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    current = SessionSnapshot {};
+    current.state = target.rfind(RealmPrefix, 0) == 0 || target.rfind(ExperiencePrefix, 0) == 0 || !realmInviteCode(target).empty() ? SessionState::Resolving : SessionState::Connecting;
+    current.name = std::move(name);
+    current.target = std::move(target);
+    pendingChat.clear();
+    pendingActionbar.reset();
+    pendingTitles.clear();
+    pendingToasts.clear();
+    outgoingChat.clear();
+    pendingForms.clear();
+    outgoingForms.clear();
 }
 
 void Session::disconnect()
@@ -434,19 +441,17 @@ std::string_view Session::gameVersion()
     return GameVersion;
 }
 
-std::optional<std::string> Session::takeTransfer()
-{
-    std::lock_guard<std::mutex> guard(mutex);
-    if (current.transferTarget.empty()) {
-        return std::nullopt;
-    }
-    return std::exchange(current.transferTarget, std::string());
-}
-
 SessionSnapshot Session::snapshot() const
 {
     std::lock_guard<std::mutex> guard(mutex);
     return current;
+}
+
+std::shared_ptr<const world::PackFiles> Session::cachedPack(const std::string& path)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    auto found = packCache.find(path);
+    return found == packCache.end() ? nullptr : found->second;
 }
 
 std::vector<MeshUpdate> Session::takeMeshUpdates()
@@ -714,7 +719,6 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ChunkRadiusUpdated:
     case MinecraftPacketIds::DimensionData:
     case MinecraftPacketIds::BlockEvent:
-    case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
@@ -757,6 +761,8 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::SetActorMotion:
     case MinecraftPacketIds::UpdateAbilities:
     case MinecraftPacketIds::Text:
+    case MinecraftPacketIds::SetTitle:
+    case MinecraftPacketIds::ToastRequest:
     case MinecraftPacketIds::AvailableCommands:
     case MinecraftPacketIds::SetDisplayObjective:
     case MinecraftPacketIds::SetScore:
@@ -764,6 +770,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ModalFormRequest:
     case MinecraftPacketIds::ClientboundCloseForm:
     case MinecraftPacketIds::PacketViolationWarning:
+    case MinecraftPacketIds::Transfer:
         break;
     default:
         return;
@@ -792,6 +799,17 @@ void Session::handleWorldPacket(const std::string& payload)
 
     if (auto violation = std::dynamic_pointer_cast<PacketViolationWarningPacket>(packet)) {
         handleViolation(*violation);
+        return;
+    }
+
+    if (auto transfer = std::dynamic_pointer_cast<TransferPacket>(packet)) {
+        // A slash would turn the address into a Realm or experience target.
+        if (transfer->mAddress.empty() || transfer->mAddress.find('/') != std::string::npos || transfer->mPort <= 0 || transfer->mPort > 65535) {
+            debugLog("ignored transfer to " + transfer->mAddress + ":" + std::to_string(transfer->mPort));
+            return;
+        }
+        std::string host = transfer->mAddress.find(':') != std::string::npos ? "[" + transfer->mAddress + "]" : transfer->mAddress;
+        transferTarget = host + ":" + std::to_string(transfer->mPort);
         return;
     }
 
@@ -985,14 +1003,6 @@ void Session::handleWorldPacket(const std::string& payload)
         if (chestLidStates.contains(cell)) {
             markChestLid(cell, true);
         }
-    } else if (auto transfer = std::dynamic_pointer_cast<TransferPacket>(packet)) {
-        constexpr int32_t DefaultPort = 19132;
-        std::string host = transfer->mAddress.find(':') != std::string::npos ? "[" + transfer->mAddress + "]" : transfer->mAddress;
-        int32_t port = transfer->mPort > 0 && transfer->mPort <= 65535 ? transfer->mPort : DefaultPort;
-        debugLog("transfer to " + host + ":" + std::to_string(port));
-        transferring = true;
-        std::lock_guard<std::mutex> guard(mutex);
-        current.transferTarget = host + ":" + std::to_string(port);
     } else if (auto blockEvent = std::dynamic_pointer_cast<BlockEventPacket>(packet)) {
         constexpr int32_t ChestEvent = 1;
         if (blockEvent->mEventType == ChestEvent) {
@@ -1181,7 +1191,25 @@ void Session::fail(const std::string& error)
 
 void Session::run(std::string target, MinecraftAuthentication* authentication, std::string offlineName)
 {
-    transferring = false;
+    std::optional<std::string> next = std::move(target);
+    while (next && !cancelled) {
+        std::string address = std::move(*next);
+        next = join(address, authentication, offlineName);
+        if (next) {
+            debugLog("transfer to " + *next);
+            std::string name;
+            {
+                std::lock_guard<std::mutex> guard(mutex);
+                name = current.name;
+            }
+            resetSnapshot(std::move(name), *next);
+        }
+    }
+}
+
+std::optional<std::string> Session::join(const std::string& target, MinecraftAuthentication* authentication, const std::string& offlineName)
+{
+    transferTarget.reset();
     ClientConnectionSettings settings;
     settings.mProtocolVersion = ProtocolVersion;
     settings.mGameVersion = GameVersion;
@@ -1200,11 +1228,16 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         }
         if (offer.mPackSize && std::filesystem::file_size(path, error) != offer.mPackSize) return false;
         if (error) return false;
-        std::string packError;
-        auto pack = world::loadServerPack(path, offer.mContentKey, packError);
-        if (!pack || !packMatches(*pack, offer)) {
-            debugLog("pack cache rejected " + offer.mPackId + ": " + (packError.empty() ? "manifest mismatch" : packError));
-            return false;
+        std::shared_ptr<const world::PackFiles> pack = cachedPack(path.string());
+        if (!pack) {
+            std::string packError;
+            pack = world::loadServerPack(path, offer.mContentKey, packError);
+            if (!pack || !packMatches(*pack, offer)) {
+                debugLog("pack cache rejected " + offer.mPackId + ": " + (packError.empty() ? "manifest mismatch" : packError));
+                return false;
+            }
+            std::lock_guard<std::mutex> guard(mutex);
+            packCache[path.string()] = pack;
         }
         if (auto title = packTitle(*pack)) {
             std::lock_guard<std::mutex> guard(mutex);
@@ -1212,13 +1245,15 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         }
         return true;
     };
-    settings.mResourcePacks.mValidate = [](const DownloadedResourcePack& pack, std::string& error) {
+    settings.mResourcePacks.mValidate = [this](const DownloadedResourcePack& pack, std::string& error) {
         auto files = world::loadServerPackData(pack.mData, pack.mOffer.mContentKey, error);
         if (!files || !packMatches(*files, pack.mOffer)) {
             if (error.empty()) error = "manifest UUID or version does not match the server offer";
             error = "Resource pack " + pack.mOffer.mPackId + ": " + error;
             return false;
         }
+        std::lock_guard<std::mutex> guard(mutex);
+        packCache[packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion).string()] = std::move(files);
         return true;
     };
     settings.mResourcePacks.mOffer = [this](const std::vector<ResourcePackOffer>& offers) {
@@ -1246,7 +1281,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     if (target.rfind(RealmPrefix, 0) == 0 || !inviteCode.empty()) {
         if (!authentication) {
             fail("Sign in with Microsoft to join Realms");
-            return;
+            return std::nullopt;
         }
         RealmsService realms(*authentication);
         long long realmId = 0;
@@ -1254,7 +1289,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             std::string error;
             if (!acceptRealmInvite(*authentication, inviteCode, realmId, error)) {
                 fail(error);
-                return;
+                return std::nullopt;
             }
         } else {
             realmId = std::strtoll(target.c_str() + std::char_traits<char>::length(RealmPrefix), nullptr, 10);
@@ -1264,7 +1299,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         std::string error;
         if (!realms.requestAddress(realmId, TimeoutMs, &cancelled, address, error) || !address.toTarget(resolved, error)) {
             fail(error);
-            return;
+            return std::nullopt;
         }
         resolved.applyTo(settings);
         std::lock_guard<std::mutex> guard(mutex);
@@ -1272,18 +1307,18 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     } else if (target.rfind(ExperiencePrefix, 0) == 0) {
         if (!authentication) {
             fail("Sign in with Microsoft to join featured servers");
-            return;
+            return std::nullopt;
         }
         std::string error;
         if (!resolveExperience(*authentication, target.substr(std::char_traits<char>::length(ExperiencePrefix)), settings.mHost, settings.mPort, error)) {
             fail(error);
-            return;
+            return std::nullopt;
         }
         std::lock_guard<std::mutex> guard(mutex);
         current.state = SessionState::Connecting;
     } else if (!parseHostPort(target, settings.mHost, settings.mPort)) {
         fail("Invalid server address: " + target);
-        return;
+        return std::nullopt;
     }
 
     resetDebugLog();
@@ -1306,12 +1341,12 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
     for (const DownloadedResourcePack& pack : result.mResourcePacks) {
         std::string error;
-        if (!savePack(pack, error)) { fail(error); return; }
+        if (!savePack(pack, error)) { fail(error); return std::nullopt; }
     }
     if (!result.mConnection) {
         debugLog("dial failed: " + result.mError);
         fail(result.mError.empty() ? "Could not connect" : result.mError);
-        return;
+        return std::nullopt;
     }
     debugLog("dial done, chunk radius " + std::to_string(result.mConnection->getChunkRadius()) + ", spawn " + (result.mConnection->isSpawnReceived() ? "received" : "pending"));
     blockDefinitions = BlockDefinitionRegistry {};
@@ -1414,41 +1449,62 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
 
     std::string assetsError;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
+    std::map<std::string, std::shared_ptr<const world::PackFiles>> usedPacks;
+    std::string wantedAssets;
     for (const ResourcePackOffer& offer : result.mOfferedPacks) {
         std::filesystem::path path = packPath(offer.mPackId, offer.mPackVersion);
-        std::error_code exists;
-        if (!std::filesystem::exists(path, exists)) {
-            fail("Resource pack is missing from cache: " + offer.mPackId);
-            return;
+        std::shared_ptr<const world::PackFiles> pack = cachedPack(path.string());
+        if (!pack) {
+            std::error_code exists;
+            if (!std::filesystem::exists(path, exists)) {
+                fail("Resource pack is missing from cache: " + offer.mPackId);
+                return std::nullopt;
+            }
+            std::string key = offer.mContentKey;
+            if (key.empty()) {
+                std::ifstream keyFile(std::filesystem::path(path).replace_extension(".key"));
+                std::getline(keyFile, key);
+            }
+            std::string packError;
+            pack = world::loadServerPack(path, key, packError);
+            if (!pack) {
+                fail("Resource pack " + offer.mPackId + ": " + packError);
+                return std::nullopt;
+            }
         }
-        std::string key = offer.mContentKey;
-        if (key.empty()) {
-            std::ifstream keyFile(std::filesystem::path(path).replace_extension(".key"));
-            std::getline(keyFile, key);
-        }
-        std::string packError;
-        if (std::shared_ptr<const world::PackFiles> pack = world::loadServerPack(path, key, packError)) {
-            std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack);
+        std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack);
+        {
             std::lock_guard<std::mutex> guard(mutex);
             if (title && !current.titleImage) {
                 current.titleImage = std::move(title);
             }
-            packs.push_back(std::move(pack));
-        } else {
-            fail("Resource pack " + offer.mPackId + ": " + packError);
-            return;
         }
+        wantedAssets += path.string() + '\n';
+        usedPacks[path.string()] = pack;
+        packs.push_back(std::move(pack));
+    }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        packCache = std::move(usedPacks);
     }
     std::vector<world::CustomBlock> customBlocks;
     if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
+        BinaryStream definitions;
         for (const BlockPropertyData& block : startGame->mBlockProperties) {
             customBlocks.push_back({ block.mName, block.mProperties });
+            definitions.put(block.mName + '\n');
+            NbtIo::writeTag(definitions, block.mProperties, NbtVariant::LittleEndian);
         }
+        wantedAssets += definitions.getBuffer();
     }
-    std::string buildError;
-    assets = world::BlockAssets::create(packs, customBlocks, buildError);
-    if (!buildError.empty()) {
+    // Transfers inside a network usually land on the same packs, and rebuilding the atlas costs seconds.
+    if (!assets || wantedAssets != assetsKey) {
+        std::string buildError;
+        assets = world::BlockAssets::create(packs, customBlocks, buildError);
         assetsError = buildError;
+        assetsKey = assets && buildError.empty() ? std::move(wantedAssets) : std::string();
+    } else {
+        debugLog("reusing block assets");
     }
     ids = world::IdMapping {};
     ids.hashed = hashedNetworkIds;
@@ -1507,7 +1563,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
 
     std::string payload;
     double lastWorldPacket = secondsNow();
-    while (!cancelled && !transferring) {
+    while (!cancelled && !transferTarget) {
         int waitMs = 50;
         if (spawnInitialized && nextMotionTick > 0.0) {
             waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 1, OutlineRefreshMs);
@@ -1600,18 +1656,20 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         }
     }
 
+    std::optional<std::string> next = std::exchange(transferTarget, std::nullopt);
     std::lock_guard<std::mutex> guard(mutex);
-    if (transferring) {
-        connection->disconnect("Transferring");
-        current.state = SessionState::Connecting;
-    } else if (cancelled) {
+    if (cancelled) {
         connection->disconnect("Disconnected");
         current.state = SessionState::Idle;
+        next.reset();
+    } else if (next) {
+        connection->disconnect(std::string());
     } else {
         current.state = SessionState::Disconnected;
         current.error = connection->getDisconnectReason();
     }
     connection.reset();
+    return next;
 }
 
 }

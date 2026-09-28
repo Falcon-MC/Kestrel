@@ -3,7 +3,9 @@
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/AvailableCommandsPacket.h"
 #include "Protocol/Packets/CommandRequestPacket.h"
+#include "Protocol/Packets/SetTitlePacket.h"
 #include "Protocol/Packets/TextPacket.h"
+#include "Protocol/Packets/ToastRequestPacket.h"
 
 #include <algorithm>
 #include <random>
@@ -13,6 +15,8 @@ namespace kestrel {
 namespace {
 
 constexpr size_t MaxPendingChat = 256;
+constexpr size_t MaxPendingToasts = 32;
+constexpr size_t MaxPendingTitles = 64;
 
 // The game gives every command request a fresh version 4 UUID.
 Uuid randomUuid()
@@ -121,6 +125,30 @@ std::vector<ChatMessage> Session::takeChatMessages()
     return messages;
 }
 
+std::optional<ActionbarText> Session::takeActionbar()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::optional<ActionbarText> text = std::move(pendingActionbar);
+    pendingActionbar.reset();
+    return text;
+}
+
+std::vector<TitleRequest> Session::takeTitles()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<TitleRequest> titles = std::move(pendingTitles);
+    pendingTitles.clear();
+    return titles;
+}
+
+std::vector<ToastRequest> Session::takeToasts()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<ToastRequest> toasts = std::move(pendingToasts);
+    pendingToasts.clear();
+    return toasts;
+}
+
 void Session::sendChat(std::string text)
 {
     std::lock_guard<std::mutex> guard(mutex);
@@ -135,6 +163,53 @@ void Session::handleChatPacket(const std::shared_ptr<Packet>& packet)
         std::shared_ptr<const std::vector<menu::ChatCommand>> commands = chatCommands(*available);
         std::lock_guard<std::mutex> guard(mutex);
         current.commands = std::move(commands);
+        return;
+    }
+    if (auto title = std::dynamic_pointer_cast<SetTitlePacket>(packet)) {
+        using Type = SetTitlePacket::Type;
+        std::lock_guard<std::mutex> guard(mutex);
+        if (title->mType == Type::Actionbar || title->mType == Type::ActionbarJson) {
+            pendingActionbar = ActionbarText { std::move(title->mText), title->mType == Type::ActionbarJson };
+            return;
+        }
+        if (pendingTitles.size() >= MaxPendingTitles) {
+            return;
+        }
+        TitleRequest request;
+        switch (title->mType) {
+        case Type::Clear:
+            request.kind = TitleRequest::Kind::Clear;
+            break;
+        case Type::Reset:
+            request.kind = TitleRequest::Kind::Reset;
+            break;
+        case Type::Title:
+        case Type::TitleJson:
+            request.kind = TitleRequest::Kind::Title;
+            break;
+        case Type::Subtitle:
+        case Type::SubtitleJson:
+            request.kind = TitleRequest::Kind::Subtitle;
+            break;
+        case Type::Times:
+            request.kind = TitleRequest::Kind::Times;
+            break;
+        default:
+            return;
+        }
+        request.text = std::move(title->mText);
+        request.json = title->mType == Type::TitleJson || title->mType == Type::SubtitleJson;
+        request.fadeIn = title->mFadeInTime;
+        request.stay = title->mStayTime;
+        request.fadeOut = title->mFadeOutTime;
+        pendingTitles.push_back(std::move(request));
+        return;
+    }
+    if (auto toast = std::dynamic_pointer_cast<ToastRequestPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (pendingToasts.size() < MaxPendingToasts) {
+            pendingToasts.push_back({ std::move(toast->mTitle), std::move(toast->mContent) });
+        }
         return;
     }
     auto text = std::dynamic_pointer_cast<TextPacket>(packet);

@@ -156,18 +156,27 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
             }
         }
     }
-    for (const fs::path& layer : stack) {
+    // Paths the index would spell differently go straight to the disk.
+    bool indexed = texturePath.find('\\') == std::string::npos && texturePath.find("//") == std::string::npos && texturePath.find("./") == std::string::npos;
+    fs::path parent = path.parent_path();
+    std::string folder = parent.string();
+    std::string name = path.filename().string();
+    const std::vector<size_t>* candidates = indexed ? &layersWith(parent.generic_string()) : nullptr;
+    size_t count = candidates ? candidates->size() : stack.size();
+    for (size_t i = 0; i < count; ++i) {
+        size_t layer = candidates ? (*candidates)[i] : i;
         for (const char* extension : { ".png", ".tga" }) {
-            if (readFile(layer / (texturePath + extension), out)) {
+            std::string relative = texturePath + extension;
+            if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
                 return true;
             }
         }
-        const Archive* source = archive(layer / "__brarchive" / (path.parent_path().string() + ".brarchive"));
+        const Archive* source = archive(layer, folder);
         if (!source) {
             continue;
         }
         for (const char* extension : { ".png", ".tga" }) {
-            auto found = source->entries.find(path.filename().string() + extension);
+            auto found = source->entries.find(name + extension);
             if (found != source->entries.end()) {
                 out.assign(source->data, source->dataStart + found->second.first, found->second.second);
                 return true;
@@ -191,8 +200,8 @@ std::vector<std::string> PackSource::archiveEntries(const std::string& archiveNa
             }
         }
     }
-    for (const fs::path& layer : stack) {
-        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+    for (size_t layer = 0; layer < stack.size(); ++layer) {
+        const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
         }
@@ -213,8 +222,8 @@ bool PackSource::readArchived(const std::string& archiveName, const std::string&
             return true;
         }
     }
-    for (const fs::path& layer : stack) {
-        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+    for (size_t layer = 0; layer < stack.size(); ++layer) {
+        const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
         }
@@ -235,8 +244,8 @@ std::vector<std::string> PackSource::readArchivedLayers(const std::string& archi
             result.push_back(*data);
         }
     }
-    for (const fs::path& layer : stack) {
-        const Archive* source = archive(layer / "__brarchive" / (archiveName + ".brarchive"));
+    for (size_t layer = 0; layer < stack.size(); ++layer) {
+        const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
         }
@@ -248,16 +257,66 @@ std::vector<std::string> PackSource::readArchivedLayers(const std::string& archi
     return result;
 }
 
-const PackSource::Archive* PackSource::archive(const fs::path& file)
+/**
+ * The files of one layer outside its archives, relative to the layer. Probing
+ * each of the dozens of versioned vanilla layers on disk for every texture
+ * used to cost more than decoding the textures themselves.
+ */
+const PackSource::LooseFiles& PackSource::looseFiles(size_t layer)
 {
-    auto cached = archives.find(file);
+    looseIndex.resize(stack.size());
+    std::optional<LooseFiles>& index = looseIndex[layer];
+    if (index) {
+        return *index;
+    }
+    index.emplace();
+    std::error_code error;
+    const fs::path& root = stack[layer];
+    for (fs::recursive_directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {
+        if (it->path().filename() == "__brarchive") {
+            it.disable_recursion_pending();
+            continue;
+        }
+        std::error_code status;
+        if (it->is_regular_file(status)) {
+            fs::path relative = it->path().lexically_relative(root);
+            index->files.insert(relative.generic_string());
+            index->folders.insert(relative.parent_path().generic_string());
+        }
+    }
+    return *index;
+}
+
+/**
+ * The layers, in priority order, that hold loose files in the folder or an
+ * archive of it; the rest cannot have any texture from there.
+ */
+const std::vector<size_t>& PackSource::layersWith(const std::string& folder)
+{
+    auto found = folderLayers.find(folder);
+    if (found != folderLayers.end()) {
+        return found->second;
+    }
+    std::vector<size_t> layers;
+    for (size_t layer = 0; layer < stack.size(); ++layer) {
+        if (looseFiles(layer).folders.contains(folder) || archive(layer, folder)) {
+            layers.push_back(layer);
+        }
+    }
+    return folderLayers.emplace(folder, std::move(layers)).first->second;
+}
+
+const PackSource::Archive* PackSource::archive(size_t layer, const std::string& name)
+{
+    std::string key = std::to_string(layer) + ':' + name;
+    auto cached = archives.find(key);
     if (cached != archives.end()) {
         return cached->second.get();
     }
 
     auto loaded = std::make_unique<Archive>();
     uint64_t magic = 0;
-    bool valid = readFile(file, loaded->data) && loaded->data.size() >= ArchiveHeaderSize;
+    bool valid = readFile(stack[layer] / "__brarchive" / (name + ".brarchive"), loaded->data) && loaded->data.size() >= ArchiveHeaderSize;
     if (valid) {
         std::memcpy(&magic, loaded->data.data(), sizeof(magic));
         valid = magic == ArchiveMagic;
@@ -285,7 +344,7 @@ const PackSource::Archive* PackSource::archive(const fs::path& file)
     }
 
     Archive* result = valid ? loaded.get() : nullptr;
-    archives.emplace(file, valid ? std::move(loaded) : nullptr);
+    archives.emplace(std::move(key), valid ? std::move(loaded) : nullptr);
     return result;
 }
 

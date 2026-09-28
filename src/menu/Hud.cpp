@@ -10,14 +10,18 @@ namespace kestrel::menu {
 
 namespace {
 
-constexpr float HotbarWidth = 182.0f;
-constexpr uint8_t HotbarCapAlpha = 166;
 constexpr int32_t MaxHeartRows = 10;
 constexpr ui::Color White { 255, 255, 255, 255 };
-constexpr ui::Color LevelColor { 128, 255, 0, 255 };
-constexpr ui::Color LevelShadow { 32, 63, 0, 255 };
 constexpr ui::Color TextShadow { 63, 63, 63, 255 };
+constexpr float IconSize = 9.0f;
+constexpr float IconStep = 8.0f;
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
+
+// Settings the game passes hud_screen.json from code: chat lines stay ten seconds on the
+// 0.7 chat background, and title, tip and action bar boxes use the 0.6 text background.
+constexpr double ChatLifetime = 10.0;
+constexpr double ChatBackgroundOpacity = 0.7;
+constexpr double TextBackgroundOpacity = 0.6;
 
 const char* effectSprite(int32_t id)
 {
@@ -79,47 +83,6 @@ const char* effectSprite(int32_t id)
     }
 }
 
-/**
- * Maps GUI pixels to menu units and draws named skin sprites at their
- * classic GUI sizes.
- */
-struct Layout {
-    ui::Context& ui;
-    const HudView& view;
-    float originX = 0.0f;
-    float originY = 0.0f;
-    float unit = 1.0f;
-    float guiWidth = 0.0f;
-    float guiHeight = 0.0f;
-
-    ui::Rect rect(float gx, float gy, float gw, float gh) const
-    {
-        return { originX + gx * unit, originY + gy * unit, gw * unit, gh * unit };
-    }
-
-    void sprite(const std::string& name, float gx, float gy, float gw, float gh, ui::Color tint = White) const
-    {
-        ui.sprite(rect(gx, gy, gw, gh), name, tint);
-    }
-
-    void region(const std::string& name, float gx, float gy, float gw, float gh, const ui::Rect& texels) const
-    {
-        ui.spriteRegion(rect(gx, gy, gw, gh), name, texels, White);
-    }
-
-    void solid(float gx, float gy, float gw, float gh, ui::Color color) const
-    {
-        ui.fill(rect(gx, gy, gw, gh), color);
-    }
-
-    void text(const std::string& value, float gx, float gy, ui::Color color) const
-    {
-        float x = originX + gx * unit, y = originY + gy * unit;
-        ui.pixelTextScaled(value, x + unit, y + unit, unit, color, true);
-        ui.pixelTextScaled(value, x, y, unit, color);
-    }
-};
-
 std::string heartSprite(HeartKind kind, bool flash, bool half)
 {
     std::string base = "ui/";
@@ -143,58 +106,6 @@ std::string heartSprite(HeartKind kind, bool flash, bool half)
     return half ? base + "_half" : base;
 }
 
-void drawSlotContents(const Layout& layout, const HudSlot& slot, float gx, float gy)
-{
-    if (!slot.filled) {
-        return;
-    }
-    if (!slot.icon.empty()) {
-        layout.sprite(slot.icon, gx, gy, 16.0f, 16.0f);
-    }
-    if (slot.durability >= 0.0f) {
-        layout.solid(gx + 2.0f, gy + 13.0f, 13.0f, 2.0f, { 0, 0, 0, 255 });
-        float width = std::round(std::clamp(slot.durability, 0.0f, 1.0f) * 13.0f);
-        if (width > 0.0f) {
-            float hue = slot.durability / 3.0f;
-            float red = std::clamp(std::abs(hue * 6.0f - 3.0f) - 1.0f, 0.0f, 1.0f);
-            float green = std::clamp(2.0f - std::abs(hue * 6.0f - 2.0f), 0.0f, 1.0f);
-            layout.solid(gx + 2.0f, gy + 13.0f, width, 1.0f, { static_cast<uint8_t>(red * 255.0f), static_cast<uint8_t>(green * 255.0f), 0, 255 });
-        }
-    }
-    if (slot.count > 1) {
-        std::string value = std::to_string(slot.count);
-        layout.text(value, gx + 17.0f - layout.ui.measure(value, ui::TextStyle::Pixel), gy + 9.0f, White);
-    }
-}
-
-void drawHotbar(const Layout& layout)
-{
-    const HudView& view = layout.view;
-    float left = (layout.guiWidth - HotbarWidth) * 0.5f;
-    float top = layout.guiHeight - 22.0f;
-    layout.sprite("ui/hotbar_start_cap", left, top, 1.0f, 22.0f, { 255, 255, 255, HotbarCapAlpha });
-    for (int slot = 0; slot < 9; ++slot) {
-        layout.sprite("ui/hotbar_" + std::to_string(slot), left + 1.0f + slot * 20.0f, top, 20.0f, 22.0f);
-    }
-    layout.sprite("ui/hotbar_end_cap", left + HotbarWidth - 1.0f, top, 1.0f, 22.0f, { 255, 255, 255, HotbarCapAlpha });
-    int32_t selected = std::clamp(view.selected, 0, 8);
-    layout.sprite("ui/selected_hotbar_slot", left + selected * 20.0f - 1.0f, top - 1.0f, 24.0f, 24.0f);
-    if (view.offhand.filled) {
-        layout.sprite("ui/hotbar_0", left - 29.0f, top, 20.0f, 22.0f);
-    }
-    for (int slot = 0; slot < 9; ++slot) {
-        drawSlotContents(layout, view.hotbar[size_t(slot)], left + 3.0f + slot * 20.0f, layout.guiHeight - 19.0f);
-    }
-    drawSlotContents(layout, view.offhand, left - 26.0f, layout.guiHeight - 19.0f);
-
-    if (view.labelAlpha > 0.0f && !view.selectedName.empty()) {
-        float width = layout.ui.measure(view.selectedName, ui::TextStyle::Pixel);
-        float above = view.showStats ? 58.0f : 34.0f;
-        uint8_t alpha = static_cast<uint8_t>(std::clamp(view.labelAlpha, 0.0f, 1.0f) * 255.0f);
-        layout.text(view.selectedName, std::floor((layout.guiWidth - width) * 0.5f), layout.guiHeight - above, { 255, 255, 255, alpha });
-    }
-}
-
 int32_t heartRows(const HudView& view, int32_t& healthHearts, int32_t& absorptionHearts)
 {
     int32_t maximum = static_cast<int32_t>(std::ceil(view.maxHealth));
@@ -205,147 +116,118 @@ int32_t heartRows(const HudView& view, int32_t& healthHearts, int32_t& absorptio
     return std::max((total + 9) / 10, 1);
 }
 
-void drawHealth(const Layout& layout)
+ui::Color faded(float alpha)
 {
-    const HudView& view = layout.view;
+    return { 255, 255, 255, static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f) };
+}
+
+ui::UiValue text(std::string value)
+{
+    return ui::UiValue::of(std::move(value));
+}
+
+ui::UiValue flag(bool value)
+{
+    return ui::UiValue::of(value);
+}
+
+ui::UiValue number(double value)
+{
+    return ui::UiValue::of(value);
+}
+
+/**
+ * Hearts from their first row's top left corner, further rows stacking
+ * upward and closer together the more there are.
+ */
+void drawHearts(ui::Context& ui, const HudView& view, float left, float top, ui::Color tint)
+{
     int32_t healthHearts = 0;
     int32_t absorptionHearts = 0;
     int32_t rows = heartRows(view, healthHearts, absorptionHearts);
     float rowHeight = static_cast<float>(std::max(10 - std::max(rows - 2, 0), 3));
     int32_t current = static_cast<int32_t>(std::ceil(std::max(view.health, 0.0f)));
     int32_t absorption = static_cast<int32_t>(std::ceil(std::max(view.absorption, 0.0f)));
-    float left = (layout.guiWidth - HotbarWidth) * 0.5f;
-    float base = layout.guiHeight - 39.0f;
     int32_t total = std::max(healthHearts + absorptionHearts, 1);
     for (int32_t index = 0; index < total; ++index) {
-        float x = left + (index % 10) * 8.0f;
-        float y = base - (index / 10) * rowHeight;
-        layout.sprite("ui/heart_background", x, y, 9.0f, 9.0f);
+        ui::Rect cell { left + static_cast<float>(index % 10) * IconStep, top - static_cast<float>(index / 10) * rowHeight, IconSize, IconSize };
+        ui.sprite(cell, "ui/heart_background", tint);
         if (index < healthHearts) {
             int32_t filled = current - index * 2;
             if (filled >= 2) {
-                layout.sprite(heartSprite(view.heartKind, view.heartFlash, false), x, y, 9.0f, 9.0f);
+                ui.sprite(cell, heartSprite(view.heartKind, view.heartFlash, false), tint);
             } else if (filled == 1) {
-                layout.sprite(heartSprite(view.heartKind, view.heartFlash, true), x, y, 9.0f, 9.0f);
+                ui.sprite(cell, heartSprite(view.heartKind, view.heartFlash, true), tint);
             }
         } else {
             int32_t filled = absorption - (index - healthHearts) * 2;
             if (filled >= 2) {
-                layout.sprite("ui/absorption_heart", x, y, 9.0f, 9.0f);
+                ui.sprite(cell, "ui/absorption_heart", tint);
             } else if (filled == 1) {
-                layout.sprite("ui/absorption_heart_half", x, y, 9.0f, 9.0f);
+                ui.sprite(cell, "ui/absorption_heart_half", tint);
             }
         }
     }
-    if (view.armor > 0) {
-        float y = base - (rows - 1) * rowHeight - 10.0f;
-        for (int32_t index = 0; index < 10; ++index) {
-            int32_t remaining = view.armor - index * 2;
-            const char* name = remaining >= 2 ? "ui/armor_full" : remaining == 1 ? "ui/armor_half" : "ui/armor_empty";
-            layout.sprite(name, left + index * 8.0f, y, 9.0f, 9.0f);
-        }
-    }
 }
 
-void drawHunger(const Layout& layout)
+void drawArmor(ui::Context& ui, const HudView& view, float left, float top, ui::Color tint)
 {
-    const HudView& view = layout.view;
-    std::string background = view.hungerEffect ? "ui/hunger_effect_background" : "ui/hunger_background";
-    std::string full = view.hungerEffect ? "ui/hunger_effect_full" : "ui/hunger_full";
-    std::string half = view.hungerEffect ? "ui/hunger_effect_half" : "ui/hunger_half";
-    int32_t current = static_cast<int32_t>(std::ceil(std::max(view.hunger, 0.0f)));
-    float right = (layout.guiWidth + HotbarWidth) * 0.5f;
+    int32_t healthHearts = 0;
+    int32_t absorptionHearts = 0;
+    int32_t rows = heartRows(view, healthHearts, absorptionHearts);
+    float rowHeight = static_cast<float>(std::max(10 - std::max(rows - 2, 0), 3));
+    float y = top - static_cast<float>(rows - 1) * rowHeight - 10.0f;
     for (int32_t index = 0; index < 10; ++index) {
-        float x = right - index * 8.0f - 9.0f;
-        float y = layout.guiHeight - 39.0f;
-        layout.sprite(background, x, y, 9.0f, 9.0f);
-        int32_t remaining = current - index * 2;
-        if (remaining >= 2) {
-            layout.sprite(full, x, y, 9.0f, 9.0f);
-        } else if (remaining == 1) {
-            layout.sprite(half, x, y, 9.0f, 9.0f);
-        }
-    }
-    if (view.air < view.maxAir) {
-        int32_t maximum = std::max(view.maxAir, 1);
-        int32_t air = std::max(view.air, 0);
-        int32_t fullBubbles = (std::max(air - 2, 0) * 10 + maximum - 1) / maximum;
-        int32_t popping = std::max((air * 10 + maximum - 1) / maximum - fullBubbles, 0);
-        for (int32_t index = 0; index < std::min(fullBubbles + popping, 10); ++index) {
-            layout.sprite(index < fullBubbles ? "ui/bubble" : "ui/bubble_pop", right - index * 8.0f - 9.0f, layout.guiHeight - 49.0f, 9.0f, 9.0f);
-        }
-    }
-}
-
-void drawExperience(const Layout& layout)
-{
-    const HudView& view = layout.view;
-    const ui::Sprite& icons = layout.ui.skin().sprite("textures/gui/icons");
-    float texel = icons.valid && icons.width > 0.0f ? icons.width / 256.0f : 1.0f;
-    float left = (layout.guiWidth - HotbarWidth) * 0.5f;
-    float top = layout.guiHeight - 29.0f;
-    layout.region("textures/gui/icons", left, top, 182.0f, 5.0f, { 0.0f, 64.0f * texel, 182.0f * texel, 5.0f * texel });
-    float filled = std::min(std::floor(std::clamp(view.experience, 0.0f, 1.0f) * 183.0f), 182.0f);
-    if (filled >= 1.0f) {
-        layout.region("textures/gui/icons", left, top, filled, 5.0f, { 0.0f, 69.0f * texel, filled * texel, 5.0f * texel });
-    }
-    if (view.level > 0) {
-        std::string value = std::to_string(view.level);
-        float width = layout.ui.measure(value, ui::TextStyle::Pixel);
-        float height = layout.ui.lineHeight(ui::TextStyle::Pixel);
-        ui::Rect bar = layout.rect(0.0f, top, 0.0f, 0.0f);
-        float x = std::floor(layout.originX + (layout.guiWidth * layout.unit - width) * 0.5f);
-        layout.ui.textShadowed(value, ui::TextStyle::Pixel, x, std::floor(bar.y - height), LevelColor, LevelShadow);
+        int32_t remaining = view.armor - index * 2;
+        const char* name = remaining >= 2 ? "ui/armor_full" : remaining == 1 ? "ui/armor_half" : "ui/armor_empty";
+        ui.sprite({ left + static_cast<float>(index) * IconStep, y, IconSize, IconSize }, name, tint);
     }
 }
 
 /**
- * The boss bars laid out like the game's boss grid: one 182 by 20 cell per
- * bar down from two pixels under the top, as many as fit in three tenths of
- * the screen. Each cell carries the title centered on top and, ten pixels
- * lower, the bar: the empty track and the filled part clipped to the boss's
- * health, both tinted with the bar's color.
+ * Hunger from its right edge leftward, the way the game mirrors the hearts.
  */
-void drawBossBars(const Layout& layout)
+void drawHunger(ui::Context& ui, const HudView& view, float right, float top, ui::Color tint)
 {
-    static constexpr ui::Color BarColors[8] = {
-        { 236, 72, 204, 255 }, { 55, 172, 238, 255 }, { 234, 62, 60, 255 }, { 72, 214, 68, 255 },
-        { 238, 216, 52, 255 }, { 150, 64, 222, 255 }, { 102, 51, 153, 255 }, { 255, 255, 255, 255 },
-    };
-    constexpr float CellWidth = 182.0f;
-    constexpr float CellHeight = 20.0f;
-    constexpr float GridTop = 2.0f;
-    constexpr float BarOffset = 10.0f;
-    constexpr float BarHeight = 5.0f;
-    const std::vector<HudBossBar>& bars = layout.view.bossBars;
-    size_t fitting = static_cast<size_t>(std::floor(layout.guiHeight * 0.3f / CellHeight));
-    size_t count = std::min(bars.size(), fitting);
-    float left = std::floor((layout.guiWidth - CellWidth) * 0.5f);
-    for (size_t index = 0; index < count; ++index) {
-        const HudBossBar& bar = bars[index];
-        ui::Color tint = BarColors[std::clamp(bar.color, 0, 7)];
-        float top = GridTop + static_cast<float>(index) * CellHeight;
-        if (!bar.title.empty()) {
-            float width = layout.ui.measure(bar.title, ui::TextStyle::Pixel);
-            float x = std::floor(layout.originX + (layout.guiWidth * layout.unit - width) * 0.5f);
-            layout.ui.textShadowed(bar.title, ui::TextStyle::Pixel, x, layout.rect(0.0f, top, 0.0f, 0.0f).y, White, TextShadow);
-        }
-        ui::Rect track = layout.rect(left, top + BarOffset, CellWidth, BarHeight);
-        layout.ui.nineSlice(track, "ui/empty_progress_bar", tint);
-        float filled = std::clamp(bar.progress, 0.0f, 1.0f) * track.w;
-        if (filled > 0.0f) {
-            layout.ui.setClip({ track.x, track.y, filled, track.h });
-            layout.ui.nineSlice(track, "ui/filled_progress_bar", tint);
-            layout.ui.clearClip();
+    std::string background = view.hungerEffect ? "ui/hunger_effect_background" : "ui/hunger_background";
+    std::string full = view.hungerEffect ? "ui/hunger_effect_full" : "ui/hunger_full";
+    std::string half = view.hungerEffect ? "ui/hunger_effect_half" : "ui/hunger_half";
+    int32_t current = static_cast<int32_t>(std::ceil(std::max(view.hunger, 0.0f)));
+    for (int32_t index = 0; index < 10; ++index) {
+        ui::Rect cell { right - static_cast<float>(index) * IconStep - IconSize, top, IconSize, IconSize };
+        ui.sprite(cell, background, tint);
+        int32_t remaining = current - index * 2;
+        if (remaining >= 2) {
+            ui.sprite(cell, full, tint);
+        } else if (remaining == 1) {
+            ui.sprite(cell, half, tint);
         }
     }
 }
 
-void drawEffects(const Layout& layout)
+void drawBubbles(ui::Context& ui, const HudView& view, float right, float top, ui::Color tint)
+{
+    if (view.air >= view.maxAir) {
+        return;
+    }
+    int32_t maximum = std::max(view.maxAir, 1);
+    int32_t air = std::max(view.air, 0);
+    int32_t fullBubbles = (std::max(air - 2, 0) * 10 + maximum - 1) / maximum;
+    int32_t popping = std::max((air * 10 + maximum - 1) / maximum - fullBubbles, 0);
+    for (int32_t index = 0; index < std::min(fullBubbles + popping, 10); ++index) {
+        ui.sprite({ right - static_cast<float>(index) * IconStep - IconSize, top, IconSize, IconSize }, index < fullBubbles ? "ui/bubble" : "ui/bubble_pop", tint);
+    }
+}
+
+/**
+ * Status effects in the top right corner of the screen, beneficial ones in
+ * the first row and harmful ones under them.
+ */
+void drawEffects(ui::Context& ui, const HudView& view, float screenRight, float alpha)
 {
     std::vector<const HudEffectView*> beneficial;
     std::vector<const HudEffectView*> harmful;
-    for (const HudEffectView& effect : layout.view.effects) {
+    for (const HudEffectView& effect : view.effects) {
         if (!effectSprite(effect.id)) {
             continue;
         }
@@ -359,22 +241,236 @@ void drawEffects(const Layout& layout)
     std::sort(harmful.begin(), harmful.end(), byId);
     int row = 0;
     for (const std::vector<const HudEffectView*>* list : { &beneficial, &harmful }) {
-        float y = 1.0f + row * 25.0f;
+        float y = 1.0f + static_cast<float>(row) * 25.0f;
         for (size_t column = 0; column < list->size(); ++column) {
             const HudEffectView& effect = *(*list)[column];
-            float x = layout.guiWidth - 25.0f * (column + 1);
+            float x = screenRight - 25.0f * static_cast<float>(column + 1);
             if (x < 0.0f) {
                 break;
             }
-            uint8_t alpha = static_cast<uint8_t>(std::clamp(effect.alpha, 0.0f, 1.0f) * 255.0f);
-            const char* background = effect.ambient ? "ui/hud_mob_ambient_effect_background" : "ui/hud_mob_effect_background";
-            layout.sprite(background, x, y, 24.0f, 24.0f, { 255, 255, 255, alpha });
-            layout.sprite(effectSprite(effect.id), x + 3.0f, y + 3.0f, 18.0f, 18.0f, { 255, 255, 255, alpha });
+            ui::Color tint = faded(effect.alpha * alpha);
+            ui.sprite({ x, y, 24.0f, 24.0f }, effect.ambient ? "ui/hud_mob_ambient_effect_background" : "ui/hud_mob_effect_background", tint);
+            ui.sprite({ x + 3.0f, y + 3.0f, 18.0f, 18.0f }, effectSprite(effect.id), tint);
         }
         ++row;
     }
 }
 
+void drawItem(ui::Context& ui, const HudSlot& slot, const ui::Rect& rect, float alpha)
+{
+    if (slot.filled && !slot.icon.empty()) {
+        ui.sprite(rect, slot.icon, faded(alpha));
+    }
+}
+
+/**
+ * The durability bar of progress_bar_renderer: a black strip one unit
+ * wider and taller than the control, with the remaining part going from green
+ * to red over it.
+ */
+void drawDurability(ui::Context& ui, const ui::Rect& rect, float fraction, float alpha)
+{
+    uint8_t a = static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+    ui.fill({ rect.x, rect.y, rect.w + 1.0f, rect.h + 1.0f }, { 0, 0, 0, a });
+    float width = std::round(std::clamp(fraction, 0.0f, 1.0f) * (rect.w + 1.0f));
+    if (width <= 0.0f) {
+        return;
+    }
+    float hue = fraction / 3.0f;
+    float red = std::clamp(std::abs(hue * 6.0f - 3.0f) - 1.0f, 0.0f, 1.0f);
+    float green = std::clamp(2.0f - std::abs(hue * 6.0f - 2.0f), 0.0f, 1.0f);
+    ui.fill({ rect.x, rect.y, width, rect.h }, { static_cast<uint8_t>(red * 255.0f), static_cast<uint8_t>(green * 255.0f), 0, a });
+}
+
+}
+
+ui::UiData hudData(const HudView& view)
+{
+    ui::UiData data = view.sidebar;
+    ui::UiRow& g = data.globals;
+    bool survival = view.showStats;
+    g["#hud_visible"] = flag(view.visible);
+    g["#hud_alpha"] = number(1.0);
+    g["#hud_propagate_alpha"] = flag(false);
+    g["#hud_visible_centered"] = flag(true);
+    g["#hud_visible_centered_gui_elements"] = flag(true);
+    g["#hud_visible_centered_touch"] = flag(false);
+    g["#hud_visible_not_centered"] = flag(false);
+    g["#hotbar_visible"] = flag(view.showHotbar);
+    g["#hotbar_visible_not_centered"] = flag(false);
+    g["#hotbar_visible_not_centered_resizable"] = flag(false);
+    g["#hotbar_with_xp_bar"] = flag(view.showHotbar && survival);
+    g["#hotbar_no_xp_bar"] = flag(view.showHotbar && !survival);
+    g["#hotbar_with_locator_bar"] = flag(false);
+    g["#hotbar_elipses_left_visible"] = flag(false);
+    g["#hotbar_elipses_right_visible"] = flag(false);
+    g["#hotbar_grid_dimensions"] = text("9,1");
+    g["#is_spectator_mode"] = flag(!view.showHotbar);
+    g["#show_survival_ui"] = flag(survival);
+    g["#is_armor_visible"] = flag(survival && view.armor > 0);
+    g["#is_not_riding_bubbles"] = flag(survival && view.air < view.maxAir);
+    g["#is_riding_bubbles"] = flag(false);
+    g["#horse_hearts_touch"] = flag(false);
+    g["#creative_horse_hearts"] = flag(false);
+    g["#survival_horse_hearts"] = flag(false);
+    g["#level_number"] = text(std::to_string(view.level));
+    g["#level_number_visible"] = flag(survival && view.level > 0);
+    // clip_ratio is the part cut away, so a quarter full bar clips three quarters.
+    g["#exp_progress"] = number(1.0 - std::clamp(static_cast<double>(view.experience), 0.0, 1.0));
+    g["#paper_doll_visible"] = flag(view.paperDoll);
+    g["#status_effects_visible"] = flag(true);
+    g["#scoreboard_sidebar_visible"] = flag(view.sidebarVisible);
+    g["#player_position_visible"] = flag(false);
+    g["#number_of_days_played_visible"] = flag(false);
+    g["#hud_text_background_alpha"] = number(TextBackgroundOpacity);
+    g["#boss_grid_dimension"] = text("1,0");
+    g["#boss_hud_padding"] = flag(false);
+    g["#boss_hud_touch_padding"] = flag(false);
+    g["#on_new_death_screen"] = flag(false);
+    g["#interact_visible"] = flag(false);
+    g["#auto_save_animation_visible"] = flag(false);
+    for (const char* hidden : { "#reset_modal_visible", "#close_without_saving_modal_visible", "#hint_drag_visible", "#hint_deselect_visible", "#hint_saved_visible", "#layout_customization_main_panel_visible", "#layout_customization_sub_panel_visible", "#left_tips_visible", "#emote_tips_visible", "#tooltip_visible" }) {
+        g[hidden] = flag(false);
+    }
+
+    std::vector<ui::UiRow>& hotbar = data.collections["hotbar_items"];
+    for (size_t index = 0; index < view.hotbar.size(); ++index) {
+        const HudSlot& slot = view.hotbar[index];
+        ui::UiRow row;
+        row["#hotbar_slot"] = number(static_cast<double>(index));
+        row["#slot_selected"] = flag(static_cast<int32_t>(index) == view.selected);
+        row["#item_icon"] = text(slot.filled ? slot.icon : std::string());
+        row["#inventory_stack_count"] = text(slot.count > 1 ? std::to_string(slot.count) : std::string());
+        row["#stack_count_visible"] = flag(slot.filled && slot.count > 1);
+        row["#item_durability_visible"] = flag(slot.filled && slot.durability >= 0.0f);
+        row["#item_durability_total_amount"] = number(1.0);
+        row["#item_durability_current_amount"] = number(std::max(0.0f, slot.durability));
+        row["#item_storage_visible"] = flag(false);
+        row["#item_lock_in_slot"] = flag(false);
+        row["#item_lock_in_inventory"] = flag(false);
+        hotbar.push_back(std::move(row));
+    }
+
+    auto item = [&](const char* factory, const char* control, const HudText& shown, ui::UiRow variables) {
+        if (shown.serial == 0 || shown.text.empty()) {
+            return;
+        }
+        variables["$wait_duration"] = number(shown.hold);
+        data.factories[factory].push_back({ control, std::move(variables), shown.serial });
+    };
+    if (view.jukebox) {
+        g["#jukebox_text"] = text(view.itemText.text);
+        item("item_text_factory", "jukebox_text", view.itemText, {});
+    } else {
+        g["#item_text"] = text(view.itemText.text);
+        item("item_text_factory", "item_text", view.itemText, {});
+    }
+    g["#tip_text"] = text(view.tip.text);
+    item("hud_tip_text_factory", "hud_tip_text", view.tip, {});
+    item("hud_actionbar_text_factory", "hud_actionbar_text", view.actionbar, {
+        { "$actionbar_text", text(view.actionbar.text) },
+        { "$actionbar_text_background_alpha", number(TextBackgroundOpacity) },
+    });
+
+    g["#hud_title_text_string"] = text(view.title.title);
+    g["#hud_subtitle_text_string"] = text(view.title.subtitle);
+    if (view.title.serial != 0) {
+        data.factories["hud_title_text_factory"].push_back({ "hud_title_text", {
+            { "$title_fade_in_time", number(view.title.fadeIn) },
+            { "$title_stay_time", number(view.title.stay) },
+            { "$title_fade_out_time", number(view.title.fadeOut) },
+            { "$title_alpha", number(TextBackgroundOpacity) },
+            { "$subtitle_initially_visible", flag(view.title.subtitleWithTitle) },
+            { "$title_shadow", flag(false) },
+        }, view.title.serial });
+    }
+
+    std::vector<ui::UiRow>& chat = data.collections["chat_text_grid"];
+    for (const HudChatLine& line : view.chat) {
+        chat.push_back({ { "#chat_text", text(line.text) } });
+        data.factories["chat_item_factory"].push_back({ "chat_item", {
+            { "$chat_item_lifetime", number(ChatLifetime) },
+            { "$chat_background_opacity", number(ChatBackgroundOpacity) },
+            { "$chat_font_scale_factor", number(1.0) },
+            { "$chat_line_spacing", number(0.0) },
+            { "$chat_font_type", text("default") },
+        }, line.serial });
+    }
+    return data;
+}
+
+void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup)
+{
+    ui::Color tint = faded(alpha);
+    if (renderer == "hotbar_renderer") {
+        int slot = static_cast<int>(lookup("#hotbar_slot").toNumber());
+        ui.sprite(rect, "ui/hotbar_" + std::to_string(std::clamp(slot, 0, 8)), tint);
+        // The off hand has no control of its own; the game draws it with the first slot.
+        if (slot == 0 && view.offhand.filled) {
+            ui.sprite({ rect.x - 30.0f, rect.y, rect.w, rect.h }, "ui/hotbar_0", tint);
+            drawItem(ui, view.offhand, { rect.x - 27.0f, rect.y + 3.0f, 16.0f, 16.0f }, alpha);
+            if (view.offhand.durability >= 0.0f) {
+                drawDurability(ui, { rect.x - 25.0f, rect.y + 16.0f, 12.0f, 1.0f }, view.offhand.durability, alpha);
+            }
+        }
+    } else if (renderer == "inventory_item_renderer") {
+        std::string icon = lookup("#item_icon").toText();
+        if (!icon.empty()) {
+            ui.sprite(rect, icon, tint);
+        }
+    } else if (renderer == "progress_bar_renderer") {
+        if (lookup("#touch_progress_bar_visible").truthy()) {
+            double total = lookup("#progress_bar_total_amount").toNumber();
+            double current = lookup("#progress_bar_current_amount").toNumber();
+            drawDurability(ui, rect, total > 0.0 ? static_cast<float>(current / total) : 0.0f, alpha);
+        }
+    } else if (renderer == "heart_renderer") {
+        drawHearts(ui, view, rect.x, rect.y, tint);
+    } else if (renderer == "armor_renderer") {
+        drawArmor(ui, view, rect.x, rect.y, tint);
+    } else if (renderer == "hunger_renderer") {
+        drawHunger(ui, view, rect.right(), rect.y, tint);
+    } else if (renderer == "bubbles_renderer") {
+        drawBubbles(ui, view, rect.right(), rect.y, tint);
+    } else if (renderer == "mob_effects_renderer") {
+        drawEffects(ui, view, rect.right(), alpha);
+    }
+}
+
+void drawBossBars(ui::Context& ui, const HudView& view, float width, float height)
+{
+    static constexpr ui::Color BarColors[8] = {
+        { 236, 72, 204, 255 }, { 55, 172, 238, 255 }, { 234, 62, 60, 255 }, { 72, 214, 68, 255 },
+        { 238, 216, 52, 255 }, { 150, 64, 222, 255 }, { 102, 51, 153, 255 }, { 255, 255, 255, 255 },
+    };
+    constexpr float CellWidth = 182.0f;
+    constexpr float CellHeight = 20.0f;
+    constexpr float GridTop = 2.0f;
+    constexpr float BarOffset = 10.0f;
+    constexpr float BarHeight = 5.0f;
+    if (!view.visible) {
+        return;
+    }
+    size_t fitting = static_cast<size_t>(std::floor(height * 0.3f / CellHeight));
+    size_t count = std::min(view.bossBars.size(), fitting);
+    float left = std::floor((width - CellWidth) * 0.5f);
+    for (size_t index = 0; index < count; ++index) {
+        const HudBossBar& bar = view.bossBars[index];
+        ui::Color tint = BarColors[std::clamp(bar.color, 0, 7)];
+        float top = GridTop + static_cast<float>(index) * CellHeight;
+        if (!bar.title.empty()) {
+            float x = std::floor((width - ui.measure(bar.title, ui::TextStyle::Pixel)) * 0.5f);
+            ui.textShadowed(bar.title, ui::TextStyle::Pixel, x, top, White, TextShadow);
+        }
+        ui::Rect track { left, top + BarOffset, CellWidth, BarHeight };
+        ui.nineSlice(track, "ui/empty_progress_bar", tint);
+        float filled = std::clamp(bar.progress, 0.0f, 1.0f) * track.w;
+        if (filled > 0.0f) {
+            ui.setClip({ track.x, track.y, filled, track.h });
+            ui.nineSlice(track, "ui/filled_progress_bar", tint);
+            ui.clearClip();
+        }
+    }
 }
 
 void drawNameTags(ui::Context& ui, const std::vector<NameTag>& tags)
@@ -382,27 +478,6 @@ void drawNameTags(ui::Context& ui, const std::vector<NameTag>& tags)
     for (const NameTag& tag : tags) {
         ui.nameTag(tag.text, tag.x, tag.y, tag.magnify, tag.depth, tag.sneaking);
     }
-}
-
-void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width, float height)
-{
-    if (!view.visible || width <= 0.0f || height <= 0.0f) {
-        return;
-    }
-    Layout layout { ui, view, x, y, 1.0f, width, height };
-    if (layout.guiWidth < HotbarWidth || layout.guiHeight < 59.0f) {
-        return;
-    }
-    drawBossBars(layout);
-    if (view.showHotbar) {
-        drawHotbar(layout);
-    }
-    if (view.showStats) {
-        drawHealth(layout);
-        drawHunger(layout);
-        drawExperience(layout);
-    }
-    drawEffects(layout);
 }
 
 }

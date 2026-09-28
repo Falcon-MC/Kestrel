@@ -21,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <unordered_set>
 
 namespace kestrel::world {
@@ -225,6 +226,13 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
     PackSource pack(root);
     pack.setOverlays(packs);
+
+    // Entity models touch nothing the block atlas does, so they load alongside it.
+    std::jthread entities([this, &root, &packs] {
+        PackSource entityPack(root);
+        entityPack.setOverlays(packs);
+        buildEntityModels(entityPack, packs);
+    });
 
     std::vector<std::unique_ptr<json::Value>> documents;
     std::vector<const json::Value*> blockLayers;
@@ -1222,7 +1230,6 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
 
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
-    buildEntityModels(pack, packs);
     buildInterfaceAssets(pack);
 
     std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
@@ -1231,6 +1238,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
 
     overlayLayers.resize(layers.size(), false);
     buildMips(textureArray, layers, overlayLayers);
+    entities.join();
     return true;
 }
 

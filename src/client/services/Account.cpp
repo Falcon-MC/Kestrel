@@ -152,6 +152,9 @@ void Account::stop()
     if (worker.joinable()) {
         worker.join();
     }
+    if (warmer.joinable()) {
+        warmer.join();
+    }
 }
 
 void Account::run(bool interactive)
@@ -193,6 +196,15 @@ void Account::run(bool interactive)
         current.verificationUri.clear();
         current.realmsLoading = true;
     }
+    // Every join needs the Minecraft service token, and getting one takes a
+    // handful of round trips, so fetch it now instead of on the join screen.
+    warmer = std::thread([this] {
+        std::string authorization;
+        std::string failure;
+        if (!authentication->requestServiceToken(authorization, failure)) {
+            debugLog("service token warm up failed: " + failure);
+        }
+    });
     if (!profile.mToken.empty()) {
         fetchAvatar(profile.getAuthorizationHeader());
     }

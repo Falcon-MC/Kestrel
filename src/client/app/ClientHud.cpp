@@ -10,6 +10,22 @@
 
 namespace kestrel {
 
+namespace {
+
+// A factory control is made again whenever its serial changes, so every message gets
+// its own, taken from when it arrived.
+uint64_t serialOf(double shown)
+{
+    return shown < 0.0 ? 0 : static_cast<uint64_t>(shown * 1000.0) + 1;
+}
+
+menu::HudText hudText(const HudMessage& message, float hold)
+{
+    return { message.text, serialOf(message.shown), hold };
+}
+
+}
+
 menu::HudSlot Client::inventoryIcon(const HudItem& item)
 {
     menu::HudSlot slot;
@@ -130,12 +146,18 @@ menu::HudView Client::buildHudView()
     view.offhand = inventoryIcon(state.offhand);
     menu.inventoryPanel().itemIcon = [this](const HudItem& item) { return inventoryIcon(item); };
 
+    // The item name and popups come from one exclusive factory, so the newest replaces the other.
     const HudItem& held = state.inventory[size_t(view.selected)];
-    if (!held.empty()) {
-        view.selectedName = held.customName.empty() ? world::itemDisplayName(held.identifier) : held.customName;
-        double elapsed = now - state.selectedChanged;
-        view.labelAlpha = elapsed < 1.5 ? 1.0f : elapsed < 2.0 ? static_cast<float>((2.0 - elapsed) / 0.5) : 0.0f;
+    if (popupMessage.shown > state.selectedChanged) {
+        view.itemText = hudText(popupMessage, popupMessage.hold);
+        view.jukebox = popupMessage.jukebox;
+    } else if (!held.empty() && state.selectedChanged > 0.0) {
+        HudMessage name { held.customName.empty() ? world::itemDisplayName(held.identifier) : held.customName, state.selectedChanged };
+        view.itemText = hudText(name, 1.0f);
     }
+    view.tip = hudText(tipMessage, 1.0f);
+    view.actionbar = hudText(actionbarMessage, 0.0f);
+    view.title = titleView;
 
     view.health = state.health;
     view.maxHealth = state.maxHealth;

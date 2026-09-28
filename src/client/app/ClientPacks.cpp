@@ -14,8 +14,9 @@ namespace {
 constexpr uint32_t MaxGlyphSprite = 256;
 constexpr uint32_t MaxPackTexture = 1024;
 
-// The HUD files Kestrel draws from, besides the ones a pack lists in its _ui_defs.json.
-constexpr const char* HudFiles[] = { "ui/_global_variables.json", "ui/scoreboards.json" };
+// Read before the files _ui_defs.json lists, which it leaves out.
+constexpr const char* GlobalVariablesFile = "ui/_global_variables.json";
+constexpr const char* UiDefsFile = "ui/_ui_defs.json";
 constexpr const char* TextureExtensions[] = { ".png", ".jpg", ".jpeg", ".tga" };
 
 // Not in the game's files, the game fills these bindings from code.
@@ -31,17 +32,17 @@ constexpr double SidebarTitleBackgroundOpacity = 0.3;
  */
 void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
 {
-    if (hudUiLoaded && packs == artPacks) {
+    if (jsonUiLoaded && packs == artPacks) {
         return;
     }
     artPacks = packs;
-    hudUiLoaded = true;
+    jsonUiLoaded = true;
     for (const std::string& name : packSprites) {
         skin.clearDynamic(name);
     }
     packSprites.clear();
     loadPackGlyphs(packs);
-    loadHudUi(packs);
+    loadJsonUi(packs);
 }
 
 /**
@@ -112,31 +113,58 @@ void Client::cutGlyphs(size_t index, const ui::Bitmap& sheet)
     font.setPixelPageGlyphs(index, cell, boxes);
 }
 
+namespace {
+
+std::vector<std::string> listedUiFiles(const std::string& defs)
+{
+    std::vector<std::string> paths;
+    if (std::unique_ptr<json::Value> root = util::parseJsonObject(defs)) {
+        if (const json::Value* list = root->get("ui_defs"); list && list->isArray()) {
+            for (const std::unique_ptr<json::Value>& entry : list->mArray) {
+                if (entry->isString() && !entry->mString.empty()) {
+                    paths.push_back(entry->mString);
+                }
+            }
+        }
+    }
+    return paths;
+}
+
+}
+
 /**
- * Merges the vanilla HUD files with every pack's copy, lowest priority pack
- * first, plus the files packs add through _ui_defs.json, then loads the pack
- * textures the merged controls name.
+ * Merges every UI file the game's _ui_defs.json lists with each pack's copy,
+ * lowest priority pack first, plus the files packs add through their own
+ * _ui_defs.json, then loads the pack textures the merged controls name.
  */
-void Client::loadHudUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
+void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
 {
     auto definitions = std::make_shared<ui::JsonUi>();
-    for (const char* path : HudFiles) {
+    auto readVanilla = [&](const std::string& path, std::string& text) {
+        size_t slash = path.rfind('/');
+        if (slash != std::string::npos && assets.readArchived(path.substr(0, slash), path.substr(slash + 1), text)) {
+            return true;
+        }
+        std::vector<unsigned char> loose = assets.readPackFile(path);
+        text.assign(loose.begin(), loose.end());
+        return !loose.empty();
+    };
+    std::string defs;
+    readVanilla(UiDefsFile, defs);
+    std::vector<std::string> vanillaPaths = listedUiFiles(defs);
+    vanillaPaths.insert(vanillaPaths.begin(), GlobalVariablesFile);
+    for (const std::string& path : vanillaPaths) {
         std::string text;
-        std::string file(path);
-        if (assets.readArchived("ui", file.substr(3), text)) {
-            definitions->addFile(file, text);
-        } else if (std::vector<unsigned char> loose = assets.readPackFile(file); !loose.empty()) {
-            definitions->addFile(file, std::string(loose.begin(), loose.end()));
+        if (readVanilla(path, text)) {
+            definitions->addFile(path, text);
         }
     }
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
-        std::vector<std::string> paths(std::begin(HudFiles), std::end(HudFiles));
-        if (const std::string* defs = (*pack)->find("ui/_ui_defs.json")) {
-            if (std::unique_ptr<json::Value> root = util::parseJsonObject(*defs)) {
-                if (const json::Value* list = root->get("ui_defs"); list && list->isArray()) {
-                    for (const std::unique_ptr<json::Value>& entry : list->mArray) {
-                        paths.push_back(entry->string());
-                    }
+        std::vector<std::string> paths = vanillaPaths;
+        if (const std::string* packDefs = (*pack)->find(UiDefsFile)) {
+            for (std::string& path : listedUiFiles(*packDefs)) {
+                if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+                    paths.push_back(std::move(path));
                 }
             }
         }
@@ -148,32 +176,9 @@ void Client::loadHudUi(const std::vector<std::shared_ptr<const world::PackFiles>
     }
 
     for (const std::string& texture : definitions->texturePaths()) {
-        for (const std::shared_ptr<const world::PackFiles>& pack : packs) {
-            const std::string* encoded = nullptr;
-            for (const char* extension : TextureExtensions) {
-                if ((encoded = pack->find(texture + extension))) {
-                    break;
-                }
-            }
-            if (!encoded) {
-                continue;
-            }
-            ui::Bitmap bitmap;
-            if (ui::decodeBitmap(*encoded, bitmap)) {
-                ui::NineSlice slice;
-                if (const std::string* sliceJson = pack->find(texture + ".json")) {
-                    ui::readNineSlice(*sliceJson, slice);
-                }
-                float fit = bitmap.width > MaxPackTexture ? static_cast<float>(MaxPackTexture) / static_cast<float>(bitmap.width) : 1.0f;
-                slice = { slice.left * fit, slice.top * fit, slice.right * fit, slice.bottom * fit };
-                skin.setDynamic(texture, ui::shrinkBitmap(bitmap, MaxPackTexture), slice);
-                packSprites.push_back(texture);
-                debugLog("pack ui texture " + texture);
-            }
-            break;
-        }
+        loadPackTexture(texture);
     }
-    menu.setHudUi(std::move(definitions));
+    menu.setJsonUi(std::move(definitions));
 }
 
 /**
@@ -194,6 +199,44 @@ ui::UiData Client::sidebarData() const
         scores.push_back({ { "#player_score_sidebar", ui::UiValue::of(std::to_string(score)) } });
     }
     return data;
+}
+
+/**
+ * Puts the first copy of texture the server's packs have into the skin under
+ * its own path, cut to MaxPackTexture wide with its nine slice scaled along.
+ * False when no pack has it.
+ */
+bool Client::loadPackTexture(const std::string& texture)
+{
+    if (std::find(packSprites.begin(), packSprites.end(), texture) != packSprites.end()) {
+        return true;
+    }
+    for (const std::shared_ptr<const world::PackFiles>& pack : artPacks) {
+        const std::string* encoded = nullptr;
+        for (const char* extension : TextureExtensions) {
+            if ((encoded = pack->find(texture + extension))) {
+                break;
+            }
+        }
+        if (!encoded) {
+            continue;
+        }
+        ui::Bitmap bitmap;
+        if (!ui::decodeBitmap(*encoded, bitmap)) {
+            return false;
+        }
+        ui::NineSlice slice;
+        if (const std::string* sliceJson = pack->find(texture + ".json")) {
+            ui::readNineSlice(*sliceJson, slice);
+        }
+        float fit = bitmap.width > MaxPackTexture ? static_cast<float>(MaxPackTexture) / static_cast<float>(bitmap.width) : 1.0f;
+        slice = { slice.left * fit, slice.top * fit, slice.right * fit, slice.bottom * fit };
+        skin.setDynamic(texture, ui::shrinkBitmap(bitmap, MaxPackTexture), slice);
+        packSprites.push_back(texture);
+        debugLog("pack ui texture " + texture);
+        return true;
+    }
+    return false;
 }
 
 }

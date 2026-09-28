@@ -5,6 +5,7 @@
 #include "menu/Hud.h"
 #include "menu/InventoryScreen.h"
 #include "menu/ServerStore.h"
+#include "menu/ToastQueue.h"
 #include "platform/Keys.h"
 #include "ui/Font.h"
 #include "ui/Image.h"
@@ -414,13 +415,10 @@ public:
      */
 
     /**
-     * The game's HUD controls, merged with the server's packs, that the
-     * scoreboard sidebar is drawn from.
+     * The game's JSON UI, merged with the server's packs, that the HUD and
+     * server forms are drawn from.
      */
-    void setHudUi(std::shared_ptr<const ui::JsonUi> definitions)
-    {
-        hudUi = std::move(definitions);
-    }
+    void setJsonUi(std::shared_ptr<const ui::JsonUi> definitions);
 
     void setHud(HudView view)
     {
@@ -494,6 +492,15 @@ public:
     void notify(std::string message);
 
     /**
+     * Queues a toast from the server, shown over every screen once the ones
+     * before it are gone.
+     */
+    void pushToast(std::string title, std::string content)
+    {
+        toasts.push(std::move(title), std::move(content));
+    }
+
+    /**
      * A received line for the chat log; the HUD shows it for a while and the
      * chat screen keeps the last hundred.
      */
@@ -523,6 +530,7 @@ public:
 private:
     InventoryScreen inventory;
     FormScreen forms;
+    ToastQueue toasts;
     bool inventoryInputHandled = false;
     enum class ServerGroup {
         Featured,
@@ -547,6 +555,7 @@ private:
     struct ChatLine {
         std::string text;
         std::chrono::steady_clock::time_point arrived;
+        uint64_t serial = 0;
     };
 
     // Screens drawn with the classic textures.
@@ -580,7 +589,8 @@ private:
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
-    void chatFeed(ui::Context& ui, float top, float width, float height);
+    std::vector<HudChatLine> hudChat() const;
+    void drawHudScreen(ui::Context& ui, float width, float height);
     void chatScreen(ui::Context& ui, float width, float height);
 
     bool textField(ui::Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const ui::Rect& rect, bool focused);
@@ -667,7 +677,9 @@ private:
     DebugView debugView;
     bool debugShown = false;
     HudView hud;
-    std::shared_ptr<const ui::JsonUi> hudUi;
+    std::shared_ptr<const ui::JsonUi> jsonUi;
+    std::unique_ptr<ui::JsonUiScreen> hudScreen;
+    uint64_t shownSubtitle = 0;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
     float listScroll = 0.0f;
@@ -681,6 +693,7 @@ private:
     std::chrono::steady_clock::time_point respawnClicked {};
     std::optional<bool> packAnswer;
     std::deque<ChatLine> chatLines;
+    uint64_t chatSerial = 0;
     std::string chatDraft;
     std::vector<std::string> chatHistory;
     std::optional<size_t> chatRecall;
