@@ -28,7 +28,7 @@ public:
     MeshScheduler(const MeshScheduler&) = delete;
     MeshScheduler& operator=(const MeshScheduler&) = delete;
 
-    void submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids);
+    void submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent = false);
     std::vector<MeshResult> takeResults();
     size_t pending() const;
     double averageMilliseconds() const;

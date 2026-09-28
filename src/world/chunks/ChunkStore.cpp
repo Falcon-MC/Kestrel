@@ -162,6 +162,7 @@ bool ChunkStore::updateBlocks(const SubChunkKey& key, const std::vector<BlockUpd
     SubChunk updated = existing != column->second.subChunks.end() ? *existing->second : SubChunk {};
     updated.apply(updates);
     commit(key, std::move(updated));
+    urgent.insert(key);
     return true;
 }
 
@@ -214,6 +215,11 @@ std::vector<SubChunkKey> ChunkStore::takeDirty()
     std::vector<SubChunkKey> keys(dirty.begin(), dirty.end());
     dirty.clear();
     return keys;
+}
+
+std::set<SubChunkKey> ChunkStore::takeUrgent()
+{
+    return std::exchange(urgent, {});
 }
 
 void ChunkStore::markDirty(const SubChunkKey& key)

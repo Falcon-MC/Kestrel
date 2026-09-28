@@ -208,6 +208,7 @@ inline constexpr uint32_t ItemIconSize = 32;
  */
 inline constexpr uint32_t ItemTint = 0x79C05A;
 inline constexpr uint32_t SkinSlots = 64;
+inline constexpr uint32_t DroppedIconSlots = 64;
 
 /**
  * One geometry of an entity: quads in 1/256 block around its feet, facing

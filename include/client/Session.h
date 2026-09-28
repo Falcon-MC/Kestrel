@@ -154,6 +154,10 @@ struct ActorView {
     std::array<std::string, 4> armor {};
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    // A dropped item: the stack it shows, and once picked up who took it and when.
+    HudItem item;
+    uint64_t pickedUpBy = 0;
+    double pickedUpAt = 0.0;
 };
 
 /**
@@ -362,6 +366,7 @@ struct MeshUpdate {
 
 struct SessionSnapshot {
     SessionState state = SessionState::Idle;
+    uint64_t localRuntimeId = 0;
     std::string name;
     std::string target;
     std::string displayName;
@@ -670,6 +675,7 @@ private:
     LocalBreak breaking;
     bool attackOnEntity = false;
     bool attackHeldBefore = false;
+    bool breakSwitched = false;
     int32_t destroyDelay = 0;
     std::map<std::array<int32_t, 3>, RemoteCrack> remoteCracks;
     struct ChestLidState {

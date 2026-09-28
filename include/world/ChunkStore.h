@@ -69,6 +69,12 @@ public:
     size_t subChunkCount() const;
     std::vector<SubChunkKey> takeDirty();
 
+    /**
+     * The sub-chunks whose blocks changed one by one since the last call,
+     * which want their mesh ahead of freshly loaded terrain.
+     */
+    std::set<SubChunkKey> takeUrgent();
+
 private:
     struct Column {
         std::map<int32_t, std::shared_ptr<const SubChunk>> subChunks;
@@ -81,6 +87,7 @@ private:
 
     std::map<ChunkKey, Column> columnsByKey;
     std::set<SubChunkKey> dirty;
+    std::set<SubChunkKey> urgent;
     size_t storedSubChunks = 0;
 };
 

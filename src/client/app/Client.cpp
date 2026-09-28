@@ -782,10 +782,13 @@ void Client::syncSession()
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
-        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots + 1);
+        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1 + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
+        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots + 1 + world::DroppedIconSlots);
         heldItemKey.clear();
         heldItemMesh.clear();
+        droppedMeshes.clear();
+        droppedIconKeys = {};
+        nextDroppedIcon = 0;
         lastHeldIdentity.clear();
         handItem = {};
         handUpdatedAt = 0.0;
@@ -830,6 +833,7 @@ void Client::syncSession()
     timeState.thunderLevel = snapshot.thunderLevel;
     timeState.cameraMedium = snapshot.cameraMedium;
     actorViews = std::move(snapshot.actors);
+    localRuntime = snapshot.localRuntimeId;
     localSkinSlot = snapshot.localSkinSlot;
     boomFraction = snapshot.boomFraction;
     localSlim = snapshot.localSlim;

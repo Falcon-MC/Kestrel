@@ -250,6 +250,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (!frustum.contains(cullView, blockX - 8, blockY - 7, blockZ - 8)) {
             continue;
         }
+        if (actor.identifier == "minecraft:item") {
+            if (!invisible) {
+                appendDroppedItem(actor, origin, now, out);
+            }
+            continue;
+        }
         const world::EntityModel* model = actor.slim ? blockAssets->entityModel(actor.identifier + "#slim") : nullptr;
         if (!model) {
             model = blockAssets->entityModel(actor.identifier);

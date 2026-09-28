@@ -34,12 +34,17 @@ MeshScheduler::~MeshScheduler()
  * and only its newest input is meshed, so a burst of neighbour updates costs
  * one job instead of one per update.
  */
-void MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids)
+void MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent)
 {
     {
         std::lock_guard<std::mutex> guard(mutex);
         auto [entry, inserted] = queued.insert_or_assign(key, Job { key, generation, std::move(input), std::move(assets), std::move(ids) });
-        if (inserted) {
+        if (urgent) {
+            if (!inserted) {
+                order.erase(std::remove(order.begin(), order.end(), key), order.end());
+            }
+            order.push_front(key);
+        } else if (inserted) {
             order.push_back(key);
         }
     }
