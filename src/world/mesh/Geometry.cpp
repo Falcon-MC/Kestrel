@@ -112,6 +112,7 @@ GeometryCube parseCube(const json::Value& value)
     }
     if (const json::Value* mirror = value.get("mirror")) {
         cube.mirror = mirror->boolean(false);
+        cube.mirrorSet = true;
     }
     const json::Value* uv = value.get("uv");
     if (uv && uv->isObject()) {

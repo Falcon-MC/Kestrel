@@ -179,7 +179,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
             };
             std::array<float, 3> cubePivot { -cube.pivot[0], cube.pivot[1], cube.pivot[2] };
             std::array<float, 3> cubeRotation { -cube.rotation[0], -cube.rotation[1], cube.rotation[2] };
-            bool mirror = cube.mirror != bone.mirror;
+            bool mirror = cube.mirrorSet ? cube.mirror : bone.mirror;
             bool inverted = cube.size[0] < 0.0f || cube.size[1] < 0.0f || cube.size[2] < 0.0f;
             std::array<float, 3> cubeCenter = rotateEulerAround({ (min[0] + max[0]) * 0.5f, (min[1] + max[1]) * 0.5f, (min[2] + max[2]) * 0.5f }, cubePivot, cubeRotation);
             float x = cube.size[0];
@@ -209,6 +209,14 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
                         continue;
                     }
                     region = { uv.uv[0], uv.uv[1], uv.size[0], uv.size[1] };
+                    // Bedrock per-face UVs turn the top and bottom by 180 degrees
+                    // relative to the box unwrap. Flat effects depend on this too.
+                    if (face == 4 || face == 5) {
+                        region[0] += region[2];
+                        region[1] += region[3];
+                        region[2] = -region[2];
+                        region[3] = -region[3];
+                    }
                 }
                 float left = region[0] / width;
                 float right = (region[0] + region[2]) / width;
