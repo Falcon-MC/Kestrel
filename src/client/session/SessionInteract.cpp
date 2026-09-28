@@ -64,6 +64,20 @@ void Session::requestInteraction(bool use)
 }
 
 /**
+ * Whether the crosshair passes through a block, as it does through fire: it
+ * shows no outline and cannot be hit, only put out through the block it
+ * burns on.
+ */
+bool Session::unselectable(uint32_t value) const
+{
+    std::string name = assets->blockName(value, ids.hashed, ids.sequential.get());
+    if (name.rfind("minecraft:", 0) == 0) {
+        name.erase(0, 10);
+    }
+    return name == "fire" || name == "soul_fire";
+}
+
+/**
  * The first block along the look ray within reach whose outline box the ray
  * passes through: its cell, the face of that box the ray enters through
  * (down, up, north, south, west, east) and the point it hits. Rays slip past
@@ -93,7 +107,7 @@ std::optional<BlockHit> Session::traceBlock(double reach)
     while (travelled <= reach) {
         uint32_t value = blockAt(int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
         const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
-        if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid) {
+        if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid && !unselectable(value)) {
             world::CollisionBox box = selectionBox(value, int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
             std::array<double, 3> low { double(cell[0]) + box.minX, double(cell[1]) + box.minY, double(cell[2]) + box.minZ };
             std::array<double, 3> high { double(cell[0]) + box.maxX, double(cell[1]) + box.maxY, double(cell[2]) + box.maxZ };

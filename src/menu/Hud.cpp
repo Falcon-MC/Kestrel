@@ -16,6 +16,7 @@ constexpr int32_t MaxHeartRows = 10;
 constexpr ui::Color White { 255, 255, 255, 255 };
 constexpr ui::Color LevelColor { 128, 255, 0, 255 };
 constexpr ui::Color LevelShadow { 32, 63, 0, 255 };
+constexpr ui::Color TextShadow { 63, 63, 63, 255 };
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
 
 const char* effectSprite(int32_t id)
@@ -298,6 +299,48 @@ void drawExperience(const Layout& layout)
     }
 }
 
+/**
+ * The boss bars laid out like the game's boss grid: one 182 by 20 cell per
+ * bar down from two pixels under the top, as many as fit in three tenths of
+ * the screen. Each cell carries the title centered on top and, ten pixels
+ * lower, the bar: the empty track and the filled part clipped to the boss's
+ * health, both tinted with the bar's color.
+ */
+void drawBossBars(const Layout& layout)
+{
+    static constexpr ui::Color BarColors[8] = {
+        { 236, 72, 204, 255 }, { 55, 172, 238, 255 }, { 234, 62, 60, 255 }, { 72, 214, 68, 255 },
+        { 238, 216, 52, 255 }, { 150, 64, 222, 255 }, { 102, 51, 153, 255 }, { 255, 255, 255, 255 },
+    };
+    constexpr float CellWidth = 182.0f;
+    constexpr float CellHeight = 20.0f;
+    constexpr float GridTop = 2.0f;
+    constexpr float BarOffset = 10.0f;
+    constexpr float BarHeight = 5.0f;
+    const std::vector<HudBossBar>& bars = layout.view.bossBars;
+    size_t fitting = static_cast<size_t>(std::floor(layout.guiHeight * 0.3f / CellHeight));
+    size_t count = std::min(bars.size(), fitting);
+    float left = std::floor((layout.guiWidth - CellWidth) * 0.5f);
+    for (size_t index = 0; index < count; ++index) {
+        const HudBossBar& bar = bars[index];
+        ui::Color tint = BarColors[std::clamp(bar.color, 0, 7)];
+        float top = GridTop + static_cast<float>(index) * CellHeight;
+        if (!bar.title.empty()) {
+            float width = layout.ui.measure(bar.title, ui::TextStyle::Pixel);
+            float x = std::floor(layout.originX + (layout.guiWidth * layout.unit - width) * 0.5f);
+            layout.ui.textShadowed(bar.title, ui::TextStyle::Pixel, x, layout.rect(0.0f, top, 0.0f, 0.0f).y, White, TextShadow);
+        }
+        ui::Rect track = layout.rect(left, top + BarOffset, CellWidth, BarHeight);
+        layout.ui.nineSlice(track, "ui/empty_progress_bar", tint);
+        float filled = std::clamp(bar.progress, 0.0f, 1.0f) * track.w;
+        if (filled > 0.0f) {
+            layout.ui.setClip({ track.x, track.y, filled, track.h });
+            layout.ui.nineSlice(track, "ui/filled_progress_bar", tint);
+            layout.ui.clearClip();
+        }
+    }
+}
+
 void drawEffects(const Layout& layout)
 {
     std::vector<const HudEffectView*> beneficial;
@@ -350,6 +393,7 @@ void drawHud(ui::Context& ui, const HudView& view, float x, float y, float width
     if (layout.guiWidth < HotbarWidth || layout.guiHeight < 59.0f) {
         return;
     }
+    drawBossBars(layout);
     if (view.showHotbar) {
         drawHotbar(layout);
     }

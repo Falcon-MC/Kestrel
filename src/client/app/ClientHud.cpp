@@ -118,6 +118,9 @@ menu::HudView Client::buildHudView()
     if (sidebarView.visible) {
         view.sidebar = sidebarData();
     }
+    for (const BossBarView& bar : state.bossBars) {
+        view.bossBars.push_back({ bar.title, bar.progress, bar.color });
+    }
     view.showHotbar = state.gameType != 6;
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);
