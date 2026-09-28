@@ -2,6 +2,8 @@
 
 #include "Core/Json/Json.h"
 #include "Protocol/BlockStateHasher.h"
+#include "BlockUpgradeSchemas.h"
+#include "Core/BlockState/BlockStateUpgrader.h"
 #include "Network/Auth/MinecraftAuthentication.h"
 #include "Network/BedrockConnection.h"
 #include "Network/Http/HttpClient.h"
@@ -18,6 +20,7 @@
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
+#include "Protocol/Packets/DimensionDataPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
 #include "Protocol/Packets/LevelEventPacket.h"
 #include "Protocol/Packets/MoveActorAbsolutePacket.h"
@@ -93,6 +96,18 @@ double currentWorldTime(const SessionSnapshot& snapshot)
 }
 
 namespace {
+
+const BlockStateUpgrader& blockStateUpgrader()
+{
+    static const BlockStateUpgrader upgrader = [] {
+        std::vector<BlockStateUpgradeSchema> schemas;
+        for (const KestrelBlockUpgradeSchemas::Schema& schema : KestrelBlockUpgradeSchemas::kSchemas) {
+            schemas.push_back(BlockStateUpgradeSchema::fromJson(std::string(reinterpret_cast<const char*>(schema.data), schema.size), schema.id));
+        }
+        return BlockStateUpgrader(std::move(schemas));
+    }();
+    return upgrader;
+}
 
 constexpr int ProtocolVersion = 2193;
 constexpr const char* GameVersion = "1.26.51";
@@ -686,6 +701,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::UpdateSubChunkBlocks:
     case MinecraftPacketIds::NetworkChunkPublisherUpdate:
     case MinecraftPacketIds::ChunkRadiusUpdated:
+    case MinecraftPacketIds::DimensionData:
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
@@ -811,6 +827,16 @@ void Session::handleWorldPacket(const std::string& payload)
         world.handle(*updateSubChunk);
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
         world.handle(*publisher);
+    } else if (auto dimensions = std::dynamic_pointer_cast<DimensionDataPacket>(packet)) {
+        static const std::pair<const char*, int32_t> Names[] = {
+            { "minecraft:overworld", 0 }, { "minecraft:nether", 1 }, { "minecraft:the_end", 2 },
+        };
+        for (const DimensionDefinition& definition : dimensions->mDefinitions) {
+            for (const auto& [name, dimension] : Names) {
+                if (definition.mId == name) {
+                    world::setServerDimensionHeight(dimension, definition.mMinimumHeight, definition.mMaximumHeight);                }
+            }
+        }
     } else if (auto radius = std::dynamic_pointer_cast<ChunkRadiusUpdatedPacket>(packet)) {
         debugLog("server chunk radius " + std::to_string(radius->mRadius));
         world.setChunkRadius(radius->mRadius);
@@ -1228,6 +1254,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
 
     resetDebugLog();
+    world::clearServerDimensionHeights();
     debugLog("dial " + settings.mHost + ":" + std::to_string(settings.mPort) + " radius " + std::to_string(settings.mChunkRadius));
     settings.mDeferSpawn = true;
     settings.mPacketObserver = [this](MinecraftPacketIds id) {
@@ -1405,10 +1432,21 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         const Tag* properties = state.get("states");
         if (!blockAssets || !name || name->getType() != Tag::Type::String
             || !properties || properties->getType() != Tag::Type::Compound) return std::nullopt;
-        uint32_t hash = static_cast<uint32_t>(BlockStateHasher::hash(name->asString(), *properties));
+        std::string blockName = name->asString();
+        if (blockName.find(':') == std::string::npos) {
+            blockName = "minecraft:" + blockName;
+        }
+        uint32_t hash = static_cast<uint32_t>(BlockStateHasher::hash(blockName, *properties));
         auto found = resolved.find(hash);
         if (found != resolved.end()) return found->second;
         auto value = blockAssets->networkValueForState(hash, mapping.hashed, mapping.sequential.get());
+        if (!value) {
+            const Tag* version = state.get("version");
+            int32_t stateVersion = version && version->getType() == Tag::Type::Int ? version->asInt() : 0;
+            BlockStateData upgraded = blockStateUpgrader().upgrade(BlockStateData(blockName, *properties, stateVersion));
+            uint32_t upgradedHash = static_cast<uint32_t>(BlockStateHasher::hash(upgraded.getName(), upgraded.getStates()));
+            value = blockAssets->networkValueForState(upgradedHash, mapping.hashed, mapping.sequential.get());
+        }
         resolved.emplace(hash, value);
         return value;
     });

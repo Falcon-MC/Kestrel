@@ -39,6 +39,8 @@ struct DimensionRange {
 };
 
 bool vanillaDimensionRange(int32_t dimension, DimensionRange& out);
+void setServerDimensionHeight(int32_t dimension, int32_t minimumHeight, int32_t maximumHeight);
+void clearServerDimensionHeights();
 
 /**
  * Block entity compounds of one sub-chunk, keyed by the block's linear index

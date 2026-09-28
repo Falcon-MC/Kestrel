@@ -59,7 +59,7 @@ bool PalettedStorage::decode(ByteReader& reader, PalettedStorage& out, std::stri
     return decodeWithHeader(reader, header, out, error, resolver);
 }
 
-bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver)
+bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver, bool integerPalette)
 {
     bool persistent = (header & 1) == 0;
 
@@ -93,11 +93,25 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
         }
         storage.values.resize(paletteSize);
         for (size_t i = 0; i < paletteSize; ++i) {
-            if (persistent) {
+            if (persistent && integerPalette) {
+                int32_t value = 0;
+                if (networkNbt) {
+                    if (!source.readVarInt(value, error, "palette entry")) return false;
+                } else {
+                    uint32_t word = 0;
+                    if (!source.readWords(&word, 1, error, "palette entry")) return false;
+                    value = static_cast<int32_t>(word);
+                }
+                storage.values[i] = static_cast<uint32_t>(value);
+            } else if (persistent) {
                 Tag state;
                 if (!source.readTag(state, networkNbt, error)) return false;
                 auto value = resolver ? resolver(state) : std::nullopt;
-                if (!value) { error = "unresolved persistent block palette state"; return false; }
+                if (!value) {
+                    const Tag* name = state.get("name");
+                    error = "unresolved persistent block palette state " + (name && name->getType() == Tag::Type::String ? name->asString() : std::string("<no name>"));
+                    return false;
+                }
                 storage.values[i] = *value;
             } else {
                 int32_t value = 0;
@@ -110,8 +124,12 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
     ByteReader paletteStart = reader;
     if (!readPalette(reader, true)) {
         if (!persistent) return false;
+        std::string networkError = error;
         reader = paletteStart;
-        if (!readPalette(reader, false)) return false;
+        if (!readPalette(reader, false)) {
+            error = networkError + " (disk format: " + error + ")";
+            return false;
+        }
         error.clear();
     }
 

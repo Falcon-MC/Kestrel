@@ -83,6 +83,51 @@ kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png" KestrelAppIconDat
 kestrel_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/kestrel.png" KestrelTitleData kTitlePng
         "${CMAKE_CURRENT_BINARY_DIR}/generated/TitlePng.h")
 
+if(EXISTS "${KESTREL_FALCON_ROOT}/Falcon-BlockStateUpdater/CMakeLists.txt")
+    set(FETCHCONTENT_SOURCE_DIR_FALCON_BLOCK_STATE_UPDATER "${KESTREL_FALCON_ROOT}/Falcon-BlockStateUpdater")
+endif()
+FetchContent_Declare(
+    falcon_block_state_updater
+    GIT_REPOSITORY https://github.com/Falcon-MC/BlockStateUpdater.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(falcon_block_state_updater)
+
+file(GLOB KESTREL_UPGRADE_SCHEMAS CONFIGURE_DEPENDS "${falcon_block_state_updater_SOURCE_DIR}/Schemas/*.json")
+list(SORT KESTREL_UPGRADE_SCHEMAS)
+set(KESTREL_UPGRADE_SCHEMA_ARRAYS "")
+set(KESTREL_UPGRADE_SCHEMA_ENTRIES "")
+foreach(schema ${KESTREL_UPGRADE_SCHEMAS})
+    get_filename_component(schemaName "${schema}" NAME)
+    string(SUBSTRING "${schemaName}" 0 4 schemaId)
+    file(READ "${schema}" hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
+    string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n" bytes "${bytes}")
+    string(APPEND KESTREL_UPGRADE_SCHEMA_ARRAYS "inline constexpr unsigned char kSchema${schemaId}[] = {\n${bytes}\n};\n")
+    math(EXPR schemaNumber "1${schemaId} - 10000")
+    string(APPEND KESTREL_UPGRADE_SCHEMA_ENTRIES "    { ${schemaNumber}, kSchema${schemaId}, sizeof(kSchema${schemaId}) },\n")
+endforeach()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockUpgradeSchemas.h" CONTENT "#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+namespace KestrelBlockUpgradeSchemas {
+
+@KESTREL_UPGRADE_SCHEMA_ARRAYS@
+struct Schema {
+    int32_t id;
+    const unsigned char* data;
+    size_t size;
+};
+
+inline constexpr Schema kSchemas[] = {
+@KESTREL_UPGRADE_SCHEMA_ENTRIES@};
+
+}
+" @ONLY)
+
 find_package(ZLIB REQUIRED)
 
 file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
@@ -132,7 +177,7 @@ endif()
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(Kestrel PRIVATE FalconNetwork ZLIB::ZLIB)
+target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB::ZLIB)
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
     enable_testing()
