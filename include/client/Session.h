@@ -23,6 +23,7 @@
 #include <thread>
 
 class BedrockConnection;
+class BossEventPacket;
 class LevelEventPacket;
 class MinecraftAuthentication;
 class Packet;
@@ -186,8 +187,21 @@ struct HudEffect {
  * Everything the gameplay HUD shows about the local player, as the server
  * reports it.
  */
+/**
+ * A boss bar the server shows: the boss it follows, its title, how full it
+ * is from 0 to 1 and its color (pink, blue, red, green, yellow, purple,
+ * rebecca purple, white).
+ */
+struct BossBarView {
+    int64_t bossId = 0;
+    std::string title;
+    float progress = 1.0f;
+    int32_t color = 0;
+};
+
 struct HudState {
     int32_t gameType = 0;
+    std::vector<BossBarView> bossBars;
     std::array<HudItem, 36> inventory {};
     std::array<HudItem, 4> armor {};
     HudItem offhand;
@@ -474,6 +488,7 @@ private:
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
+    void handleBossEvent(const BossEventPacket& event);
     void handleInventoryPacket(const std::shared_ptr<Packet>& packet);
     void flushInventory();
     void publishInventory();
@@ -497,6 +512,7 @@ private:
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
     void useOnBlock(const BlockHit& block);
+    bool unselectable(uint32_t value) const;
     bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);
     void tickHeldUse();

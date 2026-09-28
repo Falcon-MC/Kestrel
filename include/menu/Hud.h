@@ -24,6 +24,12 @@ struct HudSlot {
     float durability = -1.0f;
 };
 
+struct HudBossBar {
+    std::string title;
+    float progress = 1.0f;
+    int32_t color = 0;
+};
+
 struct HudEffectView {
     int32_t id = 0;
     bool ambient = false;
@@ -77,6 +83,7 @@ struct HudView {
     bool heartFlash = false;
     bool hungerEffect = false;
     std::vector<HudEffectView> effects;
+    std::vector<HudBossBar> bossBars;
     std::vector<NameTag> nameTags;
     bool sidebarVisible = false;
     ui::UiData sidebar;

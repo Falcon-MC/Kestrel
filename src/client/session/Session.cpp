@@ -740,6 +740,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ActorEvent:
     case MinecraftPacketIds::SetPlayerGameType:
     case MinecraftPacketIds::MobEffect:
+    case MinecraftPacketIds::BossEvent:
     case MinecraftPacketIds::PlayerList:
     case MinecraftPacketIds::PlayerSkin:
     case MinecraftPacketIds::SetTime:

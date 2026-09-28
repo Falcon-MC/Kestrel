@@ -2,6 +2,7 @@
 
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/AnimatePacket.h"
+#include "Protocol/Packets/BossEventPacket.h"
 #include "Protocol/Packets/DeathInfoPacket.h"
 #include "Protocol/Packets/InventoryContentPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
@@ -119,6 +120,55 @@ HudItem hudItemOf(const ItemStack& stack)
  * Updates the local player's HUD state from inventory, equipment, attribute,
  * health, game mode, effect and air packets.
  */
+/**
+ * Keeps the boss bars the way the server describes them: a bar appears when
+ * its boss is created and stays, in the order the bars came, until the
+ * server removes it; later events change its fill, title or color.
+ */
+void Session::handleBossEvent(const BossEventPacket& event)
+{
+    using Action = BossEventPacket::Action;
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<BossBarView>& bars = current.hud.bossBars;
+    auto bar = std::find_if(bars.begin(), bars.end(), [&](const BossBarView& view) {
+        return view.bossId == event.mBossUniqueActorId;
+    });
+    switch (event.mAction) {
+    case Action::Create:
+        if (bar == bars.end()) {
+            bars.push_back({ event.mBossUniqueActorId });
+            bar = bars.end() - 1;
+        }
+        bar->title = event.mFilteredTitle.empty() ? event.mTitle : event.mFilteredTitle;
+        bar->progress = std::clamp(event.mHealthPercentage, 0.0f, 1.0f);
+        bar->color = event.mColor;
+        break;
+    case Action::Remove:
+        if (bar != bars.end()) {
+            bars.erase(bar);
+        }
+        break;
+    case Action::UpdatePercentage:
+        if (bar != bars.end()) {
+            bar->progress = std::clamp(event.mHealthPercentage, 0.0f, 1.0f);
+        }
+        break;
+    case Action::UpdateName:
+        if (bar != bars.end()) {
+            bar->title = event.mFilteredTitle.empty() ? event.mTitle : event.mFilteredTitle;
+        }
+        break;
+    case Action::UpdateProperties:
+    case Action::UpdateStyle:
+        if (bar != bars.end()) {
+            bar->color = event.mColor;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
 {
     double now = secondsNow();
@@ -148,6 +198,8 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
                 current.hud.selectedChanged = now;
             }
         }
+    } else if (auto boss = std::dynamic_pointer_cast<BossEventPacket>(packet)) {
+        handleBossEvent(*boss);
     } else if (auto hotbar = std::dynamic_pointer_cast<PlayerHotbarPacket>(packet)) {
         if (hotbar->mSelectHotbarSlot && hotbar->mSelectedHotbarSlot >= 0 && hotbar->mSelectedHotbarSlot < 9) {
             std::lock_guard<std::mutex> guard(mutex);
