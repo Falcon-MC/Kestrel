@@ -766,7 +766,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 if (kind == ModelKind::Carpet) {
                     max[1] = 16;
                 } else if (kind == ModelKind::SnowLayer) {
-                    int32_t layersHigh = std::clamp(stateInt(record.states, "height_in_layers").value_or(0), 0, 7);
+                    int32_t layersHigh = std::clamp(stateInt(record.states, "height").value_or(0), 0, 7);
                     max[1] = static_cast<int16_t>((layersHigh + 1) * 32);
                 } else if (kind == ModelKind::Farmland) {
                     max[1] = 240;
