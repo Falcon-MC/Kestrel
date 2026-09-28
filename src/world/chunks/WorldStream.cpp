@@ -102,7 +102,7 @@ bool decodeBiomes(ByteReader& reader, int32_t count, std::vector<std::shared_ptr
             continue;
         }
         PalettedStorage storage;
-        if (!PalettedStorage::decodeWithHeader(reader, header, storage, error)) {
+        if (!PalettedStorage::decodeWithHeader(reader, header, storage, error, {}, true)) {
             return false;
         }
         out.push_back(std::make_shared<const PalettedStorage>(std::move(storage)));

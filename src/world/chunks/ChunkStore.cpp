@@ -1,9 +1,38 @@
 #include "world/ChunkStore.h"
 
+#include <array>
+#include <cmath>
+#include <optional>
+
 namespace kestrel::world {
+
+namespace {
+
+std::array<std::optional<DimensionRange>, 3> serverRanges;
+
+}
+
+void setServerDimensionHeight(int32_t dimension, int32_t minimumHeight, int32_t maximumHeight)
+{
+    if (dimension < 0 || dimension >= static_cast<int32_t>(serverRanges.size()) || maximumHeight <= minimumHeight) {
+        return;
+    }
+    int32_t base = static_cast<int32_t>(std::floor(minimumHeight / 16.0));
+    int32_t top = static_cast<int32_t>(std::ceil(maximumHeight / 16.0));
+    serverRanges[static_cast<size_t>(dimension)] = DimensionRange { base, top - base };
+}
+
+void clearServerDimensionHeights()
+{
+    serverRanges.fill(std::nullopt);
+}
 
 bool vanillaDimensionRange(int32_t dimension, DimensionRange& out)
 {
+    if (dimension >= 0 && dimension < static_cast<int32_t>(serverRanges.size()) && serverRanges[static_cast<size_t>(dimension)]) {
+        out = *serverRanges[static_cast<size_t>(dimension)];
+        return true;
+    }
     switch (dimension) {
     case 0:
         out = { -4, 24 };
