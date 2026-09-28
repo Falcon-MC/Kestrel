@@ -12,7 +12,7 @@ class FreeCamera {
 public:
     static constexpr float Speed = 24.0f;
     static constexpr float LookSensitivity = 0.002f;
-    static constexpr float HorizontalFovDegrees = 90.0f;
+    static constexpr float DefaultFovDegrees = 60.0f;
     static constexpr float PitchLimit = 89.9f * 3.14159265f / 180.0f;
 
     void placeAt(double x, double y, double z, float minecraftYawDegrees, float minecraftPitchDegrees);
@@ -73,7 +73,7 @@ private:
     float yaw = 0.0f;
     float pitch = 0.0f;
     float fovScale = 1.0f;
-    float baseFov = HorizontalFovDegrees;
+    float baseFov = DefaultFovDegrees;
     bool facingSubject = false;
     float hurtProgress = 0.0f;
 };
