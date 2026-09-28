@@ -358,6 +358,7 @@ struct SessionSnapshot {
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
+    std::string transferTarget;
     bool packPrompt = false;
     size_t packCount = 0;
     bool packSkippable = true;
@@ -416,6 +417,12 @@ public:
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
     void requestRespawn();
+
+    /**
+     * The server the current one sent the player to, as a join target, once:
+     * the session has left and the caller connects there.
+     */
+    std::optional<std::string> takeTransfer();
     void setMotionInput(const MotionInput& input);
 
     /**
@@ -554,6 +561,7 @@ private:
     bool inventoryClosing = false;
     std::atomic<int> requestedSlot { -1 };
     std::atomic<bool> respawnRequested { false };
+    bool transferring = false;
     bool respawnPending = false;
     bool dimensionAckReceived = false;
     std::atomic<bool> useRequested { false };

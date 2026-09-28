@@ -275,6 +275,8 @@ int Client::run()
 
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
             session.connect(request->name, request->address, account.signedInAuthentication(), menu.playerName());
+        } else if (std::optional<std::string> transfer = session.takeTransfer()) {
+            session.connect(*transfer, *transfer, account.signedInAuthentication(), menu.playerName());
         }
         if (menu.takeRespawnRequest()) {
             session.requestRespawn();
