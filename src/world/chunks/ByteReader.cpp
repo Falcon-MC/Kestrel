@@ -1,6 +1,27 @@
 #include "world/ByteReader.h"
+#include "Core/NBT/NbtIo.h"
+
+#include <exception>
 
 namespace kestrel::world {
+
+bool ByteReader::readTag(Tag& out, bool network, std::string& error)
+{
+    if (remaining() == 0) {
+        error = "unexpected end of data reading block palette NBT";
+        return false;
+    }
+    try {
+        ReadOnlyBinaryStream stream(std::string(reinterpret_cast<const char*>(data + offset), remaining()));
+        out = NbtIo::readTag(stream, network ? NbtVariant::Network : NbtVariant::LittleEndian);
+        if (out.getType() != Tag::Type::Compound) { error = "block palette entry is not a compound"; return false; }
+        offset += stream.getOffset();
+        return true;
+    } catch (const std::exception& exception) {
+        error = std::string("block palette NBT: ") + exception.what();
+        return false;
+    }
+}
 
 bool ByteReader::readByte(uint8_t& out, std::string& error, const char* context)
 {

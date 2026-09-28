@@ -201,6 +201,17 @@ uint32_t BlockAssets::stateHash(uint32_t networkValue, bool hashed, const Sequen
     return records[static_cast<size_t>(index)].networkHash;
 }
 
+std::optional<uint32_t> BlockAssets::networkValueForState(uint32_t hash, bool hashed, const SequentialMap* sequential) const
+{
+    int32_t index = indexOf(hash, true, nullptr);
+    if (index < 0) return std::nullopt;
+    if (hashed) return hash;
+    if (!sequential) return std::nullopt;
+    auto found = std::find(sequential->begin(), sequential->end(), index);
+    if (found == sequential->end()) return std::nullopt;
+    return static_cast<uint32_t>(found - sequential->begin());
+}
+
 bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error)
 {
     if (!registry.load(error)) {

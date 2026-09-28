@@ -4,7 +4,7 @@
 
 namespace kestrel::world {
 
-bool SubChunk::decode(const uint8_t* data, size_t size, SubChunk& out, size_t& consumed, std::string& error)
+bool SubChunk::decode(const uint8_t* data, size_t size, SubChunk& out, size_t& consumed, std::string& error, const BlockPaletteResolver& resolver)
 {
     ByteReader reader(data, size);
     uint8_t version = 0;
@@ -47,7 +47,7 @@ bool SubChunk::decode(const uint8_t* data, size_t size, SubChunk& out, size_t& c
 
     subChunk.layers.resize(storageCount);
     for (PalettedStorage& storage : subChunk.layers) {
-        if (!PalettedStorage::decode(reader, storage, error)) {
+        if (!PalettedStorage::decode(reader, storage, error, resolver)) {
             return false;
         }
     }

@@ -3,6 +3,8 @@
 #include "world/ByteReader.h"
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,11 +19,13 @@ inline constexpr size_t linearIndex(uint32_t x, uint32_t y, uint32_t z)
     return (size_t(x) << 8) | (size_t(z) << 4) | size_t(y);
 }
 
+using BlockPaletteResolver = std::function<std::optional<uint32_t>(const Tag&)>;
+
 class PalettedStorage {
 public:
     static PalettedStorage uniform(uint32_t runtimeId);
-    static bool decode(ByteReader& reader, PalettedStorage& out, std::string& error);
-    static bool decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error);
+    static bool decode(ByteReader& reader, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver = {});
+    static bool decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver = {});
 
     uint32_t runtimeIdAt(size_t linear) const;
 

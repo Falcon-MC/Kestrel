@@ -1,4 +1,5 @@
 #include "world/WorldStream.h"
+#include "client/DebugLog.h"
 
 #include "Core/NBT/NbtIo.h"
 #include "Core/Utility/ReadOnlyBinaryStream.h"
@@ -141,6 +142,7 @@ void WorldStream::handle(const LevelChunkPacket& packet)
 {
     ChunkKey key { packet.mDimension, packet.mChunkX, packet.mChunkZ };
     if (key.dimension != dimension) {
+        debugLog("LevelChunk ignored: dimension=" + std::to_string(key.dimension) + " active=" + std::to_string(dimension));
         return;
     }
 
@@ -174,20 +176,23 @@ void WorldStream::handle(const LevelChunkPacket& packet)
     }
 
     std::vector<SubChunk> decoded(packet.mSubChunksLength);
+    std::vector<int32_t> subChunkY(packet.mSubChunksLength);
     const uint8_t* data = reinterpret_cast<const uint8_t*>(packet.mData.data());
     size_t offset = 0;
     for (uint32_t i = 0; i < packet.mSubChunksLength; ++i) {
         size_t consumed = 0;
         std::string error;
-        if (!SubChunk::decode(data + offset, packet.mData.size() - offset, decoded[i], consumed, error)) {
+        if (!SubChunk::decode(data + offset, packet.mData.size() - offset, decoded[i], consumed, error, blockPaletteResolver)) {
             recordError("LevelChunk " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + error);
             return;
         }
-        int32_t expectedY = range.baseSubChunkY + static_cast<int32_t>(i);
-        if (decoded[i].yIndex() && *decoded[i].yIndex() != expectedY) {
-            recordError("LevelChunk sub-chunk index mismatch");
+        int32_t y = decoded[i].yIndex().value_or(range.baseSubChunkY + static_cast<int32_t>(i));
+        if (y < range.baseSubChunkY || y >= range.baseSubChunkY + range.subChunkCount
+            || std::find(subChunkY.begin(), subChunkY.begin() + i, y) != subChunkY.begin() + i) {
+            recordError("LevelChunk invalid or duplicate sub-chunk Y index: " + std::to_string(y));
             return;
         }
+        subChunkY[i] = y;
         offset += consumed;
     }
 
@@ -214,7 +219,7 @@ void WorldStream::handle(const LevelChunkPacket& packet)
         chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
     }
     for (uint32_t i = 0; i < decoded.size(); ++i) {
-        chunks.commit({ key.dimension, key.x, range.baseSubChunkY + static_cast<int32_t>(i), key.z }, std::move(decoded[i]));
+        chunks.commit({ key.dimension, key.x, subChunkY[i], key.z }, std::move(decoded[i]));
     }
     for (Tag& entity : entities) {
         chunks.setBlockEntity(key.dimension, tagInt(entity, "x"), tagInt(entity, "y"), tagInt(entity, "z"), std::move(entity));
@@ -259,7 +264,7 @@ void WorldStream::handle(const SubChunkPacket& packet)
             SubChunk subChunk;
             size_t consumed = 0;
             std::string error;
-            if (!SubChunk::decode(reinterpret_cast<const uint8_t*>(entry.mData.data()), entry.mData.size(), subChunk, consumed, error)) {
+            if (!SubChunk::decode(reinterpret_cast<const uint8_t*>(entry.mData.data()), entry.mData.size(), subChunk, consumed, error, blockPaletteResolver)) {
                 recordError("SubChunk " + std::to_string(key.x) + "," + std::to_string(key.y) + "," + std::to_string(key.z) + ": " + error);
                 break;
             }
@@ -467,6 +472,8 @@ void WorldStream::evictColumn(const ChunkKey& key)
 void WorldStream::recordError(const std::string& error)
 {
     ++counters.decodeErrors;
+    if (counters.decodeErrors <= 16 || counters.decodeErrors % 100 == 0)
+        debugLog("world decode error #" + std::to_string(counters.decodeErrors) + ": " + error);
     counters.lastError = error;
 }
 

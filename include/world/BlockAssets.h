@@ -11,6 +11,7 @@
 #include <map>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -294,6 +295,7 @@ public:
      * names no vanilla state.
      */
     uint32_t stateHash(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    std::optional<uint32_t> networkValueForState(uint32_t hash, bool hashed, const SequentialMap* sequential) const;
     uint32_t blockEntityTemplate(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
 
     size_t customBlockCount() const

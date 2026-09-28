@@ -21,7 +21,7 @@ struct BlockUpdate {
 
 class SubChunk {
 public:
-    static bool decode(const uint8_t* data, size_t size, SubChunk& out, size_t& consumed, std::string& error);
+    static bool decode(const uint8_t* data, size_t size, SubChunk& out, size_t& consumed, std::string& error, const BlockPaletteResolver& resolver = {});
 
     uint8_t version() const
     {

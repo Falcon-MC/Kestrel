@@ -50,21 +50,18 @@ PalettedStorage PalettedStorage::uniform(uint32_t runtimeId)
     return storage;
 }
 
-bool PalettedStorage::decode(ByteReader& reader, PalettedStorage& out, std::string& error)
+bool PalettedStorage::decode(ByteReader& reader, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver)
 {
     uint8_t header = 0;
     if (!reader.readByte(header, error, "palette header")) {
         return false;
     }
-    return decodeWithHeader(reader, header, out, error);
+    return decodeWithHeader(reader, header, out, error, resolver);
 }
 
-bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error)
+bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver)
 {
-    if ((header & 1) == 0) {
-        error = "disk palette found in network sub-chunk data";
-        return false;
-    }
+    bool persistent = (header & 1) == 0;
 
     uint8_t bits = header >> 1;
     if (std::find(SupportedBits.begin(), SupportedBits.end(), bits) == SupportedBits.end()) {
@@ -80,26 +77,42 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
     }
 
     size_t paletteSize = 1;
-    if (bits != 0) {
-        int32_t count = 0;
-        if (!reader.readVarInt(count, error, "palette length")) {
-            return false;
+    auto readPalette = [&](ByteReader& source, bool networkNbt) {
+        paletteSize = 1;
+        if (bits != 0) {
+            int32_t count = 0;
+            if (persistent && !networkNbt) {
+                uint32_t value = 0;
+                if (!source.readWords(&value, 1, error, "palette length")) return false;
+                if (value > BlocksPerSubChunk) { error = "persistent palette length exceeds 4096"; return false; }
+                count = static_cast<int32_t>(value);
+            } else if (!source.readVarInt(count, error, "palette length")) return false;
+            size_t maxSize = std::min(size_t(1) << bits, BlocksPerSubChunk);
+            if (count <= 0 || size_t(count) > maxSize) { error = "invalid palette length: " + std::to_string(count); return false; }
+            paletteSize = size_t(count);
         }
-        size_t maxSize = std::min(size_t(1) << bits, BlocksPerSubChunk);
-        if (count <= 0 || size_t(count) > maxSize) {
-            error = "invalid palette length: " + std::to_string(count);
-            return false;
+        storage.values.resize(paletteSize);
+        for (size_t i = 0; i < paletteSize; ++i) {
+            if (persistent) {
+                Tag state;
+                if (!source.readTag(state, networkNbt, error)) return false;
+                auto value = resolver ? resolver(state) : std::nullopt;
+                if (!value) { error = "unresolved persistent block palette state"; return false; }
+                storage.values[i] = *value;
+            } else {
+                int32_t value = 0;
+                if (!source.readVarInt(value, error, "palette entry")) return false;
+                storage.values[i] = static_cast<uint32_t>(value);
+            }
         }
-        paletteSize = size_t(count);
-    }
-
-    storage.values.resize(paletteSize);
-    for (size_t i = 0; i < paletteSize; ++i) {
-        int32_t value = 0;
-        if (!reader.readVarInt(value, error, "palette entry")) {
-            return false;
-        }
-        storage.values[i] = static_cast<uint32_t>(value);
+        return true;
+    };
+    ByteReader paletteStart = reader;
+    if (!readPalette(reader, true)) {
+        if (!persistent) return false;
+        reader = paletteStart;
+        if (!readPalette(reader, false)) return false;
+        error.clear();
     }
 
     for (size_t linear = 0; linear < BlocksPerSubChunk && bits != 0; ++linear) {
