@@ -113,13 +113,22 @@ void BlockAssets::buildBlockEntityTemplates(PackSource& pack, std::vector<std::v
         "textures/entity/steve", "textures/entity/piglin/piglin", "textures/entity/dragon/dragon",
     };
     for (size_t kind = 0; kind < ChestKinds; ++kind) {
+        std::string singlePath = std::string("textures/entity/chest/") + ChestTextures[kind];
+        std::string doublePath = std::string("textures/entity/chest/") + DoubleChestTextures[kind];
+        bool doubleTexture = kind != 2;
         for (uint32_t rotation = 0; rotation < 4; ++rotation) {
             float yaw = 90.0f * float(rotation);
-            entityTemplates.chest[kind][rotation] = build(std::string("textures/entity/chest/") + ChestTextures[kind], chestBoxes(false, 0.0f), yaw, 0);
-            std::string doublePath = std::string("textures/entity/chest/") + DoubleChestTextures[kind];
-            bool doubleTexture = kind != 2;
-            entityTemplates.doubleChest[kind][0][rotation] = doubleTexture ? build(doublePath, chestBoxes(true, 0.0f), yaw, 0) : entityTemplates.chest[kind][rotation];
-            entityTemplates.doubleChest[kind][1][rotation] = doubleTexture ? build(doublePath, chestBoxes(true, -16.0f), yaw, 0) : entityTemplates.chest[kind][rotation];
+            entityTemplates.chest[kind][rotation] = build(singlePath, chestBoxes(false, 0.0f), yaw, 0);
+            entityTemplates.chestBody[kind][rotation] = build(singlePath, chestBodyBoxes(false, 0.0f), yaw, 0);
+            for (size_t half = 0; half < 2; ++half) {
+                float offset = half == 0 ? 0.0f : -16.0f;
+                entityTemplates.doubleChest[kind][half][rotation] = doubleTexture ? build(doublePath, chestBoxes(true, offset), yaw, 0) : entityTemplates.chest[kind][rotation];
+                entityTemplates.doubleChestBody[kind][half][rotation] = doubleTexture ? build(doublePath, chestBodyBoxes(true, offset), yaw, 0) : entityTemplates.chestBody[kind][rotation];
+            }
+        }
+        entityTemplates.chestLid[kind] = build(singlePath, chestLidBoxes(false, 0.0f), 0.0f, 0);
+        for (size_t half = 0; half < 2; ++half) {
+            entityTemplates.doubleChestLid[kind][half] = doubleTexture ? build(doublePath, chestLidBoxes(true, half == 0 ? 0.0f : -16.0f), 0.0f, 0) : entityTemplates.chestLid[kind];
         }
     }
     for (size_t color = 0; color < DyeColors; ++color) {
@@ -161,9 +170,46 @@ void BlockAssets::buildBlockEntityTemplates(PackSource& pack, std::vector<std::v
     }
 }
 
+namespace {
+
+/**
+ * Which chest a block entity draws: its look, and for the lead half of a
+ * double chest which side its partner sits on (0 or 1), -1 for a single
+ * chest and -2 for the half its partner draws.
+ */
+std::pair<size_t, int32_t> chestShape(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position)
+{
+    uint32_t rotation = visual.variant & 3;
+    size_t kind = visual.blockEntity == EntityCopperChest ? CopperChestKind + ((visual.variant >> 2) & 3) : size_t(visual.blockEntity - EntityChest);
+    if (visual.blockEntity != EntityEnderChest && data && data->get("pairx") && data->get("pairz")) {
+        if (!entityInt(data, "pairlead", 0)) {
+            return { kind, -2 };
+        }
+        int32_t dx = entityInt(data, "pairx", 0) - position[0];
+        int32_t dz = entityInt(data, "pairz", 0) - position[2];
+        for (uint32_t step = 0; step < rotation; ++step) {
+            int32_t turned = dz;
+            dz = -dx;
+            dx = turned;
+        }
+        if (dz == 0 && (dx == 1 || dx == -1)) {
+            return { kind, dx == 1 ? 0 : 1 };
+        }
+    }
+    return { kind, -1 };
+}
+
+bool isChest(const BlockVisual& visual)
+{
+    return visual.blockEntity == EntityChest || visual.blockEntity == EntityTrappedChest || visual.blockEntity == EntityEnderChest || visual.blockEntity == EntityCopperChest;
+}
+
+}
+
 /**
  * The model of a block drawn from its block entity. A double chest is drawn
- * whole by its lead half, so the other half returns no model.
+ * whole by its lead half, so the other half returns no model. A chest whose
+ * lid is moving leaves the lid out: it is drawn on its own every frame.
  */
 uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const
 {
@@ -173,23 +219,15 @@ uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* 
     case EntityTrappedChest:
     case EntityEnderChest:
     case EntityCopperChest: {
-        size_t kind = visual.blockEntity == EntityCopperChest ? CopperChestKind + ((visual.variant >> 2) & 3) : size_t(visual.blockEntity - EntityChest);
-        if (visual.blockEntity != EntityEnderChest && data && data->get("pairx") && data->get("pairz")) {
-            if (!entityInt(data, "pairlead", 0)) {
-                return NoModelTemplate;
-            }
-            int32_t dx = entityInt(data, "pairx", 0) - position[0];
-            int32_t dz = entityInt(data, "pairz", 0) - position[2];
-            for (uint32_t step = 0; step < rotation; ++step) {
-                int32_t turned = dz;
-                dz = -dx;
-                dx = turned;
-            }
-            if (dz == 0 && (dx == 1 || dx == -1)) {
-                return entityTemplates.doubleChest[kind][dx == 1 ? 0 : 1][rotation];
-            }
+        auto [kind, half] = chestShape(visual, data, position);
+        bool moving = data && data->get(ChestLidMovingKey);
+        if (half == -2) {
+            return NoModelTemplate;
         }
-        return entityTemplates.chest[kind][rotation];
+        if (half >= 0) {
+            return moving ? entityTemplates.doubleChestBody[kind][half][rotation] : entityTemplates.doubleChest[kind][half][rotation];
+        }
+        return moving ? entityTemplates.chestBody[kind][rotation] : entityTemplates.chest[kind][rotation];
     }
     case EntityBed: {
         uint32_t color = uint32_t(std::clamp(entityInt(data, "color", DefaultBedColor), 0, int32_t(DyeColors) - 1));
@@ -211,6 +249,18 @@ uint32_t BlockAssets::blockEntityTemplate(const BlockVisual& visual, const Tag* 
     default:
         return NoModelTemplate;
     }
+}
+
+ChestLid BlockAssets::chestLid(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const
+{
+    if (!isChest(visual)) {
+        return {};
+    }
+    auto [kind, half] = chestShape(visual, data, position);
+    if (half == -2) {
+        return {};
+    }
+    return { half >= 0 ? entityTemplates.doubleChestLid[kind][half] : entityTemplates.chestLid[kind], visual.variant & 3 };
 }
 
 }

@@ -53,18 +53,31 @@ void setTinted(std::array<EntityFace, 6>& faces)
 
 }
 
-std::vector<EntityBox> chestBoxes(bool twoBlocks, float offsetX)
+std::vector<EntityBox> chestBodyBoxes(bool twoBlocks, float offsetX)
+{
+    float width = twoBlocks ? 30.0f : 14.0f;
+    std::array<EntityFace, 6> body = boxUv(0.0f, 19.0f, width, 10.0f, 14.0f);
+    return { box({ offsetX + 1.0f, 0.0f, 1.0f }, { offsetX + 1.0f + width, 10.0f, 15.0f }, body) };
+}
+
+std::vector<EntityBox> chestLidBoxes(bool twoBlocks, float offsetX)
 {
     float width = twoBlocks ? 30.0f : 14.0f;
     std::array<EntityFace, 6> lid = boxUv(0.0f, 0.0f, width, 5.0f, 14.0f);
     setSides(lid, true);
-    std::array<EntityFace, 6> body = boxUv(0.0f, 19.0f, width, 10.0f, 14.0f);
     float latchX = offsetX + 1.0f + width * 0.5f - 1.0f;
     return {
-        box({ offsetX + 1.0f, 0.0f, 1.0f }, { offsetX + 1.0f + width, 10.0f, 15.0f }, body),
         box({ offsetX + 1.0f, 9.0f, 1.0f }, { offsetX + 1.0f + width, 14.0f, 15.0f }, lid),
         box({ latchX, 7.0f, 15.0f }, { latchX + 2.0f, 11.0f, 16.0f }, boxUv(0.0f, 0.0f, 2.0f, 4.0f, 1.0f)),
     };
+}
+
+std::vector<EntityBox> chestBoxes(bool twoBlocks, float offsetX)
+{
+    std::vector<EntityBox> boxes = chestBodyBoxes(twoBlocks, offsetX);
+    std::vector<EntityBox> lid = chestLidBoxes(twoBlocks, offsetX);
+    boxes.insert(boxes.end(), lid.begin(), lid.end());
+    return boxes;
 }
 
 std::vector<EntityBox> bedBoxes(bool head)

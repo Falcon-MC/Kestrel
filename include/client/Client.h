@@ -94,6 +94,7 @@ private:
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBlockOverlays(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendChestLids(const std::array<int32_t, 3>& origin, double deltaSeconds, std::vector<world::ModelQuadGpu>& out);
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
@@ -167,6 +168,8 @@ private:
     SidebarView sidebarView;
     std::optional<BlockSelection> selectionView;
     std::vector<BlockCrack> crackViews;
+    std::vector<ChestLidView> chestLidViews;
+    std::map<std::array<int32_t, 3>, float> chestLidShown;
     BlockParticles blockParticles;
     Profiler profiler;
     ServerPinger pinger;

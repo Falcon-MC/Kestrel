@@ -19,6 +19,7 @@
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
+#include "Protocol/Packets/BlockEventPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/DimensionDataPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
@@ -702,6 +703,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::NetworkChunkPublisherUpdate:
     case MinecraftPacketIds::ChunkRadiusUpdated:
     case MinecraftPacketIds::DimensionData:
+    case MinecraftPacketIds::BlockEvent:
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
@@ -967,6 +969,16 @@ void Session::handleWorldPacket(const std::string& payload)
         }
     } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
         world.handle(*actor);
+        std::array<int32_t, 3> cell { actor->mBlockPosition.x, actor->mBlockPosition.y, actor->mBlockPosition.z };
+        if (chestLidStates.contains(cell)) {
+            markChestLid(cell, true);
+        }
+    } else if (auto blockEvent = std::dynamic_pointer_cast<BlockEventPacket>(packet)) {
+        constexpr int32_t ChestEvent = 1;
+        if (blockEvent->mEventType == ChestEvent) {
+            std::array<int32_t, 3> cell { blockEvent->mBlockPosition.x, blockEvent->mBlockPosition.y, blockEvent->mBlockPosition.z };
+            chestLidStates[cell].open = blockEvent->mEventData > 0;
+        }
     } else if (auto status = std::dynamic_pointer_cast<PlayStatusPacket>(packet)) {
         debugLog("play status " + std::to_string(static_cast<int>(status->mStatus)));
         if (status->mStatus == PlayStatusPacket::Status::PlayerSpawn) {

@@ -93,6 +93,16 @@ inline constexpr size_t CopperChestKind = 3;
 inline constexpr size_t SkullKinds = 7;
 inline constexpr size_t DyeColors = 16;
 inline constexpr size_t FineRotations = 16;
+inline constexpr const char* ChestLidMovingKey = "KestrelLidMoving";
+
+/**
+ * The lid of a chest drawn on its own while it moves: its model built facing
+ * south in block pixels, and the quarter turns that face the chest's way.
+ */
+struct ChestLid {
+    uint32_t modelTemplate = NoModelTemplate;
+    uint32_t rotation = 0;
+};
 
 /**
  * Pre-built models for blocks drawn from their block entity, one per look
@@ -102,6 +112,10 @@ inline constexpr size_t FineRotations = 16;
 struct BlockEntityTemplates {
     std::array<std::array<uint32_t, 4>, ChestKinds> chest {};
     std::array<std::array<std::array<uint32_t, 4>, 2>, ChestKinds> doubleChest {};
+    std::array<std::array<uint32_t, 4>, ChestKinds> chestBody {};
+    std::array<std::array<std::array<uint32_t, 4>, 2>, ChestKinds> doubleChestBody {};
+    std::array<uint32_t, ChestKinds> chestLid {};
+    std::array<std::array<uint32_t, 2>, ChestKinds> doubleChestLid {};
     std::array<std::array<std::array<uint32_t, 4>, 2>, DyeColors> bed {};
     std::array<std::array<uint32_t, FineRotations>, SkullKinds> floorSkull {};
     std::array<std::array<uint32_t, 4>, SkullKinds> wallSkull {};
@@ -299,6 +313,7 @@ public:
     uint32_t stateHash(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::optional<uint32_t> networkValueForState(uint32_t hash, bool hashed, const SequentialMap* sequential) const;
     uint32_t blockEntityTemplate(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
+    ChestLid chestLid(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
 
     size_t customBlockCount() const
     {

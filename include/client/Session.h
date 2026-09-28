@@ -83,6 +83,18 @@ struct BlockCrack {
 };
 
 /**
+ * A chest lid on the move: the chest's cell, its lid model and turns, whether
+ * the chest is open, and how far the lid has opened from 0 to 1 at the last
+ * tick.
+ */
+struct ChestLidView {
+    std::array<int32_t, 3> cell {};
+    world::ChestLid lid;
+    bool open = false;
+    float openness = 0.0f;
+};
+
+/**
  * Particles a block throws off: the burst of a broken block or the chip
  * knocked off the face being mined. Material is a block texture word and
  * tint 0xRRGGBB (0 for none); the shape and the obstacles the particles
@@ -342,6 +354,7 @@ struct SessionSnapshot {
     std::optional<TargetBlock> targetBlock;
     std::optional<BlockSelection> selection;
     std::vector<BlockCrack> cracks;
+    std::vector<ChestLidView> chestLids;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -473,6 +486,8 @@ private:
     void answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t value);
     bool locallyBroken(const std::array<int32_t, 3>& cell) const;
     void tickCracks();
+    void tickChestLids();
+    void markChestLid(const std::array<int32_t, 3>& cell, bool moving);
     void publishBreaking();
     double boomFraction();
     uint8_t mediumAt(const std::array<double, 3>& position);
@@ -572,6 +587,11 @@ private:
     bool attackHeldBefore = false;
     int32_t destroyDelay = 0;
     std::map<std::array<int32_t, 3>, RemoteCrack> remoteCracks;
+    struct ChestLidState {
+        bool open = false;
+        float openness = 0.0f;
+    };
+    std::map<std::array<int32_t, 3>, ChestLidState> chestLidStates;
     std::map<std::array<int32_t, 3>, double> recentBreaks;
     std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;

@@ -344,6 +344,7 @@ int Client::run()
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
                 blockParticles.update(secondsNow());
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
+                appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 appendFirstPerson(entityOrigin, handQuads);
                 if (self) {
                     appendPaperDoll(*self, entityOrigin, handQuads);
@@ -836,6 +837,7 @@ void Client::syncSession()
     sidebarView = std::move(snapshot.sidebar);
     selectionView = std::move(snapshot.selection);
     crackViews = std::move(snapshot.cracks);
+    chestLidViews = std::move(snapshot.chestLids);
     for (const ParticleBurst& burst : session.takeParticleBursts()) {
         blockParticles.spawn(burst);
     }
