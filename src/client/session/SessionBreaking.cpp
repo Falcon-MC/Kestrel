@@ -350,11 +350,13 @@ void Session::answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t 
 
 /**
  * One tick of holding the attack button, as the game's GameMode runs it:
- * the first hit starts breaking (moving on to another block while held
- * continues instead), every tick adds the dig speed and chips the face,
+ * the first hit starts breaking, and so does the next block once one is
+ * broken (sliding onto another block in the middle of breaking continues
+ * instead), every tick adds the dig speed and chips the face,
  * and the block goes once the progress is full, then a short delay passes
  * before the next one starts. Creative breaks at the first hit. Letting go
- * or looking away aborts.
+ * or looking away from every block aborts; sliding onto another block while
+ * held only sends the continue for it.
  */
 void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick)
 {
@@ -418,7 +420,10 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
         }
     }
     if (breaking.active && (!hit || hit->cell != breaking.cell)) {
-        action(PlayerActionType::AbortBreak, breaking.cell, breaking.face);
+        if (!hit) {
+            action(PlayerActionType::AbortBreak, breaking.cell, breaking.face);
+        }
+        breakSwitched = hit.has_value();
         breaking.active = false;
     }
 
@@ -446,7 +451,8 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
                 destroyDelay = DestroyDelayTicks;
             }
         } else if (destroyDelay == 0 && !(gameType == CreativeMode && world::preventsCreativeBreaking(conditions.heldItem))) {
-            action(heldBefore ? PlayerActionType::BlockContinueDestroy : PlayerActionType::StartBreak, hit->cell, hit->face);
+            action(heldBefore && breakSwitched ? PlayerActionType::BlockContinueDestroy : PlayerActionType::StartBreak, hit->cell, hit->face);
+            breakSwitched = false;
             breaking = { true, hit->cell, hit->face, hit->value, 0.0f, 0 };
             if (speed >= 1.0f) {
                 destroyPredicted(packet, hit->face, hit->point);

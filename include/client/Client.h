@@ -224,7 +224,6 @@ private:
     float handEquip = 0.0f;
     HudItem handItem;
     std::string heldItemKey;
-    std::vector<uint8_t> heldIcon;
     struct HeldItemFace {
         std::array<std::array<float, 3>, 4> corners;
         std::array<std::array<uint16_t, 2>, 4> uvs;
@@ -233,6 +232,18 @@ private:
     };
     std::vector<HeldItemFace> heldItemMesh;
     bool heldItemBlock = false;
+    std::vector<HeldItemFace> buildItemMesh(const HudItem& held, uint32_t layer, bool& block);
+    struct DroppedItemMesh {
+        std::vector<HeldItemFace> faces;
+        bool block = false;
+        uint32_t iconSlot = 0;
+    };
+    std::unordered_map<std::string, DroppedItemMesh> droppedMeshes;
+    uint64_t localRuntime = 0;
+    std::array<std::string, world::DroppedIconSlots> droppedIconKeys {};
+    uint32_t nextDroppedIcon = 0;
+    const DroppedItemMesh* droppedItemMesh(const HudItem& item);
+    void appendDroppedItem(const ActorView& actor, const std::array<int32_t, 3>& origin, double now, std::vector<world::ModelQuadGpu>& out);
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;

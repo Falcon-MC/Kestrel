@@ -584,14 +584,34 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
     if (held.empty() || !blockAssets) {
         return;
     }
+    std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
+    if (meshKey != heldItemKey) {
+        heldItemMesh = buildItemMesh(held, heldItemLayer(), heldItemBlock);
+        heldItemKey = meshKey;
+    }
+    for (const HeldItemFace& face : heldItemMesh) {
+        std::array<Vec3, 4> corners;
+        for (size_t i = 0; i < 4; ++i) corners[i] = place(face.corners[i], heldItemBlock);
+        out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
+    }
+}
+
+/**
+ * The shape of an item as it is drawn in the world, in blocks around its
+ * center: a block as its model or a cube half a block wide, any other item as
+ * its icon extruded one pixel deep, the icon uploaded to the given entity
+ * texture layer. block tells which of the two it is.
+ */
+std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uint32_t layer, bool& block)
+{
+    std::vector<HeldItemFace> mesh;
     const std::string& heldName = held.identifier;
-    std::string meshKey = heldName + "#" + std::to_string(held.aux) + "#" + held.icon;
-    auto buildMesh = [&] {
+    {
         const world::BlockVisual* cube = blockAssets->itemCube(heldName);
         std::vector<world::ModelQuad> shape = blockAssets->itemGeometry(heldName);
-        heldItemBlock = cube != nullptr || !shape.empty();
+        block = cube != nullptr || !shape.empty();
         auto emit = [&](const std::array<Vec3, 4>& local, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord) {
-            heldItemMesh.push_back({ local, uvs, material, shadeWord });
+            mesh.push_back({ local, uvs, material, shadeWord });
         };
         const std::array<std::array<uint16_t, 2>, 4> fullUv { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
 
@@ -607,7 +627,7 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
                 uint32_t tint = material.tintKind() != world::TintKind::None ? world::ItemTint : 0u;
                 emit(corners, quad.uvs, material.gpuWord(), (quad.flags & world::QuadFaceMask) | (tint << 8));
             }
-            return;
+            return mesh;
         }
 
         if (cube) {
@@ -633,28 +653,22 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
                 uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
                 emit(side.corners, fullUv, materials[material].gpuWord(), (uint32_t(side.face) + 1) | (tint << 8));
             }
-            return;
+            return mesh;
         }
 
-        uint32_t layer = heldItemLayer();
-        std::string key = heldName + "#" + std::to_string(held.aux) + "#" + held.icon;
-        std::vector<uint8_t>& icon = heldIcon;
-        if (key != heldItemKey) {
-            heldItemKey = key;
-            icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
-            std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
-            if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
-                for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
-                    for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
-                        size_t source = (size_t(y * ItemGrid / world::EntityTextureSize) * ItemGrid + x * ItemGrid / world::EntityTextureSize) * 4;
-                        std::copy_n(icon.data() + source, 4, pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4);
-                    }
+        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
+        std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
+        if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
+            for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
+                for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
+                    size_t source = (size_t(y * ItemGrid / world::EntityTextureSize) * ItemGrid + x * ItemGrid / world::EntityTextureSize) * 4;
+                    std::copy_n(icon.data() + source, 4, pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4);
                 }
             }
-            renderer->updateEntityTexture(layer, pixels.data());
         }
+        renderer->updateEntityTexture(layer, pixels.data());
         if (icon.size() != size_t(ItemGrid) * ItemGrid * 4) {
-            return;
+            return mesh;
         }
         float h = HeldItemSize * 0.5f;
         float pixel = HeldItemSize / static_cast<float>(ItemGrid);
@@ -696,17 +710,8 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
                 }
             }
         }
-    };
-    if (meshKey != heldItemKey) {
-        heldItemMesh.clear();
-        buildMesh();
-        heldItemKey = meshKey;
     }
-    for (const HeldItemFace& face : heldItemMesh) {
-        std::array<Vec3, 4> corners;
-        for (size_t i = 0; i < 4; ++i) corners[i] = place(face.corners[i], heldItemBlock);
-        out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
-    }
+    return mesh;
 }
 
 }

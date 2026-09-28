@@ -20,7 +20,9 @@
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
+#include "Protocol/Packets/AddItemActorPacket.h"
 #include "Protocol/Packets/BlockEventPacket.h"
+#include "Protocol/Packets/TakeItemActorPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
 #include "Protocol/Packets/DimensionDataPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
@@ -722,6 +724,8 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
+    case MinecraftPacketIds::AddItemActor:
+    case MinecraftPacketIds::TakeItemActor:
     case MinecraftPacketIds::AddActor:
     case MinecraftPacketIds::Animate:
     case MinecraftPacketIds::RemoveActor:
@@ -919,6 +923,23 @@ void Session::handleWorldPacket(const std::string& payload)
         actors[runtime] = actor;
         runtimeByUnique[added->mUniqueActorId] = runtime;
         moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
+    } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
+        uint64_t runtime = dropped->mRuntimeActorId;
+        ActorView actor;
+        actor.runtimeId = runtime;
+        actor.identifier = "minecraft:item";
+        actor.item = hudItemOf(dropped->mItemInHand);
+        actor.width = 0.25f;
+        actor.height = 0.25f;
+        applyActorMetadata(dropped->mMetadata, actor);
+        actors[runtime] = actor;
+        runtimeByUnique[dropped->mUniqueActorId] = runtime;
+        moveActor(runtime, dropped->mPosition.x, dropped->mPosition.y, dropped->mPosition.z, 0.0f, 0.0f, 0.0f, true, false, true);
+    } else if (auto taken = std::dynamic_pointer_cast<TakeItemActorPacket>(packet)) {
+        if (auto item = actors.find(taken->mItemRuntimeActorId); item != actors.end() && item->second.pickedUpAt == 0.0) {
+            item->second.pickedUpBy = taken->mRuntimeActorId;
+            item->second.pickedUpAt = secondsNow();
+        }
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
             actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);
@@ -926,7 +947,9 @@ void Session::handleWorldPacket(const std::string& payload)
         }
     } else if (auto removed = std::dynamic_pointer_cast<RemoveActorPacket>(packet)) {
         auto runtime = runtimeByUnique.find(removed->mUniqueActorId);
-        if (runtime != runtimeByUnique.end()) {
+        if (auto picked = runtime != runtimeByUnique.end() ? actors.find(runtime->second) : actors.end(); picked != actors.end() && picked->second.pickedUpAt > 0.0) {
+            runtimeByUnique.erase(runtime);
+        } else if (runtime != runtimeByUnique.end()) {
             actors.erase(runtime->second);
             if (auto owner = uuidByRuntime.find(runtime->second); owner != uuidByRuntime.end()) {
                 std::string uuid = owner->second;
@@ -1088,6 +1111,7 @@ void Session::finishDimensionChange()
 void Session::scheduleMeshes()
 {
     std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
+    std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
     if (!assets) {
         return;
     }
@@ -1132,7 +1156,7 @@ void Session::scheduleMeshes()
         input.skyLight = key.dimension == 0;
         input.blockEntities = world.store().blockEntities(key);
         input.origin = { key.x * 16, key.y * 16, key.z * 16 };
-        mesher->submit(key, generation, std::move(input), assets, ids);
+        mesher->submit(key, generation, std::move(input), assets, ids, urgent.contains(key));
     }
 }
 
@@ -1625,9 +1649,16 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         current.meshJobs = mesher->pending();
         current.cohortComplete = world.cohortLoaded();
         current.updatesPending = !pendingUpdates.empty();
+        current.localRuntimeId = localRuntimeId;
         current.actors.clear();
-        for (const auto& [runtime, actor] : actors) {
-            current.actors.push_back(actor);
+        for (auto actor = actors.begin(); actor != actors.end();) {
+            constexpr double PickupSeconds = 0.25;
+            if (actor->second.pickedUpAt > 0.0 && secondsNow() - actor->second.pickedUpAt > PickupSeconds) {
+                actor = actors.erase(actor);
+                continue;
+            }
+            current.actors.push_back(actor->second);
+            ++actor;
         }
         if (double now = secondsNow(); now - lastReadinessLog >= 1.0) {
             lastReadinessLog = now;
