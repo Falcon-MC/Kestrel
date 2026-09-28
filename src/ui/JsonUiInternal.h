@@ -186,6 +186,15 @@ struct JsonUiRuntime {
     uint64_t focused = 0;
     float grab = 0.0f;
 
+    // The last laid out frame, drawn again as is while nothing it depends on changes.
+    bool laidOut = false;
+    Rect laidArea {};
+    UiData laidData;
+    float laidMouseX = 0.0f;
+    float laidMouseY = 0.0f;
+    bool laidBlocked = false;
+    std::vector<Node*> painted;
+
     // JsonUiBuild.cpp
     std::unique_ptr<Node> make(Node* parent, std::string_view key, const json::Value* instance, const std::string* space, std::shared_ptr<const PropMap> scope, const UiRow* variables, int depth);
     void collect(std::string_view reference, const std::string* space, PropMap& out, int depth) const;
