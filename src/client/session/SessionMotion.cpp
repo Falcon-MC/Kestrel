@@ -368,6 +368,7 @@ void Session::tickMotion()
     tickCracks();
     tickChestLids();
     connection->send(packet);
+    tickHeldUse();
     connection->flush();
     lastMotionInput = input;
 

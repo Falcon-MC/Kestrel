@@ -436,6 +436,19 @@ public:
      * block under the crosshair.
      */
     void setAttackHeld(bool held);
+
+    /**
+     * Whether the use button is held down in game, which keeps placing along
+     * the line the first placement started.
+     */
+    void setUseHeld(bool held);
+
+    /**
+     * Queues a pick of the block under the crosshair: the server selects it
+     * in the hotbar, or gives it in creative. With data, the block entity's
+     * contents come along.
+     */
+    void requestPickBlock(bool withData);
     std::vector<ParticleBurst> takeParticleBursts();
     void requestInventory(InventoryCommand command);
 
@@ -483,11 +496,14 @@ private:
     std::optional<BlockHit> traceBlock(double reach);
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
+    void useOnBlock(const BlockHit& block);
+    void pickBlock(bool withData);
+    void tickHeldUse();
     uint32_t blockAt(int32_t x, int32_t y, int32_t z, uint32_t layer = 0);
     std::vector<world::CollisionBox> shapeBoxes(uint32_t value, int32_t x, int32_t y, int32_t z);
     world::CollisionBox selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z);
     void tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick);
-    void destroyPredicted(PlayerAuthInputPacket& packet, int32_t face);
+    void destroyPredicted(PlayerAuthInputPacket& packet, int32_t face, const std::array<double, 3>& point);
     void emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& cell, uint32_t value, int32_t face);
     void handleBreakingEvent(const LevelEventPacket& event);
     void answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t value);
@@ -567,6 +583,11 @@ private:
     std::atomic<bool> useRequested { false };
     std::atomic<bool> attackRequested { false };
     std::atomic<bool> attackHeld { false };
+    std::atomic<bool> useHeld { false };
+    std::atomic<int> pickRequested { 0 };
+    std::optional<std::array<int32_t, 3>> buildLast;
+    int32_t buildFace = 0;
+    uint32_t useRepeatTicks = 0;
 
     struct LocalBreak {
         bool active = false;
