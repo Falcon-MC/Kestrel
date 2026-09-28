@@ -799,8 +799,15 @@ void Session::handleWorldPacket(const std::string& payload)
     } else if (auto subChunk = std::dynamic_pointer_cast<SubChunkPacket>(packet)) {
         world.handle(*subChunk);
     } else if (auto updateBlock = std::dynamic_pointer_cast<UpdateBlockPacket>(packet)) {
+        if (updateBlock->mDataLayer == 0) {
+            const Vector3i& at = updateBlock->mBlockPosition;
+            answerPredictedBreak({ at.x, at.y, at.z }, updateBlock->mRuntimeId);
+        }
         world.handle(*updateBlock);
     } else if (auto updateSubChunk = std::dynamic_pointer_cast<UpdateSubChunkBlocksPacket>(packet)) {
+        for (const BlockChangeEntry& entry : updateSubChunk->mStandardBlocks) {
+            answerPredictedBreak({ entry.mPosition.x, entry.mPosition.y, entry.mPosition.z }, entry.mRuntimeId);
+        }
         world.handle(*updateSubChunk);
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
         world.handle(*publisher);

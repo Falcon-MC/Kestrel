@@ -17,6 +17,7 @@ constexpr double BreakReach = 6.0;
 constexpr int32_t DestroyDelayTicks = 5;
 constexpr uint32_t HitSoundTicks = 4;
 constexpr double LocalBreakMemory = 1.0;
+constexpr double BreakAnswerWait = 1.0;
 constexpr int32_t ObstacleRadius = 2;
 constexpr size_t MaxPendingBursts = 256;
 constexpr int32_t SurvivalMode = 0;
@@ -268,8 +269,9 @@ void Session::emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& 
 /**
  * Finishes breaking the block being mined the way the game predicts it: the
  * server hears a predicted destroy with the break transaction beside it,
- * and the client clears the block at once, keeping any water it held, with
- * its particles and break sound.
+ * and the client clears the block at once, keeping any water it held. The
+ * particles and break sound wait for the server to agree, so a break it
+ * cancels only puts the block back.
  */
 void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face)
 {
@@ -309,14 +311,40 @@ void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face)
     uint8_t z = uint8_t(cell[2] & 15);
     world.store().updateBlocks(key, { { x, y, z, 0, keepsLiquid ? extra : air }, { x, y, z, 1, air } });
 
-    emitBurst(ParticleBurst::Kind::Destroy, cell, value, face);
+    double now = secondsNow();
+    std::erase_if(predictedBreaks, [&](const PredictedBreak& entry) {
+        return entry.cell == cell;
+    });
+    predictedBreaks.push_back({ cell, value, face, now });
+    recentBreaks[cell] = now;
+    remoteCracks.erase(cell);
+}
+
+/**
+ * Settles a predicted break once the server says what the block became:
+ * anything but the block that was broken means the break went through and
+ * its particles and sound play, the same block back means it was cancelled.
+ */
+void Session::answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t value)
+{
+    auto found = std::find_if(predictedBreaks.begin(), predictedBreaks.end(), [&](const PredictedBreak& entry) {
+        return entry.cell == cell;
+    });
+    if (found == predictedBreaks.end()) {
+        return;
+    }
+    PredictedBreak broken = *found;
+    predictedBreaks.erase(found);
+    if (value == broken.value) {
+        recentBreaks.erase(cell);
+        return;
+    }
+    emitBurst(ParticleBurst::Kind::Destroy, cell, broken.value, broken.face);
     SoundRequest sound;
     sound.name = "break";
     sound.position = { cell[0] + 0.5, cell[1] + 0.5, cell[2] + 0.5 };
-    sound.block = name;
+    sound.block = assets->blockName(broken.value, ids.hashed, ids.sequential.get());
     queueSound(std::move(sound));
-    recentBreaks[cell] = secondsNow();
-    remoteCracks.erase(cell);
 }
 
 /**
@@ -458,6 +486,8 @@ void Session::handleBreakingEvent(const LevelEventPacket& event)
         remoteCracks.erase(cell);
     } else if (id == LevelEventPacket::ParticleDestroy) {
         remoteCracks.erase(cell);
+        uint32_t air = ids.hashed ? assets->airNetworkHash() : assets->airSequentialId();
+        answerPredictedBreak(cell, air);
         if (!locallyBroken(cell)) {
             emitBurst(ParticleBurst::Kind::Destroy, cell, static_cast<uint32_t>(event.mData), 0);
         }
@@ -477,6 +507,9 @@ void Session::tickCracks()
     double now = secondsNow();
     std::erase_if(recentBreaks, [now](const auto& entry) {
         return now - entry.second >= LocalBreakMemory;
+    });
+    std::erase_if(predictedBreaks, [now](const PredictedBreak& entry) {
+        return now - entry.time >= BreakAnswerWait;
     });
 }
 

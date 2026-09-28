@@ -470,6 +470,7 @@ private:
     void destroyPredicted(PlayerAuthInputPacket& packet, int32_t face);
     void emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& cell, uint32_t value, int32_t face);
     void handleBreakingEvent(const LevelEventPacket& event);
+    void answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t value);
     bool locallyBroken(const std::array<int32_t, 3>& cell) const;
     void tickCracks();
     void publishBreaking();
@@ -553,6 +554,13 @@ private:
         uint32_t ticks = 0;
     };
 
+    struct PredictedBreak {
+        std::array<int32_t, 3> cell {};
+        uint32_t value = 0;
+        int32_t face = 0;
+        double time = 0.0;
+    };
+
     struct RemoteCrack {
         uint32_t value = 0;
         float progress = 0.0f;
@@ -565,6 +573,7 @@ private:
     int32_t destroyDelay = 0;
     std::map<std::array<int32_t, 3>, RemoteCrack> remoteCracks;
     std::map<std::array<int32_t, 3>, double> recentBreaks;
+    std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;
     PlayerMotion motion;
     MotionInput motionInput;
