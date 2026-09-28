@@ -1544,6 +1544,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         if (useRequested.exchange(false)) {
             interact(true);
         }
+        if (int pick = pickRequested.exchange(0); pick != 0) {
+            pickBlock(pick == 2);
+        }
         flushInventory();
         flushChat();
         flushForms();

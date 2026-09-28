@@ -1,6 +1,7 @@
 #include "SessionData.h"
 
 #include "Network/BedrockConnection.h"
+#include "Protocol/Packets/BlockPickRequestPacket.h"
 #include "Protocol/Packets/InventoryTransactionPacket.h"
 #include "client/DebugLog.h"
 
@@ -19,6 +20,7 @@ constexpr int32_t InteractEntity = 0;
 constexpr int32_t AttackEntity = 1;
 constexpr float DefaultActorWidth = 0.6f;
 constexpr float DefaultActorHeight = 1.8f;
+constexpr std::array<std::array<int32_t, 3>, 6> FaceOffsets { { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } } };
 
 /**
  * Where a ray first enters a box, as a distance along the ray, or nothing
@@ -183,19 +185,138 @@ void Session::interact(bool use)
     } else if (!use) {
         return;
     } else if (block) {
-        packet.mTransactionType = InventoryTransactionType::ItemUse;
-        packet.mActionType = ClickBlock;
-        packet.mBlockPosition = Vector3i(block->cell[0], block->cell[1], block->cell[2]);
-        packet.mBlockFace = block->face;
-        packet.mClickPosition = Vector3f(float(block->point[0] - block->cell[0]), float(block->point[1] - block->cell[1]), float(block->point[2] - block->cell[2]));
-        packet.mBlockDefinition = std::make_shared<BlockDefinition>(block->name, static_cast<int>(block->value), Tag {});
-        debugLog("use item on " + block->name);
+        useOnBlock(*block);
+        return;
     } else {
+        buildLast.reset();
         packet.mTransactionType = InventoryTransactionType::ItemUse;
         packet.mActionType = ClickAir;
         packet.mBlockFace = -1;
         debugLog("use item in the air");
     }
+    if (target) {
+        buildLast.reset();
+    }
+    connection->send(packet);
+}
+
+/**
+ * Uses the held item on one face of a block, and remembers the cell a block
+ * placed there would fill as the head of the line held use extends.
+ */
+void Session::useOnBlock(const BlockHit& block)
+{
+    int32_t slot = 0;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        slot = std::clamp(current.hud.selectedSlot, 0, 8);
+    }
+    InventoryTransactionPacket packet;
+    packet.mHotbarSlot = slot;
+    packet.mItemInHand = inventoryModel.slots[size_t(slot)];
+    packet.mPlayerPosition = Vector3f(float(lookOrigin[0]), float(lookOrigin[1]), float(lookOrigin[2]));
+    packet.mTriggerType = ItemUseTriggerType::PlayerInput;
+    packet.mClientInteractPrediction = ItemUsePredictedResult::Success;
+    packet.mTransactionType = InventoryTransactionType::ItemUse;
+    packet.mActionType = ClickBlock;
+    packet.mBlockPosition = Vector3i(block.cell[0], block.cell[1], block.cell[2]);
+    packet.mBlockFace = block.face;
+    packet.mClickPosition = Vector3f(float(block.point[0] - block.cell[0]), float(block.point[1] - block.cell[1]), float(block.point[2] - block.cell[2]));
+    packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
+    debugLog("use item on " + block.name);
+    connection->send(packet);
+
+    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(block.face, 0, 5)];
+    buildFace = block.face;
+    buildLast = std::array<int32_t, 3> { block.cell[0] + offset[0], block.cell[1] + offset[1], block.cell[2] + offset[2] };
+}
+
+/**
+ * Held use places again every few ticks, the way the game builds while the
+ * button stays down. A placement keeps to the face the first one used: when
+ * the crosshair has moved on, onto the top of the new block or past its edge
+ * into the air, the next block still goes against that face of the last one
+ * placed, as long as it is in reach. That is what lets a player bridge
+ * forward.
+ */
+void Session::tickHeldUse()
+{
+    constexpr uint32_t RepeatTicks = 4;
+    if (!useHeld.load() || !connection || !codecContext || !assets) {
+        useRepeatTicks = 0;
+        buildLast.reset();
+        return;
+    }
+    if (++useRepeatTicks < RepeatTicks) {
+        return;
+    }
+    std::optional<BlockHit> hit = traceBlock(InteractReach);
+    if (hit && hit->face == buildFace) {
+        useRepeatTicks = 0;
+        interact(true);
+        return;
+    }
+    if (!buildLast) {
+        return;
+    }
+    const std::array<int32_t, 3>& last = *buildLast;
+    uint32_t air = ids.hashed ? assets->airNetworkHash() : assets->airSequentialId();
+    auto isAir = [&](const std::array<int32_t, 3>& cell) {
+        uint32_t value = blockAt(cell[0], cell[1], cell[2]);
+        return value == world::ImplicitAir || value == air;
+    };
+    if (isAir(last)) {
+        return;
+    }
+    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(buildFace, 0, 5)];
+    std::array<int32_t, 3> nextCell { last[0] + offset[0], last[1] + offset[1], last[2] + offset[2] };
+    double reach = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        double gap = nextCell[axis] + 0.5 - lookOrigin[axis];
+        reach += gap * gap;
+    }
+    if (!isAir(nextCell) || reach > InteractReach * InteractReach) {
+        return;
+    }
+    BlockHit extend;
+    extend.cell = last;
+    extend.value = blockAt(last[0], last[1], last[2]);
+    extend.name = assets->describe(extend.value, ids.hashed, ids.sequential.get());
+    extend.face = buildFace;
+    for (int axis = 0; axis < 3; ++axis) {
+        extend.point[axis] = last[axis] + 0.5 + offset[axis] * 0.5;
+    }
+    useRepeatTicks = 0;
+    useOnBlock(extend);
+}
+
+void Session::setUseHeld(bool held)
+{
+    useHeld = held;
+}
+
+void Session::requestPickBlock(bool withData)
+{
+    pickRequested = withData ? 2 : 1;
+}
+
+void Session::pickBlock(bool withData)
+{
+    if (!connection || !codecContext) {
+        return;
+    }
+    std::optional<BlockHit> block = traceBlock(InteractReach);
+    if (!block) {
+        return;
+    }
+    BlockPickRequestPacket packet;
+    packet.mBlockPosition = Vector3i(block->cell[0], block->cell[1], block->cell[2]);
+    packet.mAddUserData = withData;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        packet.mHotbarSlot = std::clamp(current.hud.selectedSlot, 0, 8);
+    }
+    debugLog("pick block " + block->name);
     connection->send(packet);
 }
 
