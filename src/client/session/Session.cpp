@@ -21,6 +21,7 @@
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/BlockEventPacket.h"
 #include "Protocol/Packets/ChunkRadiusUpdatedPacket.h"
+#include "Protocol/Packets/TransferPacket.h"
 #include "Protocol/Packets/DimensionDataPacket.h"
 #include "Protocol/Packets/GameRulesChangedPacket.h"
 #include "Protocol/Packets/LevelEventPacket.h"
@@ -433,6 +434,15 @@ std::string_view Session::gameVersion()
     return GameVersion;
 }
 
+std::optional<std::string> Session::takeTransfer()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    if (current.transferTarget.empty()) {
+        return std::nullopt;
+    }
+    return std::exchange(current.transferTarget, std::string());
+}
+
 SessionSnapshot Session::snapshot() const
 {
     std::lock_guard<std::mutex> guard(mutex);
@@ -704,6 +714,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ChunkRadiusUpdated:
     case MinecraftPacketIds::DimensionData:
     case MinecraftPacketIds::BlockEvent:
+    case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::ChangeDimension:
     case MinecraftPacketIds::MovePlayer:
     case MinecraftPacketIds::AddPlayer:
@@ -973,6 +984,14 @@ void Session::handleWorldPacket(const std::string& payload)
         if (chestLidStates.contains(cell)) {
             markChestLid(cell, true);
         }
+    } else if (auto transfer = std::dynamic_pointer_cast<TransferPacket>(packet)) {
+        constexpr int32_t DefaultPort = 19132;
+        std::string host = transfer->mAddress.find(':') != std::string::npos ? "[" + transfer->mAddress + "]" : transfer->mAddress;
+        int32_t port = transfer->mPort > 0 && transfer->mPort <= 65535 ? transfer->mPort : DefaultPort;
+        debugLog("transfer to " + host + ":" + std::to_string(port));
+        transferring = true;
+        std::lock_guard<std::mutex> guard(mutex);
+        current.transferTarget = host + ":" + std::to_string(port);
     } else if (auto blockEvent = std::dynamic_pointer_cast<BlockEventPacket>(packet)) {
         constexpr int32_t ChestEvent = 1;
         if (blockEvent->mEventType == ChestEvent) {
@@ -1161,6 +1180,7 @@ void Session::fail(const std::string& error)
 
 void Session::run(std::string target, MinecraftAuthentication* authentication, std::string offlineName)
 {
+    transferring = false;
     ClientConnectionSettings settings;
     settings.mProtocolVersion = ProtocolVersion;
     settings.mGameVersion = GameVersion;
@@ -1486,7 +1506,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
 
     std::string payload;
     double lastWorldPacket = secondsNow();
-    while (!cancelled) {
+    while (!cancelled && !transferring) {
         int waitMs = 50;
         if (spawnInitialized && nextMotionTick > 0.0) {
             waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 1, OutlineRefreshMs);
@@ -1577,7 +1597,10 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
 
     std::lock_guard<std::mutex> guard(mutex);
-    if (cancelled) {
+    if (transferring) {
+        connection->disconnect("Transferring");
+        current.state = SessionState::Connecting;
+    } else if (cancelled) {
         connection->disconnect("Disconnected");
         current.state = SessionState::Idle;
     } else {
