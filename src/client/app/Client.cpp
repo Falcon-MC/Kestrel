@@ -810,6 +810,9 @@ void Client::syncSession()
     localSlim = snapshot.localSlim;
     menu.setCommands(std::move(snapshot.commands));
     menu.setPlayers(std::move(snapshot.players));
+    if (snapshot.hud.lastSwing > hudState.lastSwing) {
+        startSwing(secondsNow());
+    }
     hudState = std::move(snapshot.hud);
     sidebarView = std::move(snapshot.sidebar);
     for (SkinUpload& skin : session.takeSkinUploads()) {
