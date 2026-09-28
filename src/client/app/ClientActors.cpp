@@ -209,9 +209,8 @@ uint32_t pickChoice(world::EntityAnimator& animator, const world::molang::Script
  * in 1/256 block: every bone posed by the entity's animations, then the model
  * scaled and turned to its body yaw. Entity quads set bit 5 of the shade word
  * so they sample the entity textures, and bit 6 when their material adds
- * light. Quads whose material blends go to blended. Invisible or zero scale
- * entities draw nothing, which is how servers hide the armor stands behind
- * floating text.
+ * light. Quads whose material blends go to blended. Zero scale entities draw
+ * nothing; invisible ones hide their body but keep their armor and held item.
  */
 void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
 {
@@ -235,9 +234,10 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     std::unordered_set<uint64_t> present;
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
-        if ((actor.flags[0] & InvisibleFlag) || actor.scale <= 0.0f) {
+        if (actor.scale <= 0.0f) {
             continue;
         }
+        bool invisible = (actor.flags[0] & InvisibleFlag) != 0;
         double dx = actor.x - origin[0];
         double dy = actor.y - origin[1];
         double dz = actor.z - origin[2];
@@ -427,7 +427,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, blend == world::EntityBlend::Opaque ? out : blended);
         };
-        if (combined) {
+        if (!invisible && combined) {
             for (size_t index = 0; index < model->controllers.size(); ++index) {
                 const world::EntityRenderController& source = model->controllers[index];
                 if (!source.condition.empty() && animator.evaluate(source.condition) == 0.0) {
@@ -443,7 +443,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     }
                 }
             }
-        } else {
+        } else if (!invisible) {
             uint32_t layer = actor.skinSlot != NoSkin ? blockAssets->skinLayerBase() + actor.skinSlot : textureOf(controller);
             std::vector<uint8_t> hidden = controller ? hiddenBones(*controller) : std::vector<uint8_t> {};
             world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
