@@ -33,6 +33,12 @@ void debugLog(const std::string& line)
 void resetDebugLog()
 {
     std::lock_guard<std::mutex> guard(logMutex);
+    std::error_code error;
+    const auto path = logPath();
+    if (std::filesystem::exists(path, error)) {
+        auto previous = path.parent_path() / "debug.previous.txt";
+        std::filesystem::copy_file(path, previous, std::filesystem::copy_options::overwrite_existing, error);
+    }
     std::ofstream file(logPath(), std::ios::trunc);
 }
 

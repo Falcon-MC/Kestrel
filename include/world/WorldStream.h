@@ -38,6 +38,7 @@ public:
     using Clock = std::chrono::steady_clock;
 
     void reset(int32_t dimension, int32_t chunkX, int32_t chunkZ);
+    void setBlockPaletteResolver(BlockPaletteResolver resolver) { blockPaletteResolver = std::move(resolver); }
     void setChunkRadius(int32_t radius);
     void changeDimension(int32_t dimension, int32_t chunkX, int32_t chunkZ);
 
@@ -70,6 +71,7 @@ private:
     void evictColumn(const ChunkKey& key);
     void recordError(const std::string& error);
 
+    BlockPaletteResolver blockPaletteResolver;
     ChunkStore chunks;
     std::map<ChunkKey, std::map<int32_t, PendingSubChunk>> pending;
     int32_t dimension = 0;

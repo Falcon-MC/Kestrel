@@ -22,5 +22,6 @@ struct PackFiles {
 };
 
 std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& archive, const std::string& contentKey, std::string& error);
+std::shared_ptr<const PackFiles> loadServerPackData(const std::string& archive, const std::string& contentKey, std::string& error);
 
 }

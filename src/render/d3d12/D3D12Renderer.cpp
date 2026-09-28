@@ -1,4 +1,5 @@
 #include "render/Renderer.h"
+#include "client/DebugLog.h"
 
 #include "platform/Window.h"
 #include "ui/DrawList.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -26,6 +28,8 @@ namespace kestrel {
 namespace {
 
 constexpr uint32_t FrameCount = 3;
+constexpr uint32_t EntityTexturePageLayers = 2048;
+constexpr uint32_t EntityTexturePages = 2; // Entity material indices use 12 bits.
 
 constexpr char UiShader[] = R"(
 cbuffer View : register(b0)
@@ -97,6 +101,7 @@ cbuffer Draw : register(b0)
 Texture2DArray blocks : register(t0);
 Texture2DArray blocksHigh : register(t1);
 Texture2DArray entities : register(t2);
+Texture2DArray entitiesHigh : register(t3);
 SamplerState blockSampler : register(s0);
 
 struct WorldIn
@@ -286,7 +291,10 @@ float4 applyTint(float4 texel, uint tint)
 float4 surfaceTexel(WorldOut input)
 {
     if (input.entity != 0) {
-        float4 texel = entities.Sample(blockSampler, float3(input.uv, input.material & 0xfff));
+        uint layer = input.material & 0xfff;
+        float4 texel = layer < 2048
+            ? entities.Sample(blockSampler, float3(input.uv, layer))
+            : entitiesHigh.Sample(blockSampler, float3(input.uv, layer - 2048));
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
         return texel;
@@ -373,7 +381,11 @@ float4 ps_sky(SkyOut input) : SV_Target
 void check(HRESULT hr, const char* what)
 {
     if (FAILED(hr)) {
-        throw std::runtime_error(what);
+        char code[16];
+        std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(hr));
+        std::string message = std::string(what) + " failed (HRESULT " + code + ")";
+        debugLog("D3D12 " + message);
+        throw std::runtime_error(message);
     }
 }
 
@@ -476,12 +488,12 @@ public:
         rtvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         D3D12_DESCRIPTOR_HEAP_DESC srvDesc {};
-        srvDesc.NumDescriptors = 2 + BlockTexturePages;
+        srvDesc.NumDescriptors = 1 + BlockTexturePages + EntityTexturePages;
         srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         check(device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap)), "CreateDescriptorHeap");
         srvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        for (uint32_t slot = 1; slot < 2 + BlockTexturePages; ++slot) {
+        for (uint32_t slot = 1; slot < 1 + BlockTexturePages + EntityTexturePages; ++slot) {
             D3D12_SHADER_RESOURCE_VIEW_DESC empty {};
             empty.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             empty.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
@@ -552,7 +564,7 @@ public:
         textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
         D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
-        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&atlas)), "CreateCommittedResource");
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&atlas)), "CreateCommittedResource: UI atlas");
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint {};
         UINT rows = 0;
@@ -613,52 +625,63 @@ public:
 
     void uploadEntityTextures(const uint8_t* pixels, uint32_t size, uint32_t layers) override
     {
+        debugLog("D3D12 entity textures size=" + std::to_string(size) + " layers=" + std::to_string(layers)
+                 + " bytes=" + std::to_string(uint64_t(size) * size * layers * 4));
+        if (layers > EntityTexturePageLayers * EntityTexturePages) {
+            check(E_INVALIDARG, "Entity textures exceed the 4096-layer material index capacity");
+        }
         waitIdle();
-        entityTextures.Reset();
+        for (auto& page : entityTextures) page.Reset();
         entitySize = size;
         entityLayers = layers;
-        if (layers == 0) {
-            return;
+        for (uint32_t page = 0; page < EntityTexturePages; ++page) {
+            uint32_t first = page * EntityTexturePageLayers;
+            uint32_t count = layers > first ? std::min(layers - first, EntityTexturePageLayers) : 0;
+            D3D12_SHADER_RESOURCE_VIEW_DESC view {};
+            view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            view.Texture2DArray.MipLevels = 1;
+            view.Texture2DArray.ArraySize = std::max(count, 1u);
+            D3D12_CPU_DESCRIPTOR_HANDLE slot = srvHeap->GetCPUDescriptorHandleForHeapStart();
+            slot.ptr += srvStride * (1 + BlockTexturePages + page);
+            if (count == 0) {
+                device->CreateShaderResourceView(nullptr, &view, slot);
+                continue;
+            }
+            D3D12_RESOURCE_DESC textureDesc {};
+            textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            textureDesc.Width = size;
+            textureDesc.Height = size;
+            textureDesc.DepthOrArraySize = static_cast<UINT16>(count);
+            textureDesc.MipLevels = 1;
+            textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            textureDesc.SampleDesc.Count = 1;
+            D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
+            debugLog("D3D12 entity texture page=" + std::to_string(page) + " layers=" + std::to_string(count));
+            check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&entityTextures[page])), "CreateCommittedResource: entity texture page");
+            copyEntityLayers(pixels + size_t(first) * size * size * 4, page, 0, count, D3D12_RESOURCE_STATE_COPY_DEST);
+            device->CreateShaderResourceView(entityTextures[page].Get(), &view, slot);
         }
-        D3D12_RESOURCE_DESC textureDesc {};
-        textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        textureDesc.Width = size;
-        textureDesc.Height = size;
-        textureDesc.DepthOrArraySize = static_cast<UINT16>(layers);
-        textureDesc.MipLevels = 1;
-        textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        textureDesc.SampleDesc.Count = 1;
-        D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
-        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&entityTextures)), "CreateCommittedResource");
-        copyEntityLayers(pixels, 0, layers, D3D12_RESOURCE_STATE_COPY_DEST);
-
-        D3D12_SHADER_RESOURCE_VIEW_DESC view {};
-        view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        view.Texture2DArray.MipLevels = 1;
-        view.Texture2DArray.ArraySize = layers;
-        D3D12_CPU_DESCRIPTOR_HANDLE slot = srvHeap->GetCPUDescriptorHandleForHeapStart();
-        slot.ptr += srvStride * (1 + BlockTexturePages);
-        device->CreateShaderResourceView(entityTextures.Get(), &view, slot);
     }
 
     void updateEntityTexture(uint32_t layer, const uint8_t* pixels) override
     {
-        if (!entityTextures || layer >= entityLayers) {
+        if (layer >= entityLayers || !entityTextures[layer / EntityTexturePageLayers]) {
             return;
         }
         waitIdle();
-        copyEntityLayers(pixels, layer, 1, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        copyEntityLayers(pixels, layer / EntityTexturePageLayers, layer % EntityTexturePageLayers, 1, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
 
     /**
      * Copies consecutive entity texture layers from tightly packed pixels and
      * leaves the texture ready for sampling.
      */
-    void copyEntityLayers(const uint8_t* pixels, uint32_t first, uint32_t count, D3D12_RESOURCE_STATES state)
+    void copyEntityLayers(const uint8_t* pixels, uint32_t page, uint32_t first, uint32_t count, D3D12_RESOURCE_STATES state)
     {
-        D3D12_RESOURCE_DESC textureDesc = entityTextures->GetDesc();
+        D3D12_RESOURCE_DESC textureDesc = entityTextures[page]->GetDesc();
         std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(count);
         std::vector<UINT> rows(count);
         std::vector<UINT64> rowSizes(count);
@@ -671,7 +694,7 @@ public:
         uploadAllocator->Reset();
         uploadList->Reset(uploadAllocator.Get(), nullptr);
         if (state != D3D12_RESOURCE_STATE_COPY_DEST) {
-            transition(uploadList.Get(), entityTextures.Get(), state, D3D12_RESOURCE_STATE_COPY_DEST);
+            transition(uploadList.Get(), entityTextures[page].Get(), state, D3D12_RESOURCE_STATE_COPY_DEST);
         }
         for (uint32_t layer = 0; layer < count; ++layer) {
             const uint8_t* source = pixels + static_cast<size_t>(layer) * entitySize * entitySize * 4;
@@ -679,7 +702,7 @@ public:
                 std::memcpy(mapped + footprints[layer].Offset + static_cast<size_t>(y) * footprints[layer].Footprint.RowPitch, source + static_cast<size_t>(y) * entitySize * 4, static_cast<size_t>(entitySize) * 4);
             }
             D3D12_TEXTURE_COPY_LOCATION destination {};
-            destination.pResource = entityTextures.Get();
+            destination.pResource = entityTextures[page].Get();
             destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
             destination.SubresourceIndex = first + layer;
             D3D12_TEXTURE_COPY_LOCATION copySource {};
@@ -689,7 +712,7 @@ public:
             uploadList->CopyTextureRegion(&destination, 0, 0, 0, &copySource, nullptr);
         }
         staging->Unmap(0, nullptr);
-        transition(uploadList.Get(), entityTextures.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        transition(uploadList.Get(), entityTextures[page].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         uploadList->Close();
         ID3D12CommandList* lists[] = { uploadList.Get() };
         queue->ExecuteCommandLists(1, lists);
@@ -702,6 +725,8 @@ public:
      */
     void uploadBlockTexturePage(const BlockTextureUpload& textures, uint32_t page, uint32_t first, uint32_t count)
     {
+        debugLog("D3D12 block texture page=" + std::to_string(page) + " size=" + std::to_string(textures.size)
+                 + " layers=" + std::to_string(count) + " mips=" + std::to_string(textures.mipLevels));
         blockTextures[page].Reset();
         D3D12_SHADER_RESOURCE_VIEW_DESC view {};
         view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -726,7 +751,7 @@ public:
         textureDesc.SampleDesc.Count = 1;
 
         D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
-        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&blockTextures[page])), "CreateCommittedResource");
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&blockTextures[page])), "CreateCommittedResource: block texture page");
 
         UINT subresources = count * textures.mipLevels;
         std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(subresources);
@@ -905,7 +930,7 @@ public:
             return chunk->counts[0] || chunk->counts[1];
         }));
 
-        bool entities = view.entityTotal() && entityTextures;
+        bool entities = view.entityTotal() && entityLayers > 0 && entityTextures[0];
         if (entities) {
             FrameBuffers& buffers = frameBuffers[frameIndex];
             size_t bytes = static_cast<size_t>(view.entityTotal()) * ModelQuadBytes;
@@ -1182,7 +1207,7 @@ private:
     {
         D3D12_DESCRIPTOR_RANGE range {};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = BlockTexturePages + 1;
+        range.NumDescriptors = BlockTexturePages + EntityTexturePages;
         range.BaseShaderRegister = 0;
         range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
@@ -1309,7 +1334,7 @@ private:
         clear.DepthStencil.Depth = 1.0f;
 
         D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
-        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&depthBuffer)), "CreateCommittedResource");
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&depthBuffer)), "CreateCommittedResource: depth buffer");
         device->CreateDepthStencilView(depthBuffer.Get(), nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
     }
 
@@ -1318,7 +1343,8 @@ private:
         D3D12_HEAP_PROPERTIES uploadHeap = heapProperties(D3D12_HEAP_TYPE_UPLOAD);
         D3D12_RESOURCE_DESC description = bufferDescription(size);
         ComPtr<ID3D12Resource> buffer;
-        check(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer)), "CreateCommittedResource");
+        std::string allocation = "CreateCommittedResource: upload buffer bytes=" + std::to_string(description.Width);
+        check(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer)), allocation.c_str());
         return buffer;
     }
 
@@ -1385,7 +1411,7 @@ private:
     ComPtr<ID3D12PipelineState> modelBlendPipeline;
     ComPtr<ID3D12PipelineState> skyPipeline;
     std::array<ComPtr<ID3D12Resource>, BlockTexturePages> blockTextures;
-    ComPtr<ID3D12Resource> entityTextures;
+    std::array<ComPtr<ID3D12Resource>, EntityTexturePages> entityTextures;
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;

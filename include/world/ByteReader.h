@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include "Core/NBT/Tag.h"
 #include <cstdint>
 #include <string>
 
@@ -24,6 +25,7 @@ public:
         return size - offset;
     }
 
+    bool readTag(Tag& out, bool network, std::string& error);
     bool readByte(uint8_t& out, std::string& error, const char* context);
     bool readWords(uint32_t* out, size_t count, std::string& error, const char* context);
     bool readVarInt(int32_t& out, std::string& error, const char* context);

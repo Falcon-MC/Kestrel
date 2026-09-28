@@ -26,13 +26,14 @@ bool inflateRaw(const char* data, size_t size, size_t expected, std::string& out
     if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
         return false;
     }
-    out.assign(expected, '\0');
+    out.assign(expected ? expected : 1, '\0');
     stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data));
     stream.avail_in = static_cast<uInt>(size);
     stream.next_out = reinterpret_cast<Bytef*>(out.data());
     stream.avail_out = static_cast<uInt>(out.size());
     int status = inflate(&stream, Z_FINISH);
     inflateEnd(&stream);
+    out.resize(expected);
     return status == Z_STREAM_END && stream.total_out == expected;
 }
 
@@ -56,6 +57,7 @@ bool unzip(const std::string& archive, std::unordered_map<std::string, std::stri
     }
     uint16_t count = readLe16(archive, end + 10);
     size_t cursor = readLe32(archive, end + 16);
+    uint64_t expanded = 0;
     for (uint16_t i = 0; i < count; ++i) {
         if (cursor + 46 > archive.size() || readLe32(archive, cursor) != 0x02014b50u) {
             error = "corrupt zip directory";
@@ -68,21 +70,37 @@ bool unzip(const std::string& archive, std::unordered_map<std::string, std::stri
         uint16_t extraLength = readLe16(archive, cursor + 30);
         uint16_t commentLength = readLe16(archive, cursor + 32);
         uint32_t local = readLe32(archive, cursor + 42);
+        uint32_t expectedCrc = readLe32(archive, cursor + 16);
+        if (cursor + 46 + size_t(nameLength) + extraLength + commentLength > archive.size()) {
+            error = "truncated zip directory";
+            return false;
+        }
         std::string name = archive.substr(cursor + 46, nameLength);
         cursor += 46 + size_t(nameLength) + extraLength + commentLength;
 
-        if (name.empty() || name.back() == '/' || local + 30 > archive.size()) {
+        if (name.empty() || name.back() == '/') {
             continue;
         }
-        size_t dataStart = local + 30 + readLe16(archive, local + 26) + readLe16(archive, local + 28);
+        expanded += size;
+        if (expanded > 1024ull * 1024 * 1024 || size_t(local) + 30 > archive.size() || readLe32(archive, local) != 0x04034b50u) {
+            error = "invalid or oversized zip entry";
+            return false;
+        }
+        size_t dataStart = size_t(local) + 30 + readLe16(archive, local + 26) + readLe16(archive, local + 28);
         if (dataStart + compressedSize > archive.size()) {
-            continue;
+            error = "truncated zip entry";
+            return false;
         }
         std::string content;
         if (method == 0) {
             content = archive.substr(dataStart, compressedSize);
         } else if (method != 8 || !inflateRaw(archive.data() + dataStart, compressedSize, size, content)) {
-            continue;
+            error = "unsupported or corrupt zip entry";
+            return false;
+        }
+        if (content.size() != size || crc32(0, reinterpret_cast<const Bytef*>(content.data()), static_cast<uInt>(content.size())) != expectedCrc) {
+            error = "zip entry size or CRC mismatch";
+            return false;
         }
         for (char& c : name) {
             if (c == '\\') {
@@ -132,6 +150,12 @@ std::string rootPrefix(const std::unordered_map<std::string, std::string>& files
 
 std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& archivePath, const std::string& contentKey, std::string& error)
 {
+    std::error_code sizeError;
+    auto size = std::filesystem::file_size(archivePath, sizeError);
+    if (sizeError || size > 512ull * 1024 * 1024) {
+        error = "missing or oversized resource pack archive";
+        return nullptr;
+    }
     std::ifstream file(archivePath, std::ios::binary);
     if (!file) {
         error = "cannot open " + archivePath.string();
@@ -139,9 +163,13 @@ std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& arc
     }
     std::ostringstream buffer;
     buffer << file.rdbuf();
+    return loadServerPackData(buffer.str(), contentKey, error);
+}
 
+std::shared_ptr<const PackFiles> loadServerPackData(const std::string& archive, const std::string& contentKey, std::string& error)
+{
     std::unordered_map<std::string, std::string> raw;
-    if (!unzip(buffer.str(), raw, error)) {
+    if (!unzip(archive, raw, error)) {
         return nullptr;
     }
 
@@ -154,6 +182,12 @@ std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& arc
     }
 
     auto contents = pack->files.find("contents.json");
+    const std::string* manifest = pack->find("manifest.json");
+    auto documentManifest = manifest ? json::parse(*manifest) : nullptr;
+    if (!documentManifest || !documentManifest->get("header")) {
+        error = "missing or invalid pack manifest";
+        return nullptr;
+    }
     if (contents == pack->files.end() || contents->second.size() < EncryptedHeaderSize || readLe32(contents->second, 4) != EncryptedMagic) {
         return pack;
     }
@@ -176,11 +210,15 @@ std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& arc
         }
         auto target = pack->files.find(path->string());
         if (target == pack->files.end()) {
-            continue;
+            error = "encrypted pack entry is missing";
+            return nullptr;
         }
         std::string plain;
         if (decryptCfb8(key->string(), target->second.data(), target->second.size(), plain)) {
             target->second = std::move(plain);
+        } else {
+            error = "could not decrypt pack entry";
+            return nullptr;
         }
     }
     pack->files["contents.json"] = std::move(decrypted);

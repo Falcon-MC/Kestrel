@@ -1,6 +1,7 @@
 #include "SessionData.h"
 
 #include "Core/Json/Json.h"
+#include "Protocol/BlockStateHasher.h"
 #include "Network/Auth/MinecraftAuthentication.h"
 #include "Network/BedrockConnection.h"
 #include "Network/Http/HttpClient.h"
@@ -74,6 +75,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 
 namespace kestrel {
 
@@ -160,20 +162,69 @@ std::filesystem::path packDirectory()
 
 std::filesystem::path packPath(const std::string& id, const std::string& version)
 {
-    return packDirectory() / (id + "_" + version + ".zip");
+    auto component = [](const std::string& value) {
+        std::string safe;
+        constexpr char Hex[] = "0123456789abcdef";
+        for (unsigned char c : value) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.') safe += char(c);
+            else { safe += '%'; safe += Hex[c >> 4]; safe += Hex[c & 15]; }
+        }
+        return safe;
+    };
+    return packDirectory() / (component(id) + "_" + component(version) + ".zip");
 }
 
-void savePack(const DownloadedResourcePack& pack)
+bool packMatches(const world::PackFiles& pack, const ResourcePackOffer& offer)
+{
+    const std::string* manifest = pack.find("manifest.json");
+    auto document = manifest ? json::parse(*manifest) : nullptr;
+    const auto* header = document ? document->get("header") : nullptr;
+    const auto* uuid = header ? header->get("uuid") : nullptr;
+    const auto* version = header ? header->get("version") : nullptr;
+    if (!uuid || !uuid->isString() || !version) return false;
+    auto lower = [](std::string value) {
+        for (char& c : value) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        return value;
+    };
+    if (lower(uuid->string()) != lower(offer.mPackId)) return false;
+    std::string text = version->isString() ? version->string() : std::string();
+    if (version->isArray()) {
+        for (const auto& part : version->mArray) {
+            if (!part->isNumber()) return false;
+            if (!text.empty()) text += '.';
+            text += std::to_string(part->integer());
+        }
+    }
+    return text == offer.mPackVersion;
+}
+
+bool savePack(const DownloadedResourcePack& pack, std::string& message)
 {
     std::error_code error;
     std::filesystem::create_directories(packDirectory(), error);
-    std::filesystem::path path = packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion);
-    std::ofstream archive(path, std::ios::binary | std::ios::trunc);
-    archive.write(pack.mData.data(), static_cast<std::streamsize>(pack.mData.size()));
-    if (!pack.mOffer.mContentKey.empty()) {
-        std::ofstream key(std::filesystem::path(path).replace_extension(".key"), std::ios::trunc);
-        key << pack.mOffer.mContentKey;
+    if (error) { message = "cannot create resource pack cache: " + error.message(); return false; }
+    auto path = packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion);
+    auto temporary = path;
+    temporary += ".part";
+    {
+        std::ofstream archive(temporary, std::ios::binary | std::ios::trunc);
+        archive.write(pack.mData.data(), static_cast<std::streamsize>(pack.mData.size()));
+        archive.close();
+        if (!archive) { message = "cannot write resource pack cache"; std::filesystem::remove(temporary, error); return false; }
     }
+    auto keyPath = path;
+    keyPath.replace_extension(".key");
+    {
+        std::ofstream key(keyPath, std::ios::trunc);
+        key << pack.mOffer.mContentKey;
+        key.close();
+        if (!key) { message = "cannot write resource pack key"; std::filesystem::remove(temporary, error); return false; }
+    }
+    std::filesystem::remove(path, error);
+    error.clear();
+    std::filesystem::rename(temporary, path, error);
+    if (error) { message = "cannot publish resource pack cache: " + error.message(); return false; }
+    return true;
 }
 
 std::shared_ptr<const std::vector<uint8_t>> packTitle(const world::PackFiles& pack)
@@ -736,6 +787,12 @@ void Session::handleWorldPacket(const std::string& payload)
     }
 
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
+        if (world.stats().levelChunks < 8) {
+            debugLog("LevelChunk received x=" + std::to_string(levelChunk->mChunkX) + " z=" + std::to_string(levelChunk->mChunkZ)
+                     + " dimension=" + std::to_string(levelChunk->mDimension) + " subchunks=" + std::to_string(levelChunk->mSubChunksLength)
+                     + " request-subchunks=" + (levelChunk->mRequestSubChunks ? "yes" : "no")
+                     + " cached=" + (levelChunk->mCachingEnabled ? "yes" : "no") + " bytes=" + std::to_string(levelChunk->mData.size()));
+        }
         world.handle(*levelChunk);
     } else if (auto subChunk = std::dynamic_pointer_cast<SubChunkPacket>(packet)) {
         world.handle(*subChunk);
@@ -1072,19 +1129,26 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         if (!std::filesystem::exists(path, error)) {
             return false;
         }
-        bool needsTitle = false;
-        {
-            std::lock_guard<std::mutex> guard(mutex);
-            needsTitle = !current.titleImage;
+        if (offer.mPackSize && std::filesystem::file_size(path, error) != offer.mPackSize) return false;
+        if (error) return false;
+        std::string packError;
+        auto pack = world::loadServerPack(path, offer.mContentKey, packError);
+        if (!pack || !packMatches(*pack, offer)) {
+            debugLog("pack cache rejected " + offer.mPackId + ": " + (packError.empty() ? "manifest mismatch" : packError));
+            return false;
         }
-        if (needsTitle) {
-            std::string packError;
-            if (std::shared_ptr<const world::PackFiles> pack = world::loadServerPack(path, offer.mContentKey, packError)) {
-                if (std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack)) {
-                    std::lock_guard<std::mutex> guard(mutex);
-                    current.titleImage = std::move(title);
-                }
-            }
+        if (auto title = packTitle(*pack)) {
+            std::lock_guard<std::mutex> guard(mutex);
+            if (!current.titleImage) current.titleImage = std::move(title);
+        }
+        return true;
+    };
+    settings.mResourcePacks.mValidate = [](const DownloadedResourcePack& pack, std::string& error) {
+        auto files = world::loadServerPackData(pack.mData, pack.mOffer.mContentKey, error);
+        if (!files || !packMatches(*files, pack.mOffer)) {
+            if (error.empty()) error = "manifest UUID or version does not match the server offer";
+            error = "Resource pack " + pack.mOffer.mPackId + ": " + error;
+            return false;
         }
         return true;
     };
@@ -1163,6 +1227,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             current.packsResolved = true;
         }
     };
+    settings.mDiagnostic = [](const std::string& message) { debugLog("network " + message); };
     ClientConnectionResult result = ClientNetworkSystem::dial(settings);
     {
         std::lock_guard<std::mutex> guard(mutex);
@@ -1170,7 +1235,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         current.packDownloading = false;
     }
     for (const DownloadedResourcePack& pack : result.mResourcePacks) {
-        savePack(pack);
+        std::string error;
+        if (!savePack(pack, error)) { fail(error); return; }
     }
     if (!result.mConnection) {
         debugLog("dial failed: " + result.mError);
@@ -1282,7 +1348,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         std::filesystem::path path = packPath(offer.mPackId, offer.mPackVersion);
         std::error_code exists;
         if (!std::filesystem::exists(path, exists)) {
-            continue;
+            fail("Resource pack is missing from cache: " + offer.mPackId);
+            return;
         }
         std::string key = offer.mContentKey;
         if (key.empty()) {
@@ -1298,7 +1365,8 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
             }
             packs.push_back(std::move(pack));
         } else {
-            assetsError = "Resource pack " + offer.mPackId + ": " + packError;
+            fail("Resource pack " + offer.mPackId + ": " + packError);
+            return;
         }
     }
     std::vector<world::CustomBlock> customBlocks;
@@ -1321,6 +1389,19 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         customPermutationCount = assets->customStateCount();
         ids.sequential = assets->sequentialMap();
     }
+    world.setBlockPaletteResolver([blockAssets = assets, mapping = ids,
+        resolved = std::unordered_map<uint32_t, std::optional<uint32_t>> {}](const Tag& state) mutable -> std::optional<uint32_t> {
+        const Tag* name = state.get("name");
+        const Tag* properties = state.get("states");
+        if (!blockAssets || !name || name->getType() != Tag::Type::String
+            || !properties || properties->getType() != Tag::Type::Compound) return std::nullopt;
+        uint32_t hash = static_cast<uint32_t>(BlockStateHasher::hash(name->asString(), *properties));
+        auto found = resolved.find(hash);
+        if (found != resolved.end()) return found->second;
+        auto value = blockAssets->networkValueForState(hash, mapping.hashed, mapping.sequential.get());
+        resolved.emplace(hash, value);
+        return value;
+    });
     if (!mesher) {
         mesher = std::make_unique<world::MeshScheduler>();
     }
@@ -1344,6 +1425,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     }
 
     std::string payload;
+    double lastWorldPacket = secondsNow();
     while (!cancelled) {
         int waitMs = 50;
         if (spawnInitialized && nextMotionTick > 0.0) {
@@ -1351,8 +1433,11 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         }
         bool received = connection->readRaw(payload, waitMs, &cancelled);
         if (received) {
+            lastWorldPacket = secondsNow();
             handleWorldPacket(payload);
         } else if (connection->isClosed()) {
+            debugLog("connection closed: " + connection->getDisconnectReason() + "; last world packet "
+                     + std::to_string(secondsNow() - lastWorldPacket) + " seconds ago; spawn=" + (spawnInitialized ? "initialized" : "waiting"));
             break;
         }
 
