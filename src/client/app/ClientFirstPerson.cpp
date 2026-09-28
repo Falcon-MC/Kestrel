@@ -24,6 +24,19 @@ constexpr uint32_t ItemGrid = world::ItemIconSize;
 
 using Vec3 = std::array<float, 3>;
 
+struct ItemDisplay {
+    Vec3 rotation;
+    Vec3 translation;
+    float scale;
+};
+
+// thirdperson_righthand of block/block, item/generated and item/handheld,
+// translations in pixels. Bedrock documents the same block values.
+constexpr ItemDisplay BlockThirdPerson { { 75.0f, 45.0f, 0.0f }, { 0.0f, 2.5f, 0.0f }, 0.375f };
+constexpr ItemDisplay GeneratedThirdPerson { { 0.0f, 0.0f, 0.0f }, { 0.0f, 3.0f, 1.0f }, 0.55f };
+constexpr ItemDisplay HandheldThirdPerson { { 0.0f, -90.0f, 55.0f }, { 0.0f, 4.0f, 0.5f }, 0.85f };
+constexpr Vec3 HandOffset { 1.0f, 2.0f, -10.0f };
+
 int16_t roundToShort(float value)
 {
     return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
@@ -345,27 +358,33 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
 
 /**
  * The selected item in the right hand of the local player's model in the
- * third person views, hanging off the right item bone the way the game holds
- * it: a block as a small cube turned to show a corner, anything else upright
- * with its top pointing ahead.
+ * third person views. The game places it the same way the Java renderer does:
+ * turned into the hand frame of the right arm, nudged to the fist, then run
+ * through the item's thirdperson_righthand display transform (block, flat item
+ * or tool). Those run in the flipped Java model space, which is the rig space
+ * turned half a circle around z.
  */
 void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out)
 {
-    int32_t itemBone = -1;
+    int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
-        if (lowercase(rig.bones[bone].name) == "rightitem") {
-            itemBone = static_cast<int32_t>(bone);
+        if (lowercase(rig.bones[bone].name) == "rightarm") {
+            armBone = static_cast<int32_t>(bone);
         }
     }
-    if (itemBone < 0) {
+    if (armBone < 0) {
         return;
     }
-    const world::BoneMatrix& m = matrices[static_cast<size_t>(itemBone)];
-    const Vec3& pivot = rig.bones[static_cast<size_t>(itemBone)].pivot;
+    const world::BoneMatrix& m = matrices[static_cast<size_t>(armBone)];
+    const Vec3& shoulder = rig.bones[static_cast<size_t>(armBone)].pivot;
+    const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
     auto place = [&](const Vec3& local, bool cube) {
-        Vec3 pixels = cube ? add(rotate(scaled(local, 12.0f), { 10.0f, 45.0f, 0.0f }), { 0.0f, -1.0f, -3.0f })
-                           : add(Vec3 { local[2] * 12.8f, local[1] * 12.8f, -local[0] * 12.8f }, { 0.0f, 4.0f, -6.0f });
-        pixels = add(pixels, pivot);
+        const ItemDisplay& display = cube ? BlockThirdPerson : held.handEquipped ? HandheldThirdPerson : GeneratedThirdPerson;
+        Vec3 p = scaled(local, display.scale / (cube ? HeldCubeSize : HeldItemSize));
+        p = rotate(rotate(rotate(p, { 0.0f, 0.0f, display.rotation[2] }), { 0.0f, display.rotation[1], 0.0f }), { display.rotation[0], 0.0f, 0.0f });
+        p = add(p, scaled(add(display.translation, HandOffset), 1.0f / 16.0f));
+        p = rotate(rotate(p, { 0.0f, 180.0f, 0.0f }), { -90.0f, 0.0f, 0.0f });
+        Vec3 pixels { shoulder[0] - p[0] * 16.0f, shoulder[1] - p[1] * 16.0f, shoulder[2] + p[2] * 16.0f };
         Vec3 posed = scaled({
             m[0] * pixels[0] + m[1] * pixels[1] + m[2] * pixels[2] + m[3],
             m[4] * pixels[0] + m[5] * pixels[1] + m[6] * pixels[2] + m[7],
@@ -373,14 +392,25 @@ void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vecto
         }, scale);
         return Vec3 { base[0] + cosine * posed[0] + sine * posed[2], base[1] + posed[1], base[2] - sine * posed[0] + cosine * posed[2] };
     };
-    appendHeldItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], place, out);
+    appendHeldItem(held, place, out);
+}
+
+/**
+ * Starts a new swing unless the current one is less than halfway through,
+ * which is why spam clicking never spins the arm faster than the game does.
+ */
+void Client::startSwing(double now)
+{
+    if (swingStart < 0.0 || now - swingStart >= SwingSeconds * 0.5) {
+        swingStart = now;
+    }
 }
 
 float Client::swingProgress()
 {
     double now = secondsNow();
     if (menu.capturesMouse() && window->input().mousePressed) {
-        swingStart = now;
+        startSwing(now);
     }
     double swing = swingStart >= 0.0 ? (now - swingStart) / SwingSeconds : 1.0;
     return swing < 1.0 ? static_cast<float>(swing) : 0.0f;

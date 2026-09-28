@@ -85,6 +85,7 @@ private:
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
     float swingProgress();
+    void startSwing(double now);
     void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
     void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out);
     menu::HudSlot inventoryIcon(const HudItem& item);
