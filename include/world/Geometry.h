@@ -28,6 +28,7 @@ struct GeometryCube {
     Vec3f rotation {};
     float inflate = 0.0f;
     bool mirror = false;
+    bool mirrorSet = false;
     bool boxUv = true;
     std::array<float, 2> uv {};
     std::array<GeometryFace, 6> faces {};
