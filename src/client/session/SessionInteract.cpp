@@ -283,11 +283,39 @@ void Session::tickHeldUse()
     extend.value = blockAt(last[0], last[1], last[2]);
     extend.name = assets->describe(extend.value, ids.hashed, ids.sequential.get());
     extend.face = buildFace;
-    for (int axis = 0; axis < 3; ++axis) {
-        extend.point[axis] = last[axis] + 0.5 + offset[axis] * 0.5;
+    if (!faceClickPoint(last, buildFace, extend.point)) {
+        return;
     }
     useRepeatTicks = 0;
     useOnBlock(extend);
+}
+
+/**
+ * The point of one face of a cell nearest the crosshair: where the look ray
+ * crosses the face's plane, kept inside the face. The point must lie within
+ * a comfortable cone of the look direction, as a placement the player aims at
+ * would; otherwise there is none.
+ */
+bool Session::faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const
+{
+    constexpr double MaximumAngleCosine = 0.5;
+    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(face, 0, 5)];
+    int normalAxis = offset[0] != 0 ? 0 : (offset[1] != 0 ? 1 : 2);
+    double plane = cell[normalAxis] + (offset[normalAxis] > 0 ? 1.0 : 0.0);
+    double along = lookDirection[normalAxis];
+    double travel = std::abs(along) > 1.0e-6 ? (plane - lookOrigin[normalAxis]) / along : -1.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        double ahead = travel > 0.0 ? lookOrigin[axis] + lookDirection[axis] * travel : cell[axis] + 0.5;
+        point[axis] = axis == normalAxis ? plane : std::clamp(ahead, double(cell[axis]) + 0.01, double(cell[axis]) + 0.99);
+    }
+    double length = 0.0;
+    double dot = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        double to = point[axis] - lookOrigin[axis];
+        length += to * to;
+        dot += to * lookDirection[axis];
+    }
+    return length > 1.0e-8 && dot / std::sqrt(length) >= MaximumAngleCosine;
 }
 
 void Session::setUseHeld(bool held)
