@@ -24,6 +24,7 @@
 #include "Protocol/Packets/PlayerListPacket.h"
 #include "Protocol/Packets/PlayerSkinPacket.h"
 #include "Protocol/Packets/RemoveActorPacket.h"
+#include "Protocol/Packets/PacketViolationWarningPacket.h"
 #include "Protocol/Packets/PlayStatusPacket.h"
 #include "Protocol/Packets/InventoryContentPacket.h"
 #include "Protocol/Packets/InventorySlotPacket.h"
@@ -584,6 +585,34 @@ std::optional<TargetBlock> Session::traceTarget()
     return target;
 }
 
+void Session::handleViolation(const PacketViolationWarningPacket& violation)
+{
+    auto cause = static_cast<MinecraftPacketIds>(violation.mPacketCauseId);
+    std::string severity = "unknown";
+    switch (violation.mSeverity) {
+    case PacketViolationSeverity::Warning:
+        severity = "warning";
+        break;
+    case PacketViolationSeverity::FinalWarning:
+        severity = "final warning";
+        break;
+    case PacketViolationSeverity::TerminatingConnection:
+        severity = "terminating connection";
+        break;
+    default:
+        break;
+    }
+    std::string details = "Packet violation (" + severity + ")"
+        + "\nType: " + (violation.mType == PacketViolationType::MalformedPacket ? "malformed packet" : "unknown")
+        + "\nPacket: " + toString(cause) + " (" + std::to_string(violation.mPacketCauseId) + ")";
+    if (!violation.mContext.empty()) {
+        details += "\nContext: " + violation.mContext;
+    }
+    debugLog(details);
+    std::lock_guard<std::mutex> guard(mutex);
+    current.packetError = std::move(details);
+}
+
 void Session::handleWorldPacket(const std::string& payload)
 {
     MinecraftPacketIds id;
@@ -649,6 +678,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::RemoveObjective:
     case MinecraftPacketIds::ModalFormRequest:
     case MinecraftPacketIds::ClientboundCloseForm:
+    case MinecraftPacketIds::PacketViolationWarning:
         break;
     default:
         return;
@@ -656,7 +686,15 @@ void Session::handleWorldPacket(const std::string& payload)
 
     std::shared_ptr<Packet> packet = connection->decode(payload);
     if (!packet) {
-        debugLog("could not decode packet " + std::to_string(static_cast<int>(id)) + ": " + connection->getLastDecodeError());
+        std::string details = std::string("Could not read ") + toString(id) + " (" + std::to_string(static_cast<int>(id)) + ")"
+            + "\nSize: " + std::to_string(payload.size()) + " bytes"
+            + "\nError: " + connection->getLastDecodeError();
+        debugLog(details);
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.packetError = std::move(details);
+        }
+        connection->disconnect("Bad packet received from server");
         return;
     }
     handleInventoryPacket(packet);
@@ -666,6 +704,11 @@ void Session::handleWorldPacket(const std::string& payload)
     handleChatPacket(packet);
     handleScorePacket(packet);
     handleFormPacket(packet);
+
+    if (auto violation = std::dynamic_pointer_cast<PacketViolationWarningPacket>(packet)) {
+        handleViolation(*violation);
+        return;
+    }
 
     if (auto event = std::dynamic_pointer_cast<ActorEventPacket>(packet);
         event && event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) {

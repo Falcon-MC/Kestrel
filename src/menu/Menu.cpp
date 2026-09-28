@@ -832,6 +832,9 @@ void Menu::connectionError(Context& ui, float width, float height)
     const std::string& server = session.name.empty() ? session.levelName : session.name;
     std::string reason = session.error.empty() ? tr("disconnect.closed", "The connection was closed.")
         : Localization::shared().translateMessage(session.error);
+    if (!session.packetError.empty()) {
+        reason += "\n\n" + session.packetError;
+    }
     auto textPanel = [&](const Rect& area, std::string_view text, float& scroll, bool centered) {
         float contentHeight = ui.paragraphHeight(text, TextStyle::ErrorBody, area.w - 6.0f);
         scrollArea(ui, area, scroll, contentHeight);

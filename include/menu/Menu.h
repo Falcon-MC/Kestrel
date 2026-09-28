@@ -256,6 +256,7 @@ struct SessionInfo {
     size_t diagnosticVisuals = 0;
     std::string assetsError;
     std::string error;
+    std::string packetError;
     bool packPrompt = false;
     size_t packCount = 0;
     bool packSkippable = true;
