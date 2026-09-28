@@ -130,14 +130,15 @@ menu::HudView Client::buildHudView()
     view.visible = true;
     view.nameTags = buildNameTags();
     view.sidebarVisible = sidebarView.visible;
-    view.paperDoll = paperDollVisible();
+    view.hiddenElements = state.hiddenElements;
+    view.paperDoll = paperDollVisible() && !view.hidden(menu::HudElement::PaperDoll);
     if (sidebarView.visible) {
         view.sidebar = sidebarData();
     }
     for (const BossBarView& bar : state.bossBars) {
         view.bossBars.push_back({ bar.title, bar.progress, bar.color });
     }
-    view.crosshair = perspective == PerspectiveFirst;
+    view.crosshair = perspective == PerspectiveFirst && !view.hidden(menu::HudElement::Crosshair);
     view.showHotbar = state.gameType != 6;
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);
@@ -154,6 +155,9 @@ menu::HudView Client::buildHudView()
     } else if (!held.empty() && state.selectedChanged > 0.0) {
         HudMessage name { held.customName.empty() ? world::itemDisplayName(held.identifier) : held.customName, state.selectedChanged };
         view.itemText = hudText(name, 1.0f);
+    }
+    if (view.hidden(menu::HudElement::ItemText)) {
+        view.itemText = {};
     }
     view.tip = hudText(tipMessage, 1.0f);
     view.actionbar = hudText(actionbarMessage, 0.0f);

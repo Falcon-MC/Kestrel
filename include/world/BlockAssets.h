@@ -268,6 +268,7 @@ struct EntityRenderController {
     std::vector<uint32_t> textureChoices;
     std::vector<EntityPartRule> parts;
     EntityBlend blend = EntityBlend::Opaque;
+    bool oneSided = false;
 };
 
 /**
@@ -464,7 +465,7 @@ private:
 
     bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
     void buildEntityModels(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs);
-    void buildInterfaceAssets(PackSource& pack);
+    void buildInterfaceAssets(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs);
     void buildBlockEntityTemplates(PackSource& pack, std::vector<std::vector<uint8_t>>& layers, std::vector<bool>& overlayLayers, std::map<std::string, uint32_t>& materialByKey,
         const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
@@ -497,6 +498,7 @@ private:
     std::unordered_map<std::string, uint32_t> blockByName;
     std::unordered_map<std::string, BlockVisual> carriedVisuals;
     std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
+    std::unordered_map<std::string, std::string> itemIconNames;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
     std::array<uint32_t, DestroyStages> destroyStages {};

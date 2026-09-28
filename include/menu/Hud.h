@@ -90,6 +90,23 @@ struct HudChatLine {
     uint64_t serial = 0;
 };
 
+// The game's HudElement ids, as SetHud names them.
+enum class HudElement : uint32_t {
+    PaperDoll = 0,
+    Armor = 1,
+    ToolTips = 2,
+    TouchControls = 3,
+    Crosshair = 4,
+    HotBar = 5,
+    Health = 6,
+    ProgressBar = 7,
+    Hunger = 8,
+    AirBubbles = 9,
+    HorseHealth = 10,
+    StatusEffects = 11,
+    ItemText = 12,
+};
+
 enum class HeartKind {
     Normal,
     Poison,
@@ -135,6 +152,12 @@ struct HudView {
     ui::UiData sidebar;
     // The paper doll is up, which pushes the chat below it.
     bool paperDoll = false;
+    uint32_t hiddenElements = 0;
+
+    bool hidden(HudElement element) const
+    {
+        return (hiddenElements >> static_cast<uint32_t>(element)) & 1u;
+    }
 };
 
 /**

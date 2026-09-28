@@ -775,6 +775,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::ClientboundCloseForm:
     case MinecraftPacketIds::PacketViolationWarning:
     case MinecraftPacketIds::Transfer:
+    case MinecraftPacketIds::SetHud:
         break;
     default:
         return;
@@ -1036,6 +1037,7 @@ void Session::handleWorldPacket(const std::string& payload)
         debugLog("play status " + std::to_string(static_cast<int>(status->mStatus)));
         if (status->mStatus == PlayStatusPacket::Status::PlayerSpawn) {
             initializeLocalPlayer(*connection, localRuntimeId);
+            dimensionSpawnReceived = true;
         }
     } else if (auto event = std::dynamic_pointer_cast<LevelEventPacket>(packet)) {
         handleBreakingEvent(*event);
@@ -1069,6 +1071,7 @@ void Session::handleWorldPacket(const std::string& payload)
         }
         uuidByRuntime.clear();
         dimensionAckReceived = false;
+        dimensionSpawnReceived = false;
         for (const std::string& uuid : worn) {
             releaseSkin(uuid);
         }
@@ -1083,9 +1086,10 @@ void Session::handleWorldPacket(const std::string& payload)
 }
 
 /**
- * Once the server has said the new dimension is ready and the chunks it
- * announced are here, answers its acknowledgement and lifts the dimension
- * screen.
+ * Once the server has said the new dimension is ready and the chunks around
+ * the player are here, answers its acknowledgement and lifts the dimension
+ * screen. Proxies like WaterdogPE switch servers without sending a single
+ * chunk and settle it with a spawn status instead, which counts too.
  */
 void Session::finishDimensionChange()
 {
@@ -1095,7 +1099,8 @@ void Session::finishDimensionChange()
             return;
         }
     }
-    if (!dimensionAckReceived || !world.cohortLoaded() || !connection) {
+    bool ready = dimensionSpawnReceived || (dimensionAckReceived && world.centerLoaded());
+    if (!ready || !connection) {
         return;
     }
     PlayerActionPacket action;
@@ -1104,6 +1109,7 @@ void Session::finishDimensionChange()
     action.mFace = -1;
     connection->send(action);
     dimensionAckReceived = false;
+    dimensionSpawnReceived = false;
     std::lock_guard<std::mutex> guard(mutex);
     current.changingDimension = false;
 }

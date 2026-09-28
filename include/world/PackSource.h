@@ -47,6 +47,12 @@ public:
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
 
     /**
+     * Like readArchived, but only from the game's own layers, never a server
+     * pack that happens to ship a file of the same name.
+     */
+    bool readBaseArchived(const std::string& archive, const std::string& name, std::string& out);
+
+    /**
      * The archived file from every layer that has it, highest priority first.
      */
     std::vector<std::string> readArchivedLayers(const std::string& archive, const std::string& name);

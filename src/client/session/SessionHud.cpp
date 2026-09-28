@@ -12,6 +12,7 @@
 #include "Protocol/Packets/MobEquipmentPacket.h"
 #include "Protocol/Packets/PlayerHotbarPacket.h"
 #include "Protocol/Packets/SetHealthPacket.h"
+#include "Protocol/Packets/SetHudPacket.h"
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
@@ -259,6 +260,18 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
             action.mAction = PlayerActionType::Respawn;
             action.mFace = -1;
             connection->send(action);
+        }
+    } else if (auto hud = std::dynamic_pointer_cast<SetHudPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        for (int32_t element : hud->mElements) {
+            if (element < 0 || element >= 32) {
+                continue;
+            }
+            if (hud->mVisibility == SetHudPacket::HudVisibility::Hide) {
+                current.hud.hiddenElements |= 1u << element;
+            } else {
+                current.hud.hiddenElements &= ~(1u << element);
+            }
         }
     } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);

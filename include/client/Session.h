@@ -226,6 +226,8 @@ struct HudState {
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     std::vector<HudEffect> effects;
+    // HUD elements the server hid with SetHud, one bit per HudElement.
+    uint32_t hiddenElements = 0;
 };
 
 /**
@@ -641,6 +643,7 @@ private:
     std::atomic<bool> respawnRequested { false };
     bool respawnPending = false;
     bool dimensionAckReceived = false;
+    bool dimensionSpawnReceived = false;
     std::atomic<bool> useRequested { false };
     std::atomic<bool> attackRequested { false };
     std::atomic<bool> attackHeld { false };

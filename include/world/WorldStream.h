@@ -58,6 +58,7 @@ public:
 
     WorldStats stats() const;
     bool cohortLoaded() const;
+    bool centerLoaded() const;
 
 private:
     struct PendingSubChunk {

@@ -359,6 +359,23 @@ bool WorldStream::cohortLoaded() const
     return true;
 }
 
+/**
+ * The column under the publisher center and its neighbours have arrived. The
+ * game settles a dimension change on this alone, and proxies like Hive only
+ * send those nine columns until the client says it is done.
+ */
+bool WorldStream::centerLoaded() const
+{
+    for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            if (!chunks.isLoaded({ dimension, centerX + dx, centerZ + dz })) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void WorldStream::handle(const NetworkChunkPublisherUpdatePacket& packet)
 {
     centerX = floorDiv16(packet.mPosition.x);

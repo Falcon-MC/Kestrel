@@ -28,8 +28,6 @@ namespace kestrel {
 namespace {
 
 constexpr uint32_t FrameCount = 3;
-constexpr uint32_t EntityTexturePageLayers = 2048;
-constexpr uint32_t EntityTexturePages = 2; // Entity material indices use 12 bits.
 
 constexpr char UiShader[] = R"(
 cbuffer View : register(b0)

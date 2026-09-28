@@ -1230,7 +1230,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
 
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
-    buildInterfaceAssets(pack);
+    buildInterfaceAssets(pack, packs);
 
     std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
     PackSource behaviors(behaviorRoot);

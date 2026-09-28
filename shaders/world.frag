@@ -11,6 +11,7 @@ layout(push_constant) uniform Draw {
 layout(set = 0, binding = 0) uniform sampler2DArray blocks;
 layout(set = 0, binding = 1) uniform sampler2DArray blocksHigh;
 layout(set = 0, binding = 2) uniform sampler2DArray entities;
+layout(set = 0, binding = 3) uniform sampler2DArray entitiesHigh;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -26,6 +27,13 @@ vec4 sampleLayer(vec2 uv, uint layer)
 {
     vec4 low = texture(blocks, vec3(uv, float(min(layer, 2047u))));
     vec4 high = texture(blocksHigh, vec3(uv, float(layer >= 2048u ? layer - 2048u : 0u)));
+    return layer >= 2048u ? high : low;
+}
+
+vec4 sampleEntity(vec2 uv, uint layer)
+{
+    vec4 low = texture(entities, vec3(uv, float(min(layer, 2047u))));
+    vec4 high = texture(entitiesHigh, vec3(uv, float(layer >= 2048u ? layer - 2048u : 0u)));
     return layer >= 2048u ? high : low;
 }
 
@@ -81,7 +89,7 @@ void main()
     }
     outColor = vec4(crack.rgb, 1.0);
 #else
-    vec4 texel = inEntity != 0u ? texture(entities, vec3(inUv, float(inMaterial & 0xfffu))) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    vec4 texel = inEntity != 0u ? sampleEntity(inUv, inMaterial & 0xfffu) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
     if ((inEntity & 4u) != 0u) texel.rgb = mix(texel.rgb, vec3(1.0, 0.0, 0.0), 0.5);
 #ifdef BLEND
