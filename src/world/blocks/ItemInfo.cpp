@@ -110,6 +110,30 @@ int32_t itemArmorPoints(const std::string& identifier)
     return 0;
 }
 
+std::string itemArmorTexture(const std::string& identifier, size_t slot)
+{
+    static const std::pair<const char*, const char*> Materials[] = {
+        { "minecraft:leather_", "leather" },
+        { "minecraft:chainmail_", "chain" },
+        { "minecraft:iron_", "iron" },
+        { "minecraft:golden_", "gold" },
+        { "minecraft:diamond_", "diamond" },
+        { "minecraft:netherite_", "netherite" },
+        { "minecraft:copper_", "copper" },
+        { "minecraft:turtle_", "turtle" },
+    };
+    static const char* Pieces[] = { "helmet", "chestplate", "leggings", "boots" };
+    if (slot >= std::size(Pieces)) {
+        return {};
+    }
+    for (const auto& [prefix, material] : Materials) {
+        if (identifier.rfind(prefix, 0) == 0 && identifier.substr(std::char_traits<char>::length(prefix)) == Pieces[slot]) {
+            return std::string("textures/models/armor/") + material + (slot == 2 ? "_2" : "_1");
+        }
+    }
+    return {};
+}
+
 std::string itemDisplayName(const std::string& identifier)
 {
     std::string name = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);

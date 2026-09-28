@@ -32,6 +32,10 @@ void Client::loadSettings()
             menu.setMaxFps(parsed == menu::UnlimitedFps ? parsed : std::clamp(parsed, menu::MinMaxFps, menu::MaxMaxFps));
         } else if (key == "fov") {
             menu.setFov(std::clamp(std::atoi(value.c_str()), menu::MinFov, menu::MaxFov));
+        } else if (key == "fullscreen") {
+            savedFullscreen = value == "1";
+        } else if (key == "hidePaperDoll") {
+            menu.setPaperDollHidden(value == "1");
         } else if (key == "language") {
             menu.setLanguage(value);
         } else if (key.rfind("volume.", 0) == 0) {
@@ -53,17 +57,23 @@ void Client::loadSettings()
     savedRenderDistance = menu.renderDistance();
     savedMaxFps = menu.maxFps();
     savedFov = menu.fov();
+    savedPaperDollHidden = menu.paperDollHidden();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }
 
 void Client::saveSettings()
 {
+    if (window) {
+        savedFullscreen = window->fullscreen();
+    }
     std::ofstream file(settingsFile, std::ios::trunc);
     file << "interfaceScale=" << menu.interfaceScale() << '\n';
     file << "renderDistance=" << menu.renderDistance() << '\n';
     file << "maxFps=" << menu.maxFps() << '\n';
     file << "fov=" << menu.fov() << '\n';
+    file << "fullscreen=" << (savedFullscreen ? 1 : 0) << '\n';
+    file << "hidePaperDoll=" << (menu.paperDollHidden() ? 1 : 0) << '\n';
     file << "language=" << menu.language() << '\n';
     for (size_t i = 0; i < menu::VolumeChannelCount; ++i) {
         file << "volume." << i << '=' << menu.soundVolumes()[i] << '\n';
@@ -77,6 +87,7 @@ void Client::saveSettings()
     savedRenderDistance = menu.renderDistance();
     savedMaxFps = menu.maxFps();
     savedFov = menu.fov();
+    savedPaperDollHidden = menu.paperDollHidden();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }

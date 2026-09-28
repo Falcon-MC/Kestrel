@@ -143,6 +143,14 @@ std::optional<std::array<double, 4>> project(const Mat4& matrix, double x, doubl
     return std::array<double, 4> { row(0) / w, row(1) / w, w, depth };
 }
 
+std::string lowercase(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text;
+}
+
 float wrapDegrees(float degrees)
 {
     float wrapped = std::fmod(degrees + 180.0f, 360.0f);
@@ -443,8 +451,16 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 emit(index, layer, hidden, blend);
             }
         }
+        auto toWorld = [&](const std::array<float, 3>& posed) {
+            std::array<float, 3> p { posed[0] * scale, posed[1] * scale, posed[2] * scale };
+            return std::array<float, 3> { baseX + cosine * p[0] + sine * p[2], baseY + p[1], baseZ - sine * p[0] + cosine * p[2] };
+        };
+        if (actor.identifier == "minecraft:player") {
+            bool hurt = actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5;
+            appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out);
+        }
         if (actor.runtimeId == LocalActorId) {
-            appendThirdPersonItem(rig, matrices, scale, { baseX, baseY, baseZ }, cosine, sine, out);
+            appendThirdPersonItem(rig, matrices, toWorld, out);
         }
     }
     for (auto it = animators.begin(); it != animators.end();) {
@@ -462,6 +478,60 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
     }
     lastActorTime = now;
+}
+
+/**
+ * The armor a humanoid wears, drawn with the vanilla armor models. Their bones
+ * share the humanoid's names, so each armor bone follows the pose of the
+ * wearer's bone of the same name, whatever geometry the skin brings.
+ */
+void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out)
+{
+    for (size_t slot = 0; slot < armor.size(); ++slot) {
+        if (armor[slot].empty()) {
+            continue;
+        }
+        world::ArmorLook look = blockAssets->armorLook(slot, armor[slot]);
+        if (!look.rig) {
+            continue;
+        }
+        std::vector<int32_t>& wearer = armorBoneMatches[{ look.rig, &rig }];
+        if (wearer.size() != look.rig->bones.size()) {
+            wearer.assign(look.rig->bones.size(), -1);
+            for (size_t piece = 0; piece < look.rig->bones.size(); ++piece) {
+                std::string name = look.rig->bones[piece].name;
+                for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                    if (matchesPattern(lowercase(name), rig.bones[bone].name)) {
+                        wearer[piece] = static_cast<int32_t>(bone);
+                        break;
+                    }
+                }
+            }
+        }
+        std::pair<uint32_t, uint32_t> grid = blockAssets->entityTileGrid(look.layer);
+        for (size_t index = 0; index < look.rig->quads.size(); ++index) {
+            size_t piece = index < look.rig->quadBones.size() ? look.rig->quadBones[index] : wearer.size();
+            int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
+            if (bone < 0 || size_t(bone) >= matrices.size()) {
+                continue;
+            }
+            const world::BoneMatrix& m = matrices[size_t(bone)];
+            const world::ModelQuad& quad = look.rig->quads[index];
+            std::array<QuadCorner, 4> corners;
+            for (size_t corner = 0; corner < 4; ++corner) {
+                float x = quad.positions[corner][0] / 16.0f;
+                float y = quad.positions[corner][1] / 16.0f;
+                float z = quad.positions[corner][2] / 16.0f;
+                corners[corner].position = toWorld({
+                    m[0] * x + m[1] * y + m[2] * z + m[3],
+                    m[4] * x + m[5] * y + m[6] * z + m[7],
+                    m[8] * x + m[9] * y + m[10] * z + m[11],
+                });
+                corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
+            }
+            appendTiled(corners, look.layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | shadeFlags, out);
+        }
+    }
 }
 
 /**
@@ -551,6 +621,9 @@ ActorView Client::localActorView(float deltaSeconds)
     self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (playerView.swimming ? 1ull << SwimmingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;
+    for (size_t slot = 0; slot < self.armor.size(); ++slot) {
+        self.armor[slot] = hudState.armor[slot].empty() ? std::string() : hudState.armor[slot].identifier;
+    }
 
     float ticks = deltaSeconds * 20.0f;
     double dx = playerView.current[0] - playerView.previous[0];

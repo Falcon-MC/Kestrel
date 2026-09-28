@@ -214,8 +214,7 @@ void InventoryModel::quickMove(ItemStackRequest& request, int from)
         int begin = from < 9 ? 9 : 0, end = from < 9 ? 36 : 9;
         for (int i = begin; i < end; ++i) destinations.push_back(i);
     } else {
-        for (int i = 9; i < 36; ++i) destinations.push_back(i);
-        for (int i = 0; i < 9; ++i) destinations.push_back(i);
+        for (int i = 0; i < 36; ++i) destinations.push_back(i);
     }
     for (bool merging : { true, false }) {
         for (int to : destinations) {

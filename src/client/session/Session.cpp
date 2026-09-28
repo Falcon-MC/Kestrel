@@ -30,6 +30,7 @@
 #include "Protocol/Packets/InventorySlotPacket.h"
 #include "Protocol/Packets/ItemRegistryPacket.h"
 #include "Protocol/Packets/MobEffectPacket.h"
+#include "Protocol/Packets/MobArmorEquipmentPacket.h"
 #include "Protocol/Packets/MobEquipmentPacket.h"
 #include "Protocol/Packets/PlayerHotbarPacket.h"
 #include "Protocol/Packets/RequestChunkRadiusPacket.h"
@@ -650,6 +651,7 @@ void Session::handleWorldPacket(const std::string& payload)
     case MinecraftPacketIds::InventoryContent:
     case MinecraftPacketIds::InventorySlot:
     case MinecraftPacketIds::MobEquipment:
+    case MinecraftPacketIds::MobArmorEquipment:
     case MinecraftPacketIds::PlayerHotbar:
     case MinecraftPacketIds::UpdateAttributes:
     case MinecraftPacketIds::SetHealth:
@@ -719,6 +721,17 @@ void Session::handleWorldPacket(const std::string& payload)
         if (event->mRuntimeActorId == localRuntimeId) {
             std::lock_guard<std::mutex> guard(mutex);
             if (now - current.hud.lastHurt > 0.1) current.hud.lastHurt = now;
+        }
+    }
+
+    if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
+        if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
+            actor->second.armor = {
+                hudItemOf(equipment->mHelmet).identifier,
+                hudItemOf(equipment->mChestplate).identifier,
+                hudItemOf(equipment->mLeggings).identifier,
+                hudItemOf(equipment->mBoots).identifier,
+            };
         }
     }
 
@@ -1214,6 +1227,9 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
         displaySlots.clear();
         scores.clear();
         slotOwners = {};
+        // The slots were just handed back, so the old slot may soon hold somebody else's skin.
+        current.localSkinSlot = NoSkin;
+        current.localSlim = false;
         if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
             current.spawnX = startGame->mPlayerPosition.x;
             current.spawnY = startGame->mPlayerPosition.y;

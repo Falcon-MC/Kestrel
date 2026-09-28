@@ -38,7 +38,8 @@ struct Layout {
         } else ui.sprite(rect(a,b,w,h), name, color);
     }
     void text(float a, float b, std::string_view value, ui::Color color = Ink, bool shadow = false) const {
-        ui.pixelTextScaled(value, x + a * unit, y + b * unit, unit, color, shadow);
+        if (shadow) ui.pixelTextScaled(value, x + (a + 1) * unit, y + (b + 1) * unit, unit, color, true);
+        ui.pixelTextScaled(value, x + a * unit, y + b * unit, unit, color);
     }
 };
 }
@@ -120,7 +121,7 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
         }
         if (dragging && std::find(dragSlots.begin(),dragSlots.end(),index) != dragSlots.end()) {
             HudItem preview = state.slots[inventory::Cursor];
-            preview.count = dragRight ? 1 : std::max(1, preview.count / std::max(1,int(dragSlots.size())));
+            preview.count = std::max(1, preview.count / std::max(1,int(dragSlots.size())));
             preview.count += value.count;
             item(preview,x,y,true,190);
         }
@@ -288,16 +289,16 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
             searchFocused=false;
             if(input.isHeld(Key::Shift))send(InventoryAction::QuickMove,hoveredSlot);
             else if(!secondary && lastClickedSlot==hoveredSlot && nowSeconds()-lastClick<0.3 && !state.slots[inventory::Cursor].empty())send(InventoryAction::Collect,hoveredSlot);
-            else if(state.slots[inventory::Cursor].empty() || hoveredSlot==Output)send(secondary?InventoryAction::Secondary:InventoryAction::Primary,hoveredSlot);
-            else {dragging=true;dragRight=secondary;dragStart=hoveredSlot;dragSlots={hoveredSlot};}
+            else if(secondary || state.slots[inventory::Cursor].empty() || hoveredSlot==Output)send(secondary?InventoryAction::Secondary:InventoryAction::Primary,hoveredSlot);
+            else {dragging=true;dragStart=hoveredSlot;dragSlots={hoveredSlot};}
             lastClickedSlot=hoveredSlot;lastClick=nowSeconds();
         } else if(outside && !overControl)send(InventoryAction::Drop,inventory::Cursor,0,!secondary);
     }
     if(dragging) {
         if(hoveredSlot>=0 && hoveredSlot!=Output && std::find(dragSlots.begin(),dragSlots.end(),hoveredSlot)==dragSlots.end())dragSlots.push_back(hoveredSlot);
-        if((dragRight && !input.rightMouseDown) || (!dragRight && !input.mouseDown)) {
-            if(dragSlots.size()==1)send(dragRight?InventoryAction::Secondary:InventoryAction::Primary,dragStart);
-            else commands.push_back({InventoryAction::Distribute,-1,0,!dragRight,dragSlots});
+        if(!input.mouseDown) {
+            if(dragSlots.size()==1)send(InventoryAction::Primary,dragStart);
+            else commands.push_back({InventoryAction::Distribute,-1,0,true,dragSlots});
             dragging=false;dragSlots.clear();
         }
     }
@@ -318,7 +319,11 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
         if(x+(tw+8)*unit>width)x=ui.mouseX()-(tw+12)*unit;
         x=std::max(4*unit,x);y=std::clamp(y,4*unit,std::max(4*unit,height-(th+8)*unit));
         l.image((x-l.x)/unit-4,(y-l.y)/unit-4,tw+8,th+7,"ui/purpleBorder",true);
-        for(size_t i=0;i<lines.size();++i)ui.pixelTextScaled(lines[i],x,y+i*10*unit,unit,i==0?White:ui::Color{170,170,170,255},true);
+        for(size_t i=0;i<lines.size();++i) {
+            ui::Color color=i==0?White:ui::Color{170,170,170,255};
+            ui.pixelTextScaled(lines[i],x+unit,y+(i*10+1)*unit,unit,color,true);
+            ui.pixelTextScaled(lines[i],x,y+i*10*unit,unit,color);
+        }
     }
 }
 }

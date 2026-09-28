@@ -37,6 +37,18 @@ constexpr ItemDisplay GeneratedThirdPerson { { 0.0f, 0.0f, 0.0f }, { 0.0f, 3.0f,
 constexpr ItemDisplay HandheldThirdPerson { { 0.0f, -90.0f, 55.0f }, { 0.0f, 4.0f, 0.5f }, 0.85f };
 constexpr Vec3 HandOffset { 1.0f, 2.0f, -10.0f };
 
+// Where the paper doll sits in HUD units: hud_player_renderer is a 15 unit
+// panel 15 units in from the top left, and the HUD leaves the top 50 units
+// clear for it.
+constexpr std::array<float, 2> PaperDollCenter { 22.5f, 24.0f };
+constexpr float PaperDollHeight = 30.0f;
+constexpr float PaperDollTurnDegrees = 30.0f;
+// Far enough that a model pixel is several 1/256 block steps wide.
+constexpr float PaperDollDistance = 8.0f;
+constexpr float PlayerHeight = 1.8f;
+// The doll stays up this long after the player stops moving that way.
+constexpr double PaperDollLingerSeconds = 3.0;
+
 int16_t roundToShort(float value)
 {
     return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
@@ -58,6 +70,12 @@ Vec3 add(const Vec3& a, const Vec3& b)
 Vec3 scaled(const Vec3& a, float s)
 {
     return { a[0] * s, a[1] * s, a[2] * s };
+}
+
+float wrapDegrees(float degrees)
+{
+    float wrapped = std::fmod(degrees + 180.0f, 360.0f);
+    return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
 }
 
 std::array<float, 9> inverseBasis(const world::BoneMatrix& m)
@@ -156,6 +174,30 @@ uint32_t Client::heldItemLayer() const
 }
 
 /**
+ * The player model the local player wears, with the rig and texture layer of
+ * their own skin when it has arrived, the default ones until then.
+ */
+const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig, uint32_t& skinLayer) const
+{
+    const world::EntityModel* model = localSlim ? blockAssets->entityModel("minecraft:player#slim") : nullptr;
+    if (!model) {
+        model = blockAssets->entityModel("minecraft:player");
+    }
+    if (!model || model->rigs.empty()) {
+        return nullptr;
+    }
+    rig = &model->rigs.front();
+    skinLayer = model->layer;
+    if (localSkinSlot != NoSkin) {
+        if (auto skinRig = skinRigs.find(localSkinSlot); skinRig != skinRigs.end() && skinRig->second) {
+            rig = skinRig->second.get();
+        }
+        skinLayer = blockAssets->skinLayerBase() + localSkinSlot;
+    }
+    return model;
+}
+
+/**
  * The local player's arm and held item as the game draws them in first
  * person: the player model runs its own first person animations (arm pose,
  * swing, walking bob, equip dip, breathing), shows its right arm only while
@@ -167,20 +209,11 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst) {
         return;
     }
-    const world::EntityModel* model = localSlim ? blockAssets->entityModel("minecraft:player#slim") : nullptr;
+    const world::EntityRig* chosenRig = nullptr;
+    uint32_t skinLayer = 0;
+    const world::EntityModel* model = localPlayerModel(chosenRig, skinLayer);
     if (!model) {
-        model = blockAssets->entityModel("minecraft:player");
-    }
-    if (!model || model->rigs.empty()) {
         return;
-    }
-    const world::EntityRig* chosenRig = &model->rigs.front();
-    uint32_t skinLayer = model->layer;
-    if (localSkinSlot != NoSkin) {
-        if (auto skinRig = skinRigs.find(localSkinSlot); skinRig != skinRigs.end() && skinRig->second) {
-            chosenRig = skinRig->second.get();
-        }
-        skinLayer = blockAssets->skinLayerBase() + localSkinSlot;
     }
     const world::EntityRig& rig = *chosenRig;
     double now = secondsNow();
@@ -356,6 +389,131 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     appendHeldItem(held, place, out);
 }
 
+bool Client::paperDollVisible()
+{
+    if (!blockAssets || !worldShown || !playerView.active || menu.paperDollHidden() || menu.inventoryPanel().active) {
+        return false;
+    }
+    double now = secondsNow();
+    if (playerView.sneaking || playerView.sprinting || playerView.swimming || playerView.flying) {
+        paperDollShownAt = now;
+    }
+    return paperDollShownAt > 0.0 && now - paperDollShownAt < PaperDollLingerSeconds;
+}
+
+/**
+ * Bedrock's paper doll: the local player model in the top left corner of the
+ * HUD while they sneak, sprint, swim or fly and a few seconds after, running the same third person
+ * animations as F5 (swings, sneaking, swimming) with its armor and held item,
+ * turned a little toward the middle of the screen. The game's own paperdoll
+ * state is the dressing room pose, not this one. The head
+ * keeps that turn and the body swings under it, so strafing shows up on the
+ * doll. It is laid out in HUD units and projected back into the world a few
+ * blocks ahead of the eye, so sprinting's wider view doesn't move, shrink or
+ * skew it, and goes out with the hand so terrain never covers it.
+ */
+void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    if (!paperDollVisible()) {
+        return;
+    }
+    const world::EntityRig* chosenRig = nullptr;
+    uint32_t skinLayer = 0;
+    const world::EntityModel* model = localPlayerModel(chosenRig, skinLayer);
+    if (!model) {
+        return;
+    }
+    const world::EntityRig& rig = *chosenRig;
+    double now = secondsNow();
+    const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
+
+    world::AnimationInput input;
+    input.x = self.x;
+    input.y = self.y;
+    input.z = self.z;
+    input.yaw = self.yaw;
+    input.headYaw = self.headYaw;
+    input.pitch = self.pitch;
+    input.now = now;
+    input.worldTime = currentWorldTime(timeState);
+    input.flags = self.flags;
+    input.identifier = self.identifier;
+    input.onGround = playerView.onGround;
+    input.health = hudState.health;
+    input.maxHealth = hudState.maxHealth;
+    input.hurtTime = self.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - self.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
+    input.mainHandItem = held.empty() ? std::string() : held.identifier;
+    input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
+    input.engineVariables = {
+        { "attack_time", swingProgress() },
+        { "is_holding_right", held.empty() ? 0.0 : 1.0 },
+        { "is_first_person", 0.0 },
+        { "swim_amount", playerView.swimming ? 1.0 : 0.0 },
+    };
+    paperDollAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
+    const std::vector<world::BoneMatrix>& matrices = paperDollAnimator.matrices();
+    if (matrices.size() != rig.bones.size()) {
+        return;
+    }
+
+    float width = static_cast<float>(window->width());
+    float height = static_cast<float>(std::max<uint32_t>(window->height(), 1));
+    float aspect = width / height;
+    float gui = guiScale();
+    float tangent = camera.halfVerticalTangent(aspect);
+    std::array<Vec3, 3> axes = cameraAxes(camera.minecraftYaw(), camera.minecraftPitch());
+    Vec3 eyePoint {
+        static_cast<float>((camera.x() - origin[0]) * 256.0),
+        static_cast<float>((camera.y() - origin[1]) * 256.0),
+        static_cast<float>((camera.z() - origin[2]) * 256.0),
+    };
+
+    // A doll simply placed in the corner of a wide view gets stretched toward
+    // the corner and seen from the side. Instead every point is laid out on
+    // the HUD as a straight on view would draw it, then pushed out along the
+    // ray through that HUD spot, nearer points a little closer to keep depth.
+    float hudPerBlock = PaperDollHeight / PlayerHeight;
+    float unit = paperDollAnimator.scale() / 16.0f;
+    float turn = (PaperDollTurnDegrees - wrapDegrees(self.yaw - self.headYaw)) * Pi / 180.0f;
+    float cosine = std::cos(turn);
+    float sine = std::sin(turn);
+    auto toWorld = [&](const Vec3& posed) {
+        float x = -posed[0] * unit;
+        float y = posed[1] * unit - PlayerHeight * 0.5f;
+        float z = -posed[2] * unit;
+        float across = x * cosine + z * sine;
+        float toward = -x * sine + z * cosine;
+        float hudX = PaperDollCenter[0] + across * hudPerBlock;
+        float hudY = PaperDollCenter[1] - y * hudPerBlock;
+        float ndcX = hudX * gui / width * 2.0f - 1.0f;
+        float ndcY = 1.0f - hudY * gui / height * 2.0f;
+        Vec3 ray = add(add(scaled(axes[2], -1.0f), scaled(axes[0], ndcX * tangent * aspect)), scaled(axes[1], ndcY * tangent));
+        return add(eyePoint, scaled(ray, std::max(PaperDollDistance - toward, 1.0f) * 256.0f));
+    };
+
+    uint32_t hurt = self.lastHurt > 0.0 && now - self.lastHurt < 0.5 ? 1u << 7 : 0u;
+    for (size_t index = 0; index < rig.quads.size(); ++index) {
+        size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
+        const world::ModelQuad& quad = rig.quads[index];
+        std::array<Vec3, 4> corners;
+        for (size_t corner = 0; corner < 4; ++corner) {
+            Vec3 p { quad.positions[corner][0] / 16.0f, quad.positions[corner][1] / 16.0f, quad.positions[corner][2] / 16.0f };
+            if (bone < matrices.size()) {
+                const world::BoneMatrix& m = matrices[bone];
+                p = {
+                    m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+                    m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+                    m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
+                };
+            }
+            corners[corner] = toWorld(p);
+        }
+        out.push_back(packQuad(corners, quad.uvs, skinLayer, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | hurt));
+    }
+    appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
+    appendThirdPersonItem(rig, matrices, toWorld, out);
+}
+
 /**
  * The selected item in the right hand of the local player's model in the
  * third person views. The game places it the same way the Java renderer does:
@@ -364,7 +522,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, float scale, const std::array<float, 3>& base, float cosine, float sine, std::vector<world::ModelQuadGpu>& out)
+void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
@@ -385,12 +543,11 @@ void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vecto
         p = add(p, scaled(add(display.translation, HandOffset), 1.0f / 16.0f));
         p = rotate(rotate(p, { 0.0f, 180.0f, 0.0f }), { -90.0f, 0.0f, 0.0f });
         Vec3 pixels { shoulder[0] - p[0] * 16.0f, shoulder[1] - p[1] * 16.0f, shoulder[2] + p[2] * 16.0f };
-        Vec3 posed = scaled({
+        return toWorld({
             m[0] * pixels[0] + m[1] * pixels[1] + m[2] * pixels[2] + m[3],
             m[4] * pixels[0] + m[5] * pixels[1] + m[6] * pixels[2] + m[7],
             m[8] * pixels[0] + m[9] * pixels[1] + m[10] * pixels[2] + m[11],
-        }, scale);
-        return Vec3 { base[0] + cosine * posed[0] + sine * posed[2], base[1] + posed[1], base[2] - sine * posed[0] + cosine * posed[2] };
+        });
     };
     appendHeldItem(held, place, out);
 }

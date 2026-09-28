@@ -71,4 +71,20 @@ bool decodeSquareImage(const std::string& encoded, uint32_t size, std::vector<ui
     return true;
 }
 
+void applyDyeMask(std::span<uint8_t> rgba, const std::array<uint8_t, 3>& color)
+{
+    for (size_t pixel = 0; pixel + 3 < rgba.size(); pixel += 4) {
+        uint32_t mask = rgba[pixel + 3];
+        if (mask == 0) {
+            continue;
+        }
+        for (size_t channel = 0; channel < 3; ++channel) {
+            uint32_t base = rgba[pixel + channel];
+            uint32_t dyed = base * color[channel] / 255;
+            rgba[pixel + channel] = static_cast<uint8_t>((base * (255 - mask) + dyed * mask) / 255);
+        }
+        rgba[pixel + 3] = 255;
+    }
+}
+
 }

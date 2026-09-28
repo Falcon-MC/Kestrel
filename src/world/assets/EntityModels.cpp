@@ -7,6 +7,7 @@
 #include "util/Text.h"
 #include "world/EntityAnimation.h"
 #include "world/Geometry.h"
+#include "world/ItemInfo.h"
 #include "world/MolangScript.h"
 #include "world/PackSource.h"
 
@@ -511,7 +512,17 @@ std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, c
         return nullptr;
     }
     auto rig = std::make_shared<EntityRig>();
-    buildEntityRig(*geometry, *rig);
+    if (geometry->textureSizeSet) {
+        buildEntityRig(*geometry, *rig);
+    } else {
+        // Skin geometry often leaves the texture size out; the game lays those
+        // UVs out on a 64 pixel skin whatever the image size, not on the 16 a
+        // bare geometry file would get.
+        Geometry sized = *geometry;
+        sized.textureWidth = 64.0f;
+        sized.textureHeight = 64.0f;
+        buildEntityRig(sized, *rig);
+    }
     if (rig->quads.empty()) {
         return nullptr;
     }
@@ -708,6 +719,44 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
+
+    static constexpr const char* ArmorGeometries[] = {
+        "geometry.humanoid.armor.helmet",
+        "geometry.humanoid.armor.chestplate",
+        "geometry.humanoid.armor.leggings",
+        "geometry.humanoid.armor.boots",
+    };
+    for (size_t slot = 0; slot < armorRigs.size(); ++slot) {
+        if (const Geometry* geometry = library.find(ArmorGeometries[slot])) {
+            buildEntityRig(*geometry, armorRigs[slot]);
+        }
+    }
+    for (const char* material : { "leather", "chain", "iron", "gold", "diamond", "netherite", "copper", "turtle" }) {
+        for (const char* suffix : { "_1", "_2" }) {
+            std::string path = "textures/models/armor/" + std::string(material) + suffix;
+            std::optional<uint32_t> layer = textureLayer(path);
+            if (!layer) {
+                continue;
+            }
+            armorLayers.emplace(path, *layer);
+            if (std::string_view(material) == "leather" && entityTileGrid(*layer) == std::make_pair(1u, 1u)) {
+                size_t bytes = size_t(EntityTextureSize) * EntityTextureSize * 4;
+                ui::applyDyeMask(std::span<uint8_t>(entityPixels).subspan(size_t(*layer) * bytes, bytes), ui::LeatherColor);
+            }
+        }
+    }
+}
+
+ArmorLook BlockAssets::armorLook(size_t slot, const std::string& identifier) const
+{
+    if (slot >= armorRigs.size() || armorRigs[slot].quads.empty()) {
+        return {};
+    }
+    auto found = armorLayers.find(itemArmorTexture(identifier, slot));
+    if (found == armorLayers.end()) {
+        return {};
+    }
+    return { &armorRigs[slot], found->second };
 }
 
 }

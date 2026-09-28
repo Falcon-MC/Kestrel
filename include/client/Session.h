@@ -91,6 +91,8 @@ struct ActorView {
     uint32_t skinSlot = NoSkin;
     bool slim = false;
     bool onGround = true;
+    // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
+    std::array<std::string, 4> armor {};
     uint64_t moves = 0;
     uint64_t teleports = 0;
 };

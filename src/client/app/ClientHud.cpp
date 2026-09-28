@@ -108,6 +108,7 @@ menu::HudView Client::buildHudView()
     view.visible = true;
     view.nameTags = buildNameTags();
     view.sidebarVisible = sidebarView.visible;
+    view.paperDoll = paperDollVisible();
     if (sidebarView.visible) {
         view.sidebar = sidebarData();
     }

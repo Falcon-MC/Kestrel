@@ -80,6 +80,8 @@ struct HudView {
     std::vector<NameTag> nameTags;
     bool sidebarVisible = false;
     ui::UiData sidebar;
+    // The paper doll is up, which pushes the chat below it.
+    bool paperDoll = false;
 };
 
 /**

@@ -43,6 +43,17 @@ struct GeometryBone {
     float inflate = 0.0f;
     bool neverRender = false;
     std::vector<GeometryCube> cubes;
+    // Which fields the file spelled out, so a legacy child geometry only
+    // overrides those and keeps the rest of its parent's bone. reset drops
+    // the parent's cubes.
+    bool parentSet = false;
+    bool pivotSet = false;
+    bool rotationSet = false;
+    bool mirrorSet = false;
+    bool inflateSet = false;
+    bool neverRenderSet = false;
+    bool cubesSet = false;
+    bool reset = false;
 };
 
 /**

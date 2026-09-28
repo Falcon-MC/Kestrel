@@ -177,6 +177,7 @@ std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture text
     return out;
 }
 
+
 }
 
 /**
@@ -199,6 +200,8 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack)
             std::string encoded;
             if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, image.width, image.height, image.rgba) || image.width == 0 || image.height == 0) {
                 image = Decoded {};
+            } else if (path.rfind("textures/items/leather_", 0) == 0) {
+                ui::applyDyeMask(image.rgba, ui::LeatherColor);
             }
             found = decoded.emplace(path, std::move(image)).first;
         }
@@ -317,6 +320,26 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         { "golden_carrot", "carrot_golden" },
         { "turtle_scute", "turtle_shell_piece" },
         { "rabbit_foot", "rabbit_foot" },
+        { "ink_sac", "dye_powder_black" },
+        { "cocoa_beans", "dye_powder_brown" },
+        { "lapis_lazuli", "dye_powder_blue" },
+        { "bone_meal", "dye_powder_white" },
+        { "black_dye", "dye_powder_black_new" },
+        { "brown_dye", "dye_powder_brown_new" },
+        { "blue_dye", "dye_powder_blue_new" },
+        { "white_dye", "dye_powder_white_new" },
+        { "red_dye", "dye_powder_red" },
+        { "green_dye", "dye_powder_green" },
+        { "purple_dye", "dye_powder_purple" },
+        { "cyan_dye", "dye_powder_cyan" },
+        { "light_gray_dye", "dye_powder_silver" },
+        { "gray_dye", "dye_powder_gray" },
+        { "pink_dye", "dye_powder_pink" },
+        { "lime_dye", "dye_powder_lime" },
+        { "yellow_dye", "dye_powder_yellow" },
+        { "light_blue_dye", "dye_powder_light_blue" },
+        { "magenta_dye", "dye_powder_magenta" },
+        { "orange_dye", "dye_powder_orange" },
     };
     std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     std::vector<std::string> names;

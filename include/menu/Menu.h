@@ -329,6 +329,16 @@ public:
         fieldOfView = degrees;
     }
 
+    bool paperDollHidden() const
+    {
+        return hidePaperDoll;
+    }
+
+    void setPaperDollHidden(bool hidden)
+    {
+        hidePaperDoll = hidden;
+    }
+
     /**
      * Volume percentages: the main volume first, then music, ambient,
      * weather, blocks, hostile, friendly, players, records and interface.
@@ -686,6 +696,7 @@ private:
     int chunkDistance = DefaultRenderDistance;
     int fpsLimit = DefaultMaxFps;
     int fieldOfView = DefaultFov;
+    bool hidePaperDoll = false;
     std::string languageCode = "en_US";
     std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;
