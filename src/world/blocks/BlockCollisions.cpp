@@ -112,6 +112,9 @@ public:
         }
         line = text.substr(position, end - position);
         position = end + 1;
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
         return true;
     }
 
