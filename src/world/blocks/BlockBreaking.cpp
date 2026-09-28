@@ -139,6 +139,9 @@ BlockHardnessTable::BlockHardnessTable()
         size_t end = std::min(text.find('\n'), text.size());
         std::string_view line = text.substr(0, end);
         text.remove_prefix(std::min(end + 1, text.size()));
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
         std::string_view fields[5];
         size_t count = 0;
         while (!line.empty() && count < 5) {
