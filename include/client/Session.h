@@ -24,6 +24,7 @@
 class BedrockConnection;
 class MinecraftAuthentication;
 class Packet;
+class PacketViolationWarningPacket;
 class SerializedSkin;
 
 namespace kestrel {
@@ -267,6 +268,7 @@ struct SessionSnapshot {
     size_t diagnosticVisuals = 0;
     std::string assetsError;
     std::string error;
+    std::string packetError;
     uint64_t joinCount = 0;
     double spawnX = 0.0;
     double spawnY = 0.0;
@@ -390,6 +392,7 @@ private:
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);
     void fail(const std::string& error);
     void handleWorldPacket(const std::string& payload);
+    void handleViolation(const PacketViolationWarningPacket& violation);
     void scheduleMeshes();
     void finishDimensionChange();
     void collectMeshes();

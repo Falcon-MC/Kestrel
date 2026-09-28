@@ -880,6 +880,7 @@ void Client::syncSession()
     info.packTotal = snapshot.packTotal;
     info.packsResolved = snapshot.packsResolved;
     info.error = std::move(snapshot.error);
+    info.packetError = std::move(snapshot.packetError);
     info.dead = snapshot.dead && snapshot.state == SessionState::Joined;
     info.changingDimension = snapshot.changingDimension && snapshot.state == SessionState::Joined;
     if (info.dead && !snapshot.deathCause.empty()) {
