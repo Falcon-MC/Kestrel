@@ -273,7 +273,7 @@ void Session::emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& 
  * particles and break sound wait for the server to agree, so a break it
  * cancels only puts the block back.
  */
-void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face)
+void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face, const std::array<double, 3>& point)
 {
     const std::array<int32_t, 3>& cell = breaking.cell;
     uint32_t value = breaking.value;
@@ -293,6 +293,7 @@ void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face)
     transaction.mActionType = BreakBlockAction;
     transaction.mBlockPosition = predict.mBlockPosition;
     transaction.mBlockFace = face;
+    transaction.mClickPosition = Vector3f(float(point[0] - cell[0]), float(point[1] - cell[1]), float(point[2] - cell[2]));
     transaction.mHotbarSlot = slot;
     transaction.mItemInHand = inventoryModel.slots[size_t(slot)];
     transaction.mPlayerPosition = packet.mPosition;
@@ -440,7 +441,7 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
             emitBurst(ParticleBurst::Kind::Crack, breaking.cell, breaking.value, breaking.face);
             breaking.progress += speed;
             if (breaking.progress >= 1.0f) {
-                destroyPredicted(packet, breaking.face);
+                destroyPredicted(packet, breaking.face, hit->point);
                 breaking.active = false;
                 destroyDelay = DestroyDelayTicks;
             }
@@ -448,7 +449,7 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
             action(heldBefore ? PlayerActionType::BlockContinueDestroy : PlayerActionType::StartBreak, hit->cell, hit->face);
             breaking = { true, hit->cell, hit->face, hit->value, 0.0f, 0 };
             if (speed >= 1.0f) {
-                destroyPredicted(packet, hit->face);
+                destroyPredicted(packet, hit->face, hit->point);
                 breaking.active = false;
                 if (gameType == CreativeMode) {
                     destroyDelay = DestroyDelayTicks;
