@@ -1035,6 +1035,9 @@ void Menu::progressDialog(Context& ui, float width, float height)
         }
         return;
     }
+    if (session.loadingTerrain) {
+        return;
+    }
     if (ui.classicButton("connecting:cancel", button, primary)) {
         disconnectRequested = true;
         dialog = Dialog::None;
