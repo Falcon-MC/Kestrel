@@ -121,6 +121,7 @@ menu::HudView Client::buildHudView()
     for (const BossBarView& bar : state.bossBars) {
         view.bossBars.push_back({ bar.title, bar.progress, bar.color });
     }
+    view.crosshair = perspective == PerspectiveFirst;
     view.showHotbar = state.gameType != 6;
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);

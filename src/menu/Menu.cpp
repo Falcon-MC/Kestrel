@@ -1154,6 +1154,9 @@ void Menu::gameView(Context& ui, float width, float height)
     }
     chatFeed(ui, y, width, height);
 
+    if (!hud.crosshair) {
+        return;
+    }
     float cx = std::floor(width * 0.5f - 7.5f);
     float cy = std::floor(height * 0.5f - 7.5f);
     ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });

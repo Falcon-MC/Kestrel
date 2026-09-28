@@ -65,6 +65,8 @@ struct HudView {
     bool visible = false;
     bool showHotbar = true;
     bool showStats = true;
+    // The crosshair shows only through the player's own eyes.
+    bool crosshair = true;
     std::array<HudSlot, 9> hotbar {};
     HudSlot offhand;
     int32_t selected = 0;
