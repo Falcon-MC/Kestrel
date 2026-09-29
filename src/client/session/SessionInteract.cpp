@@ -239,6 +239,10 @@ void Session::useOnBlock(const BlockHit& block)
     packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
     debugLog("use item on " + block.name);
     connection->send(packet);
+    if (!packet.mItemInHand.isAir()) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.lastSwing = secondsNow();
+    }
 
     const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(block.face, 0, 5)];
     buildFace = block.face;

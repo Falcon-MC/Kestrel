@@ -176,6 +176,7 @@ void Menu::profileCard(Context& ui, const Rect& card)
     Rect dressing { card.x + 7.0f, card.y + 150.0f, 162.0f, 22.0f };
     std::string dressingLabel = tr("hbui.PlayerCard.dressingRoomButton", "Dressing Room");
     if (ui.pressableButton("profile:dressing", "pressableElevatedSecondary", "", dressing)) {
+        returnScreen = Screen::Title;
         navigate(Screen::DressingRoom);
     }
     float labelWidth = ui.measure(dressingLabel, TextStyle::Ui);

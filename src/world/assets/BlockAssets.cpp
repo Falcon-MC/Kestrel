@@ -32,6 +32,15 @@ using util::endsWith;
 using util::startsWith;
 using util::stripJsonComments;
 
+namespace {
+
+// The game paints its grey lily pad texture this green everywhere, whatever the biome.
+constexpr uint32_t LilyPadColor = 0x208030;
+// Plain water in a cauldron keeps this blue in every biome; only potions and dyes change it.
+constexpr uint32_t CauldronWaterColor = 0x3F76E4;
+
+}
+
 std::shared_ptr<const BlockAssets> BlockAssets::shared(std::string& error)
 {
     static std::mutex mutex;
@@ -468,6 +477,13 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         if (textureKey == "cocoa") {
             return std::min<size_t>(static_cast<size_t>(std::clamp(stateInt(states, "age").value_or(0), 0, 2)), count - 1);
         }
+        if (isCandleName(textureKey)) {
+            return stateInt(states, "lit").value_or(0) != 0 ? 1 : 0;
+        }
+        if (textureKey == "turtle_egg") {
+            std::string cracks = stateString(states, "cracked_state");
+            return std::min<size_t>(cracks == "max_cracked" ? 2 : cracks == "cracked" ? 1 : 0, count - 1);
+        }
         if (textureKey == "torchflower_crop") {
             return growth && *growth >= 4 ? 1 : 0;
         }
@@ -601,9 +617,10 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             };
             models::Materials materials {};
             bool complete = true;
+            uint32_t fixedTint = name == "waterlily" || name == "lily_pad" ? LilyPadColor : 0;
             for (int face = 0; face < 6; ++face) {
                 std::string key = faceKeyFor(face);
-                materials[face] = key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), 0, blockTint(name, face));
+                materials[face] = key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), fixedTint, blockTint(name, face));
                 complete &= materials[face] != DiagnosticMaterial;
             }
             auto uniform = [&](int face) {
@@ -844,6 +861,49 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 bool hanging = flag("hanging");
                 modelTemplate = intern(keyOf("lantern", uniform(models::Up), { hanging }), [&] {
                     pushTemplate(models::lantern(material, hanging), 0);
+                });
+                break;
+            }
+            case ModelKind::Candle:
+            case ModelKind::TurtleEgg: {
+                uint32_t material = materials[models::Up];
+                if (material == DiagnosticMaterial) {
+                    break;
+                }
+                uint32_t count = 1;
+                if (kind == ModelKind::Candle) {
+                    count = static_cast<uint32_t>(std::clamp(stateInt(record.states, "candles").value_or(0), 0, 3)) + 1;
+                } else {
+                    static constexpr const char* Counts[4] = { "one_egg", "two_egg", "three_egg", "four_egg" };
+                    std::string eggs = stateString(record.states, "turtle_egg_count");
+                    for (uint32_t index = 0; index < 4; ++index) {
+                        if (eggs == Counts[index]) {
+                            count = index + 1;
+                        }
+                    }
+                }
+                modelTemplate = intern(keyOf(kind == ModelKind::Candle ? "candles" : "turtle_eggs", uniform(models::Up), { count }), [&] {
+                    pushTemplate(kind == ModelKind::Candle ? models::candles(material, count) : models::turtleEggs(material, count), 0);
+                });
+                break;
+            }
+            case ModelKind::Cauldron: {
+                if (!complete) {
+                    break;
+                }
+                std::string liquid = name == "lava_cauldron" ? "lava" : stateString(record.states, "cauldron_liquid");
+                uint32_t level = static_cast<uint32_t>(std::clamp(stateInt(record.states, "fill_level").value_or(0), 0, 6));
+                uint32_t surface = DiagnosticMaterial;
+                if (liquid == "lava" || liquid == "powder_snow") {
+                    surface = materialFor(liquid == "lava" ? "still_lava" : "powder_snow", false);
+                } else if (std::string waterKey = faceKeyFor(models::West); !waterKey.empty()) {
+                    surface = materialFor(waterKey, false, 0, CauldronWaterColor);
+                }
+                if (surface == DiagnosticMaterial) {
+                    level = 0;
+                }
+                modelTemplate = intern(keyOf("cauldron", materials, { surface, level }), [&] {
+                    pushTemplate(models::cauldron(materials, surface, level), 0);
                 });
                 break;
             }

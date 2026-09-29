@@ -148,6 +148,29 @@ Node* JsonUiRuntime::ancestor(Node& node, const std::string& type) const
 }
 
 /**
+ * Whether a key held down reaches the button through one of its global
+ * button mappings.
+ */
+bool JsonUiRuntime::heldDown(const Node& node) const
+{
+    if (held.empty() || node.type != "button") {
+        return false;
+    }
+    const json::Value* mappings = property(node, "button_mappings");
+    if (!mappings || !mappings->isArray()) {
+        return false;
+    }
+    for (const std::unique_ptr<json::Value>& mapping : mappings->mArray) {
+        const json::Value* from = mapping->isObject() ? resolve(node, mapping->get("from_button_id")) : nullptr;
+        const json::Value* type = mapping->isObject() ? resolve(node, mapping->get("mapping_type")) : nullptr;
+        if (from && from->isString() && type && type->string() == "global" && std::find(held.begin(), held.end(), from->mString) != held.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Picks which state children of a button, toggle, slider or edit box show,
  * from whether the mouse is over it, pressing it or it is locked, the way
  * default_control, hover_control and the rest name them.
@@ -156,7 +179,7 @@ void JsonUiRuntime::chooseStates(Node& node)
 {
     node.states.clear();
     bool hovered = hot == node.id;
-    bool pressed = active == node.id && hovered && ui && ui->input().mouseDown;
+    bool pressed = (active == node.id && hovered && ui && ui->input().mouseDown) || heldDown(node);
     auto show = [&](const char* property, bool visible) {
         std::string name = text(node, property);
         if (name.empty()) {
@@ -946,6 +969,17 @@ void JsonUiScreen::fire(const std::string& event)
     }
 }
 
+void JsonUiScreen::holdButton(const std::string& id, bool held)
+{
+    std::vector<std::string>& buttons = runtime->held;
+    auto found = std::find(buttons.begin(), buttons.end(), id);
+    if (held && found == buttons.end()) {
+        buttons.push_back(id);
+    } else if (!held && found != buttons.end()) {
+        buttons.erase(found);
+    }
+}
+
 void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
 {
     if (!runtime->root) {
@@ -959,7 +993,7 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
 
     if (r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
         && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
-        && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidData == data) {
+        && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidHeld == r.held && r.laidData == data) {
         for (Node* node : r.painted) {
             r.paint(*node);
         }
@@ -1051,6 +1085,7 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     r.laidMouseX = ui.mouseX();
     r.laidMouseY = ui.mouseY();
     r.laidBlocked = ui.isBlocked();
+    r.laidHeld = r.held;
     r.data = nullptr;
 }
 

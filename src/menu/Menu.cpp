@@ -27,9 +27,12 @@ constexpr float TitleButtonHeight = 30.0f;
 constexpr float TitleButtonStep = 32.0f;
 constexpr float CornerButtonHeight = 24.0f;
 constexpr uint32_t PanoramaSize = 512;
-constexpr float ScreenTransitionSeconds = 0.25f;
-constexpr float DialogTransitionSeconds = 0.15f;
-constexpr float ScreenSlide = 24.0f;
+// $transition_time_push, $transition_time_pop and $container_transition_time_push in _global_variables.json.
+constexpr float ScreenTransitionSeconds = 0.4f;
+// The wipe offsets in ui_common.json: a quarter of the screen sideways, containers half of it up.
+constexpr float ScreenWipe = 0.25f;
+constexpr float ContainerWipe = 0.5f;
+constexpr Color InventoryDim { 0, 0, 0, 102 };
 constexpr Color DialogInk { 0x4c, 0x4c, 0x4c, 255 };
 constexpr Color Backing { 0, 0, 0, 150 };
 
@@ -89,6 +92,99 @@ bool iconButton(Context& ui, std::string_view id, std::string_view label, std::s
         ui.text(label, TextStyle::Pixel, x + std::floor((room - width) * 0.5f), rect.y + std::floor((rect.h - 8.0f) * 0.5f), state.hovered ? White : ButtonText, room);
     }
     return state.clicked;
+}
+
+// How a screen comes and goes. JSON UI screens run the ui_common.json screen_animations they
+// list: the offset wipe with the fade, the fade alone, a fade out alone like progress_screen.json,
+// or their own. OreUI routes take the RouteSlideTransition or RouteNoTransition routes.json gives
+// them.
+enum class Transition {
+    Wipe,
+    Fade,
+    FadeOut,
+    Own,
+    Slide,
+    None,
+};
+
+Transition transitionOf(Screen screen)
+{
+    switch (screen) {
+    case Screen::Title:
+        return Transition::Fade;
+    case Screen::Play:
+    case Screen::Settings:
+    case Screen::ServerForm:
+    case Screen::Profile:
+        return Transition::Slide;
+    default:
+        return Transition::Wipe;
+    }
+}
+
+Transition transitionOf(Dialog dialog)
+{
+    switch (dialog) {
+    case Dialog::Pause:
+        return Transition::Fade;
+    case Dialog::Connecting:
+    case Dialog::SignIn:
+    case Dialog::ConnectionError:
+        return Transition::Slide;
+    case Dialog::Death:
+    case Dialog::ProfileOptions:
+    case Dialog::ConfirmDelete:
+        return Transition::None;
+    case Dialog::SafeArea:
+        return Transition::Own;
+    default:
+        return Transition::Wipe;
+    }
+}
+
+// The OreUI routes that take the place of the screen instead of opening over it.
+bool replacesScreen(Dialog dialog)
+{
+    return dialog == Dialog::Connecting || dialog == Dialog::SignIn || dialog == Dialog::ConnectionError;
+}
+
+float outCubic(float t)
+{
+    float left = 1.0f - std::clamp(t, 0.0f, 1.0f);
+    return 1.0f - left * left * left;
+}
+
+// CSS "ease", cubic-bezier(0.25, 0.1, 0.25, 1), since the OreUI slide never names a timing function.
+float cssEase(float t)
+{
+    auto bezier = [](float a, float b, float s) {
+        float u = 1.0f - s;
+        return 3.0f * u * u * s * a + 3.0f * u * s * s * b + s * s * s;
+    };
+    t = std::clamp(t, 0.0f, 1.0f);
+    float low = 0.0f;
+    float high = 1.0f;
+    for (int step = 0; step < 16; ++step) {
+        float mid = (low + high) * 0.5f;
+        (bezier(0.25f, 0.25f, mid) < t ? low : high) = mid;
+    }
+    return bezier(0.1f, 1.0f, (low + high) * 0.5f);
+}
+
+float progressSince(std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point since, float seconds)
+{
+    return std::clamp(std::chrono::duration<float>(now - since).count() / seconds, 0.0f, 1.0f);
+}
+
+// Offsets and fades the layer the way kind comes in or goes out, progress being how far along it
+// is and direction 1 going forward, -1 going back.
+void transitionLayer(Context& ui, Transition kind, bool entering, float progress, float direction, float screenWidth)
+{
+    float eased = kind == Transition::Slide ? cssEase(progress) : outCubic(progress);
+    float reach = kind == Transition::Slide ? 1.0f : kind == Transition::Wipe ? ScreenWipe : 0.0f;
+    float slide = (entering ? 1.0f - eased : -eased) * reach * screenWidth * direction;
+    bool fades = kind == Transition::Wipe || kind == Transition::Fade || (kind == Transition::FadeOut && !entering);
+    ui.setLayer(slide, 0.0f, !fades ? 1.0f : entering ? eased : 1.0f - eased);
 }
 
 // The server's packs, title art included, only count while we are on its way in or playing there.
@@ -231,6 +327,8 @@ void Menu::setSession(SessionInfo info)
             dialog = Dialog::None;
         }
         navigate(Screen::Title);
+        // The progress screen hid the one we joined from, so it has nothing to play its way out of.
+        leavingScreen.reset();
         break;
     case SessionStatus::Failed:
     case SessionStatus::Disconnected:
@@ -273,9 +371,9 @@ void Menu::setSession(SessionInfo info)
     }
 }
 
-void Menu::screenContent(Context& ui, float width, float height)
+void Menu::screenContent(Context& ui, float width, float height, Screen which)
 {
-    switch (screen) {
+    switch (which) {
     case Screen::Title:
         if (inGame()) {
             gameView(ui, width, height);
@@ -315,6 +413,10 @@ void Menu::frame(Context& ui, float width, float height)
 
 void Menu::safeFrame(Context& ui, float width, float height)
 {
+    if (!skinChoiceLoaded) {
+        skinChoiceLoaded = true;
+        applySkinChoice(ui);
+    }
     if (ui.input().mousePressed) {
         field = Field::None;
         rebinding.reset();
@@ -327,9 +429,17 @@ void Menu::safeFrame(Context& ui, float width, float height)
         dialog = Dialog::None;
     }
 
+    auto now = std::chrono::steady_clock::now();
+    if (inventory.active != inventoryShown) {
+        inventoryShown = inventory.active;
+        inventoryChanged = now;
+    }
+    coverHud(inventory.active || forms.active() || dialog != Dialog::None || screen != Screen::Title, now);
+
     if (inventory.active) {
         ui.setBlocked(false);
-        inventory.draw(ui, width, height, [&](float x, float y, float pixel) { playerModel(ui, x, y, pixel, true); });
+        fadingHud(ui, width, height, now);
+        inventoryLayer(ui, width, height, now);
         toasts.draw(ui, width, height);
         return;
     }
@@ -338,54 +448,124 @@ void Menu::safeFrame(Context& ui, float width, float height)
     }
     if (forms.active()) {
         ui.setBlocked(false);
+        fadingHud(ui, width, height, now);
         forms.draw(ui, width, height);
         toasts.draw(ui, width, height);
         return;
     }
 
-    bool modal =dialog != Dialog::None || socialOpen;
+    bool modal = dialog != Dialog::None || socialOpen;
     ui.setBlocked(modal || capturesMouse());
 
     if (!worldVisible()) {
         panorama(ui);
     }
 
-    auto now = std::chrono::steady_clock::now();
     if (dialog != shownDialog) {
+        leavingDialog = shownDialog;
         shownDialog = dialog;
         dialogChanged = now;
+        // The safe area screen replaces the one under it, which leaves as it comes in and comes back as it goes.
+        if (dialog == Dialog::SafeArea || leavingDialog == Dialog::SafeArea) {
+            leavingScreen = dialog == Dialog::SafeArea ? std::optional<Screen>(screen) : std::nullopt;
+            screenChanged = now;
+            screenDirection = dialog == Dialog::SafeArea ? 1.0f : -1.0f;
+        }
+        if (safeZoneScreen && dialog == Dialog::SafeArea) {
+            safeZoneScreen->fire("screen.entrance_push");
+        } else if (safeZoneScreen && leavingDialog == Dialog::SafeArea) {
+            safeZoneScreen->fire("screen.exit_pop");
+        }
     }
     if (socialOpen != socialShown) {
         socialShown = socialOpen;
         socialChanged = now;
     }
-    auto eased = [&](std::chrono::steady_clock::time_point since, float seconds) {
-        float t = std::clamp(std::chrono::duration<float>(now - since).count() / seconds, 0.0f, 1.0f);
-        return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+    // A screen on its way out takes no input and leaves the field and dialog of the one replacing it alone.
+    auto leaving = [&](auto&& draw) {
+        bool blocked = ui.isBlocked();
+        Field keptField = field;
+        Dialog keptDialog = dialog;
+        ui.setBlocked(true);
+        draw();
+        ui.setBlocked(blocked);
+        field = keptField;
+        dialog = keptDialog;
     };
 
     bool loading = !inGame() && (dialog == Dialog::Connecting || dialog == Dialog::ConnectionError || dialog == Dialog::SignIn);
-    // The safe area screen replaces the one under it so the corners sit on a clear view.
-    if (!loading && dialog != Dialog::SafeArea) {
-        float shown = inGame() && screen == Screen::Title ? 1.0f : eased(screenChanged, ScreenTransitionSeconds);
-        ui.setLayer((1.0f - shown) * ScreenSlide * screenDirection, 0.0f, shown);
-        screenContent(ui, width, height);
+    float dialogProgress = progressSince(now, dialogChanged, ScreenTransitionSeconds);
+    bool dialogMoving = dialogProgress < 1.0f;
+    if (loading && dialogMoving && !replacesScreen(leavingDialog)) {
+        // A route like /progress slides the screen it replaces out ahead of it.
+        transitionLayer(ui, transitionOf(screen), false, dialogProgress, 1.0f, screenBounds.w);
+        leaving([&] { screenContent(ui, width, height, screen); });
+        ui.clearLayer();
+    } else if (!loading) {
+        float progress = progressSince(now, screenChanged, ScreenTransitionSeconds);
+        if (progress < 1.0f && leavingScreen && !(inGame() && *leavingScreen == Screen::Title)) {
+            transitionLayer(ui, transitionOf(*leavingScreen), false, progress, screenDirection, screenBounds.w);
+            leaving([&] { screenContent(ui, width, height, *leavingScreen); });
+        }
+        if (dialog != Dialog::SafeArea) {
+            if (inGame() && screen == Screen::Title) {
+                ui.clearLayer();
+            } else if (dialogMoving && replacesScreen(leavingDialog)) {
+                // Leaving a route like /disconnected brings the screen under it back from the other side.
+                transitionLayer(ui, transitionOf(screen), true, dialogProgress, -1.0f, screenBounds.w);
+            } else {
+                transitionLayer(ui, transitionOf(screen), true, progress, screenDirection, screenBounds.w);
+            }
+            screenContent(ui, width, height, screen);
+        }
         ui.clearLayer();
     }
 
     ui.setBlocked(false);
     if (socialOpen && !loading) {
-        float shown = eased(socialChanged, ScreenTransitionSeconds);
+        float shown = outCubic(progressSince(now, socialChanged, ScreenTransitionSeconds));
         ui.setLayer((1.0f - shown) * 190.0f, 0.0f, shown);
         socialDrawer(ui, width, height);
         ui.clearLayer();
     }
 
+    Transition leavingKind = transitionOf(leavingDialog);
+    if (dialogMoving && leavingDialog != Dialog::None && leavingKind != Transition::None) {
+        // Joining the world drops the OreUI routes, and the world fades in from under them.
+        if (dialog == Dialog::None && inGame() && leavingKind == Transition::Slide) {
+            leavingKind = Transition::FadeOut;
+        }
+        // Closing pops the dialog back out the way it came, one replacing it pushes it out the other side.
+        transitionLayer(ui, leavingKind, false, dialogProgress, dialog == Dialog::None ? -1.0f : 1.0f, screenBounds.w);
+        leaving([&] {
+            bool ignored = false;
+            dialogContent(ui, width, height, leavingDialog, ignored, ignored);
+        });
+    }
     bool confirmed = false;
     bool cancelled = false;
-    float dialogShown = eased(dialogChanged, DialogTransitionSeconds);
-    ui.setLayer(0.0f, (1.0f - dialogShown) * 8.0f, dialogShown);
-    switch (dialog) {
+    transitionLayer(ui, transitionOf(dialog), true, dialogProgress, 1.0f, screenBounds.w);
+    dialogContent(ui, width, height, dialog, confirmed, cancelled);
+    ui.clearLayer();
+    if (confirmed || cancelled) {
+        dialog = Dialog::None;
+    }
+
+    inventoryLayer(ui, width, height, now);
+    // Only a closed form still playing its exit is left to draw here.
+    forms.draw(ui, width, height);
+
+    if (inGame() && session.changingDimension) {
+        dimensionScreen(ui);
+    }
+    toast(ui, width, height);
+    toasts.draw(ui, width, height);
+    handleKeys(ui);
+}
+
+void Menu::dialogContent(Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled)
+{
+    switch (which) {
     case Dialog::None:
         break;
     case Dialog::Pause:
@@ -427,17 +607,52 @@ void Menu::safeFrame(Context& ui, float width, float height)
         }
         break;
     }
-    ui.clearLayer();
-    if (confirmed || cancelled) {
-        dialog = Dialog::None;
-    }
+}
 
-    if (inGame() && session.changingDimension) {
-        dimensionScreen(ui);
+/**
+ * The inventory the way inventory_screen_common in ui_common.json moves it:
+ * the panel rises from half a screen down while it fades in and sinks back
+ * while it fades out, and the dim behind it fades linearly on its own.
+ */
+void Menu::inventoryLayer(Context& ui, float width, float height, std::chrono::steady_clock::time_point now)
+{
+    float progress = progressSince(now, inventoryChanged, ScreenTransitionSeconds);
+    if (!inventory.active && (progress >= 1.0f || !inGame())) {
+        return;
     }
-    toast(ui, width, height);
-    toasts.draw(ui, width, height);
-    handleKeys(ui);
+    float shown = inventory.active ? outCubic(progress) : 1.0f - outCubic(progress);
+    bool blocked = ui.isBlocked();
+    ui.setBlocked(!inventory.active);
+    ui.setLayer(0.0f, 0.0f, inventory.active ? progress : 1.0f - progress);
+    // The dim goes over the whole screen, not just the safe area the panel sits in.
+    ui.fill(screenBounds, InventoryDim);
+    ui.setLayer(0.0f, (1.0f - shown) * ContainerWipe * screenBounds.h, shown);
+    inventory.draw(ui, width, height, [&](float x, float y, float pixel) { playerModel(ui, x, y, pixel, true); });
+    ui.clearLayer();
+    ui.setBlocked(blocked);
+}
+
+/**
+ * hud_screen.json fades the HUD out as a screen is pushed over it and back in
+ * once that screen pops.
+ */
+void Menu::coverHud(bool covered, std::chrono::steady_clock::time_point now)
+{
+    if (covered == hudCovered) {
+        return;
+    }
+    hudCovered = covered;
+    hudChanged = now;
+    if (hudScreen) {
+        hudScreen->fire(covered ? "screen.exit_push" : "screen.entrance_pop");
+    }
+}
+
+void Menu::fadingHud(Context& ui, float width, float height, std::chrono::steady_clock::time_point now)
+{
+    if (inGame() && hudCovered && progressSince(now, hudChanged, ScreenTransitionSeconds) < 1.0f) {
+        drawHudScreen(ui, width, height);
+    }
 }
 
 void Menu::panorama(Context& ui)
@@ -805,13 +1020,14 @@ void Menu::title(Context& ui, float width, float height)
     float dressingX = width - 158.0f;
     float dressingY = height - 96.33f;
     if (ui.classicButton("title:dressing", tr("profileScreen.header", "Dressing Room"), { dressingX, dressingY, 82.0f, CornerButtonHeight })) {
+        returnScreen = Screen::Title;
         navigate(Screen::DressingRoom);
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
     backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), std::floor(dressingY - 97.67f));
     playerModel(ui, dressingX + 41.0f, dressingY - 81.67f, 2.23f);
 
-    backedLabel(ui, "Kestrel", CornerMargin, labelY);
+    backedLabel(ui, "Mojang AB, Kestrel \xC2\xA9", CornerMargin, labelY);
     constexpr std::string_view Version = "v1.26.51";
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
 }
@@ -845,7 +1061,9 @@ void Menu::pause(Context& ui, float width, float height)
     }
     float dressingX = width - 158.0f;
     if (ui.classicButton("pause:dressing", tr("profileScreen.header", "Dressing Room"), { dressingX, y + 119.0f, 82.0f, CornerButtonHeight })) {
-        notify("TODO: Dressing Room");
+        dialog = Dialog::None;
+        returnScreen = Screen::Title;
+        navigate(Screen::DressingRoom);
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
     backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), y - 25.67f);
@@ -1194,6 +1412,7 @@ void Menu::gameView(Context& ui, float width, float height)
         drawNameTags(ui, hud.nameTags);
     }
     if (dialog != Dialog::None) {
+        fadingHud(ui, width, height, std::chrono::steady_clock::now());
         return;
     }
 
@@ -1241,12 +1460,19 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
         hudScreen->fire("anim_subtitle_text_alpha_in_play_event");
     }
     hud.chat = hudChat();
+    hud.players = players;
+    // Tab is button.scoreboard, the player list key, while nothing covers the HUD.
+    hudScreen->holdButton("button.scoreboard", capturesMouse() && ui.input().isHeld(Key::Tab));
     ui::UiData data = hudData(hud);
     // The HUD never takes the mouse, so the controls under it stay idle.
     bool blocked = ui.isBlocked();
     ui.setBlocked(true);
     hudScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    // Boss bars live in hud_screen.json too, so they fade along with it.
+    float faded = outCubic(progressSince(std::chrono::steady_clock::now(), hudChanged, ScreenTransitionSeconds));
+    ui.setLayer(0.0f, 0.0f, hudCovered ? 1.0f - faded : faded);
     drawBossBars(ui, hud, width, height);
+    ui.clearLayer();
     ui.setBlocked(blocked);
     hudScreen->takeEvents();
 }
@@ -1481,6 +1707,7 @@ std::string* Menu::focusedText()
 void Menu::navigate(Screen target)
 {
     if (target != screen) {
+        leavingScreen = screen;
         screenChanged = std::chrono::steady_clock::now();
         screenDirection = 1.0f;
     }
@@ -1496,7 +1723,7 @@ void Menu::goBack()
 {
     if (screen == Screen::ServerForm) {
         navigate(Screen::Play);
-    } else if (screen == Screen::Settings) {
+    } else if (screen == Screen::Settings || screen == Screen::DressingRoom) {
         navigate(returnScreen);
         if (inGame()) {
             dialog = Dialog::Pause;

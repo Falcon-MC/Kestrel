@@ -99,6 +99,7 @@ std::shared_ptr<const std::vector<menu::ChatCommand>> chatCommands(const Availab
     for (const CommandData& data : packet.mCommands) {
         menu::ChatCommand& command = commands->emplace_back();
         command.name = data.mName;
+        command.description = data.mDescription;
         for (const std::string& alias : data.mAliases.mValues) {
             if (alias != data.mName) {
                 command.aliases.push_back(alias);

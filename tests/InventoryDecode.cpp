@@ -64,6 +64,22 @@ int main()
         try { ItemCodec::readNetworkItemStackDescriptor(bad, context); }
         catch (const std::exception&) { rejected = true; }
         require(rejected, "accepted a truncated item");
+
+        // Some servers stamp empty slots with a net id and user data too, and
+        // the slot after them has to start where the air really ends.
+        BinaryStream stampedAir;
+        stampedAir.putLShort(0);
+        stampedAir.putLShort(0);
+        stampedAir.putUnsignedVarInt(0);
+        stampedAir.putBool(true);
+        stampedAir.putVarInt(42);
+        stampedAir.putUnsignedVarInt(0);
+        stampedAir.putString(std::string(3, '\0'));
+        ItemCodec::writeNetworkItemStackDescriptor(stampedAir, context, packet.mContents[0]);
+        ReadOnlyBinaryStream stamped(stampedAir.getBuffer());
+        require(ItemCodec::readNetworkItemStackDescriptor(stamped, context).isAir(), "stamped air not air");
+        require(ItemCodec::readNetworkItemStackDescriptor(stamped, context).mCount == 7, "slot after stamped air misaligned");
+        require(stamped.getRemainingLength() == 0, "unread stamped air data");
         std::cout << "Inventory decoding regressions passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

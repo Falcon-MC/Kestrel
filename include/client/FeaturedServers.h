@@ -69,9 +69,10 @@ public:
 
     /**
      * Queues an image download once; the decoded bitmap shows up in
-     * takeImages() keyed by its url.
+     * takeImages() keyed by its url. Urgent ones, like form button icons
+     * someone is looking at, skip ahead of the featured server pictures.
      */
-    void requestImage(const std::string& url, bool showcase);
+    void requestImage(const std::string& url, bool showcase, bool urgent = false);
     std::map<std::string, ui::Bitmap> takeImages();
 
 private:

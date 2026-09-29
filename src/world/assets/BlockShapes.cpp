@@ -36,7 +36,7 @@ bool isShapeName(const std::string& name)
     return name == "enchanting_table" || name == "hopper" || name == "brewing_stand" || name == "campfire" || name == "soul_campfire"
         || name == "lectern" || name == "frame" || name == "glow_frame" || name == "lever" || name == "cocoa" || name == "dragon_egg"
         || name == "decorated_pot" || contains(name, "copper_golem_statue") || isShelfName(name) || name == "leaf_litter"
-        || name == "pink_petals" || name == "wildflowers";
+        || name == "pink_petals" || name == "wildflowers" || name == "frog_spawn" || name == "flower_pot";
 }
 
 BlockShape blockShape(const std::string& name, const Tag& states)
@@ -120,8 +120,16 @@ BlockShape blockShape(const std::string& name, const Tag& states)
     } else if (isShelfName(name)) {
         shape.boxes = { part({ 0, 0, 0 }, { 16, 16, 8 }) };
         shape.turns = cardinalTurns(states);
-    } else if (name == "leaf_litter" || name == "pink_petals" || name == "wildflowers") {
+    } else if (name == "leaf_litter" || name == "pink_petals" || name == "wildflowers" || name == "frog_spawn") {
         shape.planeSide = Up;
+    } else if (name == "flower_pot") {
+        shape.boxes = {
+            part({ 5, 0, 5 }, { 6, 6, 11 }),
+            part({ 10, 0, 5 }, { 11, 6, 11 }),
+            part({ 6, 0, 5 }, { 10, 6, 6 }),
+            part({ 6, 0, 10 }, { 10, 6, 11 }),
+            part({ 6, 0, 6 }, { 10, 4, 10 }, -1, "dirt"),
+        };
     }
     return shape;
 }

@@ -129,6 +129,7 @@ struct TargetBlock {
 
 struct ActorView {
     double lastHurt = 0.0;
+    double lastSwing = 0.0;
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;

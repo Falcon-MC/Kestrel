@@ -21,6 +21,16 @@ bool isLanternName(const std::string& name)
     return name == "lantern" || name == "soul_lantern" || endsWith(name, "copper_lantern");
 }
 
+bool isCandleName(const std::string& name)
+{
+    return name == "candle" || endsWith(name, "_candle");
+}
+
+bool isCauldronName(const std::string& name)
+{
+    return name == "cauldron" || name == "lava_cauldron";
+}
+
 bool isAquaticName(const std::string& name)
 {
     return name == "seagrass" || name == "tall_seagrass" || name == "kelp" || name == "kelp_plant" || (contains(name, "coral") && !contains(name, "coral_block"));
@@ -87,6 +97,7 @@ Family classify(const std::string& name)
         || endsWith(name, "_fence") || name == "fence" || name == "nether_brick_fence" || contains(name, "glass_pane")
         || endsWith(name, "_pane") || endsWith(name, "_bars") || endsWith(name, "_bed") || name == "bed"
         || contains(name, "chest") || contains(name, "sign") || contains(name, "rail") || isTorchName(name) || isLanternName(name)
+        || isCandleName(name) || isCauldronName(name) || name == "turtle_egg"
         || endsWith(name, "_button") || name == "stone_button" || contains(name, "pressure_plate")
         || endsWith(name, "_carpet") || name == "carpet" || name == "snow_layer"
         || isAquaticName(name) || isCropName(name) || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
@@ -163,6 +174,15 @@ ModelKind modelKind(const std::string& name)
     }
     if (isLanternName(name)) {
         return ModelKind::Lantern;
+    }
+    if (isCandleName(name)) {
+        return ModelKind::Candle;
+    }
+    if (isCauldronName(name)) {
+        return ModelKind::Cauldron;
+    }
+    if (name == "turtle_egg") {
+        return ModelKind::TurtleEgg;
     }
     if (name == "cactus") {
         return ModelKind::Cactus;

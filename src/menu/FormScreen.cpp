@@ -13,6 +13,8 @@ namespace kestrel::menu {
 namespace {
 
 constexpr const char* FormRoot = "server_form.third_party_server_screen";
+// $transition_time_pop, how long the screen's exit_pop anims run once the last form closes.
+constexpr float LeaveSeconds = 0.4f;
 
 // Labels localize what they show, so a string that is a language key reads as its text.
 std::string formText(const json::Value* value)
@@ -190,6 +192,7 @@ void FormScreen::closeAll()
 {
     forms.clear();
     screen.reset();
+    leaving.reset();
 }
 
 void FormScreen::reset()
@@ -248,6 +251,7 @@ void FormScreen::setDefinitions(std::shared_ptr<const ui::JsonUi> value)
 {
     definitions = std::move(value);
     screen.reset();
+    leaving.reset();
 }
 
 /**
@@ -403,6 +407,16 @@ void FormScreen::handle(Form& form, const ui::UiEvent& event)
 
 void FormScreen::draw(ui::Context& ui, float width, float height)
 {
+    if (leaving) {
+        bool blocked = ui.isBlocked();
+        ui.setBlocked(true);
+        leaving->draw(ui, { 0.0f, 0.0f, width, height }, leavingData);
+        leaving->takeEvents();
+        ui.setBlocked(blocked);
+        if (std::chrono::steady_clock::now() - leftAt >= std::chrono::duration<float>(LeaveSeconds)) {
+            leaving.reset();
+        }
+    }
     if (forms.empty()) {
         return;
     }
@@ -418,7 +432,8 @@ void FormScreen::draw(ui::Context& ui, float width, float height)
         forms.pop_back();
         return;
     }
-    screen->draw(ui, { 0.0f, 0.0f, width, height }, formData(form));
+    ui::UiData data = formData(form);
+    screen->draw(ui, { 0.0f, 0.0f, width, height }, data);
     uint32_t id = form.id;
     size_t depth = forms.size();
     for (const ui::UiEvent& event : screen->takeEvents()) {
@@ -426,6 +441,13 @@ void FormScreen::draw(ui::Context& ui, float width, float height)
             break;
         }
         handle(forms.back(), event);
+    }
+    if (forms.empty()) {
+        // The last form keeps drawing a moment longer so it can play its way out.
+        leaving = std::move(screen);
+        leavingData = std::move(data);
+        leftAt = std::chrono::steady_clock::now();
+        leaving->fire("screen.exit_pop");
     }
 }
 

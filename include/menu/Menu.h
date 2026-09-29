@@ -683,7 +683,11 @@ private:
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
     void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false);
-    void screenContent(ui::Context& ui, float width, float height);
+    void screenContent(ui::Context& ui, float width, float height, Screen which);
+    void dialogContent(ui::Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled);
+    void inventoryLayer(ui::Context& ui, float width, float height, std::chrono::steady_clock::time_point now);
+    void coverHud(bool covered, std::chrono::steady_clock::time_point now);
+    void fadingHud(ui::Context& ui, float width, float height, std::chrono::steady_clock::time_point now);
     void gameView(ui::Context& ui, float width, float height);
 
     // Screens drawn the way the HTML menus draw them.
@@ -793,7 +797,13 @@ private:
     std::chrono::steady_clock::time_point screenChanged {};
     std::chrono::steady_clock::time_point dialogChanged {};
     std::chrono::steady_clock::time_point socialChanged {};
+    std::chrono::steady_clock::time_point inventoryChanged {};
+    std::chrono::steady_clock::time_point hudChanged {};
     float screenDirection = 1.0f;
+    std::optional<Screen> leavingScreen;
+    Dialog leavingDialog = Dialog::None;
+    bool inventoryShown = false;
+    bool hudCovered = false;
     Screen gameReturnScreen = Screen::Play;
     Dialog shownDialog = Dialog::None;
     bool socialShown = false;

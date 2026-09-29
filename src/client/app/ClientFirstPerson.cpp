@@ -573,14 +573,22 @@ void Client::startSwing(double now)
     }
 }
 
+/**
+ * How far a swing that started at start has got by now, zero once it is over.
+ */
+float Client::swingProgressSince(double start, double now) const
+{
+    double swing = (now - start) / SwingSeconds;
+    return swing >= 0.0 && swing < 1.0 ? static_cast<float>(swing) : 0.0f;
+}
+
 float Client::swingProgress()
 {
     double now = secondsNow();
     if (menu.capturesMouse() && window->input().mousePressed) {
         startSwing(now);
     }
-    double swing = swingStart >= 0.0 ? (now - swingStart) / SwingSeconds : 1.0;
-    return swing < 1.0 ? static_cast<float>(swing) : 0.0f;
+    return swingStart >= 0.0 ? swingProgressSince(swingStart, now) : 0.0f;
 }
 
 /**

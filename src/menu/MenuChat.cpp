@@ -28,6 +28,7 @@ constexpr float ChatBottomBarHeight = 27.0f;
 constexpr float SendButtonWidth = 44.0f;
 constexpr float HintRowHeight = 10.0f;
 constexpr Color ChatBackground { 0, 0, 0, 178 };
+constexpr Color CommandCover { 0, 0, 0, 110 };
 constexpr Color ChatTitleInk { 76, 76, 76, 255 };
 constexpr Color SelectionFill { 0x3c, 0x8a, 0xd6, 255 };
 constexpr Color HintBorder { 179, 179, 179, 255 };
@@ -122,10 +123,11 @@ void Menu::closeChat()
 
 /**
  * Sends the draft and keeps the screen open with an empty box, the way the
- * game does after Enter.
+ * game does after Enter. A command closes the screen instead.
  */
 void Menu::submitChat()
 {
+    bool command = !chatDraft.empty() && chatDraft.front() == '/';
     if (!blank(chatDraft)) {
         if (chatHistory.empty() || chatHistory.back() != chatDraft) {
             chatHistory.push_back(chatDraft);
@@ -139,6 +141,9 @@ void Menu::submitChat()
     chatRecall.reset();
     selectedField = Field::None;
     chatScroll = 0.0f;
+    if (command) {
+        closeChat();
+    }
 }
 
 void Menu::recallChat(int step)
@@ -251,7 +256,8 @@ std::vector<HudChatLine> Menu::hudChat() const
 /**
  * The list the game puts right above the box while a command is typed, drawn
  * straight on the chat cover: the completions for the word being typed and,
- * nearest the box, the syntax hint of every overload that still fits.
+ * nearest the box, the syntax hint of every overload that still fits. The
+ * log underneath dims while a command or an @ mention is being typed.
  * Clicking a completion takes it.
  */
 void Menu::commandPanel(Context& ui, float width, float bottom, float top)
@@ -271,6 +277,10 @@ void Menu::commandPanel(Context& ui, float width, float bottom, float top)
     size_t first = cycling && chatCycleIndex >= room ? chatCycleIndex + 1 - room : 0;
     size_t shown = std::min(room, suggestions.size() - std::min(first, suggestions.size()));
     size_t rows = shown + usageRows;
+    // The log dims under a command being typed and under @ mention picks.
+    if (chatDraft.front() == '/' || rows > 0) {
+        ui.fill({ 0.0f, top, width, bottom - top }, CommandCover);
+    }
     if (rows == 0) {
         return;
     }
@@ -286,7 +296,8 @@ void Menu::commandPanel(Context& ui, float width, float bottom, float top)
         }
         std::string label = commandNames ? "/" + suggestion.text : suggestion.text;
         if (!suggestion.description.empty()) {
-            label += "\xC2\xA7" "7 - " + suggestion.description;
+            // Servers send vanilla descriptions as language keys and their own as plain text.
+            label += "\xC2\xA7" "7 - " + tr(suggestion.description, suggestion.description);
         }
         ui.text(label, TextStyle::Pixel, 2.0f, y + 1.0f, White, width - 4.0f);
         if (state.clicked) {

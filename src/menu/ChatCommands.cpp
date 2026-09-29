@@ -165,11 +165,11 @@ CommandHints commandHints(const std::vector<ChatCommand>& commands, const std::v
         hints.replaceFrom = 1;
         for (const ChatCommand& command : commands) {
             if (startsWith(command.name, typed)) {
-                hints.suggestions.push_back({ command.name, {} });
+                hints.suggestions.push_back({ command.name, command.description });
             }
             for (const std::string& alias : command.aliases) {
                 if (startsWith(alias, typed)) {
-                    hints.suggestions.push_back({ alias, {} });
+                    hints.suggestions.push_back({ alias, command.description });
                 }
             }
         }

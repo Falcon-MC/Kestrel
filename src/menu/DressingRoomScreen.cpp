@@ -194,10 +194,6 @@ void Menu::openDressingSection(DressingSection section, const std::string& page,
 void Menu::dressingRoom(Context& ui, float width, float height)
 {
     DressingState& state = dressingState;
-    if (!skinChoiceLoaded) {
-        skinChoiceLoaded = true;
-        applySkinChoice(ui);
-    }
     panorama(ui);
     ui.fill(screenBounds, { 0, 0, 0, 120 });
 
@@ -406,14 +402,10 @@ void Menu::dressingCharacters(Context& ui, float left, float width, float height
         carouselPlaced = true;
     }
     std::string current = playerSkin;
-    for (int offset = -2; offset <= 2; ++offset) {
-        if (offset == 0) {
-            continue;
-        }
-        size_t index = (carouselIndex + count + static_cast<size_t>(offset + 2) - 2) % count;
+    for (int offset : { -1, 1 }) {
+        size_t index = (carouselIndex + count + static_cast<size_t>(offset + 1) - 1) % count;
         playerSkin = index == 0 ? current : characterSprite(ui, characters[index - 1].file);
-        float spacing = std::abs(offset) == 1 ? 118.0f : 200.0f;
-        playerModel(ui, centerX + static_cast<float>(offset) * spacing, HeaderHeight + 50.0f, std::abs(offset) == 1 ? 1.9f : 1.4f);
+        playerModel(ui, centerX + static_cast<float>(offset) * 118.0f, HeaderHeight + 50.0f, 1.9f);
     }
     playerSkin = carouselIndex == 0 ? current : characterSprite(ui, characters[carouselIndex - 1].file);
     playerModel(ui, centerX, HeaderHeight + 26.0f, 2.95f);
@@ -532,7 +524,7 @@ void Menu::dressingPieces(Context& ui, const Rect& panel, const std::string& pag
     };
     float content = 40.0f + (page ? rows(page->owned.size()) * step + (page->others.empty() ? 0.0f : 28.0f + rows(page->others.size()) * step) : 0.0f);
     float range = std::max(0.0f, content - inner.h);
-    if (inner.contains(ui.mouseX(), ui.mouseY())) {
+    if (ui.hovered(inner)) {
         state.scroll -= ui.input().wheel * step * 0.5f;
     }
     state.scroll = std::clamp(state.scroll, 0.0f, range);

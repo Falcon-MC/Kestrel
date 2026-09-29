@@ -212,7 +212,7 @@ std::vector<FeaturedServer> FeaturedServers::servers() const
     return list;
 }
 
-void FeaturedServers::requestImage(const std::string& url, bool showcase)
+void FeaturedServers::requestImage(const std::string& url, bool showcase, bool urgent)
 {
     if (url.empty()) {
         return;
@@ -221,7 +221,11 @@ void FeaturedServers::requestImage(const std::string& url, bool showcase)
     if (!requested.emplace(url, true).second) {
         return;
     }
-    queue.push_back({ url, showcase });
+    if (urgent) {
+        queue.push_front({ url, showcase });
+    } else {
+        queue.push_back({ url, showcase });
+    }
     wake.notify_one();
 }
 
