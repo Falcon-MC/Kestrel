@@ -114,7 +114,7 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         if (close->mServerInitiated) {
             ContainerClosePacket reply = *close;
             reply.mServerInitiated = false;
-            connection->send(reply);
+            transmit(reply);
         }
         if (inventoryBefore) for (int slot : inventoryChangedSlots) inventoryModel.slots[slot] = (*inventoryBefore)[slot];
         inventoryBefore.reset();
@@ -243,7 +243,7 @@ void Session::flushInventory()
         close.mWindowId = int8_t(inventoryModel.windowId);
         close.mType = inventoryModel.type;
         close.mServerInitiated = false;
-        connection->send(close);
+        transmit(close);
         inventoryClosing = false;
         inventoryModel.windowId = 0;
         inventoryModel.type = ContainerType::Inventory;
@@ -258,7 +258,7 @@ void Session::flushInventory()
         open.mAction = InteractPacket::Action::OpenInventory;
         open.mRuntimeActorId = localRuntimeId;
         open.mHasMousePosition = false;
-        connection->send(open);
+        transmit(open);
         return;
     }
     inventoryModel.creativeMode = current.hud.gameType == 1;
@@ -294,7 +294,7 @@ void Session::flushInventory()
     inventoryRequestTime = secondsNow();
     ItemStackRequestPacket packet;
     packet.mRequests.push_back(std::move(request));
-    connection->send(packet);
+    transmit(packet);
     publishInventory();
 }
 }

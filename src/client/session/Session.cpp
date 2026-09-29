@@ -716,6 +716,7 @@ void Session::handleWorldPacket(const std::string& payload)
     if (!BedrockConnection::peekPacketId(payload, id)) {
         return;
     }
+    journal.record(false, static_cast<int>(id), payload);
     if (seenPackets.insert(static_cast<int>(id)).second) {
         debugLog("first world packet " + std::to_string(static_cast<int>(id)));
     }
@@ -1124,7 +1125,7 @@ void Session::finishDimensionChange()
     action.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
     action.mAction = PlayerActionType::DimensionChangeSuccess;
     action.mFace = -1;
-    connection->send(action);
+    transmit(action);
     dimensionAckReceived = false;
     dimensionSpawnReceived = false;
     std::lock_guard<std::mutex> guard(mutex);
@@ -1374,6 +1375,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     settings.mDeferSpawn = true;
     settings.mPacketObserver = [this](MinecraftPacketIds id) {
         debugLog("dial packet " + std::to_string(static_cast<int>(id)));
+        journal.record(false, static_cast<int>(id), {});
         if (id == MinecraftPacketIds::ResourcePackStack) {
             std::lock_guard<std::mutex> guard(mutex);
             current.packsResolved = true;
@@ -1627,18 +1629,28 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         }
 
         for (const std::unique_ptr<SubChunkRequestPacket>& request : world.takeRequests(world::WorldStream::Clock::now())) {
-            connection->send(*request);
+            transmit(*request);
         }
         if (int wanted = requestedRadius.load(); wanted != sentRadius) {
             RequestChunkRadiusPacket request;
             request.mRadius = wanted;
             request.mMaxRadius = wanted;
-            connection->send(request);
+            transmit(request);
             sentRadius = wanted;
             debugLog("requested chunk radius " + std::to_string(wanted));
         }
         if (int slot = requestedSlot.exchange(-1); slot >= 0) {
             sendSelectedSlot(slot);
+        }
+        std::vector<std::string> raw;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            raw.swap(rawOutgoing);
+        }
+        for (const std::string& payload : raw) {
+            MinecraftPacketIds rawId;
+            journal.record(true, BedrockConnection::peekPacketId(payload, rawId) ? static_cast<int>(rawId) : -1, payload);
+            connection->sendRaw(payload);
         }
         if (respawnRequested.exchange(false)) {
             sendRespawnRequest();
@@ -1725,6 +1737,24 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     connection.reset();
     return next;
+}
+
+void Session::transmit(const Packet& packet)
+{
+    std::string payload;
+    if (journal.recording() && codecContext) {
+        BinaryStream stream;
+        packet.writeWithHeader(stream, *codecContext);
+        payload = stream.getBuffer();
+    }
+    journal.record(true, static_cast<int>(packet.getId()), payload);
+    connection->send(packet);
+}
+
+void Session::sendRawPacket(std::string payload)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    rawOutgoing.push_back(std::move(payload));
 }
 
 }

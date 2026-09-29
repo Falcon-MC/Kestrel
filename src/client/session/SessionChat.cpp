@@ -248,14 +248,14 @@ void Session::flushChat()
             request.mCommand = std::move(line);
             request.mOrigin.mOrigin = CommandOriginType::Player;
             request.mOrigin.mUuid = randomUuid();
-            connection->send(request);
+            transmit(request);
         } else {
             TextPacket chat;
             chat.mType = TextPacket::Type::Chat;
             chat.mSourceName = sender;
             chat.mMessage = std::move(line);
             chat.mXuid = localXuid;
-            connection->send(chat);
+            transmit(chat);
         }
     }
 }

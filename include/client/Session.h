@@ -4,6 +4,7 @@
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
 #include "client/Inventory.h"
+#include "client/PacketJournal.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
 #include "world/BlockCollisions.h"
@@ -515,7 +516,19 @@ public:
      */
     void answerForm(uint32_t id, std::optional<std::string> data, bool busy);
 
+    PacketJournal& packets()
+    {
+        return journal;
+    }
+
+    /**
+     * Queues a raw game packet payload, header included, to go out as it is.
+     * Meant for protocol debugging; the server sees whatever was written.
+     */
+    void sendRawPacket(std::string payload);
+
 private:
+    void transmit(const Packet& packet);
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
     void handleSoundPacket(const std::shared_ptr<Packet>& packet);
     void handleChatPacket(const std::shared_ptr<Packet>& packet);
@@ -642,6 +655,8 @@ private:
     std::unique_ptr<PacketCodecContext> codecContext;
     InventoryModel inventoryModel;
     std::vector<InventoryCommand> inventoryCommands;
+    PacketJournal journal;
+    std::vector<std::string> rawOutgoing;
     std::optional<std::array<ItemStack, inventory::SlotCount>> inventoryBefore;
     std::set<int> inventoryChangedSlots;
     int32_t inventoryRequestId = -1;

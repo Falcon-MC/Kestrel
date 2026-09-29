@@ -259,7 +259,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
             action.mRuntimeActorId = static_cast<int64_t>(localRuntimeId);
             action.mAction = PlayerActionType::Respawn;
             action.mFace = -1;
-            connection->send(action);
+            transmit(action);
         }
     } else if (auto hud = std::dynamic_pointer_cast<SetHudPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
@@ -350,7 +350,7 @@ void Session::sendRespawnRequest()
     packet.mPosition = { 0.0f, 0.0f, 0.0f };
     packet.mState = RespawnPacket::State::ClientReady;
     packet.mRuntimeActorId = localRuntimeId;
-    connection->send(packet);
+    transmit(packet);
     respawnPending = true;
 }
 
@@ -365,7 +365,7 @@ void Session::sendSelectedSlot(int slot)
     packet.mInventorySlot = slot;
     packet.mHotbarSlot = slot;
     packet.mContainerId = InventoryContainer;
-    connection->send(packet);
+    transmit(packet);
 }
 
 }
