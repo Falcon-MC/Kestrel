@@ -3,6 +3,7 @@
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"
 #include "Protocol/BlockStateHasher.h"
+#include "util/SkinChoice.h"
 #include "BlockUpgradeSchemas.h"
 #include "Core/BlockState/BlockStateUpgrader.h"
 #include "Network/Auth/MinecraftAuthentication.h"
@@ -135,12 +136,21 @@ void applyDefaultSkin(ClientData& identity)
         return;
     }
     world::PackSource pack(vanilla);
+    util::SkinChoice choice = util::loadSkinChoice();
     std::string encoded;
     uint32_t width = 0;
     uint32_t height = 0;
     std::vector<uint8_t> rgba;
-    if (!pack.readTexture("textures/entity/steve", encoded) || !ui::decodeImage(encoded, width, height, rgba) || width != 64 || (height != 64 && height != 32)) {
-        return;
+    bool loaded = (choice.kind == "custom" && util::readCustomSkin(width, height, rgba))
+        || (choice.kind.rfind("default:", 0) == 0 && util::readDefaultSkin(choice.kind.substr(8), width, height, rgba));
+    if (!loaded) {
+        std::string texture = choice.kind == "alex" ? "textures/entity/alex" : "textures/entity/steve";
+        if (!pack.readTexture(texture, encoded) || !ui::decodeImage(encoded, width, height, rgba) || width != 64 || (height != 64 && height != 32)) {
+            return;
+        }
+    }
+    if (choice.slim) {
+        identity.mSkinResourcePatch = Base64::encode("{\"geometry\":{\"default\":\"geometry.humanoid.customSlim\"}}");
     }
     identity.mSkinData = Base64::encode(std::string(rgba.begin(), rgba.end()));
     identity.mSkinImageWidth = static_cast<int>(width);
@@ -1062,6 +1072,7 @@ void Session::handleWorldPacket(const std::string& payload)
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
         motionDimension = dimension->mDimension;
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
+        motionHistory.clear();
         motionStarted = false;
         actors.clear();
         runtimeByUnique.clear();
@@ -1398,6 +1409,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     requestedSlot = -1;
     spawnInitialized = false;
     motion = PlayerMotion {};
+    motionHistory.clear();
     motionStarted = false;
     teleportHandled = false;
     clientTick = 0;

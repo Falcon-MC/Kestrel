@@ -15,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -526,6 +527,7 @@ private:
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
+    void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector& velocity, bool onGround);
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
@@ -689,7 +691,18 @@ private:
     std::map<std::array<int32_t, 3>, double> recentBreaks;
     std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;
+    /**
+     * One sent movement tick: its number, the input it ran with and the
+     * motion state it ended in, kept so a server correction of that tick can
+     * be replayed forward to the present.
+     */
+    struct SentMotionTick {
+        uint64_t tick = 0;
+        MotionInput input;
+        PlayerMotion after;
+    };
     PlayerMotion motion;
+    std::deque<SentMotionTick> motionHistory;
     MotionInput motionInput;
     MotionInput lastMotionInput;
     bool motionStarted = false;

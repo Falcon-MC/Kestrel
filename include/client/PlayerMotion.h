@@ -112,6 +112,12 @@ public:
     void anchor(const MotionVector& position);
     void correct(const MotionVector& position, const MotionVector& motion, bool grounded);
 
+    /**
+     * Carries a knockback the live state received but has not run yet over
+     * to this replayed state.
+     */
+    void keepPendingKnockback(const PlayerMotion& live);
+
     void setMovementSpeed(float current, float base);
     void setServerSprint(bool sprinting);
     void setGravity(bool affected);

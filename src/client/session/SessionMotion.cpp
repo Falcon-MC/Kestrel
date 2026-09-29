@@ -25,6 +25,7 @@ using session::EyeHeight;
 using session::ScaleDataId;
 
 constexpr double TickSeconds = 0.05;
+constexpr size_t MotionHistoryTicks = 200;
 constexpr int32_t FlagsDataId = 0;
 constexpr int SprintingFlag = 3;
 constexpr int NoAiFlag = 16;
@@ -106,6 +107,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         MotionVector was = motion.position();
+        motionHistory.clear();
         motion.teleport({ move->mPosition.x, move->mPosition.y - EyeHeight, move->mPosition.z });
         teleportHandled = true;
         debugLog("server moved player at tick " + std::to_string(clientTick) + " mode " + std::to_string(static_cast<int>(move->mMode)) + " from " + std::to_string(was.x) + " " + std::to_string(was.y) + " " + std::to_string(was.z)
@@ -121,6 +123,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         MotionVector feet { respawn->mPosition.x, respawn->mPosition.y - EyeHeight, respawn->mPosition.z };
+        motionHistory.clear();
         motion.reset(feet);
         debugLog("respawn at " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
         bool dead = false;
@@ -150,7 +153,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         debugLog("server corrected movement at tick " + std::to_string(clientTick) + " for tick " + std::to_string(correction->mTick));
-        motion.correct({ correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z }, correction->mOnGround);
+        replayCorrection(correction->mTick, { correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z }, correction->mOnGround);
     } else if (auto push = std::dynamic_pointer_cast<SetActorMotionPacket>(packet)) {
         if (push->mRuntimeActorId == localRuntimeId) {
             motion.knockback({ push->mMotion.x, push->mMotion.y, push->mMotion.z });
@@ -373,6 +376,10 @@ void Session::tickMotion()
     lastMotionInput = input;
 
     motion.anchor({ tick.position.x, eyeY - EyeHeight, tick.position.z });
+    motionHistory.push_back({ clientTick, input, motion });
+    while (motionHistory.size() > MotionHistoryTicks) {
+        motionHistory.pop_front();
+    }
     MotionVector feet = motion.position();
     if (clientTick % 20 == 0) {
         char line[192];
@@ -391,6 +398,40 @@ void Session::tickMotion()
     current.player.swimming = tick.swimming;
     current.player.flying = tick.flying;
     current.player.movementSpeed = motion.speed();
+}
+
+/**
+ * Takes the server's state for a tick already sent, then runs every tick
+ * sent since then again with its own input, so the correction lands in the
+ * present instead of pulling the player back to where they were.
+ */
+void Session::replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector& velocity, bool onGround)
+{
+    auto corrected = std::find_if(motionHistory.begin(), motionHistory.end(), [tick](const SentMotionTick& sent) {
+        return sent.tick == tick;
+    });
+    if (corrected == motionHistory.end()) {
+        motion.correct(position, velocity, onGround);
+        motionHistory.clear();
+        return;
+    }
+    corrected->after.correct(position, velocity, onGround);
+    PlayerMotion replay = corrected->after;
+    PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
+        return motionCell(x, y, z);
+    };
+    for (auto sent = std::next(corrected); sent != motionHistory.end(); ++sent) {
+        MotionTick result = replay.step(sent->input, lookup);
+        float eyeY = result.position.y + EyeHeight;
+        replay.anchor({ result.position.x, eyeY - EyeHeight, result.position.z });
+        sent->after = replay;
+    }
+    motionHistory.erase(motionHistory.begin(), corrected);
+    replay.keepPendingKnockback(motion);
+    motion = replay;
+    MotionVector feet = motion.position();
+    std::lock_guard<std::mutex> guard(mutex);
+    current.player.current = { feet.x, feet.y, feet.z };
 }
 
 }
