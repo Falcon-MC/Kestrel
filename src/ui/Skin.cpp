@@ -187,7 +187,7 @@ Skin::Entry& Skin::load(std::string_view name)
 {
     auto found = entries.find(std::string(name));
     if (found != entries.end()) {
-        if (found->second.lastUse + 1 < useClock && !found->second.placed && !found->second.bitmap.rgba.empty()) {
+        if (found->second.lastUse < useClock && !found->second.placed && !found->second.bitmap.rgba.empty()) {
             changed = true;
         }
         found->second.lastUse = useClock;
@@ -239,7 +239,7 @@ const Bitmap* Skin::bitmap(std::string_view name)
 void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
 {
     Entry& entry = entries[name];
-    reclaimable = reclaimable || entry.placed;
+    release(entry);
     entry.bitmap = std::move(bitmap);
     entry.sprite = {};
     entry.sprite.slice = slice;
@@ -247,6 +247,7 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     entry.placed = false;
+    entry.lastUse = useClock;
     changed = true;
 }
 
@@ -254,7 +255,7 @@ void Skin::clearDynamic(const std::string& name)
 {
     auto found = entries.find(name);
     if (found != entries.end()) {
-        reclaimable = reclaimable || found->second.placed;
+        release(found->second);
         entries.erase(found);
         changed = true;
     }
@@ -267,6 +268,9 @@ bool Skin::place(Entry& entry)
     if (w > AtlasSize) {
         return false;
     }
+    if (placeInFreeSlot(entry)) {
+        return true;
+    }
     if (cursorX + w > AtlasSize) {
         cursorX = 0;
         cursorY += shelfHeight;
@@ -277,66 +281,147 @@ bool Skin::place(Entry& entry)
     }
     entry.x = cursorX;
     entry.y = cursorY;
+    entry.slotWidth = w;
+    entry.slotHeight = h;
     entry.placed = true;
     cursorX += w;
     shelfHeight = std::max(shelfHeight, h);
     return true;
 }
 
+/**
+ * Puts a picture in the smallest freed rectangle it fits in, giving the
+ * part on its right back when that is wide enough to hold another one.
+ */
+bool Skin::placeInFreeSlot(Entry& entry)
+{
+    uint32_t w = entry.bitmap.width + 2;
+    uint32_t h = entry.bitmap.height + 2;
+    auto best = freeSlots.end();
+    for (auto slot = freeSlots.begin(); slot != freeSlots.end(); ++slot) {
+        if (slot->width < w || slot->height < h) {
+            continue;
+        }
+        if (best == freeSlots.end() || uint64_t(slot->width) * slot->height < uint64_t(best->width) * best->height) {
+            best = slot;
+        }
+    }
+    if (best == freeSlots.end()) {
+        return false;
+    }
+    FreeSlot slot = *best;
+    freeSlots.erase(best);
+    entry.x = slot.x;
+    entry.y = slot.y;
+    entry.slotWidth = w;
+    entry.slotHeight = slot.height;
+    entry.placed = true;
+    if (slot.width - w >= 3) {
+        freeSlots.push_back({ slot.x + w, slot.y, slot.width - w, slot.height });
+    } else {
+        entry.slotWidth = slot.width;
+    }
+    return true;
+}
+
+/**
+ * Gives a placed picture's rectangle back without moving any other picture.
+ */
+void Skin::release(Entry& entry)
+{
+    if (!entry.placed) {
+        return;
+    }
+    freeSlots.push_back({ entry.x, entry.y, entry.slotWidth, entry.slotHeight });
+    entry.placed = false;
+    entry.sprite.valid = false;
+}
+
+/**
+ * Frees the pictures unused for the longest, never one asked for since the
+ * last pack, until the given one fits.
+ */
+bool Skin::evictFor(Entry& entry)
+{
+    std::vector<Entry*> idle;
+    for (auto& [name, candidate] : entries) {
+        if (candidate.placed && candidate.lastUse < useClock) {
+            idle.push_back(&candidate);
+        }
+    }
+    std::sort(idle.begin(), idle.end(), [](const Entry* a, const Entry* b) {
+        return a->lastUse < b->lastUse;
+    });
+    for (Entry* candidate : idle) {
+        release(*candidate);
+        if (placeInFreeSlot(entry)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Packs every picture again from the top, most recently used first. Pictures
+ * move, so this only runs when freeing idle ones could not make room.
+ */
+void Skin::repackAll()
+{
+    freeSlots.clear();
+    cursorX = 0;
+    cursorY = ImageTop;
+    shelfHeight = 0;
+    std::vector<Entry*> byUse;
+    for (auto& [name, entry] : entries) {
+        entry.placed = false;
+        if (!entry.bitmap.rgba.empty()) {
+            byUse.push_back(&entry);
+        }
+    }
+    std::sort(byUse.begin(), byUse.end(), [](const Entry* a, const Entry* b) {
+        return a->lastUse > b->lastUse;
+    });
+    const uint64_t capacity = uint64_t(AtlasSize) * (AtlasSize - ImageTop) * 9 / 10;
+    uint64_t used = 0;
+    std::vector<Entry*> kept;
+    for (Entry* entry : byUse) {
+        uint64_t area = uint64_t(entry->bitmap.width + 2) * (entry->bitmap.height + 2);
+        if (used + area > capacity) {
+            continue;
+        }
+        used += area;
+        kept.push_back(entry);
+    }
+    std::sort(kept.begin(), kept.end(), [](const Entry* a, const Entry* b) {
+        return a->bitmap.height > b->bitmap.height;
+    });
+    for (Entry* entry : kept) {
+        place(*entry);
+    }
+}
+
 void Skin::pack(std::vector<uint8_t>& atlasRgba)
 {
     changed = false;
-    auto unplaced = [&]() {
-        std::vector<Entry*> order;
-        for (auto& [name, entry] : entries) {
-            if (!entry.placed && !entry.bitmap.rgba.empty()) {
-                order.push_back(&entry);
-            }
-        }
-        std::sort(order.begin(), order.end(), [](const Entry* a, const Entry* b) {
-            return a->bitmap.height > b->bitmap.height;
-        });
-        return order;
-    };
-    bool full = false;
-    for (Entry* entry : unplaced()) {
-        if (!place(*entry) && entry->bitmap.width + 2 <= AtlasSize) {
-            full = true;
-            break;
+    std::vector<Entry*> pending;
+    for (auto& [name, entry] : entries) {
+        if (!entry.placed && !entry.bitmap.rgba.empty() && entry.lastUse >= useClock) {
+            pending.push_back(&entry);
         }
     }
+    std::sort(pending.begin(), pending.end(), [](const Entry* a, const Entry* b) {
+        return a->bitmap.height > b->bitmap.height;
+    });
+    bool full = false;
+    for (Entry* entry : pending) {
+        if (entry->bitmap.width + 2 > AtlasSize || place(*entry) || evictFor(*entry)) {
+            continue;
+        }
+        full = true;
+        break;
+    }
     if (full) {
-        reclaimable = false;
-        cursorX = 0;
-        cursorY = ImageTop;
-        shelfHeight = 0;
-        std::vector<Entry*> byUse;
-        for (auto& [name, entry] : entries) {
-            entry.placed = false;
-            if (!entry.bitmap.rgba.empty()) {
-                byUse.push_back(&entry);
-            }
-        }
-        std::sort(byUse.begin(), byUse.end(), [](const Entry* a, const Entry* b) {
-            return a->lastUse > b->lastUse;
-        });
-        const uint64_t capacity = uint64_t(AtlasSize) * (AtlasSize - ImageTop) * 9 / 10;
-        uint64_t used = 0;
-        std::vector<Entry*> kept;
-        for (Entry* entry : byUse) {
-            uint64_t area = uint64_t(entry->bitmap.width + 2) * (entry->bitmap.height + 2);
-            if (used + area > capacity) {
-                continue;
-            }
-            used += area;
-            kept.push_back(entry);
-        }
-        std::sort(kept.begin(), kept.end(), [](const Entry* a, const Entry* b) {
-            return a->bitmap.height > b->bitmap.height;
-        });
-        for (Entry* entry : kept) {
-            place(*entry);
-        }
+        repackAll();
     }
     ++useClock;
 
