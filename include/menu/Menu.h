@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -54,6 +55,12 @@ enum class Screen {
 enum class PlayTab {
     Realms,
     Servers,
+};
+
+struct ModKeyBind {
+    std::string id;
+    std::string label;
+    Key key = Key::None;
 };
 
 enum class SettingsPage {
@@ -554,6 +561,16 @@ public:
         bindings = value;
     }
 
+    void setModKeyBinds(std::vector<ModKeyBind> binds)
+    {
+        modBinds = std::move(binds);
+    }
+
+    void setModKeyBindHandler(std::function<void(const std::string&, Key)> handler)
+    {
+        onModKeyBind = std::move(handler);
+    }
+
     bool worldVisible() const;
     bool capturesMouse() const;
 
@@ -921,7 +938,10 @@ private:
     ui::Rect screenBounds;
     uint64_t shownSubtitle = 0;
     KeyBindings bindings;
+    std::vector<ModKeyBind> modBinds;
+    std::function<void(const std::string&, Key)> onModKeyBind;
     std::optional<size_t> rebinding;
+    std::optional<std::string> rebindingMod;
     float listScroll = 0.0f;
     float detailScroll = 0.0f;
     float detailContent = 0.0f;

@@ -49,7 +49,7 @@ Kestrel down, though the handler that threw stops for that call.
 | `player()` | position, rotation (and turning), health, food, xp, inventory, effects, attack, use, drop, respawn |
 | `world()` | server, dimension, time, weather, entities, the targeted block, player list, sidebar |
 | `network()` | connect, disconnect, raw packets, form answers, packet filters |
-| `input()` | held keys, mouse, whether the player is in game, key bindings |
+| `input()` | held keys, mouse, whether the player is in game, key bindings (`bind(key)` hidden, `bind({ id, label, defaultKey })` listed in Keyboard & Mouse while the mod is loaded) |
 | `commands()` | `.name args` chat commands that never reach the server; `.help` and `.mods` are built in |
 | `config()` | `key=value` settings in `mods/<id>/config.txt`, saved on unload |
 | `scheduler()` | `after`, `every`, `nextFrame` on the main thread, `post` from any thread |
@@ -57,7 +57,7 @@ Kestrel down, though the handler that threw stops for that call.
 | `log()` | lines in `debug.txt` and the console, prefixed with the mod id |
 
 Helpers on `Mod` shorten the common cases: `on<Event>(lambda)`, `on(&MyMod::method)`, `command(...)`,
-`bind(key, action)`, `every(seconds, task)` and `after(seconds, task)`.
+`bind(key, action)`, `bind({ id, label, key }, action)`, `every(seconds, task)` and `after(seconds, task)`.
 
 ## Events
 

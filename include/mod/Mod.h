@@ -98,6 +98,11 @@ protected:
         return input().bind(key, std::move(action));
     }
 
+    Subscription bind(KeyBindSpec spec, std::function<void()> action)
+    {
+        return input().bind(std::move(spec), std::move(action));
+    }
+
     Subscription every(double seconds, Scheduler::Task task)
     {
         return scheduler().every(seconds, std::move(task));

@@ -122,17 +122,19 @@ private:
 
 class InputService final : public mod::Input {
 public:
-    InputService(HostState& host, size_t owner);
+    InputService(HostState& host, size_t owner, mod::Config& config);
 
     bool isHeld(mod::Key key) const override;
     bool inGame() const override;
     float mouseX() const override;
     float mouseY() const override;
     mod::Subscription bind(mod::Key key, std::function<void()> action) override;
+    mod::Subscription bind(mod::KeyBindSpec spec, std::function<void()> action) override;
 
 private:
     HostState& host;
     size_t owner;
+    mod::Config& config;
 };
 
 class CommandService final : public mod::Commands {

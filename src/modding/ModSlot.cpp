@@ -77,12 +77,12 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , playerService(host)
     , worldService(host)
     , networkService(host, owner)
-    , inputService(host, owner)
     , commandService(host, owner)
     , loggerService(instance->info().id)
     , schedulerService(host, owner)
     , shaderService(host, owner)
     , settings(host.root / instance->info().id / "config.txt")
+    , inputService(host, owner, settings)
 {
 }
 
@@ -120,6 +120,7 @@ void ModSlot::releaseAll()
 {
     host.events.release(id);
     host.commands.release(id);
+    host.keyBinds.release(id);
     host.scheduler.release(id);
     host.packets->release(id);
     host.shaders.release(id);

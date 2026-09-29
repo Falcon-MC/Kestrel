@@ -30,7 +30,7 @@ public:
             }
         });
 
-        bind(Key::H, [this] {
+        bind({ "coords", "Toggle coordinates", Key::H }, [this] {
             showCoordinates = !showCoordinates;
             config().set("showCoordinates", showCoordinates);
         });

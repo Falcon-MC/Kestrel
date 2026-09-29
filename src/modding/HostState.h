@@ -2,6 +2,7 @@
 
 #include "CommandRegistry.h"
 #include "EventDispatcher.h"
+#include "KeyBindRegistry.h"
 #include "PacketFilters.h"
 #include "ShaderStore.h"
 #include "TaskScheduler.h"
@@ -44,6 +45,7 @@ struct HostState {
 
     EventDispatcher events;
     CommandRegistry commands;
+    KeyBindRegistry keyBinds;
     TaskScheduler scheduler;
     std::shared_ptr<PacketFilters> packets;
     ShaderStore shaders;

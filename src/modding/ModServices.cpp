@@ -1,14 +1,18 @@
 #include "ModServices.h"
 
 #include "client/DebugLog.h"
+#include "mod/Config.h"
 #include "menu/Menu.h"
 #include "mod/Events.h"
 #include "platform/Input.h"
+#include "platform/Keys.h"
 
 #include "Protocol/MinecraftPacketIds.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
+#include <stdexcept>
 
 namespace kestrel::modding {
 
@@ -439,9 +443,10 @@ std::string_view NetworkService::gameVersion() const
     return Session::gameVersion();
 }
 
-InputService::InputService(HostState& host, size_t owner)
+InputService::InputService(HostState& host, size_t owner, mod::Config& config)
     : host(host)
     , owner(owner)
+    , config(config)
 {
 }
 
@@ -470,6 +475,35 @@ mod::Subscription InputService::bind(mod::Key key, std::function<void()> action)
     return host.events.subscribe(owner, mod::KeyPressEvent::Type, [key, action = std::move(action)](mod::Event& event) {
         auto& press = static_cast<mod::KeyPressEvent&>(event);
         if (press.inGame && press.key == key) {
+            press.cancel();
+            action();
+        }
+    }, {});
+}
+
+mod::Subscription InputService::bind(mod::KeyBindSpec spec, std::function<void()> action)
+{
+    if (spec.id.empty() || spec.id.find(' ') != std::string::npos || spec.id.find(':') != std::string::npos) {
+        throw std::invalid_argument("A bind id is one word without ':', got \"" + spec.id + "\"");
+    }
+    Key key = spec.defaultKey;
+    if (std::optional<std::string> saved = config.find("bind." + spec.id)) {
+        Key named = keyFromName(*saved);
+        if (named != Key::None) {
+            key = named;
+        }
+    }
+    std::string modId;
+    std::string modName;
+    if (owner > 0 && owner <= host.loaded.size()) {
+        modId = host.loaded[owner - 1].id;
+        modName = host.loaded[owner - 1].name;
+    }
+    std::string bindId = spec.id;
+    host.keyBinds.add(owner, std::move(modId), std::move(modName), spec, key, &config);
+    return host.events.subscribe(owner, mod::KeyPressEvent::Type, [this, bindId = std::move(bindId), action = std::move(action)](mod::Event& event) {
+        auto& press = static_cast<mod::KeyPressEvent&>(event);
+        if (press.inGame && press.key == host.keyBinds.current(owner, bindId) && press.key != Key::None) {
             press.cancel();
             action();
         }
