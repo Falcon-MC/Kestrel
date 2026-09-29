@@ -806,6 +806,20 @@ void Menu::settingsPage(Context& ui, const Rect& area)
             std::string label = waiting ? tr("options.pressKey", "Press a key...") : std::string(keyName(bindings.keys[i]));
             if (ui.pressableButton(std::string("bind:") + KeyBindings::id(i), waiting ? "pressableElevatedPrimary" : "pressableElevatedSecondary", label, { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
                 rebinding = i;
+                rebindingMod.reset();
+            }
+        }
+        if (!modBinds.empty()) {
+            settingsHeading(ui, x, y, w, "Mods", "Keys added by loaded mods. They disappear when the mod is removed.");
+            for (const ModKeyBind& bind : modBinds) {
+                float rowY = y;
+                bool waiting = rebindingMod && *rebindingMod == bind.id;
+                settingsRow(ui, x, y, w, bind.label, {}, 31.33f);
+                std::string label = waiting ? tr("options.pressKey", "Press a key...") : std::string(keyName(bind.key));
+                if (ui.pressableButton(std::string("modbind:") + bind.id, waiting ? "pressableElevatedPrimary" : "pressableElevatedSecondary", label, { x + w - 12.0f - 68.0f, rowY + 5.0f, 68.0f, 20.0f })) {
+                    rebindingMod = bind.id;
+                    rebinding.reset();
+                }
             }
         }
         float rowY = y;

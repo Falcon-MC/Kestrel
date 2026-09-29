@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/Session.h"
+#include "menu/Menu.h"
 #include "mod/Types.h"
 #include "render/Renderer.h"
 
@@ -77,6 +78,9 @@ public:
     bool filterActionbar(ActionbarText& actionbar);
     bool filterToast(ToastRequest& toast);
     bool filterForm(const FormRequest& form);
+
+    std::vector<menu::ModKeyBind> listedKeyBinds() const;
+    bool setKeyBind(const std::string& id, Key key);
 
     void drawHud(ui::Context& context, float width, float height, bool screenOpen);
 

@@ -71,12 +71,12 @@ private:
     PlayerService playerService;
     WorldService worldService;
     NetworkService networkService;
-    InputService inputService;
     CommandService commandService;
     LoggerService loggerService;
     SchedulerService schedulerService;
     ShaderService shaderService;
     ModConfig settings;
+    InputService inputService;
 };
 
 /**

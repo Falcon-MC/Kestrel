@@ -43,6 +43,11 @@ void Client::startMods()
     };
     mods = std::make_unique<modding::ModManager>(session, menu, *renderer, std::move(bridge));
     mods->loadFolder(platform::dataDirectory() / "mods");
+    menu.setModKeyBindHandler([this](const std::string& id, Key key) {
+        if (mods) {
+            mods->setKeyBind(id, key);
+        }
+    });
 }
 
 }

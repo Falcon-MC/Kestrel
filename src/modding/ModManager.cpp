@@ -107,6 +107,21 @@ ModManager::~ModManager()
     }
     host->events.release(HostOwner);
     host->commands.release(HostOwner);
+    host->keyBinds.release(HostOwner);
+}
+
+std::vector<menu::ModKeyBind> ModManager::listedKeyBinds() const
+{
+    std::vector<menu::ModKeyBind> binds;
+    for (const KeyBindRegistry::Listed& entry : host->keyBinds.list()) {
+        binds.push_back({ entry.id, entry.label, entry.key });
+    }
+    return binds;
+}
+
+bool ModManager::setKeyBind(const std::string& id, Key key)
+{
+    return host->keyBinds.set(id, key);
 }
 
 void ModManager::loadFolder(const std::filesystem::path& folder)

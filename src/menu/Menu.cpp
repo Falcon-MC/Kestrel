@@ -434,6 +434,7 @@ void Menu::safeFrame(Context& ui, float width, float height)
     if (ui.input().mousePressed) {
         field = Field::None;
         rebinding.reset();
+        rebindingMod.reset();
     }
     if (inGame() && session.dead) {
         if (dialog == Dialog::None && screen == Screen::Title) {
@@ -1575,12 +1576,18 @@ void Menu::handleKeys(Context& ui)
 {
     const InputState& input = ui.input();
 
-    if (rebinding) {
+    if (rebinding || rebindingMod) {
         if (input.pressedKey == Key::Escape) {
             rebinding.reset();
+            rebindingMod.reset();
         } else if (input.pressedKey != Key::None) {
-            bindings.keys[*rebinding] = input.pressedKey;
+            if (rebinding) {
+                bindings.keys[*rebinding] = input.pressedKey;
+            } else if (onModKeyBind) {
+                onModKeyBind(*rebindingMod, input.pressedKey);
+            }
             rebinding.reset();
+            rebindingMod.reset();
         }
         return;
     }
@@ -1748,6 +1755,7 @@ void Menu::navigate(Screen target)
     detailScroll = 0.0f;
     pageScroll = 0.0f;
     rebinding.reset();
+    rebindingMod.reset();
 }
 
 void Menu::openScreen(Screen target)

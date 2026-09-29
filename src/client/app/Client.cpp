@@ -152,6 +152,7 @@ int Client::run()
             syncChat();
             syncForms();
             mods->update(deltaSeconds);
+            menu.setModKeyBinds(mods->listedKeyBinds());
         }
         {
             Profiler::Section section(profiler, "mesh upload");
