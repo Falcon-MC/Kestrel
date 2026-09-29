@@ -75,7 +75,7 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         }
         debugLog("inventory content window " + std::to_string(content->mContainerId)
             + " stacks " + std::to_string(content->mContents.size()));
-        if (content->mContainerId == inventoryModel.windowId && inventoryModel.windowId != 0 && content->mContents.size() <= 54)
+        if (content->mContainerId == inventoryModel.windowId && inventoryModel.windowId != 0 && content->mContents.size() <= 54 && !enderChestOpen)
             inventoryModel.containerSize = int(content->mContents.size());
         int length = content->mContainerId == 0 ? 36 : content->mContainerId == 120 ? 4 : content->mContainerId == 119 ? 1
             : content->mContainerId == 124 ? 54 : inventoryModel.containerSize;
@@ -103,6 +103,23 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         inventoryModel.windowId = uint8_t(open->mWindowId);
         inventoryModel.type = open->mType;
         inventoryModel.containerSize = containerSize(open->mType);
+        enderChestOpen = false;
+        if (open->mType == ContainerType::Container && open->mUniqueActorId == -1 && assets) {
+            uint32_t block = blockAt(open->mBlockPosition.x, open->mBlockPosition.y, open->mBlockPosition.z);
+            std::string name = assets->blockName(block, ids.hashed, ids.sequential.get());
+            enderChestOpen = name == "minecraft:ender_chest" || name == "ender_chest";
+        }
+        current.hud.container.enderChest = enderChestOpen;
+        current.hud.container.customName.clear();
+        if (open->mUniqueActorId == -1) {
+            const Vector3i& at = open->mBlockPosition;
+            std::shared_ptr<const world::BlockEntityMap> entities = world.store().blockEntities({ current.dimension, at.x >> 4, at.y >> 4, at.z >> 4 });
+            if (entities) {
+                auto found = entities->find(static_cast<uint16_t>(world::linearIndex(uint32_t(at.x & 15), uint32_t(at.y & 15), uint32_t(at.z & 15))));
+                const Tag* name = found != entities->end() ? found->second.get("CustomName") : nullptr;
+                if (name && name->getType() == Tag::Type::String) current.hud.container.customName = name->asString();
+            }
+        }
         for (int i = Container; i < SlotCount; ++i) inventoryModel.slots[i] = ItemStack::air();
         current.hud.container.furnaceProgress = 0;
         current.hud.container.furnaceFlame = 0;
