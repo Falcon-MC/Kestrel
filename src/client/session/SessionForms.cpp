@@ -60,7 +60,7 @@ void Session::flushForms()
             response.mHasCancelReason = true;
             response.mCancelReason = answer.busy ? ModalFormResponsePacket::CancelReason::UserBusy : ModalFormResponsePacket::CancelReason::UserClosed;
         }
-        connection->send(response);
+        transmit(response);
     }
 }
 

@@ -99,7 +99,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             NetworkStackLatencyPacket answer;
             answer.mTimestamp = latency->mTimestamp;
             answer.mFromServer = false;
-            connection->send(answer);
+            transmit(answer);
             connection->flush();
         }
     } else if (auto move = std::dynamic_pointer_cast<MovePlayerPacket>(packet)) {
@@ -136,7 +136,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             ready.mPosition = respawn->mPosition;
             ready.mState = RespawnPacket::State::ClientReady;
             ready.mRuntimeActorId = localRuntimeId;
-            connection->send(ready);
+            transmit(ready);
             connection->flush();
         }
         std::lock_guard<std::mutex> guard(mutex);
@@ -370,7 +370,7 @@ void Session::tickMotion()
     tickBreaking(packet, tick);
     tickCracks();
     tickChestLids();
-    connection->send(packet);
+    transmit(packet);
     tickHeldUse();
     connection->flush();
     lastMotionInput = input;

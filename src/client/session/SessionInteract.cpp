@@ -230,7 +230,7 @@ void Session::interact(bool use)
     if (target) {
         buildLast.reset();
     }
-    connection->send(packet);
+    transmit(packet);
 }
 
 /**
@@ -257,7 +257,7 @@ void Session::useOnBlock(const BlockHit& block)
     packet.mClickPosition = Vector3f(float(block.point[0] - block.cell[0]), float(block.point[1] - block.cell[1]), float(block.point[2] - block.cell[2]));
     packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
     debugLog("use item on " + block.name);
-    connection->send(packet);
+    transmit(packet);
     std::array<int32_t, 3> placed = placedCell(block);
     // A block that has nowhere to go leaves the arm still, the way the game only swings for a placement.
     bool swings = !packet.mItemInHand.isAir() && (!holdsBlock(packet.mItemInHand) || placeableAt(placed));
@@ -525,7 +525,7 @@ void Session::pickBlock(bool withData)
         packet.mHotbarSlot = std::clamp(current.hud.selectedSlot, 0, 8);
     }
     debugLog("pick block " + block->name);
-    connection->send(packet);
+    transmit(packet);
 }
 
 }
