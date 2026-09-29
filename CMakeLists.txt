@@ -194,7 +194,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(Kestrel PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
-    target_link_libraries(Kestrel PRIVATE d3d12 dxgi d3dcompiler dwmapi shell32 advapi32 comdlg32)
+    target_link_libraries(Kestrel PRIVATE d3d12 dxgi d3dcompiler dwmapi shell32 advapi32 comdlg32 ws2_32)
     set_target_properties(Kestrel PROPERTIES WIN32_EXECUTABLE TRUE)
     if(MSVC)
         target_compile_options(Kestrel PRIVATE /utf-8 /W3)

@@ -605,6 +605,85 @@ public:
     std::optional<ConnectRequest> takeConnectRequest();
     void notify(std::string message);
 
+    Screen currentScreen() const
+    {
+        return screen;
+    }
+
+    Dialog currentDialog() const
+    {
+        return dialog;
+    }
+
+    SettingsPage currentSettingsPage() const
+    {
+        return settingsSection;
+    }
+
+    PlayTab currentPlayTab() const
+    {
+        return playTab;
+    }
+
+    bool socialDrawerOpen() const
+    {
+        return socialOpen;
+    }
+
+    /**
+     * Goes straight to a screen the way its button would, for automation.
+     */
+    void openScreen(Screen target);
+
+    void openSettingsPage(SettingsPage page)
+    {
+        settingsSection = page;
+        pageScroll = 0.0f;
+    }
+
+    void openPlayTab(PlayTab tab)
+    {
+        playTab = tab;
+        listScroll = 0.0f;
+    }
+
+    /**
+     * Shows or dismisses a dialog for automation. Only the ones a player can
+     * open on purpose are allowed; false for the rest.
+     */
+    bool showDialog(Dialog which);
+
+    /**
+     * Starts joining a server as if its entry had been clicked.
+     */
+    void connectTo(std::string name, std::string address)
+    {
+        pending = ConnectRequest { std::move(name), std::move(address) };
+    }
+
+    /**
+     * Opens the inventory the way its key does, when the player is in game.
+     */
+    bool openInventory();
+
+    /**
+     * Opens the add server form, or the edit form of a saved server.
+     */
+    void editServer(std::optional<size_t> index)
+    {
+        openServerForm(index);
+    }
+
+    /**
+     * The chat log, oldest line first.
+     */
+    std::vector<std::string> chatLog() const;
+
+    bool inventoryOpen() const
+    {
+        return inventory.active;
+    }
+
     /**
      * Queues a toast from the server, shown over every screen once the ones
      * before it are gone.

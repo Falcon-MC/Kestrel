@@ -66,6 +66,19 @@ public:
     void draw(ui::Context& ui, float width, float height);
     std::vector<FormAnswer> takeAnswers();
 
+    /**
+     * The forms on screen, the one underneath first, each with its id and
+     * the JSON the server sent.
+     */
+    std::vector<std::pair<uint32_t, std::string>> openForms() const;
+
+    /**
+     * Answers an open form the way its buttons would and takes it away:
+     * with the response JSON, or with none to close it. False when no form
+     * with that id is open.
+     */
+    bool answer(uint32_t id, std::optional<std::string> data);
+
 private:
     enum class Kind {
         Simple,
@@ -108,6 +121,7 @@ private:
         std::string content;
         std::string submit;
         std::vector<Element> elements;
+        std::string json;
     };
 
     ui::UiData formData(const Form& form) const;

@@ -30,6 +30,7 @@ namespace kestrel {
 namespace {
 
 constexpr size_t MinVisibleTerrain = 1024;
+constexpr int HiddenMaxFps = 30;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t ShadedQuadFlag = 1u << 8;
@@ -43,7 +44,7 @@ constexpr const char* FeaturedSpritePrefix = "dynamic/featured/";
 
 }
 
-Client::Client()
+Client::Client(LaunchOptions options)
     : store(platform::dataDirectory() / "servers.txt")
     , menu(store)
     , account(platform::dataDirectory() / "microsoft-token.json")
@@ -57,8 +58,12 @@ Client::Client()
     if (!font.load(assets, skin)) {
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
-    window = Window::create("Kestrel", 1280, 760);
-    if (savedFullscreen) {
+    launch = std::move(options);
+    if (launch.connect) {
+        pendingConnect = menu::ConnectRequest { *launch.connect, *launch.connect };
+    }
+    window = Window::create("Kestrel", launch.width, launch.height, !launch.hidden);
+    if (savedFullscreen && !launch.hidden) {
         window->toggleFullscreen();
     }
     renderer = Renderer::create(*window);
@@ -77,6 +82,9 @@ Client::Client()
     std::error_code oreuiError;
     if (!vanilla.empty() && std::filesystem::is_directory(vanilla.parent_path() / "oreui", oreuiError)) {
         ui::Localization::shared().setInterfacePack(std::make_shared<world::PackSource>(vanilla.parent_path() / "oreui"));
+    }
+    if (launch.agent) {
+        startAgent();
     }
 }
 
@@ -102,7 +110,11 @@ int Client::run()
             }
         }
         discord.update();
-        if (window->consumeFocusLost()) {
+        if (agentServer) {
+            Profiler::Section section(profiler, "agent");
+            serveAgent();
+        }
+        if (window->consumeFocusLost() && !agentServer) {
             menu.pauseIfPlaying();
         }
         if (window->consumeResize()) {
@@ -110,7 +122,12 @@ int Client::run()
             renderer->resize(window->width(), window->height());
         }
 
-        if (int limit = menu.maxFps(); limit != menu::UnlimitedFps) {
+        int limit = menu.maxFps();
+        // Nobody watches a hidden window, and an agent reads it a few times a second at most.
+        if (!window->visible()) {
+            limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
+        }
+        if (limit != menu::UnlimitedFps) {
             Profiler::Section section(profiler, "fps cap wait");
             std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
         }
@@ -226,9 +243,13 @@ int Client::run()
 
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
+        context.recordWidgets(agentServer != nullptr);
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
+            if (agentServer) {
+                agentWidgets = context.widgets();
+            }
             for (auto& command : menu.inventoryPanel().takeCommands()) session.requestInventory(std::move(command));
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
@@ -284,7 +305,7 @@ int Client::run()
         }
 
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
-            session.connect(request->name, request->address, account.signedInAuthentication(), menu.playerName());
+            session.connect(request->name, request->address, account.signedInAuthentication(), offlineName());
         }
         if (menu.takeRespawnRequest()) {
             session.requestRespawn();
@@ -302,7 +323,7 @@ int Client::run()
         if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.safeArea() != savedSafeArea || menu.soundVolumes() != savedVolumes) {
             saveSettings();
         }
-        if (menu.quitRequested()) {
+        if (menu.quitRequested() || agentQuit) {
             break;
         }
 
@@ -385,6 +406,9 @@ int Client::run()
             Profiler::Section section(profiler, "present gpu");
             renderer->endFrame();
         }
+        if (!agentCaptures.empty()) {
+            finishAgentCaptures();
+        }
         profiler.endFrame();
     }
     return 0;
@@ -413,6 +437,14 @@ void Client::collectFeaturedImages()
 void Client::syncForms()
 {
     for (FormRequest& request : session.takeForms()) {
+        if (agentServer) {
+            agent::JsonWriter writer;
+            writer.beginObject().field("id", request.id).field("close", request.close);
+            if (!request.close) {
+                writer.field("json", request.data);
+            }
+            agentEvents.add("form", writer.endObject().take());
+        }
         if (request.close) {
             menu.formPanel().closeAll();
         } else {
@@ -540,6 +572,11 @@ void Client::syncFeatured()
 void Client::syncAccount()
 {
     AccountSnapshot snapshot = account.snapshot();
+    // Wait for the saved sign in to come back, or an online server sees an offline player.
+    if (pendingConnect && snapshot.state != AccountState::Connecting) {
+        menu.connectTo(std::move(pendingConnect->name), std::move(pendingConnect->address));
+        pendingConnect.reset();
+    }
     menu::AccountInfo info;
     switch (snapshot.state) {
     case AccountState::SignedOut:
@@ -857,6 +894,9 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
 void Client::syncSession()
 {
     SessionSnapshot snapshot = session.snapshot();
+    if (agentSession) {
+        agentSession->observe(snapshot);
+    }
     playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
     if (menu.debugVisible()) {
         menu.setDebugView(buildDebugView(snapshot));

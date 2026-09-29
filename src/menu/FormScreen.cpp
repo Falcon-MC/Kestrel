@@ -87,6 +87,7 @@ void FormScreen::open(uint32_t id, const std::string& json)
 
     Form form;
     form.id = id;
+    form.json = json;
     form.title = formText(root->get("title"));
     if (type == "modal") {
         form.kind = Kind::Modal;
@@ -206,6 +207,25 @@ std::vector<FormAnswer> FormScreen::takeAnswers()
     std::vector<FormAnswer> taken = std::move(answers);
     answers.clear();
     return taken;
+}
+
+std::vector<std::pair<uint32_t, std::string>> FormScreen::openForms() const
+{
+    std::vector<std::pair<uint32_t, std::string>> open;
+    for (const Form& form : forms) {
+        open.emplace_back(form.id, form.json);
+    }
+    return open;
+}
+
+bool FormScreen::answer(uint32_t id, std::optional<std::string> data)
+{
+    auto found = std::find_if(forms.begin(), forms.end(), [id](const Form& form) { return form.id == id; });
+    if (found == forms.end()) {
+        return false;
+    }
+    submit(*found, std::move(data));
+    return true;
 }
 
 void FormScreen::submit(Form& form, std::optional<std::string> data)
