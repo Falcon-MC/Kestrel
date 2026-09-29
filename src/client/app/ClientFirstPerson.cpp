@@ -351,6 +351,11 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         }
         out.push_back(packQuad(corners, quad.uvs, skinLayer,(quad.flags & world::QuadFaceMask) | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
     }
+    std::array<std::string, 4> armor;
+    for (size_t piece = 0; piece < armor.size(); ++piece) {
+        armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
+    }
+    appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown);
     if (heldName.empty() || itemBone < 0) {
         return;
     }
