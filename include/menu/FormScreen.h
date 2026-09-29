@@ -3,6 +3,7 @@
 #include "ui/JsonUi.h"
 #include "ui/Types.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -118,6 +119,9 @@ private:
     std::vector<FormAnswer> answers;
     std::shared_ptr<const ui::JsonUi> definitions;
     std::unique_ptr<ui::JsonUiScreen> screen;
+    std::unique_ptr<ui::JsonUiScreen> leaving;
+    ui::UiData leavingData;
+    std::chrono::steady_clock::time_point leftAt;
     uint32_t shownForm = 0;
     size_t shownDepth = 0;
 };

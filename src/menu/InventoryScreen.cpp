@@ -11,6 +11,8 @@ namespace kestrel::menu {
 namespace {
 using namespace inventory;
 constexpr ui::Color White { 255, 255, 255, 255 }, Ink { 76, 76, 76, 255 };
+// What a closed inventory reads while it slides out, so it can't act on anything.
+const InputState NoInput {};
 
 double nowSeconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 std::string nameOf(const HudItem& item) { return item.customName.empty() ? world::itemDisplayName(item.identifier) : item.customName; }
@@ -69,8 +71,7 @@ bool InventoryScreen::handleKeys(const InputState& input, Key inventoryKey)
 
 void InventoryScreen::draw(ui::Context& ui, float width, float height, const std::function<void(float,float,float)>& player)
 {
-    if (!active) return;
-    const auto& input = ui.input();
+    const auto& input = active ? ui.input() : NoInput;
     const bool workbench = state.type == ContainerType::Workbench;
     const bool container = state.containerSize > 0;
     const bool furnace = state.type == ContainerType::Furnace || state.type == ContainerType::BlastFurnace || state.type == ContainerType::Smoker;
@@ -84,7 +85,6 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
         std::floor((height - panelHeight * unit) * 0.5f * ui.pixelScale()) / ui.pixelScale(), unit };
     const float right = showBook ? 150.0f : 0.0f;
     const float bookWidth = wide ? 326.0f : 146.0f;
-    ui.fill({0,0,width,height}, {0,0,0,102});
     hoveredSlot = -1;
     const HudItem* tooltipItem = nullptr;
     std::string tooltip;

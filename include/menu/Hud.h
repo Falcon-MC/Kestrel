@@ -148,6 +148,8 @@ struct HudView {
     std::vector<HudEffectView> effects;
     std::vector<HudBossBar> bossBars;
     std::vector<NameTag> nameTags;
+    // Everyone on the server's player list, for the pause screen's players_collection.
+    std::vector<std::string> players;
     bool sidebarVisible = false;
     ui::UiData sidebar;
     // The paper doll is up, which pushes the chat below it.

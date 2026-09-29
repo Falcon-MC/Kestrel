@@ -200,6 +200,23 @@ using SequentialMap = std::vector<int32_t>;
 
 inline constexpr uint32_t EntityTextureSize = 128;
 inline constexpr uint32_t MaxEntityTiles = 8;
+
+/**
+ * How an entity texture bigger than a layer is laid over a grid of layers.
+ * It is copied texel for texel from the top left, so cover is the share of
+ * the grid it fills; only textures too big for the grid get squeezed.
+ */
+struct EntityTileGrid {
+    uint32_t tilesX = 1;
+    uint32_t tilesY = 1;
+    float coverX = 1.0f;
+    float coverY = 1.0f;
+
+    bool single() const
+    {
+        return tilesX * tilesY <= 1;
+    }
+};
 inline constexpr uint32_t ItemIconSize = 64;
 
 /**
@@ -269,6 +286,7 @@ struct EntityRenderController {
     std::vector<EntityPartRule> parts;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
+    bool ignoreLighting = false;
 };
 
 /**
@@ -398,10 +416,10 @@ public:
      * How many layers across and down an entity texture starting at layer is
      * cut into; one by one for all but the textures bigger than a layer.
      */
-    std::pair<uint32_t, uint32_t> entityTileGrid(uint32_t layer) const
+    EntityTileGrid entityTileGrid(uint32_t layer) const
     {
         auto found = entityTiles.find(layer);
-        return found == entityTiles.end() ? std::make_pair(1u, 1u) : found->second;
+        return found == entityTiles.end() ? EntityTileGrid {} : found->second;
     }
 
     std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
@@ -503,7 +521,7 @@ private:
     std::unordered_map<std::string, uint32_t> armorLayers;
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
-    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> entityTiles;
+    std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
     std::unordered_map<std::string, std::vector<std::vector<uint8_t>>> itemTextures;

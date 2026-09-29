@@ -840,6 +840,12 @@ void Session::handleWorldPacket(const std::string& payload)
         }
     }
 
+    if (auto animation = std::dynamic_pointer_cast<AnimatePacket>(packet); animation && animation->mAction == AnimatePacket::Action::SwingArm) {
+        if (auto actor = actors.find(animation->mRuntimeActorId); actor != actors.end()) {
+            actor->second.lastSwing = secondsNow();
+        }
+    }
+
     if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
             actor->second.armor = {

@@ -857,7 +857,8 @@ void Font::drawNameTag(DrawList& list, std::string_view text, Color color, bool 
         float width = measure(line, TextStyle::Pixel);
         float x = -std::floor(width * 0.5f);
         if (background && width > 0.0f) {
-            list.fill({ x - 1.0f, y - 1.0f, width + 2.0f, 9.0f }, { 0, 0, 0, 64 });
+            // Bedrock backs tags with half transparent black, twice Java's.
+            list.fill({ x - 1.0f, y - 1.0f, width + 2.0f, 9.0f }, { 0, 0, 0, 128 });
         }
         emitPixel(list, line, x / scale, y / scale, color, false, 1.0f / scale);
         carried = activeFormatting(line);

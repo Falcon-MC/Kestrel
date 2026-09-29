@@ -292,6 +292,13 @@ ui::UiData hudData(const HudView& view)
     bool hotbarShown = view.showHotbar && !view.hidden(HudElement::HotBar);
     bool experience = survival && !view.hidden(HudElement::ProgressBar);
     g["#hud_visible"] = flag(view.visible);
+    // Packs draw their own tab list from these, the way the pause screen lists players.
+    g["#players_grid_dimension"] = text("1," + std::to_string(view.players.size()));
+    std::vector<ui::UiRow>& players = data.collections["players_collection"];
+    players.reserve(view.players.size());
+    for (const std::string& name : view.players) {
+        players.push_back({ { "#gamertag", text(name) }, { "#gamerpic_visible", flag(false) }, { "#texture", text("") }, { "#texture_source", text("") } });
+    }
     g["#hud_alpha"] = number(1.0);
     g["#hud_propagate_alpha"] = flag(false);
     g["#hud_visible_centered"] = flag(true);

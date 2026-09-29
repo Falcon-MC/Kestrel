@@ -193,6 +193,8 @@ struct JsonUiRuntime {
     float laidMouseX = 0.0f;
     float laidMouseY = 0.0f;
     bool laidBlocked = false;
+    std::vector<std::string> laidHeld;
+    std::vector<std::string> held;
     std::vector<Node*> painted;
 
     // JsonUiBuild.cpp
@@ -224,6 +226,7 @@ struct JsonUiRuntime {
     void update(Node& node, int depth, Node* control);
     static bool isControl(const Node& node);
     void chooseStates(Node& node);
+    bool heldDown(const Node& node) const;
     void overrideState(Node& control, Node& node);
     std::vector<std::unique_ptr<Node>> takeGenerated(Node& node);
     void sweep(Node& node);

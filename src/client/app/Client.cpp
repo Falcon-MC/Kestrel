@@ -30,6 +30,7 @@ namespace kestrel {
 namespace {
 
 constexpr size_t MinVisibleTerrain = 1024;
+constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t ShadedQuadFlag = 1u << 8;
 constexpr uint8_t OpenSkyLight = 0xF0;
@@ -355,7 +356,7 @@ int Client::run()
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 appendFirstPerson(entityOrigin, handQuads);
-                lightQuads(handQuads, 0, camera.x(), camera.y() - 1.0, camera.z());
+                lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
                 if (self) {
                     appendPaperDoll(*self, entityOrigin, handQuads);
                 }
@@ -434,7 +435,7 @@ std::string Client::formImage(const menu::FormImage& image)
         if (featuredImages.count(image.data)) {
             return FeaturedSpritePrefix + image.data;
         }
-        featured->requestImage(image.data, false);
+        featured->requestImage(image.data, false, true);
         return menu::FormImageLoading;
     }
     std::string path = image.data;
@@ -748,18 +749,32 @@ uint8_t Client::lightAt(double x, double y, double z) const
 }
 
 /**
- * Lights the quads appended since first by the cell at the feet and the one
- * above, whichever is brighter per channel, so a mob half sunk in a slab or
- * snow layer does not go black. Additive quads like spider eyes stay bright.
+ * The light an entity standing at the point takes: the cell at the feet and
+ * the one above, whichever is brighter per channel, so a mob half sunk in a
+ * slab or snow layer does not go black. Packed for all four quad corners.
  */
-void Client::lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, double x, double y, double z) const
+uint32_t Client::lightCorners(double x, double y, double z) const
 {
     uint8_t feet = lightAt(x, y, z);
     uint8_t head = lightAt(x, y + 1.0, z);
     uint32_t level = uint32_t(std::max(feet & 15, head & 15)) | (uint32_t(std::max(feet >> 4, head >> 4)) << 4);
-    uint32_t corners = level * 0x01010101u;
+    return level * 0x01010101u;
+}
+
+/**
+ * Lights the quads appended since first. Additive quads like spider eyes
+ * stay bright. Block textured quads, like a block in hand, are always shaded
+ * by their light and keep their tint in the upper bits, so only entity quads
+ * get the shaded flag.
+ */
+void Client::lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, uint32_t corners) const
+{
     for (size_t index = first; index < quads.size(); ++index) {
         world::ModelQuadGpu& quad = quads[index];
+        if (!(quad.words[11] & EntityQuadFlag)) {
+            quad.words[12] = corners;
+            continue;
+        }
         if (quad.words[11] & AdditiveQuadFlag) {
             continue;
         }

@@ -191,6 +191,12 @@ public:
     void fire(const std::string& event);
 
     /**
+     * Holds a button id down the way a key held on the keyboard does, so a
+     * button mapping it globally shows its pressed_control until released.
+     */
+    void holdButton(const std::string& id, bool held);
+
+    /**
      * Lays out, draws and runs the input of the screen inside area.
      */
     void draw(Context& ui, const Rect& area, const UiData& data);

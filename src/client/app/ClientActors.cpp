@@ -64,12 +64,17 @@ world::ModelQuadGpu packCorners(const std::array<QuadCorner, 4>& corners, uint32
  * quad is cut along the tile edges it crosses, each piece sampling the one
  * layer under it with its UVs moved into that tile.
  */
-void appendTiled(const std::array<QuadCorner, 4>& corners, uint32_t layer, std::pair<uint32_t, uint32_t> grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
 {
-    auto [tilesX, tilesY] = grid;
-    if (tilesX * tilesY <= 1) {
+    if (grid.single()) {
         out.push_back(packCorners(corners, layer, shadeWord));
         return;
+    }
+    uint32_t tilesX = grid.tilesX;
+    uint32_t tilesY = grid.tilesY;
+    for (QuadCorner& corner : corners) {
+        corner.uv[0] *= grid.coverX;
+        corner.uv[1] *= grid.coverY;
     }
     auto cuts = [&](const QuadCorner& from, const QuadCorner& to) {
         std::vector<float> list { 0.0f, 1.0f };
@@ -155,6 +160,30 @@ float wrapDegrees(float degrees)
 {
     float wrapped = std::fmod(degrees + 180.0f, 360.0f);
     return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
+}
+
+/**
+ * A player's body trailing its head the way the game turns it, advanced by
+ * ticks while it moves stepX and stepZ blocks a tick: it swings toward the
+ * walking direction (facing forward while backing up), never lets the head
+ * turn more than 75 degrees away, and creeps after the head once it is past
+ * 50. Servers only send where players look, so every client works this out.
+ */
+float trailBody(float body, float head, double stepX, double stepZ, float ticks)
+{
+    if (stepX * stepX + stepZ * stepZ > 0.0025) {
+        float heading = static_cast<float>(std::atan2(-stepX, stepZ) * 180.0 / 3.14159265358979);
+        if (std::abs(wrapDegrees(head - heading)) > 95.0f) {
+            heading += 180.0f;
+        }
+        body += wrapDegrees(heading - body) * (1.0f - std::pow(0.7f, ticks));
+    }
+    float turn = std::clamp(wrapDegrees(head - body), -75.0f, 75.0f);
+    body = head - turn;
+    if (std::abs(turn) > 50.0f) {
+        body += turn * (1.0f - std::pow(0.8f, ticks));
+    }
+    return wrapDegrees(body);
 }
 
 /**
@@ -245,7 +274,8 @@ std::optional<world::BoneMatrix> invert(const world::BoneMatrix& m)
  * in 1/256 block: every bone posed by the entity's animations, then the model
  * scaled and turned to its body yaw. Entity quads set bit 5 of the shade word
  * so they sample the entity textures, and bit 6 when their material adds
- * light; the rest take the light around the entity. Quads whose material
+ * light; the rest take the light around the entity unless their render
+ * controller ignores lighting. Quads whose material
  * blends go to blended. Zero scale entities draw
  * nothing; invisible ones hide their body but keep their armor and held item.
  */
@@ -287,12 +317,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (!frustum.contains(cullView, blockX - 8, blockY - 7, blockZ - 8)) {
             continue;
         }
-        size_t firstOpaque = out.size();
-        size_t firstBlended = blended.size();
+        uint32_t light = lightCorners(actor.x, actor.y, actor.z);
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
+                size_t first = out.size();
                 appendDroppedItem(actor, origin, now, out);
-                lightQuads(out, firstOpaque, actor.x, actor.y, actor.z);
+                lightQuads(out, first, light);
             }
             continue;
         }
@@ -338,6 +368,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 { "is_holding_right", held.empty() ? 0.0 : 1.0 },
                 { "is_first_person", 0.0 },
             };
+        } else if (actor.lastSwing > 0.0) {
+            input.engineVariables = { { "attack_time", swingProgressSince(actor.lastSwing, now) } };
         }
         float& swimAmount = swimAmounts[actor.runtimeId];
         bool swimmingFlag = (actor.flags[SwimmingFlag / 64] >> (SwimmingFlag % 64)) & 1;
@@ -428,7 +460,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             static_cast<float>((camera.y() - origin[1]) * 256.0),
             static_cast<float>((camera.z() - origin[2]) * 256.0),
         };
-        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided) {
+        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : matrices.size();
             if (bone < hidden.size() && hidden[bone]) {
@@ -474,7 +506,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             uint32_t shadeWord = (quad.flags & world::QuadFaceMask) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
-            appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, blend == world::EntityBlend::Opaque ? out : blended);
+            std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
+            size_t first = target.size();
+            appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, target);
+            if (lit) {
+                lightQuads(target, first, light);
+            }
         };
         if (!invisible && combined) {
             for (size_t index = 0; index < model->controllers.size(); ++index) {
@@ -488,7 +525,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
                     const world::CombinedQuadSource& from = model->combinedSources[quad];
                     if (from.controller == index && from.rig == picked) {
-                        emit(quad, layer, hidden, source.blend, source.oneSided);
+                        emit(quad, layer, hidden, source.blend, source.oneSided, !source.ignoreLighting);
                     }
                 }
             }
@@ -497,10 +534,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             std::vector<uint8_t> hidden = controller ? hiddenBones(*controller) : std::vector<uint8_t> {};
             world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
             bool oneSided = controller && controller->oneSided;
+            bool lit = !controller || !controller->ignoreLighting;
             for (size_t index = 0; index < rig.quads.size(); ++index) {
-                emit(index, layer, hidden, blend, oneSided);
+                emit(index, layer, hidden, blend, oneSided, lit);
             }
         }
+        size_t firstWorn = out.size();
         auto toWorld = [&](const std::array<float, 3>& posed) {
             std::array<float, 3> p { posed[0] * scale, posed[1] * scale, posed[2] * scale };
             return std::array<float, 3> { baseX + cosine * p[0] + sine * p[2], baseY + p[1], baseZ - sine * p[0] + cosine * p[2] };
@@ -512,8 +551,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (actor.runtimeId == LocalActorId) {
             appendThirdPersonItem(rig, matrices, toWorld, out);
         }
-        lightQuads(out, firstOpaque, actor.x, actor.y, actor.z);
-        lightQuads(blended, firstBlended, actor.x, actor.y, actor.z);
+        lightQuads(out, firstWorn, light);
     }
     for (auto it = animators.begin(); it != animators.end();) {
         if (present.count(it->first)) {
@@ -560,7 +598,7 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
                 }
             }
         }
-        std::pair<uint32_t, uint32_t> grid = blockAssets->entityTileGrid(look.layer);
+        world::EntityTileGrid grid = blockAssets->entityTileGrid(look.layer);
         for (size_t index = 0; index < look.rig->quads.size(); ++index) {
             size_t piece = index < look.rig->quadBones.size() ? look.rig->quadBones[index] : wearer.size();
             int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
@@ -649,7 +687,7 @@ bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holde
             }
         }
     }
-    std::pair<uint32_t, uint32_t> grid = blockAssets->entityTileGrid(model->layer);
+    world::EntityTileGrid grid = blockAssets->entityTileGrid(model->layer);
     for (size_t index = 0; index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
         if (bone >= rig.bones.size() || !attached[bone]) {
@@ -742,10 +780,8 @@ std::vector<menu::NameTag> Client::buildNameTags() const
 }
 
 /**
- * The local player as the third person views draw it. The body trails the
- * head the way the game turns it: it swings toward the walking direction
- * (facing forward while backing up), never lets the head turn more than 75
- * degrees away, and creeps after the head once it is past 50.
+ * The local player as the third person views draw it, its body trailing the
+ * head like every other player's.
  */
 ActorView Client::localActorView(float deltaSeconds)
 {
@@ -765,22 +801,9 @@ ActorView Client::localActorView(float deltaSeconds)
         self.armor[slot] = hudState.armor[slot].empty() ? std::string() : hudState.armor[slot].identifier;
     }
 
-    float ticks = deltaSeconds * 20.0f;
     double dx = playerView.current[0] - playerView.previous[0];
     double dz = playerView.current[2] - playerView.previous[2];
-    if (dx * dx + dz * dz > 0.0025) {
-        float heading = static_cast<float>(std::atan2(-dx, dz) * 180.0 / 3.14159265358979);
-        if (std::abs(wrapDegrees(self.headYaw - heading)) > 95.0f) {
-            heading += 180.0f;
-        }
-        localBodyYaw += wrapDegrees(heading - localBodyYaw) * (1.0f - std::pow(0.7f, ticks));
-    }
-    float turn = std::clamp(wrapDegrees(self.headYaw - localBodyYaw), -75.0f, 75.0f);
-    localBodyYaw = self.headYaw - turn;
-    if (std::abs(turn) > 50.0f) {
-        localBodyYaw += turn * (1.0f - std::pow(0.8f, ticks));
-    }
-    localBodyYaw = wrapDegrees(localBodyYaw);
+    localBodyYaw = trailBody(localBodyYaw, self.headYaw, dx, dz, deltaSeconds * 20.0f);
     self.yaw = localBodyYaw;
     return self;
 }
@@ -810,6 +833,9 @@ void Client::interpolateActors(double now)
             motion.lastSample = now;
             motion.moves = actor.moves;
             motion.teleports = actor.teleports;
+            motion.bodyYaw = actor.yaw;
+            motion.lastFrame = now;
+            motion.lastShown = target;
         } else if (actor.moves != motion.moves) {
             motion.from = motion.shown;
             motion.to = target;
@@ -832,6 +858,17 @@ void Client::interpolateActors(double now)
         actor.yaw = motion.turnShown[0];
         actor.headYaw = motion.turnShown[1];
         actor.pitch = motion.turnShown[2];
+        float ticks = static_cast<float>(std::min(now - motion.lastFrame, 0.25) * 20.0);
+        if (actor.identifier == "minecraft:player") {
+            if (ticks > 0.0f) {
+                double stepX = (motion.shown[0] - motion.lastShown[0]) / ticks;
+                double stepZ = (motion.shown[2] - motion.lastShown[2]) / ticks;
+                motion.bodyYaw = trailBody(motion.bodyYaw, actor.headYaw, stepX, stepZ, ticks);
+            }
+            actor.yaw = motion.bodyYaw;
+        }
+        motion.lastShown = motion.shown;
+        motion.lastFrame = now;
     }
     for (auto it = motions.begin(); it != motions.end();) {
         if (present.count(it->first)) {

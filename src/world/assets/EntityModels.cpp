@@ -289,6 +289,7 @@ struct RenderControllerSource {
     std::vector<std::string> textureChoices;
     std::vector<EntityPartRule> parts;
     std::string material;
+    bool ignoreLighting = false;
 };
 
 /**
@@ -427,6 +428,9 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
                     parsed.material = lowercase(value->mString);
                 }
             }
+        }
+        if (const json::Value* value = controller.get("ignore_lighting"); value && value->mType == json::Value::Type::Boolean) {
+            parsed.ignoreLighting = value->mBoolean;
         }
         if (const json::Value* visibility = controller.get("part_visibility"); visibility && visibility->isArray()) {
             for (const std::unique_ptr<json::Value>& entry : visibility->mArray) {
@@ -627,21 +631,29 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
         } else {
             // Too big for one layer: spread it over a grid of layers, row by row.
+            // Stretching an odd size like 1000x320 onto the grid would shift texel
+            // edges, and packs that paint whole faces from one texel lose them.
             uint32_t spanX = tilesX * EntityTextureSize;
             uint32_t spanY = tilesY * EntityTextureSize;
+            uint32_t usedX = std::min(width, spanX);
+            uint32_t usedY = std::min(height, spanY);
+            static constexpr uint8_t Clear[4] = { 0, 0, 0, 0 };
             for (uint32_t tileY = 0; tileY < tilesY; ++tileY) {
                 for (uint32_t tileX = 0; tileX < tilesX; ++tileX) {
                     for (uint32_t y = 0; y < EntityTextureSize; ++y) {
-                        uint32_t sourceY = (tileY * EntityTextureSize + y) * height / spanY;
+                        uint32_t gridY = tileY * EntityTextureSize + y;
                         for (uint32_t x = 0; x < EntityTextureSize; ++x) {
-                            uint32_t sourceX = (tileX * EntityTextureSize + x) * width / spanX;
-                            const uint8_t* texel = rgba.data() + (size_t(sourceY) * width + sourceX) * 4;
+                            uint32_t gridX = tileX * EntityTextureSize + x;
+                            const uint8_t* texel = Clear;
+                            if (gridX < usedX && gridY < usedY) {
+                                texel = rgba.data() + (size_t(gridY * height / usedY) * width + gridX * width / usedX) * 4;
+                            }
                             entityPixels.insert(entityPixels.end(), texel, texel + 4);
                         }
                     }
                 }
             }
-            entityTiles.emplace(layer, std::make_pair(tilesX, tilesY));
+            entityTiles.emplace(layer, EntityTileGrid { tilesX, tilesY, float(usedX) / float(spanX), float(usedY) / float(spanY) });
         }
         layerByTexture.emplace(path, layer);
         sizeByLayer.emplace(layer, std::make_pair(width, height));
@@ -711,6 +723,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             controller.geometry = source->second.geometry;
             controller.texture = source->second.texture;
             controller.parts = source->second.parts;
+            controller.ignoreLighting = source->second.ignoreLighting;
             for (const std::string& choice : source->second.geometryChoices) {
                 controller.geometryChoices.push_back(rigOf(choice));
             }
@@ -776,7 +789,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                 continue;
             }
             armorLayers.emplace(path, *layer);
-            if (std::string_view(material) == "leather" && entityTileGrid(*layer) == std::make_pair(1u, 1u)) {
+            if (std::string_view(material) == "leather" && entityTileGrid(*layer).single()) {
                 size_t bytes = size_t(EntityTextureSize) * EntityTextureSize * 4;
                 ui::applyDyeMask(std::span<uint8_t>(entityPixels).subspan(size_t(*layer) * bytes, bytes), ui::LeatherColor);
             }

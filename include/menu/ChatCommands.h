@@ -31,6 +31,7 @@ struct ChatOverload {
  */
 struct ChatCommand {
     std::string name;
+    std::string description;
     std::vector<std::string> aliases;
     std::vector<ChatOverload> overloads;
 };

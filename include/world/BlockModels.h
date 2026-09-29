@@ -37,6 +37,14 @@ std::vector<ModelQuad> button(const Materials& materials, uint32_t orientation, 
 std::vector<ModelQuad> pressurePlate(const Materials& materials, bool pressed);
 std::vector<ModelQuad> torch(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> lantern(uint32_t material, bool hanging);
+std::vector<ModelQuad> candles(uint32_t material, uint32_t count);
+std::vector<ModelQuad> turtleEggs(uint32_t material, uint32_t count);
+
+/**
+ * A cauldron built from the block's faces: north is the outer wall, south the
+ * inner one, and the liquid surface sits at level out of six when above zero.
+ */
+std::vector<ModelQuad> cauldron(const Materials& materials, uint32_t liquid, uint32_t level);
 std::vector<ModelQuad> bamboo(uint32_t stem, uint32_t leaves, bool thick);
 std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> orientedCross(uint32_t first, uint32_t second, uint32_t facing);

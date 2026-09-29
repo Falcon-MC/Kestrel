@@ -40,6 +40,7 @@ class Renderer;
  * How one entity glides between its network samples: the displayed position
  * and rotation (yaw, head yaw, pitch) move from where they were when the last
  * sample arrived toward that sample over the time samples usually take.
+ * Players also keep the body yaw worked out from how they walk.
  */
 struct ActorMotion {
     uint64_t moves = 0;
@@ -53,6 +54,9 @@ struct ActorMotion {
     double start = 0.0;
     double duration = 0.0;
     double lastSample = 0.0;
+    float bodyYaw = 0.0f;
+    double lastFrame = 0.0;
+    std::array<double, 3> lastShown {};
 };
 
 /**
@@ -97,7 +101,8 @@ private:
     void applyMeshUpdates();
     size_t visibleTerrain() const;
     uint8_t lightAt(double x, double y, double z) const;
-    void lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, double x, double y, double z) const;
+    uint32_t lightCorners(double x, double y, double z) const;
+    void lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, uint32_t corners) const;
     void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
     ActorView localActorView(float deltaSeconds);
@@ -105,6 +110,7 @@ private:
     uint32_t heldItemLayer() const;
     const world::EntityModel* localPlayerModel(const world::EntityRig*& rig, uint32_t& skinLayer) const;
     float swingProgress();
+    float swingProgressSince(double start, double now) const;
     void startSwing(double now);
     void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
     void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);

@@ -107,6 +107,39 @@ void rectUvs(ModelQuad& quad, uint32_t side, std::array<uint16_t, 4> rect)
     }
 }
 
+/**
+ * A two sided upright plane from (x0, z0) to (x1, z1), like a lantern handle
+ * or a candle wick, with the texture rectangle given in pixels.
+ */
+ModelQuad uprightPlane(uint32_t material, int16_t x0, int16_t z0, int16_t x1, int16_t z1, int16_t bottom, int16_t top, std::array<uint16_t, 4> rect)
+{
+    ModelQuad quad;
+    quad.positions = { { { x0, bottom, z0 }, { x1, bottom, z1 }, { x1, top, z1 }, { x0, top, z0 } } };
+    auto u1 = static_cast<uint16_t>(rect[0] * 256);
+    auto v1 = static_cast<uint16_t>(rect[1] * 256);
+    auto u2 = static_cast<uint16_t>(rect[2] * 256);
+    auto v2 = static_cast<uint16_t>(rect[3] * 256);
+    quad.uvs = { { { u1, v2 }, { u2, v2 }, { u2, v1 }, { u1, v1 } } };
+    quad.material = material;
+    quad.flags = QuadTwoSided;
+    return quad;
+}
+
+/**
+ * A box in block pixels whose top and bottom show the ends rectangle and whose
+ * sides show the sides rectangle of one texture.
+ */
+void pushTexturedBox(std::vector<ModelQuad>& out, uint32_t material, std::array<int16_t, 3> min, std::array<int16_t, 3> max, std::array<uint16_t, 4> ends, std::array<uint16_t, 4> sides)
+{
+    Materials materials;
+    materials.fill(material);
+    auto faces = cuboid(materials, { int16_t(min[0] * 16), int16_t(min[1] * 16), int16_t(min[2] * 16) }, { int16_t(max[0] * 16), int16_t(max[1] * 16), int16_t(max[2] * 16) });
+    for (uint32_t side = 0; side < 6; ++side) {
+        rectUvs(faces[side], side, side == Up || side == Down ? ends : sides);
+        out.push_back(faces[side]);
+    }
+}
+
 size_t cellIndex(size_t x, size_t y, size_t z)
 {
     return x | (y << 1) | (z << 2);
@@ -781,16 +814,7 @@ std::vector<ModelQuad> lantern(uint32_t material, bool hanging)
     constexpr int16_t Near = 128 - 17;
     constexpr int16_t Far = 128 + 17;
     auto handle = [&](int16_t x0, int16_t z0, int16_t x1, int16_t z1, int16_t bottom, int16_t top, std::array<uint16_t, 4> rect) {
-        ModelQuad quad;
-        quad.positions = { { { x0, bottom, z0 }, { x1, bottom, z1 }, { x1, top, z1 }, { x0, top, z0 } } };
-        auto u1 = static_cast<uint16_t>(rect[0] * 256);
-        auto v1 = static_cast<uint16_t>(rect[1] * 256);
-        auto u2 = static_cast<uint16_t>(rect[2] * 256);
-        auto v2 = static_cast<uint16_t>(rect[3] * 256);
-        quad.uvs = { { { u1, v2 }, { u2, v2 }, { u2, v1 }, { u1, v1 } } };
-        quad.material = material;
-        quad.flags = QuadTwoSided;
-        result.push_back(quad);
+        result.push_back(uprightPlane(material, x0, z0, x1, z1, bottom, top, rect));
     };
     if (hanging) {
         handle(Near, Near, Far, Far, 176, 240, { 11, 1, 14, 5 });
@@ -798,6 +822,93 @@ std::vector<ModelQuad> lantern(uint32_t material, bool hanging)
     } else {
         handle(Near, Near, Far, Far, 144, 176, { 11, 1, 14, 3 });
         handle(Near, Far, Far, Near, 144, 176, { 11, 10, 14, 12 });
+    }
+    return result;
+}
+
+std::vector<ModelQuad> candles(uint32_t material, uint32_t count)
+{
+    struct Candle {
+        int16_t x;
+        int16_t z;
+        int16_t height;
+    };
+    static constexpr Candle Layouts[4][4] = {
+        { { 7, 7, 6 } },
+        { { 5, 7, 6 }, { 9, 6, 5 } },
+        { { 7, 9, 6 }, { 5, 7, 5 }, { 8, 6, 4 } },
+        { { 5, 8, 6 }, { 8, 8, 5 }, { 5, 5, 4 }, { 8, 5, 3 } },
+    };
+    // Each wick is two 1px planes crossed at 45 degrees, so its ends sit about 6 units off center.
+    constexpr int16_t Reach = 6;
+    uint32_t candleCount = std::clamp<uint32_t>(count, 1, 4);
+    std::vector<ModelQuad> result;
+    for (uint32_t index = 0; index < candleCount; ++index) {
+        const Candle& candle = Layouts[candleCount - 1][index];
+        int16_t top = static_cast<int16_t>(candle.height);
+        pushTexturedBox(result, material, { candle.x, 0, candle.z }, { int16_t(candle.x + 2), top, int16_t(candle.z + 2) }, { 0, 6, 2, 8 }, { 0, 8, 2, static_cast<uint16_t>(8 + candle.height) });
+        int16_t centerX = static_cast<int16_t>((candle.x + 1) * 16);
+        int16_t centerZ = static_cast<int16_t>((candle.z + 1) * 16);
+        int16_t bottom = static_cast<int16_t>(top * 16);
+        int16_t tip = static_cast<int16_t>(bottom + 16);
+        result.push_back(uprightPlane(material, centerX - Reach, centerZ - Reach, centerX + Reach, centerZ + Reach, bottom, tip, { 0, 5, 1, 6 }));
+        result.push_back(uprightPlane(material, centerX - Reach, centerZ + Reach, centerX + Reach, centerZ - Reach, bottom, tip, { 0, 5, 1, 6 }));
+    }
+    return result;
+}
+
+std::vector<ModelQuad> turtleEggs(uint32_t material, uint32_t count)
+{
+    struct Egg {
+        std::array<int16_t, 3> min;
+        std::array<int16_t, 3> max;
+        std::array<uint16_t, 4> ends;
+        std::array<uint16_t, 4> sides;
+    };
+    static constexpr Egg Eggs[4] = {
+        { { 5, 0, 4 }, { 9, 7, 8 }, { 0, 0, 4, 4 }, { 1, 4, 5, 11 } },
+        { { 1, 0, 7 }, { 5, 5, 11 }, { 6, 7, 10, 11 }, { 10, 10, 14, 15 } },
+        { { 5, 0, 11 }, { 8, 4, 14 }, { 5, 0, 8, 3 }, { 8, 3, 11, 7 } },
+        { { 10, 0, 10 }, { 14, 4, 14 }, { 0, 11, 4, 15 }, { 4, 11, 8, 15 } },
+    };
+    std::vector<ModelQuad> result;
+    for (uint32_t index = 0; index < std::clamp<uint32_t>(count, 1, 4); ++index) {
+        pushTexturedBox(result, material, Eggs[index].min, Eggs[index].max, Eggs[index].ends, Eggs[index].sides);
+    }
+    return result;
+}
+
+std::vector<ModelQuad> cauldron(const Materials& materials, uint32_t liquid, uint32_t level)
+{
+    uint32_t side = materials[North];
+    uint32_t inner = materials[South];
+    uint32_t top = materials[Up];
+    uint32_t bottom = materials[Down];
+    std::vector<ModelQuad> result;
+    auto box = [&](Point min, Point max, uint32_t up, uint32_t facingIn) {
+        Materials faces;
+        for (uint32_t face = 0; face < 6; ++face) {
+            faces[face] = face == Up ? up : face == Down ? bottom : touchesBoundary(face, min, max) ? side : facingIn;
+        }
+        auto quads = cuboid(faces, min, max);
+        result.insert(result.end(), quads.begin(), quads.end());
+    };
+    static constexpr std::array<int16_t, 4> Legs[8] = {
+        { 0, 0, 64, 32 }, { 0, 32, 32, 64 }, { 192, 0, 256, 32 }, { 224, 32, 256, 64 },
+        { 0, 224, 64, 256 }, { 0, 192, 32, 224 }, { 192, 224, 256, 256 }, { 224, 192, 256, 224 },
+    };
+    for (const auto& [x0, z0, x1, z1] : Legs) {
+        box({ x0, 0, z0 }, { x1, 48, z1 }, side, side);
+    }
+    box({ 32, 48, 32 }, { 224, 64, 224 }, inner, inner);
+    box({ 0, 48, 0 }, { 32, Full, Full }, top, inner);
+    box({ 224, 48, 0 }, { Full, Full, Full }, top, inner);
+    box({ 32, 48, 0 }, { 224, Full, 32 }, top, inner);
+    box({ 32, 48, 224 }, { 224, Full, Full }, top, inner);
+    if (level > 0) {
+        // Six fill levels climb from 6px to 15px, a bottle being two of them.
+        auto height = static_cast<int16_t>(96 + std::min<uint32_t>(level, 6) * 24);
+        result.push_back(makeQuad(Up, { 32, height, 32 }, { 224, height, 224 }, liquid, false));
     }
     return result;
 }
