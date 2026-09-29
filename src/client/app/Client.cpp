@@ -30,6 +30,14 @@ namespace kestrel {
 namespace {
 
 constexpr size_t MinVisibleTerrain = 1024;
+constexpr uint32_t AdditiveQuadFlag = 1u << 6;
+constexpr uint32_t ShadedQuadFlag = 1u << 8;
+constexpr uint8_t OpenSkyLight = 0xF0;
+
+uint64_t subChunkId(const world::SubChunkKey& key)
+{
+    return (uint64_t(uint32_t(key.x) & 0x3FFFFFu) << 42) | (uint64_t(uint32_t(key.z) & 0x3FFFFFu) << 20) | (uint64_t(uint32_t(key.y) & 0xFFFu) << 8) | uint64_t(uint32_t(key.dimension) & 0xFFu);
+}
 constexpr const char* FeaturedSpritePrefix = "dynamic/featured/";
 
 }
@@ -347,6 +355,7 @@ int Client::run()
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 appendFirstPerson(entityOrigin, handQuads);
+                lightQuads(handQuads, 0, camera.x(), camera.y() - 1.0, camera.z());
                 if (self) {
                     appendPaperDoll(*self, entityOrigin, handQuads);
                 }
@@ -694,7 +703,7 @@ void Client::applyMeshUpdates()
 {
     for (const MeshUpdate& update : session.takeMeshUpdates()) {
         const world::SubChunkKey& key = update.key;
-        uint64_t id = (uint64_t(uint32_t(key.x) & 0x3FFFFFu) << 42) | (uint64_t(uint32_t(key.z) & 0x3FFFFFu) << 20) | (uint64_t(uint32_t(key.y) & 0xFFFu) << 8) | uint64_t(uint32_t(key.dimension) & 0xFFu);
+        uint64_t id = subChunkId(key);
         if (update.mesh) {
             ChunkMeshUpload upload;
             upload.cubes = update.mesh->cubes.data();
@@ -711,10 +720,51 @@ void Client::applyMeshUpdates()
             } else {
                 opaqueChunks[id] = { key.x * 16, key.y * 16, key.z * 16 };
             }
+            litChunks[id] = update.mesh;
         } else {
             renderer->removeChunkMesh(id);
             opaqueChunks.erase(id);
+            litChunks.erase(id);
         }
+    }
+}
+
+/**
+ * Block and sky light of the cell holding the point, as the mesher solved it.
+ * Sub-chunks without a mesh never had their light solved; those are mostly
+ * open air, so they count as open sky.
+ */
+uint8_t Client::lightAt(double x, double y, double z) const
+{
+    int32_t blockX = static_cast<int32_t>(std::floor(x));
+    int32_t blockY = static_cast<int32_t>(std::floor(y));
+    int32_t blockZ = static_cast<int32_t>(std::floor(z));
+    world::SubChunkKey key { timeState.dimension, blockX >> 4, blockY >> 4, blockZ >> 4 };
+    auto found = litChunks.find(subChunkId(key));
+    if (found == litChunks.end() || found->second->light.empty()) {
+        return OpenSkyLight;
+    }
+    return found->second->light[world::linearIndex(uint32_t(blockX & 15), uint32_t(blockY & 15), uint32_t(blockZ & 15))];
+}
+
+/**
+ * Lights the quads appended since first by the cell at the feet and the one
+ * above, whichever is brighter per channel, so a mob half sunk in a slab or
+ * snow layer does not go black. Additive quads like spider eyes stay bright.
+ */
+void Client::lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, double x, double y, double z) const
+{
+    uint8_t feet = lightAt(x, y, z);
+    uint8_t head = lightAt(x, y + 1.0, z);
+    uint32_t level = uint32_t(std::max(feet & 15, head & 15)) | (uint32_t(std::max(feet >> 4, head >> 4)) << 4);
+    uint32_t corners = level * 0x01010101u;
+    for (size_t index = first; index < quads.size(); ++index) {
+        world::ModelQuadGpu& quad = quads[index];
+        if (quad.words[11] & AdditiveQuadFlag) {
+            continue;
+        }
+        quad.words[11] |= ShadedQuadFlag;
+        quad.words[12] = corners;
     }
 }
 
@@ -817,6 +867,7 @@ void Client::syncSession()
         titleView = {};
         renderer->clearChunkMeshes();
         opaqueChunks.clear();
+        litChunks.clear();
         terrainReleased = false;
         readinessFrame.reset();
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
@@ -871,6 +922,7 @@ void Client::syncSession()
     if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) {
         renderer->clearChunkMeshes();
         opaqueChunks.clear();
+        litChunks.clear();
     }
     if (snapshot.state != SessionState::Joined) {
         blockParticles.clear();
@@ -885,6 +937,7 @@ void Client::syncSession()
     timeState.rainLevel = snapshot.rainLevel;
     timeState.thunderLevel = snapshot.thunderLevel;
     timeState.cameraMedium = snapshot.cameraMedium;
+    timeState.dimension = snapshot.dimension;
     actorViews = std::move(snapshot.actors);
     localRuntime = snapshot.localRuntimeId;
     localSkinSlot = snapshot.localSkinSlot;

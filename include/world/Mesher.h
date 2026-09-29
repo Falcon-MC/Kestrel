@@ -71,11 +71,17 @@ struct ModelQuadGpu {
 
 static_assert(sizeof(ModelQuadGpu) == 64);
 
+/**
+ * Light holds the solved light of every cell, block light in the low nibble
+ * and sky light in the high one, at linearIndex(x, y, z). Entities read it to
+ * match the terrain around them.
+ */
 struct ChunkMesh {
     std::vector<PackedQuad> cubes;
     std::vector<ModelQuadGpu> models;
     std::vector<PackedQuad> translucentCubes;
     std::vector<ModelQuadGpu> translucentModels;
+    std::vector<uint8_t> light;
 
     bool empty() const
     {

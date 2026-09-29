@@ -362,8 +362,10 @@ public:
 
     /**
      * Corner lighting of a quad on the given face of block (x, y, z), with
-     * corner positions in 1/256 block: each corner averages the four cells in
-     * front of it and counts the full blocks beside and diagonal to it.
+     * corner positions in 1/256 block: each corner of the whole face averages
+     * the four cells in front of it and counts the full blocks beside and
+     * diagonal to it, and a quad corner blends those by where it sits, so a
+     * half face like a slab side lines up with the full faces next to it.
      */
     QuadLight bake(int32_t x, int32_t y, int32_t z, Face face, const std::array<std::array<int32_t, 3>, 4>& positions) const
     {
@@ -402,14 +404,28 @@ public:
             tangentB = 1;
             break;
         }
+        size_t axis = normal[0] != 0 ? 0 : normal[1] != 0 ? 1 : 2;
+        int32_t plane = normal[axis] < 0 ? 0 : 256;
+        bool flush = std::all_of(positions.begin(), positions.end(), [&](const std::array<int32_t, 3>& position) {
+            return position[axis] == plane;
+        });
+        std::array<int32_t, 3> self { x, y, z };
         std::array<int32_t, 3> outward { x + normal[0], y + normal[1], z + normal[2] };
-        QuadLight result;
-        for (size_t corner = 0; corner < 4; ++corner) {
-            int32_t signA = positions[corner][tangentA] < 128 ? -1 : 1;
-            int32_t signB = positions[corner][tangentB] < 128 ? -1 : 1;
-            std::array<int32_t, 3> sideA = outward;
+        // Faces sunk into their block, like the step of a stair, take their
+        // light from the block's own layer rather than the one beyond.
+        const std::array<int32_t, 3>& base = flush ? outward : self;
+        const std::array<int32_t, 3>& center = flush || !occludes(outward[0], outward[1], outward[2]) ? outward : self;
+        uint32_t centerLevel = levelAt(center);
+
+        // Light sums and occlusion at the four corners of the whole face,
+        // indexed by which side of each tangent they sit on.
+        std::array<std::array<uint32_t, 3>, 4> full {};
+        for (size_t index = 0; index < 4; ++index) {
+            int32_t signA = (index & 1) ? 1 : -1;
+            int32_t signB = (index & 2) ? 1 : -1;
+            std::array<int32_t, 3> sideA = base;
             sideA[tangentA] += signA;
-            std::array<int32_t, 3> sideB = outward;
+            std::array<int32_t, 3> sideB = base;
             sideB[tangentB] += signB;
             std::array<int32_t, 3> diagonal = sideA;
             diagonal[tangentB] += signB;
@@ -419,11 +435,34 @@ public:
             uint32_t ao = occludedA && occludedB ? 3u : uint32_t(occludedA) + uint32_t(occludedB) + uint32_t(occludedDiagonal);
             uint32_t blockSum = 0;
             uint32_t skySum = 0;
-            for (const std::array<int32_t, 3>& sample : { outward, sideA, sideB, diagonal }) {
-                blockSum += blockAt(sample[0], sample[1], sample[2]);
-                skySum += skyAt(sample[0], sample[1], sample[2]);
+            for (const std::array<int32_t, 3>& sample : { center, sideA, sideB, occludedA && occludedB ? sideA : diagonal }) {
+                // A dark sample is usually a solid block; the game counts it as
+                // the center instead, so walls only darken through occlusion.
+                uint32_t level = sample == center ? centerLevel : levelAt(sample);
+                if (level == 0) {
+                    level = centerLevel;
+                }
+                blockSum += level & 15u;
+                skySum += level >> 4;
             }
-            result.light |= ((blockSum / 4) | ((skySum / 4) << 4)) << (corner * 8);
+            full[index] = { blockSum, skySum, ao };
+        }
+
+        QuadLight result;
+        for (size_t corner = 0; corner < 4; ++corner) {
+            float u = std::clamp(float(positions[corner][tangentA]) / 256.0f, 0.0f, 1.0f);
+            float v = std::clamp(float(positions[corner][tangentB]) / 256.0f, 0.0f, 1.0f);
+            std::array<float, 4> weights { (1.0f - u) * (1.0f - v), u * (1.0f - v), (1.0f - u) * v, u * v };
+            std::array<float, 3> mixed {};
+            for (size_t index = 0; index < 4; ++index) {
+                for (size_t channel = 0; channel < 3; ++channel) {
+                    mixed[channel] += float(full[index][channel]) * weights[index];
+                }
+            }
+            uint32_t blockLevel = uint32_t(mixed[0] / 4.0f + 0.001f);
+            uint32_t skyLevel = uint32_t(mixed[1] / 4.0f + 0.001f);
+            uint32_t ao = uint32_t(mixed[2] + 0.5f);
+            result.light |= (blockLevel | (skyLevel << 4)) << (corner * 8);
             result.ao |= ao << (corner * 2);
         }
         return result;
@@ -436,6 +475,11 @@ public:
     }
 
 private:
+    uint32_t levelAt(const std::array<int32_t, 3>& cell) const
+    {
+        return uint32_t(blockAt(cell[0], cell[1], cell[2])) | (uint32_t(skyAt(cell[0], cell[1], cell[2])) << 4);
+    }
+
     /**
      * Solves the field on first use, so a sub-chunk that emits no face never
      * pays for it.
@@ -1345,6 +1389,16 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
     }
     meshModels(assets, input, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
     LiquidMesher(assets, ids, input, tints, field).mesh(mesh.models, mesh.translucentModels);
+    if (!mesh.empty()) {
+        mesh.light.resize(size_t(Side) * Side * Side);
+        for (uint32_t x = 0; x < Side; ++x) {
+            for (uint32_t y = 0; y < Side; ++y) {
+                for (uint32_t z = 0; z < Side; ++z) {
+                    mesh.light[linearIndex(x, y, z)] = static_cast<uint8_t>(field.blockAt(int32_t(x), int32_t(y), int32_t(z)) | (field.skyAt(int32_t(x), int32_t(y), int32_t(z)) << 4));
+                }
+            }
+        }
+    }
     return mesh;
 }
 
