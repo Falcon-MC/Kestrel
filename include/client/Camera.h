@@ -18,6 +18,7 @@ public:
     void placeAt(double x, double y, double z, float minecraftYawDegrees, float minecraftPitchDegrees);
     void update(const InputState& input, const KeyBindings& bindings, float deltaSeconds, bool captured);
     void look(const InputState& input, bool captured);
+    void setRotation(float minecraftYawDegrees, float minecraftPitchDegrees);
     void setPosition(double x, double y, double z);
     float minecraftYaw() const;
     float minecraftPitch() const;

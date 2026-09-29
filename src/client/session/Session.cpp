@@ -710,13 +710,18 @@ void Session::handleViolation(const PacketViolationWarningPacket& violation)
     current.packetError = std::move(details);
 }
 
-void Session::handleWorldPacket(const std::string& payload)
+void Session::handleWorldPacket(std::string& payload)
 {
     MinecraftPacketIds id;
     if (!BedrockConnection::peekPacketId(payload, id)) {
         return;
     }
     journal.record(false, static_cast<int>(id), payload);
+    if (packetHook) {
+        if (!packetHook->inbound(static_cast<int>(id), payload) || !BedrockConnection::peekPacketId(payload, id)) {
+            return;
+        }
+    }
     if (seenPackets.insert(static_cast<int>(id)).second) {
         debugLog("first world packet " + std::to_string(static_cast<int>(id)));
     }
@@ -1741,6 +1746,18 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
 
 void Session::transmit(const Packet& packet)
 {
+    if (packetHook && codecContext && packetHook->wantsOutbound()) {
+        BinaryStream stream;
+        packet.writeWithHeader(stream, *codecContext);
+        std::string payload = stream.getBuffer();
+        if (!packetHook->outbound(static_cast<int>(packet.getId()), payload)) {
+            return;
+        }
+        MinecraftPacketIds id;
+        journal.record(true, BedrockConnection::peekPacketId(payload, id) ? static_cast<int>(id) : -1, payload);
+        connection->sendRaw(payload);
+        return;
+    }
     std::string payload;
     if (journal.recording() && codecContext) {
         BinaryStream stream;

@@ -4,6 +4,7 @@
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
 #include "client/Inventory.h"
+#include "client/PacketHook.h"
 #include "client/PacketJournal.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
@@ -527,6 +528,15 @@ public:
      */
     void sendRawPacket(std::string payload);
 
+    /**
+     * Routes every game packet through hook from the next connection on. Set
+     * it before connecting; the network thread reads it without a lock.
+     */
+    void setPacketHook(std::shared_ptr<PacketHook> hook)
+    {
+        packetHook = std::move(hook);
+    }
+
 private:
     void transmit(const Packet& packet);
     void handleMotionPacket(const std::shared_ptr<Packet>& packet);
@@ -556,7 +566,7 @@ private:
     void resetSnapshot(std::string name, std::string target);
     std::shared_ptr<const world::PackFiles> cachedPack(const std::string& path);
     void fail(const std::string& error);
-    void handleWorldPacket(const std::string& payload);
+    void handleWorldPacket(std::string& payload);
     void handleViolation(const PacketViolationWarningPacket& violation);
     void scheduleMeshes();
     void finishDimensionChange();
@@ -656,6 +666,7 @@ private:
     InventoryModel inventoryModel;
     std::vector<InventoryCommand> inventoryCommands;
     PacketJournal journal;
+    std::shared_ptr<PacketHook> packetHook;
     std::vector<std::string> rawOutgoing;
     std::optional<std::array<ItemStack, inventory::SlotCount>> inventoryBefore;
     std::set<int> inventoryChangedSlots;

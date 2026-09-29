@@ -80,6 +80,14 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
     throw std::runtime_error("No SPIR-V for shader entry " + std::string(entry));
 }
 
+SpirV sourceCode(const std::vector<uint32_t>& code)
+{
+    if (code.empty()) {
+        throw std::runtime_error("The shader has no SPIR-V, which Vulkan needs");
+    }
+    return { code.data(), code.size() * sizeof(uint32_t) };
+}
+
 VkFormat vertexFormat(VertexFormat format)
 {
     switch (format) {
@@ -447,8 +455,8 @@ public:
         VkShaderStageFlags constantStages = desc.bindings.constantsVertexOnly ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         VkPipelineLayout layout = pipelineLayout(desc.bindings.textureCount, desc.bindings.constantCount, constantStages);
 
-        SpirV vertexCode = shaderCode(desc.library, desc.vertexEntry);
-        SpirV fragmentCode = shaderCode(desc.library, desc.pixelEntry);
+        SpirV vertexCode = desc.source ? sourceCode(desc.source->spirvVertex) : shaderCode(desc.library, desc.vertexEntry);
+        SpirV fragmentCode = desc.source ? sourceCode(desc.source->spirvPixel) : shaderCode(desc.library, desc.pixelEntry);
         VkShaderModule vertexModule = shaderModule(vertexCode);
         VkShaderModule fragmentModule = shaderModule(fragmentCode);
 

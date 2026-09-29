@@ -62,6 +62,35 @@ token are written to `agent.json` in the data directory; set `KESTREL_AGENT_TOKE
 [kestrel-mcp](https://github.com/Falcon-MC/kestrel-mcp) server uses it to let AI agents drive Kestrel: screenshots,
 menus, input, forms, inventory and packet logs. Screenshots need the Vulkan renderer for now.
 
+## Mods
+
+Kestrel loads native C++ mods from the `mods` folder in the data directory. Every library in there is loaded
+and enabled at start; removing it turns the mod off. A mod is a class derived from `kestrel::mod::Mod` plus a
+`KESTREL_MOD(ClassName)` line, built as a shared library with `cmake/KestrelMod.cmake`:
+
+```cpp
+#include "mod/Api.h"
+
+using namespace kestrel::mod;
+
+class Greeter : public Mod {
+public:
+    Greeter() : Mod({ .id = "greeter", .name = "Greeter", .version = "1.0.0" }) { }
+
+    void onEnable() override
+    {
+        command("hi", "Says hi", [](CommandContext& context) { context.reply("Hi!"); });
+        on<JoinEvent>([this](JoinEvent& event) { chat().print("Welcome to " + event.server); });
+    }
+};
+
+KESTREL_MOD(Greeter)
+```
+
+Mods get events (chat, titles, forms, keys, movement, packets, HUD and world drawing), client side `.commands`,
+key bindings, a scheduler, per mod settings, packet filters and custom shaders. See
+[examples/mods](examples/mods) for the details and two working mods.
+
 ## Related repositories
 
 - [Protocol](https://github.com/Falcon-MC/Protocol) - packets and network types

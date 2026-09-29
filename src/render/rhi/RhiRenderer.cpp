@@ -77,6 +77,34 @@ VertexLayout skyLayout()
     };
 }
 
+VertexLayout customLayout()
+{
+    return {
+        {
+            { "POSITION", 0, VertexFormat::Float3, 0 },
+            { "TEXCOORD", 0, VertexFormat::Float2, 12 },
+            { "COLOR", 0, VertexFormat::UByte4Norm, 20 },
+        },
+        sizeof(CustomVertex),
+        false,
+    };
+}
+
+BlendMode customBlend(CustomBlend blend)
+{
+    switch (blend) {
+    case CustomBlend::Opaque:
+        return BlendMode::None;
+    case CustomBlend::Alpha:
+        return BlendMode::Alpha;
+    case CustomBlend::Premultiplied:
+        return BlendMode::Premultiplied;
+    case CustomBlend::Multiply:
+        return BlendMode::Multiply;
+    }
+    return BlendMode::Alpha;
+}
+
 PipelineDesc worldPipeline(const char* vertexEntry, const char* pixelEntry, VertexLayout vertices, BlendMode blend, bool depthWrite, DepthCompare compare)
 {
     PipelineDesc desc;
@@ -394,6 +422,66 @@ public:
         device->drawIndexed(static_cast<uint32_t>(list.indices().size()));
     }
 
+    uint32_t createShader(const ShaderSource& source, CustomBlend blend, std::string& error) override
+    {
+        PipelineDesc desc;
+        desc.source = &source;
+        desc.vertexEntry = "vs_main";
+        desc.pixelEntry = "ps_main";
+        desc.vertices = customLayout();
+        desc.bindings = { 32, false, 1, SamplerMode::PixelClamp };
+        desc.blend = customBlend(blend);
+        desc.depthWrite = false;
+        desc.depthCompare = DepthCompare::LessEqual;
+        try {
+            uint32_t id = nextShader++;
+            customPipelines.emplace(id, device->createPipeline(desc));
+            return id;
+        } catch (const std::exception& failure) {
+            error = failure.what();
+            return 0;
+        }
+    }
+
+    void destroyShader(uint32_t shader) override
+    {
+        auto found = customPipelines.find(shader);
+        if (found == customPipelines.end()) {
+            return;
+        }
+        device->waitIdle();
+        customPipelines.erase(found);
+    }
+
+    void drawCustom(CustomLayer layer, const std::vector<CustomVertex>& vertices, const std::vector<CustomDraw>& draws, const std::array<float, 16>& transform, float seconds) override
+    {
+        if (draws.empty() || vertices.empty() || !device->recording()) {
+            return;
+        }
+        std::unique_ptr<Buffer>& buffer = frames[device->frameSlot()].custom[static_cast<size_t>(layer)];
+        size_t bytes = vertices.size() * sizeof(CustomVertex);
+        ensure(buffer, bytes);
+        std::memcpy(buffer->mapped(), vertices.data(), bytes);
+
+        std::array<float, 32> constants {};
+        std::copy(transform.begin(), transform.end(), constants.begin());
+        constants[16] = seconds;
+        constants[17] = static_cast<float>(device->width());
+        constants[18] = static_cast<float>(device->height());
+        for (const CustomDraw& draw : draws) {
+            auto found = customPipelines.find(draw.shader);
+            if (found == customPipelines.end() || draw.vertexCount == 0 || size_t(draw.firstVertex) + draw.vertexCount > vertices.size()) {
+                continue;
+            }
+            std::copy(draw.params.begin(), draw.params.end(), constants.begin() + 20);
+            device->setPipeline(*found->second);
+            device->setTextures(*uiTextures);
+            device->setConstants(constants.data(), static_cast<uint32_t>(constants.size()));
+            device->setVertexBuffer(*buffer, sizeof(CustomVertex), bytes);
+            device->draw(draw.vertexCount, 1, draw.firstVertex, 0);
+        }
+    }
+
     void endFrame() override
     {
         if (device->recording()) {
@@ -424,6 +512,7 @@ private:
         std::unique_ptr<Buffer> indices;
         std::unique_ptr<Buffer> sky;
         std::unique_ptr<Buffer> entities;
+        std::array<std::unique_ptr<Buffer>, CustomLayerCount> custom;
     };
 
     void retire(ChunkBuffer& chunk)
@@ -464,6 +553,8 @@ private:
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
+    std::unordered_map<uint32_t, std::unique_ptr<Pipeline>> customPipelines;
+    uint32_t nextShader = 1;
     std::vector<FrameBuffers> frames;
     std::vector<CompletedFrame> slotFrames;
     CompletedFrame recording;

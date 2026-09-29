@@ -295,6 +295,16 @@ public:
     std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) override
     {
         id<MTLLibrary> library = desc.library == ShaderLibrary::Ui ? uiLibrary : worldLibrary;
+        NSString* vertexName = functionName(desc.vertexEntry);
+        NSString* fragmentName = functionName(desc.pixelEntry);
+        if (desc.source) {
+            if (desc.source->metal.empty()) {
+                throw std::runtime_error("The shader has no Metal source, which Metal needs");
+            }
+            library = compileLibrary(desc.source->metal.c_str());
+            vertexName = @"vs_main";
+            fragmentName = @"ps_main";
+        }
         MTLVertexDescriptor* vertices = [MTLVertexDescriptor vertexDescriptor];
         for (NSUInteger index = 0; index < desc.vertices.attributes.size(); ++index) {
             const VertexAttribute& attribute = desc.vertices.attributes[index];
@@ -307,8 +317,8 @@ public:
         vertices.layouts[0].stepRate = 1;
 
         MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
-        descriptor.vertexFunction = [library newFunctionWithName:functionName(desc.vertexEntry)];
-        descriptor.fragmentFunction = [library newFunctionWithName:functionName(desc.pixelEntry)];
+        descriptor.vertexFunction = [library newFunctionWithName:vertexName];
+        descriptor.fragmentFunction = [library newFunctionWithName:fragmentName];
         descriptor.vertexDescriptor = vertices;
         descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
         applyBlend(descriptor.colorAttachments[0], desc.blend);
