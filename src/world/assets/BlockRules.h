@@ -57,6 +57,7 @@ enum class ModelKind {
     Button,
     Cross,
     Torch,
+    Lantern,
     Cactus,
     Farmland,
     Cake,
@@ -84,6 +85,7 @@ struct Flipbook {
 };
 
 bool isTorchName(const std::string& name);
+bool isLanternName(const std::string& name);
 bool isAquaticName(const std::string& name);
 bool isCropName(const std::string& name);
 bool isCrossName(const std::string& name);
