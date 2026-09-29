@@ -67,6 +67,12 @@ bool iconButton(Context& ui, std::string_view id, std::string_view label, std::s
     return state.clicked;
 }
 
+// The server's packs, title art included, only count while we are on its way in or playing there.
+bool showsServerArt(SessionStatus status)
+{
+    return status == SessionStatus::Resolving || status == SessionStatus::Connecting || status == SessionStatus::Joined;
+}
+
 }
 
 Menu::Menu(ServerStore& store)
@@ -502,7 +508,7 @@ void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
 {
     // A server that ships its own title art gets it instead of the game logo, as in game.
     const Sprite& art = ui.skin().sprite("dynamic/title");
-    if (art.valid && session.status != SessionStatus::Idle) {
+    if (art.valid && showsServerArt(session.status)) {
         float w = std::min(maxWidth, 263.0f);
         ui.sprite({ std::floor(centerX - w * 0.5f), y, w, w * art.height / art.width }, "dynamic/title");
         return;
@@ -708,7 +714,7 @@ void Menu::title(Context& ui, float width, float height)
         float pulse = 1.0f - 0.05f * std::abs(std::sin(seconds * 6.2831853f));
         float magnify = pulse * std::min(1.0f, 130.0f / std::max(widest, 1.0f));
         const Sprite& serverArt = ui.skin().sprite("dynamic/title");
-        bool customLogo = serverArt.valid && session.status != SessionStatus::Idle;
+        bool customLogo = serverArt.valid && showsServerArt(session.status);
         float logoWidth = std::min(width - 32.0f, customLogo ? 263.0f : 378.5f);
         const Sprite& art = customLogo ? serverArt : ui.skin().sprite("kestrel/title");
         float logoHeight = art.valid ? logoWidth * art.height / art.width : 40.0f;

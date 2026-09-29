@@ -58,10 +58,14 @@ std::map<std::string, std::string> readNamedStrings(const json::Value* table)
     return out;
 }
 
-void readClientEntity(const std::string& text, std::map<std::string, ClientEntity>& out)
+/**
+ * Reads a minecraft:client_entity definition, or with root minecraft:attachable
+ * an attachable, which describes itself the same way.
+ */
+void readClientEntity(const std::string& text, std::map<std::string, ClientEntity>& out, const char* root = "minecraft:client_entity")
 {
     std::unique_ptr<json::Value> document = json::parse(stripJsonComments(text));
-    const json::Value* entity = document ? document->get("minecraft:client_entity") : nullptr;
+    const json::Value* entity = document ? document->get(root) : nullptr;
     const json::Value* description = entity ? entity->get("description") : nullptr;
     const json::Value* identifier = description ? description->get("identifier") : nullptr;
     if (!identifier || !identifier->isString()) {
@@ -132,6 +136,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
         rigBone.name = bone.name;
         rigBone.pivot = { -bone.pivot[0], bone.pivot[1], bone.pivot[2] };
         rigBone.rotation = { -bone.rotation[0], -bone.rotation[1], bone.rotation[2] };
+        rigBone.bound = !bone.binding.empty();
         model.bones.push_back(rigBone);
     }
     for (size_t index = 0; index < geometry.bones.size(); ++index) {
@@ -535,12 +540,14 @@ std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, c
  * default texture scaled into one entity texture layer and its scripts, plus
  * one rig per geometry and one layer per texture its render controllers can
  * select, and every animation and animation controller. The player also gets
- * the slim humanoid model for skins that ask for it.
+ * the slim humanoid model for skins that ask for it, and the attachables of
+ * server packs are built the same way for the items they belong to.
  */
 void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs)
 {
     GeometryLibrary library;
     std::map<std::string, ClientEntity> definitions;
+    std::map<std::string, ClientEntity> attachableDefinitions;
     std::unordered_map<std::string, RenderControllerSource> controllerSources;
     auto parseAnimations = [&](const std::string& text) {
         if (std::unique_ptr<json::Value> document = json::parse(stripJsonComments(text))) {
@@ -586,6 +593,8 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                 library.parse(stripJsonComments(content));
             } else if (startsWith(path, "entity/")) {
                 readClientEntity(content, definitions);
+            } else if (startsWith(path, "attachables/")) {
+                readClientEntity(content, attachableDefinitions, "minecraft:attachable");
             } else if (startsWith(path, "animations/") || startsWith(path, "animation_controllers/")) {
                 parseAnimations(content);
             } else if (startsWith(path, "render_controllers/")) {
@@ -735,6 +744,16 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             if (std::optional<EntityModel> slim = modelOf("geometry.humanoid.customSlim", definition, *layer)) {
                 entityModels.emplace(identifier + "#slim", std::move(*slim));
             }
+        }
+    }
+
+    for (const auto& [identifier, definition] : attachableDefinitions) {
+        std::optional<uint32_t> layer = textureLayer(definition.texture);
+        if (!layer) {
+            continue;
+        }
+        if (std::optional<EntityModel> model = modelOf(definition.geometry, definition, *layer)) {
+            attachableModels.emplace(identifier, std::move(*model));
         }
     }
 

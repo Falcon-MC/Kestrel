@@ -37,6 +37,8 @@ struct GeometryCube {
 struct GeometryBone {
     std::string name;
     std::string parent;
+    // An attachable bone with a binding hangs from the holder's bone, not its own parent.
+    std::string binding;
     Vec3f pivot {};
     Vec3f rotation {};
     bool mirror = false;
@@ -52,6 +54,7 @@ struct GeometryBone {
     bool mirrorSet = false;
     bool inflateSet = false;
     bool neverRenderSet = false;
+    bool bindingSet = false;
     bool cubesSet = false;
     bool reset = false;
 };

@@ -200,7 +200,7 @@ using SequentialMap = std::vector<int32_t>;
 
 inline constexpr uint32_t EntityTextureSize = 128;
 inline constexpr uint32_t MaxEntityTiles = 8;
-inline constexpr uint32_t ItemIconSize = 32;
+inline constexpr uint32_t ItemIconSize = 64;
 
 /**
  * The plains green a tinted block gets when it is drawn as an item and has no
@@ -359,6 +359,16 @@ public:
     }
 
     /**
+     * The model a server pack attaches to an item while it is held, like a
+     * gun drawn in 3D instead of its icon; null for items without one.
+     */
+    const EntityModel* attachableModel(const std::string& identifier) const
+    {
+        auto found = attachableModels.find(identifier);
+        return found == attachableModels.end() ? nullptr : &found->second;
+    }
+
+    /**
      * How armor in the given slot looks, or no rig for items without an
      * armor texture (elytra, heads, pumpkins).
      */
@@ -476,6 +486,7 @@ private:
      * textures when the block has them; null for items that place no block.
      */
     const BlockVisual* itemVisual(const std::string& identifier) const;
+    std::vector<ModelQuad> templateQuads(uint32_t modelTemplate) const;
 
     BlockRegistry registry;
     std::vector<CustomBlock> customs;
@@ -487,6 +498,7 @@ private:
     std::vector<ModelQuad> quads;
     BlockEntityTemplates entityTemplates;
     std::unordered_map<std::string, EntityModel> entityModels;
+    std::unordered_map<std::string, EntityModel> attachableModels;
     std::array<EntityRig, 4> armorRigs;
     std::unordered_map<std::string, uint32_t> armorLayers;
     AnimationLibrary animations;
