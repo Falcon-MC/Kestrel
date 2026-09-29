@@ -652,6 +652,9 @@ void JsonUiRuntime::place(Node& node, float x, float y, float z, const Rect& cli
         if (child.offsetOverride) {
             ox = (*child.offsetOverride)[0];
             oy = (*child.offsetOverride)[1];
+        } else if (flag(child, "use_anchored_offset", false)) {
+            ox = static_cast<float>(lookup(child, "#anchored_offset_value_x").toNumber());
+            oy = static_cast<float>(lookup(child, "#anchored_offset_value_y").toNumber());
         } else if (std::optional<float> moving = animated(child, "offset", 0, node.w)) {
             ox = *moving;
             oy = animated(child, "offset", 1, node.h).value_or(0.0f);

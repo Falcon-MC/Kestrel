@@ -466,6 +466,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
     float height = static_cast<float>(std::max<uint32_t>(window->height(), 1));
     float aspect = width / height;
     float gui = guiScale();
+    ui::Rect safe = menu.safeRect(width / gui, height / gui);
     float tangent = camera.halfVerticalTangent(aspect);
     std::array<Vec3, 3> axes = cameraAxes(camera.minecraftYaw(), camera.minecraftPitch());
     Vec3 eyePoint {
@@ -489,8 +490,8 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         float z = -posed[2] * unit;
         float across = x * cosine + z * sine;
         float toward = -x * sine + z * cosine;
-        float hudX = PaperDollCenter[0] + across * hudPerBlock;
-        float hudY = PaperDollCenter[1] - y * hudPerBlock;
+        float hudX = safe.x + PaperDollCenter[0] + across * hudPerBlock;
+        float hudY = safe.y + PaperDollCenter[1] - y * hudPerBlock;
         float ndcX = hudX * gui / width * 2.0f - 1.0f;
         float ndcY = 1.0f - hudY * gui / height * 2.0f;
         Vec3 ray = add(add(scaled(axes[2], -1.0f), scaled(axes[0], ndcX * tangent * aspect)), scaled(axes[1], ndcY * tangent));

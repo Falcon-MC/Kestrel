@@ -293,12 +293,13 @@ void JsonUi::index() const
     }
     indexed = true;
     if (!platform) {
-        // What the game sets for a Windows desktop with mouse and keyboard; anything else
+        // What a retail build of the game sets for a Windows desktop with mouse and keyboard; anything else
         // it checks, like $touch or $education_edition, reads as false.
         auto values = json::Value::ofObject();
         values->set("$desktop_screen", json::Value::ofBoolean(true));
         values->set("$win10_edition", json::Value::ofBoolean(true));
         values->set("$is_pc", json::Value::ofBoolean(true));
+        values->set("$is_publish", json::Value::ofBoolean(true));
         values->set("$pocket_screen", json::Value::ofBoolean(false));
         values->set("$touch", json::Value::ofBoolean(false));
         platform = std::move(values);

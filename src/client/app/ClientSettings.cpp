@@ -36,6 +36,11 @@ void Client::loadSettings()
             savedFullscreen = value == "1";
         } else if (key == "hidePaperDoll") {
             menu.setPaperDollHidden(value == "1");
+        } else if (key == "safeArea") {
+            float parsed = std::strtof(value.c_str(), nullptr);
+            if (parsed >= menu::MinSafeArea && parsed <= menu::MaxSafeArea) {
+                menu.setSafeArea(parsed);
+            }
         } else if (key == "language") {
             menu.setLanguage(value);
         } else if (key.rfind("volume.", 0) == 0) {
@@ -58,6 +63,7 @@ void Client::loadSettings()
     savedMaxFps = menu.maxFps();
     savedFov = menu.fov();
     savedPaperDollHidden = menu.paperDollHidden();
+    savedSafeArea = menu.safeArea();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }
@@ -74,6 +80,7 @@ void Client::saveSettings()
     file << "fov=" << menu.fov() << '\n';
     file << "fullscreen=" << (savedFullscreen ? 1 : 0) << '\n';
     file << "hidePaperDoll=" << (menu.paperDollHidden() ? 1 : 0) << '\n';
+    file << "safeArea=" << menu.safeArea() << '\n';
     file << "language=" << menu.language() << '\n';
     for (size_t i = 0; i < menu::VolumeChannelCount; ++i) {
         file << "volume." << i << '=' << menu.soundVolumes()[i] << '\n';
@@ -88,6 +95,7 @@ void Client::saveSettings()
     savedMaxFps = menu.maxFps();
     savedFov = menu.fov();
     savedPaperDollHidden = menu.paperDollHidden();
+    savedSafeArea = menu.safeArea();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }

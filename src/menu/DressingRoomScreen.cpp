@@ -198,8 +198,8 @@ void Menu::dressingRoom(Context& ui, float width, float height)
         skinChoiceLoaded = true;
         applySkinChoice(ui);
     }
-    panorama(ui, width, height);
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 120 });
+    panorama(ui);
+    ui.fill(screenBounds, { 0, 0, 0, 120 });
 
     float left = SidebarWidth;
     float contentWidth = width - left;
@@ -928,7 +928,7 @@ void Menu::dressingDialog(Context& ui, float width, float height)
     if (state.dialog == DressingDialog::None) {
         return;
     }
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 110 });
+    ui.fill(screenBounds, { 0, 0, 0, 110 });
     if (state.dialog == DressingDialog::SkinModel) {
         Rect box { std::floor((width - 220.0f) * 0.5f), std::floor(height * 0.3f), 220.0f, 118.0f };
         ui.nineSlice(box, "ui/dialog_background_opaque");
