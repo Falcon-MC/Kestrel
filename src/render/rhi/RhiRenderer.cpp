@@ -402,6 +402,16 @@ public:
         device->endFrame();
     }
 
+    bool requestCapture() override
+    {
+        return device->requestCapture();
+    }
+
+    bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override
+    {
+        return device->takeCapture(rgba, width, height);
+    }
+
 private:
     struct ChunkBuffer {
         std::array<std::unique_ptr<Buffer>, 4> buffers;

@@ -230,6 +230,26 @@ public:
     virtual void drawIndexed(uint32_t indexCount) = 0;
     virtual void endFrame() = 0;
 
+    /**
+     * Asks for the next frame to be read back once it is drawn. False when
+     * the backend cannot read its frames back.
+     */
+    virtual bool requestCapture()
+    {
+        return false;
+    }
+
+    /**
+     * The captured frame as RGBA rows from the top, once one is ready.
+     */
+    virtual bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height)
+    {
+        (void)rgba;
+        (void)width;
+        (void)height;
+        return false;
+    }
+
     static std::unique_ptr<Device> create(Window& window);
 };
 

@@ -50,7 +50,13 @@ public:
     virtual void toggleFullscreen() = 0;
     virtual void close() = 0;
 
-    static std::unique_ptr<Window> create(const std::string& title, uint32_t width, uint32_t height);
+    /**
+     * False for a window kept off screen, which renderers draw offscreen
+     * for instead of presenting.
+     */
+    virtual bool visible() const = 0;
+
+    static std::unique_ptr<Window> create(const std::string& title, uint32_t width, uint32_t height, bool visible = true);
 };
 
 }

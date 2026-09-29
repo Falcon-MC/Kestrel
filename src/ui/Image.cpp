@@ -6,6 +6,10 @@
 #define STBI_ONLY_TGA
 #include <stb_image.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#include <stb_image_write.h>
+
 #include <algorithm>
 
 namespace kestrel::ui {
@@ -85,6 +89,21 @@ void applyDyeMask(std::span<uint8_t> rgba, const std::array<uint8_t, 3>& color)
         }
         rgba[pixel + 3] = 255;
     }
+}
+
+std::string encodePng(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height)
+{
+    std::string encoded;
+    if (width == 0 || height == 0 || rgba.size() < size_t(width) * height * 4) {
+        return encoded;
+    }
+    auto append = [](void* context, void* data, int size) {
+        static_cast<std::string*>(context)->append(static_cast<const char*>(data), static_cast<size_t>(size));
+    };
+    if (!stbi_write_png_to_func(append, &encoded, static_cast<int>(width), static_cast<int>(height), 4, rgba.data(), static_cast<int>(width * 4))) {
+        encoded.clear();
+    }
+    return encoded;
 }
 
 }

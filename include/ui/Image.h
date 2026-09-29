@@ -19,6 +19,11 @@ struct ImageRef {
 bool decodeImage(const std::string& encoded, uint32_t& width, uint32_t& height, std::vector<uint8_t>& outRgba);
 bool decodeSquareImage(const std::string& encoded, uint32_t size, std::vector<uint8_t>& outRgba);
 
+/**
+ * The RGBA pixels as a PNG file, or empty when encoding fails.
+ */
+std::string encodePng(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
+
 // The undyed leather color, #A06540.
 inline constexpr std::array<uint8_t, 3> LeatherColor { 0xA0, 0x65, 0x40 };
 

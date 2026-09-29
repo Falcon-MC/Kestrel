@@ -36,7 +36,8 @@ namespace {
 
 class CocoaWindow final : public Window {
 public:
-    CocoaWindow(const std::string& title, uint32_t w, uint32_t h)
+    CocoaWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
+        : shown(shown)
     {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -65,8 +66,15 @@ public:
         layer.contentsScale = window.backingScaleFactor;
         view.layer = layer;
 
-        [window makeKeyAndOrderFront:nil];
-        [NSApp activateIgnoringOtherApps:YES];
+        if (shown) {
+            [window makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
+        }
+    }
+
+    bool visible() const override
+    {
+        return shown;
     }
 
     bool pump() override
@@ -354,13 +362,14 @@ private:
     WindowChrome chrome;
     Cursor cursor = Cursor::Arrow;
     bool captured = false;
+    bool shown = true;
 };
 
 }
 
-std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height)
+std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height, bool visible)
 {
-    return std::make_unique<CocoaWindow>(title, width, height);
+    return std::make_unique<CocoaWindow>(title, width, height, visible);
 }
 
 }
