@@ -59,6 +59,14 @@ void PlayerMotion::correct(const MotionVector& position, const MotionVector& mot
     hasKnockback = false;
 }
 
+void PlayerMotion::keepPendingKnockback(const PlayerMotion& live)
+{
+    if (live.hasKnockback) {
+        pendingKnockback = live.pendingKnockback;
+        hasKnockback = true;
+    }
+}
+
 void PlayerMotion::knockback(const MotionVector& motion)
 {
     pendingKnockback = motion;
@@ -487,7 +495,7 @@ void PlayerMotion::runGroundAndAir()
         float levitationSpeed = LevitationMultiplier * static_cast<float>(levitationLevel);
         y += (levitationSpeed - y) * 0.2f;
     } else if (!scaffoldDescend && affectedByGravity) {
-        y -= gravity;
+        y -= y < 0.0f ? gravity : NormalGravity;
         y *= GravityMultiplier;
     }
     x *= frictionFactor;
@@ -517,7 +525,7 @@ void PlayerMotion::runWater(const Fluid& fluid, bool touchingWater)
     float drag = isSprinting || stoppedSwimmingThisTick ? WaterFastDrag : WaterDrag;
     velocity = { velocity.x * drag, velocity.y * WaterDrag, velocity.z * drag };
     if (levitationLevel > 0) {
-        float target = static_cast<float>(levitationLevel + 1) * 0.05f;
+        float target = static_cast<float>(levitationLevel) * LevitationMultiplier;
         velocity.y = velocity.y + (target - velocity.y) * 0.2f;
     } else if (affectedByGravity && !isSwimming) {
         velocity.y = velocity.y - SwimlessWaterGravity;
@@ -540,7 +548,7 @@ void PlayerMotion::runLava()
 
     velocity = velocity.scaled(LavaDrag);
     if (levitationLevel > 0) {
-        float target = static_cast<float>(levitationLevel + 1) * 0.05f;
+        float target = static_cast<float>(levitationLevel) * LevitationMultiplier;
         velocity.y = velocity.y + (target - velocity.y) * 0.2f;
     } else if (affectedByGravity) {
         velocity.y = velocity.y - WaterGravity;
