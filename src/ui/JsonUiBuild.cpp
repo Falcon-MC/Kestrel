@@ -99,8 +99,8 @@ void JsonUiRuntime::collect(std::string_view reference, const std::string* space
 Prop JsonUiRuntime::variable(const Node& node, std::string_view name) const
 {
     if (node.vars) {
-        if (auto found = node.vars->find(name); found != node.vars->end()) {
-            return found->second;
+        if (const Prop* found = node.vars->find(name)) {
+            return *found;
         }
     }
     return { defs->globalVariable(std::string(name)), nullptr };
@@ -263,8 +263,9 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
         return;
     }
 
-    std::shared_ptr<const PropMap> inherited = node.vars;
-    auto scope = std::make_shared<PropMap>(inherited ? *inherited : PropMap {});
+    std::shared_ptr<const jsonui::VarScope> inherited = node.vars;
+    auto scope = std::make_shared<jsonui::VarScope>();
+    scope->parent = inherited;
     auto own = [&](const std::string& name) {
         return std::any_of(plain.begin(), plain.end(), [&](const auto& entry) { return entry.first == name; });
     };
@@ -280,14 +281,14 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
     for (const auto& [key, prop] : plain) {
         Prop value = early(key, prop);
         value.fallback = false;
-        (*scope)[key] = value;
+        scope->own[key] = value;
     }
     for (const auto& [key, prop] : defaults) {
-        auto existing = scope->find(key);
-        if (existing == scope->end() || (existing->second.fallback && !own(key))) {
+        const Prop* existing = scope->find(key);
+        if (!existing || (existing->fallback && !own(key))) {
             Prop value = early(key, prop);
             value.fallback = true;
-            (*scope)[key] = value;
+            scope->own[key] = value;
         }
     }
     node.vars = scope;
@@ -303,14 +304,14 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
                 size_t bar = key.find('|');
                 std::string name = key.substr(0, bar);
                 Prop prop { entry->get(key), node.props.at("variables").space };
-                auto existing = scope->find(name);
-                if (bar == std::string::npos || existing == scope->end() || existing->second.fallback) {
+                const Prop* existing = scope->find(name);
+                if (bar == std::string::npos || !existing || existing->fallback) {
                     Node probe;
-                    probe.vars = std::make_shared<PropMap>(*scope);
+                    probe.vars = scope;
                     Prop resolved = isVariable(prop.value) ? resolveProp(probe, prop) : prop;
                     resolved = resolved.value ? resolved : prop;
                     resolved.fallback = bar != std::string::npos;
-                    (*scope)[name] = resolved;
+                    scope->own[name] = resolved;
                 }
             }
         }
@@ -318,7 +319,7 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
     if (variables) {
         for (const auto& [name, value] : *variables) {
             node.owned.push_back(toJson(value));
-            (*scope)[name.front() == '$' ? name : "$" + name] = { node.owned.back().get(), nullptr };
+            scope->own[name.front() == '$' ? name : "$" + name] = { node.owned.back().get(), nullptr };
         }
     }
 }
@@ -328,7 +329,7 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
  * "name@base", either part possibly a variable, and the instance holds the
  * properties written where the control is placed, which win over the base's.
  */
-std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, const json::Value* instance, const std::string* space, std::shared_ptr<const PropMap> scope, const UiRow* variables, int depth)
+std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, const json::Value* instance, const std::string* space, std::shared_ptr<const jsonui::VarScope> scope, const UiRow* variables, int depth)
 {
     if (depth > MaxDepth || ++madeThisFrame > MaxControlsPerFrame) {
         return nullptr;
@@ -343,11 +344,12 @@ std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, co
     std::string base(controlBase(key));
     if ((!name.empty() && name.front() == '$') || (!base.empty() && base.front() == '$')) {
         Node probe;
-        auto names = std::make_shared<PropMap>(node->vars ? *node->vars : PropMap {});
+        auto names = std::make_shared<jsonui::VarScope>();
+        names->parent = node->vars;
         if (instance && instance->isObject()) {
             for (const std::string& property : instance->mKeys) {
                 if (property.size() > 1 && property.front() == '$' && property.find('|') == std::string::npos) {
-                    (*names)[property] = { instance->get(property), space };
+                    names->own[property] = { instance->get(property), space };
                 }
             }
         }
@@ -473,6 +475,9 @@ void JsonUiRuntime::addAnim(Node& node, const std::string& target, std::string_v
     }
     track.playEvent = text(probe, "play_event");
     track.resetEvent = text(probe, "reset_event");
+    if (track.resetEvent.empty()) {
+        track.resetEvent = text(node, "animation_reset_name");
+    }
     track.start = track.playEvent.empty() ? now : -1.0;
     track.first = track.props;
     node.anims.push_back(std::move(track));

@@ -96,12 +96,13 @@ bool iconButton(Context& ui, std::string_view id, std::string_view label, std::s
 
 // How a screen comes and goes. JSON UI screens run the ui_common.json screen_animations they
 // list: the offset wipe with the fade, the fade alone, a fade out alone like progress_screen.json,
-// or their own. OreUI routes take the RouteSlideTransition or RouteNoTransition routes.json gives
-// them.
+// only the wipe out when popped like store_data_driven_screen.json, or their own. OreUI routes
+// take the RouteSlideTransition or RouteNoTransition routes.json gives them.
 enum class Transition {
     Wipe,
     Fade,
     FadeOut,
+    PopWipe,
     Own,
     Slide,
     None,
@@ -117,6 +118,9 @@ Transition transitionOf(Screen screen)
     case Screen::ServerForm:
     case Screen::Profile:
         return Transition::Slide;
+    case Screen::DressingRoom:
+    case Screen::Marketplace:
+        return Transition::PopWipe;
     default:
         return Transition::Wipe;
     }
@@ -176,14 +180,24 @@ float progressSince(std::chrono::steady_clock::time_point now, std::chrono::stea
     return std::clamp(std::chrono::duration<float>(now - since).count() / seconds, 0.0f, 1.0f);
 }
 
+// Whether kind draws anything on its way out, going forward when direction is 1 and back when -1.
+bool playsExit(Transition kind, float direction)
+{
+    return kind != Transition::None && (kind != Transition::PopWipe || direction < 0.0f);
+}
+
 // Offsets and fades the layer the way kind comes in or goes out, progress being how far along it
 // is and direction 1 going forward, -1 going back.
 void transitionLayer(Context& ui, Transition kind, bool entering, float progress, float direction, float screenWidth)
 {
+    if (entering && kind == Transition::PopWipe) {
+        ui.setLayer(0.0f, 0.0f, 1.0f);
+        return;
+    }
     float eased = kind == Transition::Slide ? cssEase(progress) : outCubic(progress);
-    float reach = kind == Transition::Slide ? 1.0f : kind == Transition::Wipe ? ScreenWipe : 0.0f;
+    float reach = kind == Transition::Slide ? 1.0f : kind == Transition::Wipe || kind == Transition::PopWipe ? ScreenWipe : 0.0f;
     float slide = (entering ? 1.0f - eased : -eased) * reach * screenWidth * direction;
-    bool fades = kind == Transition::Wipe || kind == Transition::Fade || (kind == Transition::FadeOut && !entering);
+    bool fades = kind == Transition::Wipe || kind == Transition::PopWipe || kind == Transition::Fade || (kind == Transition::FadeOut && !entering);
     ui.setLayer(slide, 0.0f, !fades ? 1.0f : entering ? eased : 1.0f - eased);
 }
 
@@ -496,14 +510,15 @@ void Menu::safeFrame(Context& ui, float width, float height)
     bool loading = !inGame() && (dialog == Dialog::Connecting || dialog == Dialog::ConnectionError || dialog == Dialog::SignIn);
     float dialogProgress = progressSince(now, dialogChanged, ScreenTransitionSeconds);
     bool dialogMoving = dialogProgress < 1.0f;
-    if (loading && dialogMoving && !replacesScreen(leavingDialog)) {
+    if (loading && dialogMoving && !replacesScreen(leavingDialog) && playsExit(transitionOf(screen), 1.0f)) {
         // A route like /progress slides the screen it replaces out ahead of it.
         transitionLayer(ui, transitionOf(screen), false, dialogProgress, 1.0f, screenBounds.w);
         leaving([&] { screenContent(ui, width, height, screen); });
         ui.clearLayer();
-    } else if (!loading) {
+    }
+    if (!loading) {
         float progress = progressSince(now, screenChanged, ScreenTransitionSeconds);
-        if (progress < 1.0f && leavingScreen && !(inGame() && *leavingScreen == Screen::Title)) {
+        if (progress < 1.0f && leavingScreen && !(inGame() && *leavingScreen == Screen::Title) && playsExit(transitionOf(*leavingScreen), screenDirection)) {
             transitionLayer(ui, transitionOf(*leavingScreen), false, progress, screenDirection, screenBounds.w);
             leaving([&] { screenContent(ui, width, height, *leavingScreen); });
         }
@@ -530,7 +545,7 @@ void Menu::safeFrame(Context& ui, float width, float height)
     }
 
     Transition leavingKind = transitionOf(leavingDialog);
-    if (dialogMoving && leavingDialog != Dialog::None && leavingKind != Transition::None) {
+    if (dialogMoving && leavingDialog != Dialog::None && playsExit(leavingKind, dialog == Dialog::None ? -1.0f : 1.0f)) {
         // Joining the world drops the OreUI routes, and the world fades in from under them.
         if (dialog == Dialog::None && inGame() && leavingKind == Transition::Slide) {
             leavingKind = Transition::FadeOut;
@@ -643,9 +658,14 @@ void Menu::coverHud(bool covered, std::chrono::steady_clock::time_point now)
     }
     hudCovered = covered;
     hudChanged = now;
-    if (hudScreen) {
-        hudScreen->fire(covered ? "screen.exit_push" : "screen.entrance_pop");
+    if (!hudScreen) {
+        return;
     }
+    if (!covered) {
+        // Otherwise the loading bars base_screen starts on exit_push would still be up.
+        hudScreen->fire("screen_animation_reset");
+    }
+    hudScreen->fire(covered ? "screen.exit_push" : "screen.entrance_pop");
 }
 
 void Menu::fadingHud(Context& ui, float width, float height, std::chrono::steady_clock::time_point now)
@@ -915,8 +935,9 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         { 3, 4, { 0.0f, 16.0f }, 1.0f, false },
         { 3, 5, { 0.0f, 16.0f }, 1.0f, true },
     };
+    // Only the inventory's player preview dresses the model; the pause screen shows the plain skin.
     std::array<std::string, 4> armor;
-    if (inGame()) {
+    if (inGame() && inventoryPreview) {
         for (size_t slot = 0; slot < armor.size(); ++slot) {
             const HudItem& piece = inventory.state.slots[inventory::Armor + slot];
             if (!piece.empty()) {

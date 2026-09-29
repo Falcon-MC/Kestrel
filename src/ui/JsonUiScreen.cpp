@@ -387,8 +387,8 @@ void JsonUiRuntime::gather(Node& node)
 
 /**
  * Sends an animation event to node and everything under it: anims waiting on
- * it as their play_event start, and chains with it as their reset_event go
- * back to their first anim.
+ * it as their play_event start, and chains with it as their reset_event, or
+ * the animation_reset_name of their control, go back to their first anim.
  */
 void JsonUiRuntime::fire(Node& node, const std::string& event)
 {
@@ -402,6 +402,9 @@ void JsonUiRuntime::fire(Node& node, const std::string& event)
             probe.vars = node.vars;
             probe.props = track.props;
             track.playEvent = text(probe, "play_event");
+            if (track.playEvent.empty()) {
+                track.start = now;
+            }
         }
         if (track.playEvent == event) {
             track.start = now;

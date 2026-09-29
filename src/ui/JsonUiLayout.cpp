@@ -3,6 +3,7 @@
 #include "ui/Context.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 
 namespace kestrel::ui {
@@ -649,9 +650,16 @@ void JsonUiRuntime::place(Node& node, float x, float y, float z, const Rect& cli
         }
         float ox = 0.0f;
         float oy = 0.0f;
+        auto boundOffset = child.bound.find("#offset");
         if (child.offsetOverride) {
             ox = (*child.offsetOverride)[0];
             oy = (*child.offsetOverride)[1];
+        } else if (boundOffset != child.bound.end() && boundOffset->second.kind == UiValue::Kind::String) {
+            // The game binds offsets as "x,y" in pixels, like #item_name_text_offset.
+            const std::string& value = boundOffset->second.text;
+            size_t comma = value.find(',');
+            ox = static_cast<float>(std::atof(value.c_str()));
+            oy = comma == std::string::npos ? 0.0f : static_cast<float>(std::atof(value.c_str() + comma + 1));
         } else if (flag(child, "use_anchored_offset", false)) {
             ox = static_cast<float>(lookup(child, "#anchored_offset_value_x").toNumber());
             oy = static_cast<float>(lookup(child, "#anchored_offset_value_y").toNumber());

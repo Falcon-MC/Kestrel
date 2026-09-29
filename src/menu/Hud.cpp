@@ -22,6 +22,7 @@ constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 2
 constexpr double ChatLifetime = 10.0;
 constexpr double ChatBackgroundOpacity = 0.7;
 constexpr double TextBackgroundOpacity = 0.6;
+constexpr const char* ItemNameTextOffset = "0,-11";
 
 const char* effectSprite(int32_t id)
 {
@@ -367,12 +368,19 @@ ui::UiData hudData(const HudView& view)
         variables["$wait_duration"] = number(shown.hold);
         data.factories[factory].push_back({ control, std::move(variables), shown.serial });
     };
+    // The game makes the item name with its text background on, and lifts it clear of the
+    // hearts and hunger the survival padding in hud_screen.json already steps over.
+    ui::UiRow itemTextVariables {
+        { "$show_text_background", flag(true) },
+        { "$item_text_background_alpha", number(TextBackgroundOpacity) },
+    };
+    g["#item_name_text_offset"] = text(ItemNameTextOffset);
     if (view.jukebox) {
         g["#jukebox_text"] = text(view.itemText.text);
-        item("item_text_factory", "jukebox_text", view.itemText, {});
+        item("item_text_factory", "jukebox_text", view.itemText, std::move(itemTextVariables));
     } else {
         g["#item_text"] = text(view.itemText.text);
-        item("item_text_factory", "item_text", view.itemText, {});
+        item("item_text_factory", "item_text", view.itemText, std::move(itemTextVariables));
     }
     g["#tip_text"] = text(view.tip.text);
     item("hud_tip_text_factory", "hud_tip_text", view.tip, {});

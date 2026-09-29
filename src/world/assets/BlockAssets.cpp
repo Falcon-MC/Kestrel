@@ -1089,6 +1089,19 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                     if (box.texture) {
                         shapePart.materials.fill(materialFor(box.texture, false));
                     }
+                    for (size_t side = 0; side < 6; ++side) {
+                        if (box.faceSides[side] >= 0) {
+                            shapePart.materials[side] = materials[size_t(box.faceSides[side])];
+                        }
+                    }
+                    shapePart.uvs = box.uvs;
+                    shapePart.hidden = box.hidden;
+                    if (box.uvs) {
+                        for (const auto& rect : *box.uvs) {
+                            shapeKey += '#' + std::to_string(rect[0]) + ',' + std::to_string(rect[1]) + ',' + std::to_string(rect[2]) + ',' + std::to_string(rect[3]);
+                        }
+                    }
+                    shapeKey += '~' + std::to_string(box.hidden);
                     for (uint32_t material : shapePart.materials) {
                         usable &= material != DiagnosticMaterial;
                         shapeKey += ':' + std::to_string(material);
@@ -1110,8 +1123,13 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                     break;
                 }
                 shapeKey += "|" + std::to_string(extra.empty() ? 0 : extra.front().material) + "|" + std::to_string(shape.crossSide) + std::to_string(shape.planeSide);
-                modelTemplate = intern(keyOf(shapeKey, {}, { shape.turns }), [&] {
-                    pushTemplate(models::shape(parts, std::move(extra), shape.turns), 0);
+                modelTemplate = intern(keyOf(shapeKey, {}, { shape.turns, uint32_t(shape.facing + 1) }), [&] {
+                    // Tilted models like a wall grindstone tip over first, then turn like the rest.
+                    std::vector<ModelQuad> quads = models::shape(parts, std::move(extra), 0);
+                    if (shape.facing >= 0) {
+                        quads = models::orient(std::move(quads), uint32_t(shape.facing));
+                    }
+                    pushTemplate(models::shape({}, std::move(quads), shape.turns), 0);
                 });
                 break;
             }

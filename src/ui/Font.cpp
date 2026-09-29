@@ -849,17 +849,29 @@ void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float
 
 void Font::drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const
 {
-    float y = -9.0f * (1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n')));
+    float lines = 1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n'));
+    float y = -9.0f * lines;
+    if (background) {
+        // One box behind the whole tag, as wide as its widest line, so blank lines stay backed too.
+        float widest = 0.0f;
+        for (std::string_view rest = text;;) {
+            size_t end = rest.find('\n');
+            widest = std::max(widest, measure(rest.substr(0, end), TextStyle::Pixel));
+            if (end == std::string_view::npos) break;
+            rest.remove_prefix(end + 1);
+        }
+        if (widest > 0.0f) {
+            // Bedrock backs tags with half transparent black, twice Java's.
+            float x = -std::floor(widest * 0.5f);
+            list.fill({ x - 1.0f, y - 1.0f, widest + 2.0f, 9.0f * lines }, { 0, 0, 0, 128 });
+        }
+    }
     std::string carried;
     while (true) {
         size_t end = text.find('\n');
         std::string line = carried + std::string(text.substr(0, end));
         float width = measure(line, TextStyle::Pixel);
         float x = -std::floor(width * 0.5f);
-        if (background && width > 0.0f) {
-            // Bedrock backs tags with half transparent black, twice Java's.
-            list.fill({ x - 1.0f, y - 1.0f, width + 2.0f, 9.0f }, { 0, 0, 0, 128 });
-        }
         emitPixel(list, line, x / scale, y / scale, color, false, 1.0f / scale);
         carried = activeFormatting(line);
         if (end == std::string_view::npos) break;
