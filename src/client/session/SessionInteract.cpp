@@ -14,6 +14,9 @@ namespace kestrel {
 namespace {
 
 constexpr double InteractReach = 6.0;
+// Hitting and using entities reaches three blocks from the eyes, five in creative.
+constexpr double EntityReach = 3.0;
+constexpr double CreativeEntityReach = 5.0;
 constexpr int32_t ClickBlock = 0;
 constexpr int32_t ClickAir = 1;
 constexpr int32_t InteractEntity = 0;
@@ -171,15 +174,18 @@ void Session::interact(bool use)
     std::array<double, 3> origin;
     std::array<double, 3> direction;
     int32_t slot = 0;
+    bool creative = false;
     {
         std::lock_guard<std::mutex> guard(mutex);
         origin = lookOrigin;
         direction = { lookDirection[0], lookDirection[1], lookDirection[2] };
         slot = std::clamp(current.hud.selectedSlot, 0, 8);
+        creative = current.gameMode == "Creative";
     }
     std::optional<BlockHit> block = traceBlock(InteractReach);
     double nearest = 0.0;
-    const ActorView* target = traceActor(origin, direction, block ? block->distance : InteractReach, nearest);
+    double entityReach = creative ? CreativeEntityReach : EntityReach;
+    const ActorView* target = traceActor(origin, direction, std::min(block ? block->distance : InteractReach, entityReach), nearest);
     if (!use) {
         attackOnEntity = target != nullptr;
     }
@@ -201,12 +207,25 @@ void Session::interact(bool use)
     } else if (block) {
         useOnBlock(*block);
         return;
+    } else if (std::optional<BlockHit> ahead = heldBlockBridge()) {
+        useOnBlock(*ahead);
+        return;
     } else {
         buildLast.reset();
         packet.mTransactionType = InventoryTransactionType::ItemUse;
         packet.mActionType = ClickAir;
         packet.mBlockFace = -1;
         debugLog("use item in the air");
+        // Throwing swings the arm; items used in place, like food or a bow, do not.
+        static constexpr std::string_view Thrown[] = {
+            "minecraft:snowball", "minecraft:egg", "minecraft:ender_pearl", "minecraft:ender_eye", "minecraft:splash_potion",
+            "minecraft:lingering_potion", "minecraft:experience_bottle", "minecraft:fishing_rod", "minecraft:wind_charge",
+            "minecraft:blue_egg", "minecraft:brown_egg",
+        };
+        if (!packet.mItemInHand.isAir() && std::find(std::begin(Thrown), std::end(Thrown), packet.mItemInHand.mDefinition->getIdentifier()) != std::end(Thrown)) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.hud.lastSwing = secondsNow();
+        }
     }
     if (target) {
         buildLast.reset();
@@ -239,14 +258,148 @@ void Session::useOnBlock(const BlockHit& block)
     packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
     debugLog("use item on " + block.name);
     connection->send(packet);
-    if (!packet.mItemInHand.isAir()) {
+    std::array<int32_t, 3> placed = placedCell(block);
+    // A block that has nowhere to go leaves the arm still, the way the game only swings for a placement.
+    bool swings = !packet.mItemInHand.isAir() && (!holdsBlock(packet.mItemInHand) || placeableAt(placed));
+    if (swings) {
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.lastSwing = secondsNow();
     }
 
-    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(block.face, 0, 5)];
     buildFace = block.face;
-    buildLast = std::array<int32_t, 3> { block.cell[0] + offset[0], block.cell[1] + offset[1], block.cell[2] + offset[2] };
+    buildLast = placed;
+}
+
+bool Session::holdsBlock(const ItemStack& item) const
+{
+    return !item.isAir() && assets && assets->placesBlock(item.mDefinition->getIdentifier());
+}
+
+std::optional<BlockHit> Session::heldBlockBridge()
+{
+    int32_t slot = 0;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        slot = std::clamp(current.hud.selectedSlot, 0, 8);
+    }
+    return holdsBlock(inventoryModel.slots[size_t(slot)]) ? bridgeHit() : std::nullopt;
+}
+
+std::array<int32_t, 3> Session::placedCell(const BlockHit& hit)
+{
+    const std::array<int32_t, 3>& offset = FaceOffsets[size_t(std::clamp(hit.face, 0, 5))];
+    return { hit.cell[0] + offset[0], hit.cell[1] + offset[1], hit.cell[2] + offset[2] };
+}
+
+/**
+ * Whether cell holds nothing a block would not replace: air, liquids and the
+ * plants and snow a placed block takes the place of.
+ */
+bool Session::replaceableAt(const std::array<int32_t, 3>& cell)
+{
+    static constexpr std::string_view Replaceable[] = {
+        "minecraft:air", "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava", "minecraft:short_grass",
+        "minecraft:tall_grass", "minecraft:fern", "minecraft:large_fern", "minecraft:deadbush", "minecraft:vine", "minecraft:snow_layer",
+        "minecraft:fire", "minecraft:soul_fire", "minecraft:seagrass", "minecraft:structure_void",
+    };
+    if (!assets) {
+        return true;
+    }
+    uint32_t value = blockAt(cell[0], cell[1], cell[2]);
+    if (value == world::ImplicitAir) {
+        return true;
+    }
+    std::string name = assets->blockName(value, ids.hashed, ids.sequential.get());
+    return std::find(std::begin(Replaceable), std::end(Replaceable), name) != std::end(Replaceable);
+}
+
+/**
+ * Whether a block could go into cell: it holds nothing a block would not
+ * replace, and it stays clear of the player's own body.
+ */
+bool Session::placeableAt(const std::array<int32_t, 3>& cell)
+{
+    if (!replaceableAt(cell)) {
+        return false;
+    }
+    constexpr double HalfWidth = DefaultActorWidth * 0.5;
+    const MotionVector& feet = motion.position();
+    bool overlaps = feet.x + HalfWidth > cell[0] && feet.x - HalfWidth < cell[0] + 1.0
+        && feet.y + DefaultActorHeight > cell[1] && feet.y < cell[1] + 1.0
+        && feet.z + HalfWidth > cell[2] && feet.z - HalfWidth < cell[2] + 1.0;
+    return !overlaps;
+}
+
+/**
+ * Bedrock builds against blocks the crosshair never touches: with nothing in
+ * reach, the look ray is walked cell by cell and the first empty cell with a
+ * solid block behind it, on a side turned toward the viewer, takes the block.
+ * Looking ahead and down past an edge finds the cell in front of the block
+ * underfoot, which is how players bridge. Only the block the player stands on
+ * can be built off this way, so it takes walking up to the edge.
+ */
+std::optional<BlockHit> Session::bridgeHit()
+{
+    // A side counts when the look runs at least this much along it, away from the block built off.
+    constexpr double SideAlignment = 0.1;
+    if (!assets) {
+        return std::nullopt;
+    }
+    std::array<size_t, 6> sides { 0, 1, 2, 3, 4, 5 };
+    auto alignment = [&](size_t face) {
+        const std::array<int32_t, 3>& offset = FaceOffsets[face];
+        return offset[0] * lookDirection[0] + offset[1] * lookDirection[1] + offset[2] * lookDirection[2];
+    };
+    std::sort(sides.begin(), sides.end(), [&](size_t a, size_t b) { return alignment(a) > alignment(b); });
+    constexpr double HalfWidth = DefaultActorWidth * 0.5;
+    const MotionVector& feet = motion.position();
+    int32_t underfoot = int32_t(std::floor(feet.y - 0.01));
+    auto standingOn = [&](const std::array<int32_t, 3>& block) {
+        return block[1] == underfoot && feet.x + HalfWidth > block[0] && feet.x - HalfWidth < block[0] + 1.0
+            && feet.z + HalfWidth > block[2] && feet.z - HalfWidth < block[2] + 1.0;
+    };
+
+    std::array<int32_t, 3> cell { int32_t(std::floor(lookOrigin[0])), int32_t(std::floor(lookOrigin[1])), int32_t(std::floor(lookOrigin[2])) };
+    std::array<int32_t, 3> step {};
+    std::array<double, 3> next {};
+    std::array<double, 3> delta {};
+    for (int axis = 0; axis < 3; ++axis) {
+        double along = lookDirection[axis];
+        step[axis] = along > 0.0 ? 1 : -1;
+        delta[axis] = std::abs(along) > 1.0e-9 ? std::abs(1.0 / along) : std::numeric_limits<double>::infinity();
+        double boundary = along > 0.0 ? cell[axis] + 1.0 - lookOrigin[axis] : lookOrigin[axis] - cell[axis];
+        next[axis] = std::abs(along) > 1.0e-9 ? boundary * delta[axis] : std::numeric_limits<double>::infinity();
+    }
+    for (double travelled = 0.0; travelled <= InteractReach;) {
+        if (placeableAt(cell)) {
+            for (size_t face : sides) {
+                if (alignment(face) < SideAlignment) {
+                    break;
+                }
+                const std::array<int32_t, 3>& offset = FaceOffsets[face];
+                std::array<int32_t, 3> against { cell[0] - offset[0], cell[1] - offset[1], cell[2] - offset[2] };
+                uint32_t value = blockAt(against[0], against[1], against[2]);
+                if (value == world::ImplicitAir || !standingOn(against) || replaceableAt(against)) {
+                    continue;
+                }
+                BlockHit hit;
+                hit.cell = against;
+                hit.value = value;
+                hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
+                hit.face = int32_t(face);
+                hit.distance = travelled;
+                for (int axis = 0; axis < 3; ++axis) {
+                    hit.point[axis] = against[axis] + 0.5 + offset[axis] * 0.5;
+                }
+                return hit;
+            }
+        }
+        int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2) : (next[1] < next[2] ? 1 : 2);
+        travelled = next[axis];
+        next[axis] += delta[axis];
+        cell[axis] += step[axis];
+    }
+    return std::nullopt;
 }
 
 /**
@@ -274,7 +427,15 @@ void Session::tickHeldUse()
         interact(true);
         return;
     }
+    // With nothing to extend, held use keeps building out from underfoot like a fresh click would.
+    auto bridge = [&] {
+        if (std::optional<BlockHit> ahead = hit ? std::nullopt : heldBlockBridge()) {
+            useRepeatTicks = 0;
+            useOnBlock(*ahead);
+        }
+    };
     if (!buildLast) {
+        bridge();
         return;
     }
     const std::array<int32_t, 3>& last = *buildLast;
@@ -302,6 +463,7 @@ void Session::tickHeldUse()
     extend.name = assets->describe(extend.value, ids.hashed, ids.sequential.get());
     extend.face = buildFace;
     if (!faceClickPoint(last, buildFace, extend.point)) {
+        bridge();
         return;
     }
     useRepeatTicks = 0;

@@ -1,6 +1,7 @@
 #include "world/BlockAssets.h"
 #include "world/BlockModels.h"
 
+#include "BlockRules.h"
 #include "TextureTools.h"
 #include "Core/Json/Json.h"
 #include "ui/Image.h"
@@ -140,9 +141,11 @@ std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, c
 /**
  * Draws block model quads with the same projection as isometricIcon, keeping the nearest
  * texel per pixel, so slabs and stairs keep their shape instead of showing one flat face.
+ * Seen through, every face is blended in from the farthest, so glass shows its far edges
+ * and tinted glass stays tinted, the way the game draws them.
  */
 template <typename Texture>
-std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture texture)
+std::vector<uint8_t> modelIcon(std::vector<ModelQuad> quads, Texture texture, bool seeThrough = false)
 {
     // Models reaching past their block, like a banner, are scaled on screen until they fit.
     constexpr float Size = static_cast<float>(ItemIconSize);
@@ -163,13 +166,23 @@ std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture text
     };
     std::vector<uint8_t> out(size_t(ItemIconSize) * ItemIconSize * 4, 0);
     std::vector<float> depth(size_t(ItemIconSize) * ItemIconSize, -1.0e9f);
+    if (seeThrough) {
+        auto nearness = [](const ModelQuad& quad) {
+            float sum = 0.0f;
+            for (const auto& corner : quad.positions) {
+                sum += float(corner[0]) + float(corner[1]) + float(corner[2]);
+            }
+            return sum;
+        };
+        std::stable_sort(quads.begin(), quads.end(), [&](const ModelQuad& a, const ModelQuad& b) { return nearness(a) < nearness(b); });
+    }
     for (const ModelQuad& quad : quads) {
         uint32_t face = quad.flags & QuadFaceMask;
         bool facing = face == 2 || face == 4 || face == 6;
         if (quad.flags & QuadInward) {
             facing = !facing;
         }
-        if (!facing && !(quad.flags & QuadTwoSided)) {
+        if (!seeThrough && !facing && !(quad.flags & QuadTwoSided)) {
             continue;
         }
         float shade = face == 2 ? 1.0f : face == 4 ? 0.62f : 0.8f;
@@ -207,7 +220,7 @@ std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture text
                     z += corners[0][axis] + a * (corners[1][axis] - corners[0][axis]) + b * (corners[3][axis] - corners[0][axis]);
                 }
                 size_t at = size_t(y) * ItemIconSize + x;
-                if (z <= depth[at]) {
+                if (!seeThrough && z <= depth[at]) {
                     continue;
                 }
                 float u = quad.uvs[0][0] + a * (quad.uvs[1][0] - quad.uvs[0][0]) + b * (quad.uvs[3][0] - quad.uvs[0][0]);
@@ -215,6 +228,21 @@ std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture text
                 uint32_t tu = std::min(uint32_t(std::max(0.0f, u) * TextureSize / 4096.0f), TextureSize - 1);
                 uint32_t tv = std::min(uint32_t(std::max(0.0f, v) * TextureSize / 4096.0f), TextureSize - 1);
                 const uint8_t* texel = pixels + (size_t(tv) * TextureSize + tu) * 4;
+                if (seeThrough) {
+                    float alpha = texel[3] / 255.0f;
+                    if (alpha <= 0.0f) {
+                        continue;
+                    }
+                    uint8_t* pixel = out.data() + at * 4;
+                    float below = pixel[3] / 255.0f;
+                    float result = alpha + below * (1.0f - alpha);
+                    for (int channel = 0; channel < 3; ++channel) {
+                        float color = std::clamp(texel[channel] * shade * tint[channel] / 255.0f, 0.0f, 255.0f);
+                        pixel[channel] = static_cast<uint8_t>((color * alpha + pixel[channel] * below * (1.0f - alpha)) / result);
+                    }
+                    pixel[3] = static_cast<uint8_t>(result * 255.0f);
+                    continue;
+                }
                 if (texel[3] < 128) {
                     continue;
                 }
@@ -297,6 +325,23 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
         const std::vector<uint8_t>* rgba = load("textures/items/" + stem, width, height);
         if (rgba && width == height) {
             itemFiles.emplace(stem, resizeNearest(*rgba, width, height, ItemIconSize));
+        }
+    }
+    // Candles keep their item pictures in a folder of their own that no atlas names.
+    for (const char* folder : { "candles" }) {
+        std::string directory = std::string("textures/items/") + folder;
+        for (const std::string& name : pack.archiveEntries(directory)) {
+            size_t dot = name.rfind('.');
+            std::string stem = name.substr(0, dot);
+            if (dot == std::string::npos || name.find('/') != std::string::npos || itemFiles.count(stem)) {
+                continue;
+            }
+            uint32_t width = 0;
+            uint32_t height = 0;
+            const std::vector<uint8_t>* rgba = load(directory + "/" + stem, width, height);
+            if (rgba && width == height) {
+                itemFiles.emplace(stem, resizeNearest(*rgba, width, height, ItemIconSize));
+            }
         }
     }
     for (const std::string& text : atlases) {
@@ -422,6 +467,8 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         { "crimson_sign", "crimson_sign_item" },
         { "warped_sign", "warped_sign_item" },
         { "lodestone_compass", "lodestonecompass_item" },
+        { "bow", "bow_standby" },
+        { "crossbow", "crossbow_standby" },
     };
     std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     std::vector<std::string> names;
@@ -518,6 +565,10 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         }
         return icon;
     }
+    if ((look.flags & (FlagTranslucent | FlagCullSame)) && !(look.flags & FlagLeafModel)) {
+        auto cube = models::cuboid(look.faces, { 0, 0, 0 }, { 256, 256, 256 });
+        return modelIcon({ cube.begin(), cube.end() }, materialPixels, true);
+    }
     std::array<const uint8_t*, 3> faces { facePixels(3, tints[0]), facePixels(5, tints[1]), facePixels(1, tints[2]) };
     return isometricIcon(faces, tints);
 }
@@ -548,6 +599,8 @@ std::vector<ModelQuad> BlockAssets::itemGeometry(const std::string& identifier) 
     if (itemFiles.contains(shortName) || itemTextures.contains(identifier)) return {};
     const ModelTemplate& model = templates[look->modelTemplate];
     if (model.flags & TemplatePane) return {};
+    // Torches show their flat texture in the inventory, not the model.
+    if (rules::modelKind(shortName) == rules::ModelKind::Torch) return {};
     if (model.flags & TemplateWall) return models::wall(look->faces, (1u << 8) | (1u << 2) | (1u << 6));
     if (model.flags & (TemplateFenceWood | TemplateFenceNether)) {
         std::vector<ModelQuad> shape;

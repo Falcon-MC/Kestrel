@@ -138,7 +138,8 @@ std::string itemDisplayName(const std::string& identifier)
 {
     std::string name = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     const ui::Localization& texts = ui::Localization::shared();
-    for (const std::string& key : { "item." + name + ".name", "tile." + name + ".name", "item." + identifier + ".name", "tile." + identifier + ".name" }) {
+    // Custom items look their name up as item.namespace:name, without the .name vanilla items end in.
+    for (const std::string& key : { "item." + name + ".name", "tile." + name + ".name", "item." + identifier + ".name", "tile." + identifier + ".name", "item." + identifier }) {
         if (texts.has(key)) {
             return texts.text(key, name);
         }

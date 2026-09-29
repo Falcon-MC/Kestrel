@@ -429,6 +429,15 @@ public:
      * drawn as a full cube; null for other items.
      */
     const BlockVisual* itemCube(const std::string& identifier) const;
+
+    /**
+     * Whether the item places a block, which the item stacks servers send do
+     * not say on their own.
+     */
+    bool placesBlock(const std::string& identifier) const
+    {
+        return itemVisual(identifier) != nullptr;
+    }
     std::vector<ModelQuad> itemGeometry(const std::string& identifier) const;
 
     size_t itemTextureCount() const

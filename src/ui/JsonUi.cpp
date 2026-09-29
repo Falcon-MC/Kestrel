@@ -194,6 +194,52 @@ void applyModifications(json::Value& control, const json::Value& modifications)
     }
 }
 
+/**
+ * The control a pack reaches with "parent/child/grandchild": the top level
+ * control, then at each step the child of that name among the controls of
+ * the one before.
+ */
+json::Value* findPath(json::Value& base, const std::string& path)
+{
+    size_t slash = path.find('/');
+    std::string first = path.substr(0, slash);
+    json::Value* current = nullptr;
+    for (const std::string& known : base.mKeys) {
+        if (controlName(known) == controlName(first)) {
+            current = base.mObject[known].get();
+            break;
+        }
+    }
+    while (current && slash != std::string::npos) {
+        size_t next = path.find('/', slash + 1);
+        std::string step = path.substr(slash + 1, next == std::string::npos ? std::string::npos : next - slash - 1);
+        slash = next;
+        auto controls = current->isObject() ? current->mObject.find("controls") : current->mObject.end();
+        json::Value* found = nullptr;
+        if (controls != current->mObject.end() && controls->second->isArray()) {
+            for (const std::unique_ptr<json::Value>& item : controls->second->mArray) {
+                if (item->isObject() && !item->mKeys.empty() && controlName(item->mKeys.front()) == controlName(step)) {
+                    found = item->mObject[item->mKeys.front()].get();
+                    break;
+                }
+            }
+        }
+        current = found;
+    }
+    return current && current->isObject() ? current : nullptr;
+}
+
+void mergeControl(json::Value& target, const json::Value& value)
+{
+    for (const std::string& property : value.mKeys) {
+        if (property == "modifications") {
+            applyModifications(target, *value.get(property));
+        } else {
+            setKey(target, property, value.get(property)->clone());
+        }
+    }
+}
+
 }
 
 void JsonUi::clear()
@@ -232,6 +278,12 @@ void JsonUi::addFile(const std::string& path, const std::string& text)
             }
             continue;
         }
+        if (key.find('/') != std::string::npos) {
+            if (json::Value* target = value->isObject() ? findPath(base, key) : nullptr) {
+                mergeControl(*target, *value);
+            }
+            continue;
+        }
         std::string match;
         for (const std::string& known : base.mKeys) {
             if (controlName(known) == controlName(key)) {
@@ -247,14 +299,7 @@ void JsonUi::addFile(const std::string& path, const std::string& text)
             renameKey(base, match, key);
             match = key;
         }
-        json::Value& target = *base.mObject[match];
-        for (const std::string& property : value->mKeys) {
-            if (property == "modifications") {
-                applyModifications(target, *value->get(property));
-            } else {
-                setKey(target, property, value->get(property)->clone());
-            }
-        }
+        mergeControl(*base.mObject[match], *value);
     }
 }
 

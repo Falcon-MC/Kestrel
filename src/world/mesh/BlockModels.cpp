@@ -7,6 +7,7 @@ namespace kestrel::world::models {
 namespace {
 
 constexpr int16_t Full = 256;
+constexpr uint32_t FaceIds[6] = { 3, 4, 1, 2, 5, 6 };
 
 uint32_t boundary(uint32_t id, bool touches)
 {
@@ -356,8 +357,7 @@ std::array<uint16_t, 4> uvLockRect(uint32_t side, Point min, Point max)
 
 uint32_t faceId(uint32_t side)
 {
-    static constexpr uint32_t Ids[6] = { 3, 4, 1, 2, 5, 6 };
-    return Ids[side];
+    return FaceIds[side];
 }
 
 std::array<ModelQuad, 6> cuboid(const Materials& materials, Point min, Point max)
@@ -419,39 +419,63 @@ std::vector<ModelQuad> stair(const Materials& materials, bool upsideDown, uint32
         }
     }
 
+    // Each face goes out as few rectangles as its half cells allow. Half-cell quads leave vertices
+    // midway along the edges of the faces around them, and those T-junctions show up as specks.
     std::vector<ModelQuad> result;
-    for (size_t x = 0; x < 2; ++x) {
-        for (size_t y = 0; y < 2; ++y) {
-            for (size_t z = 0; z < 2; ++z) {
-                if (!occupied[cellIndex(x, y, z)]) {
-                    continue;
-                }
-                Point min { static_cast<int16_t>(x * 128), static_cast<int16_t>(y * 128), static_cast<int16_t>(z * 128) };
-                Point max { static_cast<int16_t>(min[0] + 128), static_cast<int16_t>(min[1] + 128), static_cast<int16_t>(min[2] + 128) };
-                for (uint32_t side = 0; side < 6; ++side) {
-                    bool neighbourOccupied = false;
-                    switch (side) {
-                    case West:
-                        neighbourOccupied = x > 0 && occupied[cellIndex(x - 1, y, z)];
-                        break;
-                    case East:
-                        neighbourOccupied = x < 1 && occupied[cellIndex(x + 1, y, z)];
-                        break;
-                    case Down:
-                        neighbourOccupied = y > 0 && occupied[cellIndex(x, y - 1, z)];
-                        break;
-                    case Up:
-                        neighbourOccupied = y < 1 && occupied[cellIndex(x, y + 1, z)];
-                        break;
-                    case North:
-                        neighbourOccupied = z > 0 && occupied[cellIndex(x, y, z - 1)];
-                        break;
-                    default:
-                        neighbourOccupied = z < 1 && occupied[cellIndex(x, y, z + 1)];
-                        break;
+    for (uint32_t side = 0; side < 6; ++side) {
+        size_t normal = side == West || side == East ? 0 : side == Down || side == Up ? 1 : 2;
+        size_t first = normal == 0 ? 1 : 0;
+        size_t second = normal == 2 ? 1 : 2;
+        bool positive = side == East || side == Up || side == South;
+        for (size_t layer = 0; layer < 2; ++layer) {
+            std::array<std::array<bool, 2>, 2> open {};
+            for (size_t a = 0; a < 2; ++a) {
+                for (size_t b = 0; b < 2; ++b) {
+                    std::array<size_t, 3> cell {};
+                    cell[normal] = layer;
+                    cell[first] = a;
+                    cell[second] = b;
+                    if (!occupied[cellIndex(cell[0], cell[1], cell[2])]) {
+                        continue;
                     }
-                    if (!neighbourOccupied) {
-                        result.push_back(makeQuad(side, min, max, materials[side], true));
+                    bool inside = positive ? layer == 0 : layer == 1;
+                    std::array<size_t, 3> next = cell;
+                    next[normal] = 1 - layer;
+                    open[a][b] = !(inside && occupied[cellIndex(next[0], next[1], next[2])]);
+                }
+            }
+            auto emit = [&](size_t a0, size_t a1, size_t b0, size_t b1) {
+                Point min {};
+                Point max {};
+                min[normal] = static_cast<int16_t>(layer * 128);
+                max[normal] = static_cast<int16_t>(min[normal] + 128);
+                min[first] = static_cast<int16_t>(a0 * 128);
+                max[first] = static_cast<int16_t>((a1 + 1) * 128);
+                min[second] = static_cast<int16_t>(b0 * 128);
+                max[second] = static_cast<int16_t>((b1 + 1) * 128);
+                result.push_back(makeQuad(side, min, max, materials[side], true));
+            };
+            if (open[0][0] && open[0][1] && open[1][0] && open[1][1]) {
+                emit(0, 1, 0, 1);
+                continue;
+            }
+            std::array<std::array<bool, 2>, 2> done {};
+            for (size_t a = 0; a < 2; ++a) {
+                if (open[a][0] && open[a][1]) {
+                    emit(a, a, 0, 1);
+                    done[a] = { true, true };
+                }
+            }
+            for (size_t b = 0; b < 2; ++b) {
+                if (open[0][b] && open[1][b] && !done[0][b] && !done[1][b]) {
+                    emit(0, 1, b, b);
+                    done[0][b] = done[1][b] = true;
+                }
+            }
+            for (size_t a = 0; a < 2; ++a) {
+                for (size_t b = 0; b < 2; ++b) {
+                    if (open[a][b] && !done[a][b]) {
+                        emit(a, a, b, b);
                     }
                 }
             }
@@ -947,12 +971,16 @@ std::vector<ModelQuad> rotateSign(std::vector<ModelQuad> quads, uint32_t rotatio
             position[2] = static_cast<int16_t>(128 + rounded(dx * sine + dz * cosine));
         }
         uint32_t face = quad.flags & QuadFaceMask;
-        quad.flags &= ~QuadFaceMask;
-        if (face == 1 || face == 2) {
-            quad.flags |= face;
-        } else if ((rotation & 15) % 4 == 0 && face != 0) {
-            quad.flags |= faceId(rotateGateFace(sideFromFaceId(face), (rotation & 15) / 4));
-        }
+        uint32_t cull = (quad.flags & QuadCullFaceMask) >> 4;
+        quad.flags &= ~uint32_t(QuadFaceMask | QuadCullFaceMask);
+        auto turned = [&](uint32_t id) -> uint32_t {
+            if (id == 1 || id == 2) {
+                return id;
+            }
+            return (rotation & 15) % 4 == 0 && id != 0 ? faceId(rotateGateFace(sideFromFaceId(id), (rotation & 15) / 4)) : 0;
+        };
+        // The side a face is culled against turns with it, or it would hide behind the wrong neighbour.
+        quad.flags |= turned(face) | (turned(cull) << 4);
     }
     return quads;
 }
@@ -964,7 +992,15 @@ std::vector<ModelQuad> shape(const std::vector<ShapePart>& parts, std::vector<Mo
     std::vector<ModelQuad> quads;
     for (const ShapePart& part : parts) {
         auto faces = cuboid(part.materials, part.min, part.max);
-        quads.insert(quads.end(), faces.begin(), faces.end());
+        for (uint32_t side = 0; side < 6; ++side) {
+            if (part.hidden & (1u << side)) {
+                continue;
+            }
+            if (part.uvs) {
+                rectUvs(faces[side], side, (*part.uvs)[side]);
+            }
+            quads.push_back(faces[side]);
+        }
     }
     quads.insert(quads.end(), extra.begin(), extra.end());
     return rotateSign(std::move(quads), (turns & 3) * 4);
@@ -977,41 +1013,61 @@ std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing)
 
 std::vector<ModelQuad> orientedCross(uint32_t first, uint32_t second, uint32_t facing)
 {
-    std::vector<ModelQuad> quads = cross(first, second);
+    return orient(cross(first, second), facing);
+}
+
+std::vector<ModelQuad> orient(std::vector<ModelQuad> quads, uint32_t facing)
+{
+    // Where a point centered on the block goes once up points toward facing.
+    auto turn = [facing](int32_t cx, int32_t cy, int32_t cz) {
+        int32_t x = cx;
+        int32_t y = cy;
+        int32_t z = cz;
+        switch (facing) {
+        case Down:
+            y = -cy;
+            z = -cz;
+            break;
+        case North:
+            y = cz;
+            z = -cy;
+            break;
+        case South:
+            y = -cz;
+            z = cy;
+            break;
+        case West:
+            x = -cy;
+            y = cx;
+            break;
+        case East:
+            x = cy;
+            y = -cx;
+            break;
+        default:
+            break;
+        }
+        return std::array<int32_t, 3> { x, y, z };
+    };
+    static constexpr std::array<std::array<int32_t, 3>, 6> Normals { { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } } };
     for (ModelQuad& quad : quads) {
         for (Point& position : quad.positions) {
-            int32_t cx = int32_t(position[0]) - 128;
-            int32_t cy = int32_t(position[1]) - 128;
-            int32_t cz = int32_t(position[2]) - 128;
-            int32_t x = cx;
-            int32_t y = cy;
-            int32_t z = cz;
-            switch (facing) {
-            case Down:
-                y = -cy;
-                z = -cz;
-                break;
-            case North:
-                y = cz;
-                z = -cy;
-                break;
-            case South:
-                y = -cz;
-                z = cy;
-                break;
-            case West:
-                x = -cy;
-                y = cx;
-                break;
-            case East:
-                x = cy;
-                y = -cx;
-                break;
-            default:
-                break;
-            }
-            position = { static_cast<int16_t>(x + 128), static_cast<int16_t>(y + 128), static_cast<int16_t>(z + 128) };
+            auto turned = turn(int32_t(position[0]) - 128, int32_t(position[1]) - 128, int32_t(position[2]) - 128);
+            position = { static_cast<int16_t>(turned[0] + 128), static_cast<int16_t>(turned[1] + 128), static_cast<int16_t>(turned[2] + 128) };
         }
+        uint32_t id = quad.flags & QuadFaceMask;
+        auto side = std::find(std::begin(FaceIds), std::end(FaceIds), id);
+        if (side == std::end(FaceIds)) {
+            continue;
+        }
+        const auto& normal = Normals[size_t(side - std::begin(FaceIds))];
+        auto turned = turn(normal[0], normal[1], normal[2]);
+        uint32_t newSide = uint32_t(std::find(Normals.begin(), Normals.end(), turned) - Normals.begin());
+        size_t axis = newSide / 2;
+        int16_t plane = (newSide & 1) ? Full : 0;
+        bool touches = std::all_of(quad.positions.begin(), quad.positions.end(), [&](const Point& p) { return p[axis] == plane; });
+        bool culled = (quad.flags & QuadCullFaceMask) != 0;
+        quad.flags = (quad.flags & ~uint32_t(QuadFaceMask | QuadCullFaceMask)) | (culled ? boundary(faceId(newSide), touches) : faceId(newSide));
     }
     return quads;
 }

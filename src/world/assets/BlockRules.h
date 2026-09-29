@@ -112,6 +112,12 @@ struct ShapeBox {
     std::array<int16_t, 3> max {};
     int side = -1;
     const char* texture = nullptr;
+    // Which of the block's side textures each face takes, in West, East, Down, Up, North,
+    // South order, for boxes mixing them; -1 falls back to side.
+    std::array<int8_t, 6> faceSides { -1, -1, -1, -1, -1, -1 };
+    // Pixel rects per face when the box uses part of a texture, like an end rod's rod.
+    std::optional<std::array<std::array<uint16_t, 4>, 6>> uvs;
+    uint8_t hidden = 0;
 };
 
 /**
@@ -123,6 +129,8 @@ struct ShapeBox {
 struct BlockShape {
     std::vector<ShapeBox> boxes;
     uint32_t turns = 0;
+    // The side a model built pointing up is turned to point at, after its turns.
+    int facing = -1;
     int crossSide = -1;
     int planeSide = -1;
 };

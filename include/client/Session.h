@@ -559,6 +559,12 @@ private:
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
     void useOnBlock(const BlockHit& block);
+    std::optional<BlockHit> bridgeHit();
+    bool holdsBlock(const ItemStack& item) const;
+    std::optional<BlockHit> heldBlockBridge();
+    static std::array<int32_t, 3> placedCell(const BlockHit& hit);
+    bool replaceableAt(const std::array<int32_t, 3>& cell);
+    bool placeableAt(const std::array<int32_t, 3>& cell);
     bool unselectable(uint32_t value) const;
     bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);

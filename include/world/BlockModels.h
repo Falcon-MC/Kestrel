@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace kestrel::world::models {
@@ -46,6 +47,11 @@ std::vector<ModelQuad> turtleEggs(uint32_t material, uint32_t count);
  */
 std::vector<ModelQuad> cauldron(const Materials& materials, uint32_t liquid, uint32_t level);
 std::vector<ModelQuad> bamboo(uint32_t stem, uint32_t leaves, bool thick);
+/**
+ * Turns quads built pointing up to point toward facing, one of the six sides,
+ * keeping each face's shading and culling side in step.
+ */
+std::vector<ModelQuad> orient(std::vector<ModelQuad> quads, uint32_t facing);
 std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing);
 std::vector<ModelQuad> orientedCross(uint32_t first, uint32_t second, uint32_t facing);
 std::vector<ModelQuad> standingSign(uint32_t material, uint32_t rotation);
@@ -58,6 +64,11 @@ struct ShapePart {
     Point min {};
     Point max {};
     Materials materials {};
+    // Texture rects in pixels per side, for boxes cut from part of a texture; none projects
+    // them from the box's place in the block.
+    std::optional<std::array<std::array<uint16_t, 4>, 6>> uvs;
+    // A bit per side left out, like the hidden bottom of an end rod's rod.
+    uint8_t hidden = 0;
 };
 
 /**

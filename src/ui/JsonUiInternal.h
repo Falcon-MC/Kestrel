@@ -58,6 +58,25 @@ struct NameHash {
 
 using PropMap = std::unordered_map<std::string, Prop, NameHash, std::equal_to<>>;
 
+/**
+ * The variables a control sees: the ones it sets over those of the controls
+ * it sits in, which stay shared rather than copied into every control.
+ */
+struct VarScope {
+    PropMap own;
+    std::shared_ptr<const VarScope> parent;
+
+    const Prop* find(std::string_view name) const
+    {
+        for (const VarScope* scope = this; scope; scope = scope->parent.get()) {
+            if (auto found = scope->own.find(name); found != scope->own.end()) {
+                return &found->second;
+            }
+        }
+        return nullptr;
+    }
+};
+
 enum class TermKind {
     Pixel,
     Parent,
@@ -104,7 +123,7 @@ struct Node {
     std::string name;
     std::string type;
     PropMap props;
-    std::shared_ptr<const PropMap> vars;
+    std::shared_ptr<const VarScope> vars;
     Node* parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
     std::vector<std::unique_ptr<json::Value>> owned;
@@ -167,6 +186,7 @@ struct JsonUiRuntime {
     using Node = jsonui::Node;
     using Prop = jsonui::Prop;
     using PropMap = jsonui::PropMap;
+    using VarScope = jsonui::VarScope;
 
     std::shared_ptr<const JsonUi> defs;
     std::string rootReference;
@@ -198,7 +218,7 @@ struct JsonUiRuntime {
     std::vector<Node*> painted;
 
     // JsonUiBuild.cpp
-    std::unique_ptr<Node> make(Node* parent, std::string_view key, const json::Value* instance, const std::string* space, std::shared_ptr<const PropMap> scope, const UiRow* variables, int depth);
+    std::unique_ptr<Node> make(Node* parent, std::string_view key, const json::Value* instance, const std::string* space, std::shared_ptr<const VarScope> scope, const UiRow* variables, int depth);
     void collect(std::string_view reference, const std::string* space, PropMap& out, int depth) const;
     void applyVariables(Node& node, const UiRow* variables);
     Prop variable(const Node& node, std::string_view name) const;
