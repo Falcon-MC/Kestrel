@@ -233,7 +233,7 @@ float Context::shadowOffset(TextStyle style) const
 void Context::textShadowed(std::string_view value, TextStyle style, float x, float y, Color color, Color shadow, float maxWidth)
 {
     float offset = shadowOffset(style);
-    font.draw(drawList, value, style, x + offset, y + offset, shadow, maxWidth);
+    font.draw(drawList, value, style, x + offset, y + offset, { color.r, color.g, color.b, shadow.a }, maxWidth, true);
     font.draw(drawList, value, style, x, y, color, maxWidth);
 }
 

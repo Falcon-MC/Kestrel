@@ -755,10 +755,10 @@ void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x,
     }
 }
 
-void Font::draw(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, float maxWidth) const
+void Font::draw(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, float maxWidth, bool shadow) const
 {
     if (maxWidth <= 0.0f || measure(text, style) <= maxWidth) {
-        emit(list, text, style, x, y, color);
+        emit(list, text, style, x, y, color, shadow);
         return;
     }
 
@@ -786,7 +786,7 @@ void Font::draw(DrawList& list, std::string_view text, TextStyle style, float x,
         clipped.append(text.substr(start, i - start));
     }
     clipped.append(Ellipsis);
-    emit(list, clipped, style, x, y, color);
+    emit(list, clipped, style, x, y, color, shadow);
 }
 
 size_t Font::wrap(std::string_view text, TextStyle style, float width, std::vector<std::string_view>& lines) const

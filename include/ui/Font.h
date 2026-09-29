@@ -81,7 +81,11 @@ public:
 
     float measure(std::string_view text, TextStyle style) const;
     float lineHeight(TextStyle style) const;
-    void draw(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, float maxWidth) const;
+    /**
+     * Draws a line of text, or its shadow when shadow is set: every color,
+     * including those its codes pick, at a quarter of its brightness.
+     */
+    void draw(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, float maxWidth, bool shadow = false) const;
     float drawWrapped(DrawList& list, std::string_view text, TextStyle style, float x, float y, float width, Color color) const;
 
     /**
