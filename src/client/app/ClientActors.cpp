@@ -575,7 +575,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
  * share the humanoid's names, so each armor bone follows the pose of the
  * wearer's bone of the same name, whatever geometry the skin brings.
  */
-void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out)
+void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones)
 {
     for (size_t slot = 0; slot < armor.size(); ++slot) {
         if (armor[slot].empty()) {
@@ -602,7 +602,7 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
         for (size_t index = 0; index < look.rig->quads.size(); ++index) {
             size_t piece = index < look.rig->quadBones.size() ? look.rig->quadBones[index] : wearer.size();
             int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
-            if (bone < 0 || size_t(bone) >= matrices.size()) {
+            if (bone < 0 || size_t(bone) >= matrices.size() || (shownBones && !(*shownBones)[size_t(bone)])) {
                 continue;
             }
             const world::BoneMatrix& m = matrices[size_t(bone)];
