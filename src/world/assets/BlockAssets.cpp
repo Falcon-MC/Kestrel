@@ -836,6 +836,17 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 });
                 break;
             }
+            case ModelKind::Lantern: {
+                uint32_t material = materials[models::Up];
+                if (material == DiagnosticMaterial) {
+                    break;
+                }
+                bool hanging = flag("hanging");
+                modelTemplate = intern(keyOf("lantern", uniform(models::Up), { hanging }), [&] {
+                    pushTemplate(models::lantern(material, hanging), 0);
+                });
+                break;
+            }
             case ModelKind::Rail: {
                 int32_t direction = stateInt(record.states, "rail_direction").value_or(0);
                 bool curved = direction >= 6;

@@ -757,6 +757,51 @@ std::vector<ModelQuad> torch(uint32_t material, uint32_t facing)
     return result;
 }
 
+std::vector<ModelQuad> lantern(uint32_t material, bool hanging)
+{
+    Materials materials;
+    materials.fill(material);
+    int16_t lift = hanging ? 16 : 0;
+    std::vector<ModelQuad> result;
+    auto body = cuboid(materials, { 80, lift, 80 }, { 176, static_cast<int16_t>(112 + lift), 176 });
+    for (uint32_t side = 0; side < 6; ++side) {
+        rectUvs(body[side], side, side == Up || side == Down ? std::array<uint16_t, 4> { 0, 9, 6, 15 } : std::array<uint16_t, 4> { 0, 2, 6, 9 });
+        result.push_back(body[side]);
+    }
+    auto cap = cuboid(materials, { 96, static_cast<int16_t>(112 + lift), 96 }, { 160, static_cast<int16_t>(144 + lift), 160 });
+    for (uint32_t side = 0; side < 6; ++side) {
+        if (side == Down && !hanging) {
+            continue;
+        }
+        rectUvs(cap[side], side, side == Up || side == Down ? std::array<uint16_t, 4> { 1, 10, 5, 14 } : std::array<uint16_t, 4> { 1, 0, 5, 2 });
+        result.push_back(cap[side]);
+    }
+
+    // The handle is two 3px wide planes crossed at 45 degrees, so each end sits about 17 units off center on both axes.
+    constexpr int16_t Near = 128 - 17;
+    constexpr int16_t Far = 128 + 17;
+    auto handle = [&](int16_t x0, int16_t z0, int16_t x1, int16_t z1, int16_t bottom, int16_t top, std::array<uint16_t, 4> rect) {
+        ModelQuad quad;
+        quad.positions = { { { x0, bottom, z0 }, { x1, bottom, z1 }, { x1, top, z1 }, { x0, top, z0 } } };
+        auto u1 = static_cast<uint16_t>(rect[0] * 256);
+        auto v1 = static_cast<uint16_t>(rect[1] * 256);
+        auto u2 = static_cast<uint16_t>(rect[2] * 256);
+        auto v2 = static_cast<uint16_t>(rect[3] * 256);
+        quad.uvs = { { { u1, v2 }, { u2, v2 }, { u2, v1 }, { u1, v1 } } };
+        quad.material = material;
+        quad.flags = QuadTwoSided;
+        result.push_back(quad);
+    };
+    if (hanging) {
+        handle(Near, Near, Far, Far, 176, 240, { 11, 1, 14, 5 });
+        handle(Near, Far, Far, Near, 160, Full, { 11, 6, 14, 12 });
+    } else {
+        handle(Near, Near, Far, Far, 144, 176, { 11, 1, 14, 3 });
+        handle(Near, Far, Far, Near, 144, 176, { 11, 10, 14, 12 });
+    }
+    return result;
+}
+
 namespace {
 
 uint32_t sideFromFaceId(uint32_t id)
