@@ -68,11 +68,28 @@ private:
         bool placed = false;
         uint32_t x = 0;
         uint32_t y = 0;
+        uint32_t slotWidth = 0;
+        uint32_t slotHeight = 0;
         uint64_t lastUse = 0;
+    };
+
+    /**
+     * A rectangle of the atlas a picture used to hold, free for another one
+     * that fits inside it.
+     */
+    struct FreeSlot {
+        uint32_t x = 0;
+        uint32_t y = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
     };
 
     Entry& load(std::string_view name);
     bool place(Entry& entry);
+    bool placeInFreeSlot(Entry& entry);
+    void release(Entry& entry);
+    bool evictFor(Entry& entry);
+    void repackAll();
 
     GameAssets& assets;
     std::unordered_map<std::string, Entry> entries;
@@ -82,7 +99,7 @@ private:
     uint32_t cursorX = 0;
     uint32_t cursorY = ImageTop;
     uint32_t shelfHeight = 0;
-    bool reclaimable = false;
+    std::vector<FreeSlot> freeSlots;
     uint64_t useClock = 1;
 };
 
