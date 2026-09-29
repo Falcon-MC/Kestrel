@@ -256,7 +256,7 @@ int Client::run()
             if (agentServer) {
                 agentWidgets = context.widgets();
             }
-            if (menu.worldVisible()) {
+            if (menu.worldVisible() && !menu.hudHidden()) {
                 mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
             for (auto& command : menu.inventoryPanel().takeCommands()) session.requestInventory(std::move(command));
@@ -385,10 +385,12 @@ int Client::run()
                 blockParticles.update(secondsNow());
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
-                appendFirstPerson(entityOrigin, handQuads);
-                lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
-                if (self) {
-                    appendPaperDoll(*self, entityOrigin, handQuads);
+                if (!menu.hudHidden()) {
+                    appendFirstPerson(entityOrigin, handQuads);
+                    lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
+                    if (self) {
+                        appendPaperDoll(*self, entityOrigin, handQuads);
+                    }
                 }
                 appendBlockOverlays(entityOrigin, overlayQuads);
                 view.entityQuadCount = static_cast<uint32_t>(entityQuads.size());

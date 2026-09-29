@@ -505,6 +505,11 @@ public:
         return debugShown;
     }
 
+    bool hudHidden() const
+    {
+        return hudToggledOff;
+    }
+
     void setDebugView(DebugView view)
     {
         debugView = std::move(view);
@@ -907,6 +912,7 @@ private:
     std::string errorDiagnostics;
     DebugView debugView;
     bool debugShown = false;
+    bool hudToggledOff = false;
     HudView hud;
     std::shared_ptr<const ui::JsonUi> jsonUi;
     std::unique_ptr<ui::JsonUiScreen> hudScreen;
