@@ -25,4 +25,15 @@ std::string pasteText()
     return text ? std::string([text UTF8String]) : std::string();
 }
 
+std::string pickPngFile()
+{
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.allowedFileTypes = @[ @"png" ];
+    panel.allowsMultipleSelection = NO;
+    if ([panel runModal] != NSModalResponseOK || panel.URLs.count == 0) {
+        return {};
+    }
+    return std::string([panel.URLs.firstObject.path UTF8String]);
+}
+
 }
