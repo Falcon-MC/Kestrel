@@ -1,11 +1,15 @@
 #pragma once
 
+#include "agent/AgentServer.h"
+#include "agent/EventLog.h"
+#include "agent/SessionControl.h"
 #include "audio/SoundEngine.h"
 #include "client/Account.h"
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
+#include "client/LaunchOptions.h"
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
 #include "client/Session.h"
@@ -23,6 +27,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -72,12 +77,42 @@ struct HudMessage {
 
 class Client {
 public:
-    Client();
+    explicit Client(LaunchOptions options = {});
     ~Client();
 
     int run();
 
 private:
+    /**
+     * One frame of synthetic input for the agent: what to change in the
+     * window's input, and the request to answer once it has been applied.
+     */
+    struct AgentInputStep {
+        std::function<void(InputState&)> apply;
+        std::shared_ptr<agent::Request> done;
+    };
+
+    struct AgentCapture {
+        std::shared_ptr<agent::Request> request;
+        uint32_t maxWidth = 0;
+        std::optional<ui::Rect> crop;
+        int framesLeft = 0;
+    };
+
+    void startAgent();
+    void serveAgent();
+    bool handleAgentRequest(agent::Request& request);
+    void finishAgentCaptures();
+    void queueAgentInput(std::vector<std::function<void(InputState&)>> steps, agent::Request& request);
+    std::string agentState();
+    std::string agentWidgetList(const agent::Request& request) const;
+    std::string agentSettings() const;
+    bool applyAgentSettings(const agent::Request& request, std::string& error);
+    std::string agentServers();
+    std::string agentForms();
+    std::string agentDebug();
+    const std::string& offlineName() const;
+
     void syncAccount();
     void syncDressingRoom();
     void syncSession();
@@ -273,6 +308,15 @@ private:
     int framesPerSecond = 0;
     platform::MemoryUsage memory;
     std::string processor = platform::processorName();
+    LaunchOptions launch;
+    std::optional<menu::ConnectRequest> pendingConnect;
+    agent::EventLog agentEvents;
+    std::unique_ptr<agent::AgentServer> agentServer;
+    std::unique_ptr<agent::SessionControl> agentSession;
+    std::deque<AgentInputStep> agentInput;
+    std::vector<AgentCapture> agentCaptures;
+    std::vector<ui::Widget> agentWidgets;
+    bool agentQuit = false;
 };
 
 }

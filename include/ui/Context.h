@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +20,18 @@ class DrawList;
 struct WidgetState {
     uint64_t active = 0;
     uint64_t clicks = 0;
+};
+
+/**
+ * A control the frame laid out, for automation: its id, the label drawn on
+ * it when it has one, and where it sits in interface units. Visible is false
+ * when a scroll clip hides it.
+ */
+struct Widget {
+    std::string id;
+    std::string label;
+    Rect rect;
+    bool visible = true;
 };
 
 struct Interaction {
@@ -60,6 +73,20 @@ public:
     const std::vector<Rect>& interactiveRects() const
     {
         return interactive;
+    }
+
+    /**
+     * Keeps the id, label and place of every control laid out this frame,
+     * which costs a string per control, so it stays off unless asked for.
+     */
+    void recordWidgets(bool value)
+    {
+        recording = value;
+    }
+
+    const std::vector<Widget>& widgets() const
+    {
+        return recorded;
     }
 
     Cursor cursor() const
@@ -126,6 +153,7 @@ public:
 
 private:
     bool clipped(const Rect& rect) const;
+    void labelLast(std::string_view label);
     float shadowOffset(TextStyle style) const;
 
     DrawList& drawList;
@@ -139,6 +167,8 @@ private:
     bool blocked = false;
     Rect clip {};
     std::vector<Rect> interactive;
+    bool recording = false;
+    std::vector<Widget> recorded;
     Cursor wantedCursor = Cursor::Arrow;
 };
 

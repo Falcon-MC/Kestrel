@@ -49,6 +49,19 @@ directly, otherwise they are fetched from GitHub. Set `KESTREL_FALCON_ROOT` to p
 The block textures are read from the installed game. Set `KESTREL_VANILLA_PACK` to use another vanilla
 resource pack.
 
+## Command line and agents
+
+```
+Kestrel --connect play.example.net:19132   join a server straight away, skipping the start screen
+Kestrel --hidden --agent                   no visible window, frames drawn offscreen
+Kestrel --headless --connect <address>     no window and no rendering, chat printed to stdout
+```
+
+`--agent` (or `--agent-port <port>`) opens a JSON control port on 127.0.0.1 for automation. The port and its
+token are written to `agent.json` in the data directory; set `KESTREL_AGENT_TOKEN` to choose the token. The
+[kestrel-mcp](https://github.com/Falcon-MC/kestrel-mcp) server uses it to let AI agents drive Kestrel: screenshots,
+menus, input, forms, inventory and packet logs. Screenshots need the Vulkan renderer for now.
+
 ## Related repositories
 
 - [Protocol](https://github.com/Falcon-MC/Protocol) - packets and network types

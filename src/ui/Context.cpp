@@ -70,6 +70,10 @@ bool Context::hovered(const Rect& rect) const
 Interaction Context::interact(std::string_view id, const Rect& rect)
 {
     interactive.push_back({ rect.x + originX, rect.y + originY, rect.w, rect.h });
+    if (recording) {
+        bool visible = clip.w <= 0.0f || (rect.right() > clip.x && rect.x < clip.right() && rect.bottom() > clip.y && rect.y < clip.bottom());
+        recorded.push_back({ std::string(id), {}, interactive.back(), visible && !blocked });
+    }
     uint64_t key = hashId(id);
     Interaction result;
     result.hovered = hovered(rect);
@@ -338,6 +342,9 @@ size_t Context::wrap(std::string_view value, TextStyle style, float width, std::
 bool Context::classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled)
 {
     Interaction interaction = enabled ? interact(id, rect) : Interaction {};
+    if (enabled) {
+        labelLast(label);
+    }
     fill(rect, { 19, 19, 19, 255 });
     const char* face = !enabled ? "ui/button_borderless_dark"
         : interaction.pressed ? "ui/button_borderless_lightpressed"
@@ -362,6 +369,9 @@ Interaction Context::pressable(std::string_view id, std::string_view component, 
 bool Context::pressableButton(std::string_view id, std::string_view component, std::string_view label, const Rect& rect, TextStyle style, bool enabled)
 {
     Interaction interaction = pressable(id, component, rect, enabled);
+    if (enabled) {
+        labelLast(label);
+    }
     bool light = component.find("Secondary") != std::string_view::npos || component.find("Neutral") != std::string_view::npos;
     Color ink = !enabled ? theme::Disabled : light ? Color { 0x1e, 0x1e, 0x1f, 255 } : theme::White;
     Rect face = rect;
@@ -370,6 +380,13 @@ bool Context::pressableButton(std::string_view id, std::string_view component, s
     }
     textCentered(label, style, face, ink);
     return interaction.clicked;
+}
+
+void Context::labelLast(std::string_view label)
+{
+    if (recording && !recorded.empty()) {
+        recorded.back().label = label;
+    }
 }
 
 void Context::endFrame()

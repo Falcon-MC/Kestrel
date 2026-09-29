@@ -1740,6 +1740,81 @@ void Menu::navigate(Screen target)
     rebinding.reset();
 }
 
+void Menu::openScreen(Screen target)
+{
+    if (dialog == Dialog::Pause || dialog == Dialog::Chat || dialog == Dialog::ConfirmExit) {
+        if (dialog == Dialog::Chat) {
+            closeChat();
+        }
+        dialog = Dialog::None;
+    }
+    socialOpen = false;
+    switch (target) {
+    case Screen::ServerForm:
+        openServerForm(std::nullopt);
+        return;
+    case Screen::Settings:
+    case Screen::DressingRoom:
+        returnScreen = Screen::Title;
+        break;
+    default:
+        break;
+    }
+    navigate(target);
+}
+
+bool Menu::showDialog(Dialog which)
+{
+    switch (which) {
+    case Dialog::None:
+        if (dialog == Dialog::Chat) {
+            closeChat();
+        }
+        dialog = Dialog::None;
+        socialOpen = false;
+        return true;
+    case Dialog::Pause:
+        if (!inGame()) {
+            return false;
+        }
+        dialog = Dialog::Pause;
+        return true;
+    case Dialog::Chat:
+        if (!inGame() || screen != Screen::Title) {
+            return false;
+        }
+        openChat({});
+        return true;
+    case Dialog::ConfirmExit:
+    case Dialog::SafeArea:
+    case Dialog::ProfileOptions:
+        dialog = which;
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool Menu::openInventory()
+{
+    if (!capturesMouse() || session.dead || session.loadingTerrain || session.gameMode == "Spectator") {
+        return false;
+    }
+    inventory.open();
+    inventory.requestOpen();
+    return true;
+}
+
+std::vector<std::string> Menu::chatLog() const
+{
+    std::vector<std::string> lines;
+    lines.reserve(chatLines.size());
+    for (const ChatLine& line : chatLines) {
+        lines.push_back(line.text);
+    }
+    return lines;
+}
+
 void Menu::goBack()
 {
     if (screen == Screen::ServerForm) {
