@@ -290,7 +290,7 @@ int Client::run()
             ui::Localization::shared().load(vanillaSounds, menu.language());
             saveSettings();
         }
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.soundVolumes() != savedVolumes) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.safeArea() != savedSafeArea || menu.soundVolumes() != savedVolumes) {
             saveSettings();
         }
         if (menu.quitRequested()) {

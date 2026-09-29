@@ -37,6 +37,8 @@ inline constexpr int DefaultMaxFps = 120;
 inline constexpr int MinFov = 30;
 inline constexpr int MaxFov = 110;
 inline constexpr int DefaultFov = 90;
+inline constexpr float MinSafeArea = 0.9f;
+inline constexpr float MaxSafeArea = 1.0f;
 inline constexpr size_t VolumeChannelCount = 10;
 
 enum class Screen {
@@ -83,6 +85,7 @@ enum class Dialog {
     Chat,
     ProfileOptions,
     Death,
+    SafeArea,
 };
 
 enum class Field {
@@ -386,6 +389,11 @@ public:
 
     void frame(ui::Context& ui, float width, float height);
 
+    /**
+     * The part of a width by height window the interface keeps to.
+     */
+    ui::Rect safeRect(float width, float height) const;
+
     bool quitRequested() const
     {
         return quit;
@@ -424,6 +432,20 @@ public:
     void setPaperDollHidden(bool hidden)
     {
         hidePaperDoll = hidden;
+    }
+
+    /**
+     * The share of the screen the HUD keeps to, between MinSafeArea and
+     * MaxSafeArea, the way the game stores gfx_safe_zone_all.
+     */
+    float safeArea() const
+    {
+        return safeZone;
+    }
+
+    void setSafeArea(float value)
+    {
+        safeZone = value;
     }
 
     /**
@@ -651,7 +673,8 @@ private:
     };
 
     // Screens drawn with the classic textures.
-    void panorama(ui::Context& ui, float width, float height);
+    void safeFrame(ui::Context& ui, float width, float height);
+    void panorama(ui::Context& ui);
     void title(ui::Context& ui, float width, float height);
     void titlePromo(ui::Context& ui, float left, float bottom);
     void pause(ui::Context& ui, float width, float height);
@@ -693,8 +716,9 @@ private:
     void profileStats(ui::Context& ui, const ui::Rect& area);
     void profileOptions(ui::Context& ui, float width, float height);
     void deathScreen(ui::Context& ui, float width, float height);
-    void dimensionScreen(ui::Context& ui, float width, float height);
+    void dimensionScreen(ui::Context& ui);
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
+    void safeAreaDialog(ui::Context& ui);
     void socialDrawer(ui::Context& ui, float width, float height);
     void toast(ui::Context& ui, float width, float height);
     std::vector<HudChatLine> hudChat() const;
@@ -706,7 +730,7 @@ private:
     bool slider(ui::Context& ui, std::string_view id, const ui::Rect& rect, float& fraction);
     float scrollArea(ui::Context& ui, const ui::Rect& area, float& offset, float contentHeight);
     void settingsHeading(ui::Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail);
-    void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight);
+    void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight, float controlWidth = 66.0f);
     void todoRow(ui::Context& ui, float x, float& y, float width, std::string_view label);
 
     std::vector<ServerRow> featuredRows(ServerGroup group) const;
@@ -797,6 +821,9 @@ private:
     HudView hud;
     std::shared_ptr<const ui::JsonUi> jsonUi;
     std::unique_ptr<ui::JsonUiScreen> hudScreen;
+    std::unique_ptr<ui::JsonUiScreen> safeZoneScreen;
+    // The whole window in the coordinates of the safe area.
+    ui::Rect screenBounds;
     uint64_t shownSubtitle = 0;
     KeyBindings bindings;
     std::optional<size_t> rebinding;
@@ -828,6 +855,7 @@ private:
     int fpsLimit = DefaultMaxFps;
     int fieldOfView = DefaultFov;
     bool hidePaperDoll = false;
+    float safeZone = MaxSafeArea;
     std::string languageCode = "en_US";
     std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;

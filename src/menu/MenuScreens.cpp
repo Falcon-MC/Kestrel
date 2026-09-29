@@ -760,13 +760,14 @@ void Menu::settingsHeading(Context& ui, float x, float& y, float width, std::str
     divider(ui, x, y - css(2.0f), width);
 }
 
-void Menu::settingsRow(Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight)
+void Menu::settingsRow(Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight, float controlWidth)
 {
+    float textWidth = width - 24.0f - controlWidth;
     float labelY = detail.empty() && controlHeight > 24.0f ? std::round(y + (controlHeight - ui.lineHeight(TextStyle::Ui)) * 0.5f) : y + 7.0f;
-    ui.text(label, TextStyle::Ui, x + 12.0f, labelY, White, width - 90.0f);
+    ui.text(label, TextStyle::Ui, x + 12.0f, labelY, White, textWidth);
     float height = 18.0f;
     if (!detail.empty()) {
-        height += ui.paragraph(detail, TextStyle::UiSmall, x + 12.0f, y + 17.0f, width - 90.0f, Muted0);
+        height += ui.paragraph(detail, TextStyle::UiSmall, x + 12.0f, y + 17.0f, textWidth, Muted0);
     }
     y += std::max(height + 6.0f, controlHeight);
     divider(ui, x, y - css(2.0f), width);
@@ -862,6 +863,13 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         if (toggle(ui, "video:paperdoll", { x + w - 12.0f - 38.0f, rowY + 7.67f, 38.0f, 16.0f }, hidePaperDoll)) {
             hidePaperDoll = !hidePaperDoll;
         }
+        rowY = y;
+        std::string safeArea = tr("options.safeZone.title", "Change Screen Safe Area");
+        float safeAreaWidth = ui.measure(safeArea, TextStyle::Ui) + 24.0f;
+        settingsRow(ui, x, y, w, safeArea, tr("options.safeZone.description", "Make sure the game looks great in your device's screen"), 42.0f, safeAreaWidth + 12.0f);
+        if (ui.pressableButton("video:safearea", "pressableElevatedSecondary", safeArea, { x + w - 12.0f - safeAreaWidth, rowY + 8.67f, safeAreaWidth, 24.0f })) {
+            dialog = Dialog::SafeArea;
+        }
         todoRow(ui, x, y, w, tr("options.gamma", "Brightness"));
         break;
     }
@@ -956,7 +964,7 @@ void Menu::todoScreen(Context& ui, float width, float height, std::string_view h
 
 void Menu::socialDrawer(Context& ui, float width, float height)
 {
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    ui.fill(screenBounds, { 0, 0, 0, 150 });
     Rect panel { width - 1.0f - 186.67f, 28.0f, 186.67f, height - 29.0f };
     if (socialArmed && dialog == Dialog::None && ui.input().mousePressed && !panel.contains(ui.mouseX(), ui.mouseY())) {
         socialOpen = false;

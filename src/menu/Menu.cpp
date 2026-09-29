@@ -33,6 +33,30 @@ constexpr float ScreenSlide = 24.0f;
 constexpr Color DialogInk { 0x4c, 0x4c, 0x4c, 255 };
 constexpr Color Backing { 0, 0, 0, 150 };
 
+// Draws in window coordinates while it lives, for what belongs to the whole
+// window rather than the safe area, like backgrounds and the crosshair.
+class WholeScreen {
+public:
+    WholeScreen(Context& ui, const Rect& screen)
+        : ui(ui)
+        , screen(screen)
+    {
+        ui.setOrigin(0.0f, 0.0f);
+    }
+
+    ~WholeScreen()
+    {
+        ui.setOrigin(-screen.x, -screen.y);
+    }
+
+    WholeScreen(const WholeScreen&) = delete;
+    WholeScreen& operator=(const WholeScreen&) = delete;
+
+private:
+    Context& ui;
+    Rect screen;
+};
+
 std::string megabytes(uint64_t bytes)
 {
     char text[32];
@@ -180,7 +204,8 @@ float Menu::captionHeight() const
     if (capturesMouse()) {
         return 0.0f;
     }
-    return screen == Screen::Title ? 0.0f : 48.0f;
+    // The header moves with the safe area, and the window reads the caption in window units.
+    return screen == Screen::Title ? 0.0f : 48.0f - screenBounds.y;
 }
 
 void Menu::setSession(SessionInfo info)
@@ -281,6 +306,15 @@ void Menu::screenContent(Context& ui, float width, float height)
 
 void Menu::frame(Context& ui, float width, float height)
 {
+    Rect safe = safeRect(width, height);
+    screenBounds = { -safe.x, -safe.y, width, height };
+    ui.setOrigin(safe.x, safe.y);
+    safeFrame(ui, safe.w, safe.h);
+    ui.setOrigin(0.0f, 0.0f);
+}
+
+void Menu::safeFrame(Context& ui, float width, float height)
+{
     if (ui.input().mousePressed) {
         field = Field::None;
         rebinding.reset();
@@ -313,7 +347,7 @@ void Menu::frame(Context& ui, float width, float height)
     ui.setBlocked(modal || capturesMouse());
 
     if (!worldVisible()) {
-        panorama(ui, width, height);
+        panorama(ui);
     }
 
     auto now = std::chrono::steady_clock::now();
@@ -331,7 +365,8 @@ void Menu::frame(Context& ui, float width, float height)
     };
 
     bool loading = !inGame() && (dialog == Dialog::Connecting || dialog == Dialog::ConnectionError || dialog == Dialog::SignIn);
-    if (!loading) {
+    // The safe area screen replaces the one under it so the corners sit on a clear view.
+    if (!loading && dialog != Dialog::SafeArea) {
         float shown = inGame() && screen == Screen::Title ? 1.0f : eased(screenChanged, ScreenTransitionSeconds);
         ui.setLayer((1.0f - shown) * ScreenSlide * screenDirection, 0.0f, shown);
         screenContent(ui, width, height);
@@ -365,6 +400,9 @@ void Menu::frame(Context& ui, float width, float height)
     case Dialog::Death:
         deathScreen(ui, width, height);
         break;
+    case Dialog::SafeArea:
+        safeAreaDialog(ui);
+        break;
     case Dialog::Connecting:
     case Dialog::SignIn:
         progressDialog(ui, width, height);
@@ -395,15 +433,18 @@ void Menu::frame(Context& ui, float width, float height)
     }
 
     if (inGame() && session.changingDimension) {
-        dimensionScreen(ui, width, height);
+        dimensionScreen(ui);
     }
     toast(ui, width, height);
     toasts.draw(ui, width, height);
     handleKeys(ui);
 }
 
-void Menu::panorama(Context& ui, float width, float height)
+void Menu::panorama(Context& ui)
 {
+    WholeScreen whole(ui, screenBounds);
+    float width = screenBounds.w;
+    float height = screenBounds.h;
     using Vec = std::array<float, 3>;
     struct CubeFace {
         Vec center;
@@ -777,7 +818,7 @@ void Menu::title(Context& ui, float width, float height)
 
 void Menu::pause(Context& ui, float width, float height)
 {
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 90 });
+    ui.fill(screenBounds, { 0, 0, 0, 90 });
     constexpr float ButtonWidth = 276.0f;
     constexpr float ButtonHeight = 28.0f;
     constexpr float Step = 31.0f;
@@ -816,8 +857,11 @@ void Menu::pause(Context& ui, float width, float height)
  * dimension, until the server has sent the new terrain: the dimension's own
  * backdrop, its name, and the terrain building bar.
  */
-void Menu::dimensionScreen(Context& ui, float width, float height)
+void Menu::dimensionScreen(Context& ui)
 {
+    WholeScreen whole(ui, screenBounds);
+    float width = screenBounds.w;
+    float height = screenBounds.h;
     static constexpr const char* Backdrops[] = { "textures/blocks/dirt", "textures/blocks/netherrack", "textures/blocks/end_stone" };
     size_t index = static_cast<size_t>(std::clamp(session.dimension, 0, 2));
     ui.fill({ 0.0f, 0.0f, width, height }, Black);
@@ -864,7 +908,7 @@ void Menu::dimensionScreen(Context& ui, float width, float height)
  */
 void Menu::deathScreen(Context& ui, float width, float height)
 {
-    ui.fill({ 0.0f, 0.0f, width, height }, { 110, 0, 0, 120 });
+    ui.fill(screenBounds, { 110, 0, 0, 120 });
     float top = std::round(height * 0.265f);
     ui.textCentered(upperCase(tr("hbui.gameplay.DeathScreen.youDied", "You Died!")), TextStyle::HeadingLarge, { 0.0f, top - 12.0f, width, 24.0f }, White);
     if (!session.deathMessage.empty()) {
@@ -1108,7 +1152,7 @@ void Menu::progressDialog(Context& ui, float width, float height)
 
 void Menu::messageDialog(Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled)
 {
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    ui.fill(screenBounds, { 0, 0, 0, 150 });
     constexpr float DialogWidth = 200.0f;
     float bodyHeight = ui.paragraphHeight(body, TextStyle::Pixel, DialogWidth - 16.0f);
     float dialogHeight = 21.0f + bodyHeight + 16.0f + 20.0f * 2.0f + 8.0f;
@@ -1145,7 +1189,10 @@ void debugColumn(Context& ui, const std::vector<std::string>& lines, float width
 
 void Menu::gameView(Context& ui, float width, float height)
 {
-    drawNameTags(ui, hud.nameTags);
+    {
+        WholeScreen whole(ui, screenBounds);
+        drawNameTags(ui, hud.nameTags);
+    }
     if (dialog != Dialog::None) {
         return;
     }
@@ -1159,8 +1206,9 @@ void Menu::gameView(Context& ui, float width, float height)
     if (!hud.crosshair) {
         return;
     }
-    float cx = std::floor(width * 0.5f - 7.5f);
-    float cy = std::floor(height * 0.5f - 7.5f);
+    WholeScreen whole(ui, screenBounds);
+    float cx = std::floor(screenBounds.w * 0.5f - 7.5f);
+    float cy = std::floor(screenBounds.h * 0.5f - 7.5f);
     ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });
 }
 
@@ -1168,6 +1216,7 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
 {
     jsonUi = std::move(definitions);
     hudScreen.reset();
+    safeZoneScreen.reset();
     forms.setDefinitions(jsonUi);
 }
 
@@ -1200,6 +1249,61 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
     drawBossBars(ui, hud, width, height);
     ui.setBlocked(blocked);
     hudScreen->takeEvents();
+}
+
+ui::Rect Menu::safeRect(float width, float height) const
+{
+    float insetX = std::round(width * (1.0f - safeZone) * 0.5f);
+    float insetY = std::round(height * (1.0f - safeZone) * 0.5f);
+    return { insetX, insetY, width - insetX * 2.0f, height - insetY * 2.0f };
+}
+
+/**
+ * safe_zone_screen.json, fed the way the game's safe zone screen controller
+ * feeds it. The slider reads 0.0 at the smallest area the game allows and
+ * 1.0 at the whole screen, and the corners mark where the HUD will end up.
+ */
+void Menu::safeAreaDialog(Context& ui)
+{
+    if (!jsonUi) {
+        dialog = Dialog::None;
+        return;
+    }
+    if (!safeZoneScreen) {
+        safeZoneScreen = std::make_unique<ui::JsonUiScreen>(jsonUi, "safe_zone.safe_zone_screen");
+    }
+    if (!safeZoneScreen->valid()) {
+        dialog = Dialog::None;
+        return;
+    }
+    using ui::UiValue;
+    float fraction = (safeZone - MinSafeArea) / (MaxSafeArea - MinSafeArea);
+    char number[16];
+    std::snprintf(number, sizeof(number), "%.1f", fraction);
+    WholeScreen whole(ui, screenBounds);
+    float width = screenBounds.w;
+    float height = screenBounds.h;
+    Rect area = safeRect(width, height);
+
+    ui::UiData data;
+    ui::UiRow& globals = data.globals;
+    globals["#safe_zone_all"] = UiValue::of(static_cast<double>(fraction));
+    globals["#safe_zone_all_enabled"] = UiValue::of(true);
+    globals["#safe_zone_all_slider_label"] = UiValue::of(tr("options.safeZone", "Safe Area") + ": " + number);
+    globals["#safe_zone_all_text_value"] = UiValue::of(std::string(number));
+    globals["#left_safe_zone_offset"] = UiValue::of(static_cast<double>(area.x));
+    globals["#top_safe_zone_offset"] = UiValue::of(static_cast<double>(area.y));
+    globals["#right_safe_zone_offset"] = UiValue::of(static_cast<double>(area.right() - width));
+    globals["#bottom_safe_zone_offset"] = UiValue::of(static_cast<double>(area.bottom() - height));
+    safeZoneScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
+
+    for (const ui::UiEvent& event : safeZoneScreen->takeEvents()) {
+        if (event.kind == ui::UiEvent::Kind::Slider && event.name == "safe_zone_all") {
+            safeZone = MinSafeArea + static_cast<float>(event.value) * (MaxSafeArea - MinSafeArea);
+        } else if (event.kind == ui::UiEvent::Kind::Button && (event.name == "button.confirm_button" || event.name == "button.menu_exit")) {
+            dialog = Dialog::None;
+        }
+    }
 }
 
 void Menu::toast(Context& ui, float width, float height)

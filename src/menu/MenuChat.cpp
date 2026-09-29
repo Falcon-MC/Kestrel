@@ -313,7 +313,7 @@ void Menu::commandPanel(Context& ui, float width, float bottom, float top)
 void Menu::chatScreen(Context& ui, float width, float height)
 {
     field = Field::Chat;
-    ui.fill({ 0.0f, 0.0f, width, height }, ChatBackground);
+    ui.fill(screenBounds, ChatBackground);
 
     Rect area { 2.0f, ChatTopBarHeight, width - 2.0f, height - ChatTopBarHeight - ChatBottomBarHeight };
     float textWidth = area.w - 3.0f - 5.0f;

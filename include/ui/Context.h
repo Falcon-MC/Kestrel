@@ -46,6 +46,12 @@ public:
         return scale;
     }
 
+    /**
+     * Moves what is drawn and where the mouse reads from afterwards, so a
+     * screen can lay itself out from (0, 0) inside part of the window.
+     */
+    void setOrigin(float x, float y);
+
     void setLayer(float offsetX, float offsetY, float opacity);
     void clearLayer();
 
@@ -128,6 +134,8 @@ private:
     const InputState& in;
     WidgetState& state;
     float scale;
+    float originX = 0.0f;
+    float originY = 0.0f;
     bool blocked = false;
     Rect clip {};
     std::vector<Rect> interactive;

@@ -146,6 +146,7 @@ private:
     int savedMaxFps = menu::DefaultMaxFps;
     int savedFov = menu::DefaultFov;
     bool savedPaperDollHidden = false;
+    float savedSafeArea = menu::MaxSafeArea;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;

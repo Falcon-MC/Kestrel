@@ -51,6 +51,13 @@ public:
         clip = {};
     }
 
+    // Where the pixel (0, 0) of everything drawn afterwards lands, clip included.
+    void setOrigin(float x, float y)
+    {
+        originX = x;
+        originY = y;
+    }
+
     // Shifts everything drawn afterwards by pixels and fades it, for screen transitions.
     void setLayer(float offsetX, float offsetY, float opacity)
     {
@@ -86,6 +93,8 @@ private:
     float whiteU = 0.0f;
     float whiteV = 0.0f;
     Rect clip {};
+    float originX = 0.0f;
+    float originY = 0.0f;
     float layerX = 0.0f;
     float layerY = 0.0f;
     float layerOpacity = 1.0f;

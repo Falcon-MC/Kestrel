@@ -36,12 +36,12 @@ Context::Context(DrawList& drawList, const Font& font, Skin& skin, const InputSt
 
 float Context::mouseX() const
 {
-    return in.mouseX / scale;
+    return in.mouseX / scale - originX;
 }
 
 float Context::mouseY() const
 {
-    return in.mouseY / scale;
+    return in.mouseY / scale - originY;
 }
 
 void Context::setClip(const Rect& rect)
@@ -69,7 +69,7 @@ bool Context::hovered(const Rect& rect) const
 
 Interaction Context::interact(std::string_view id, const Rect& rect)
 {
-    interactive.push_back(rect);
+    interactive.push_back({ rect.x + originX, rect.y + originY, rect.w, rect.h });
     uint64_t key = hashId(id);
     Interaction result;
     result.hovered = hovered(rect);
@@ -121,6 +121,13 @@ void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& 
     float dv = (source.image.v1 - source.image.v0) / source.height;
     ImageRef region { source.image.u0 + texels.x * du, source.image.v0 + texels.y * dv, source.image.u0 + texels.right() * du, source.image.v0 + texels.bottom() * dv, true };
     image(rect, region, tint);
+}
+
+void Context::setOrigin(float x, float y)
+{
+    originX = x;
+    originY = y;
+    drawList.setOrigin(std::round(x * scale), std::round(y * scale));
 }
 
 void Context::setLayer(float offsetX, float offsetY, float opacity)

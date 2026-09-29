@@ -37,16 +37,18 @@ uint32_t DrawList::layered(uint32_t color) const
 
 void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color, float topShift, float bottomShift)
 {
-    x0 += layerX;
-    x1 += layerX;
-    y0 += layerY;
-    y1 += layerY;
+    float shiftX = originX + layerX;
+    float shiftY = originY + layerY;
+    x0 += shiftX;
+    x1 += shiftX;
+    y0 += shiftY;
+    y1 += shiftY;
     color = layered(color);
     if (clip.w > 0.0f) {
-        float cx0 = std::max(x0, clip.x + layerX);
-        float cy0 = std::max(y0, clip.y + layerY);
-        float cx1 = std::min(x1, clip.right() + layerX);
-        float cy1 = std::min(y1, clip.bottom() + layerY);
+        float cx0 = std::max(x0, clip.x + shiftX);
+        float cy0 = std::max(y0, clip.y + shiftY);
+        float cx1 = std::min(x1, clip.right() + shiftX);
+        float cy1 = std::min(y1, clip.bottom() + shiftY);
         if (cx1 <= cx0 || cy1 <= cy0) {
             return;
         }
@@ -78,7 +80,7 @@ void DrawList::freeQuad(const std::array<std::array<float, 2>, 4>& points, const
     uint32_t base = static_cast<uint32_t>(vertexData.size());
     uint32_t tinted = layered(color);
     for (size_t corner = 0; corner < 4; ++corner) {
-        vertexData.push_back({ points[corner][0] + layerX, points[corner][1] + layerY, uvs[corner][0], uvs[corner][1], tinted, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, depth });
+        vertexData.push_back({ points[corner][0] + originX + layerX, points[corner][1] + originY + layerY, uvs[corner][0], uvs[corner][1], tinted, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, depth });
     }
     pushIndices(base);
 }

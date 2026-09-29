@@ -196,7 +196,7 @@ void Menu::profileCard(Context& ui, const Rect& card)
  */
 void Menu::profileOptions(Context& ui, float width, float height)
 {
-    ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 150 });
+    ui.fill(screenBounds, { 0, 0, 0, 150 });
     constexpr float WindowWidth = 235.0f;
     constexpr float TitleHeight = 24.0f;
     constexpr float OptionHeight = 24.0f;
