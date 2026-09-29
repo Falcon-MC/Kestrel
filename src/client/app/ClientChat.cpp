@@ -32,13 +32,16 @@ void Client::syncChat()
         if (agentSession) {
             agentSession->noteChat(message, line.empty() ? body : line);
         }
+        if (!mods->receiveChat(message, line.empty() ? body : line)) {
+            continue;
+        }
         if (!line.empty()) {
             menu.addChatLine(std::move(line));
         } else {
             showHudText(message, std::move(body));
         }
     }
-    if (std::optional<ActionbarText> actionbar = session.takeActionbar()) {
+    if (std::optional<ActionbarText> actionbar = session.takeActionbar(); actionbar && mods->filterActionbar(*actionbar)) {
         actionbarMessage = { actionbar->json ? rawText(actionbar->text) : std::move(actionbar->text), secondsNow() };
         if (agentServer) {
             agent::JsonWriter writer;
@@ -52,17 +55,23 @@ void Client::syncChat()
             writer.field("text", request.json ? rawText(request.text) : request.text).endObject();
             agentEvents.add("title", writer.take());
         }
-        applyTitle(std::move(request));
+        if (mods->filterTitle(request)) {
+            applyTitle(std::move(request));
+        }
     }
     for (ToastRequest& toast : session.takeToasts()) {
         if (agentServer) {
             agent::JsonWriter writer;
             agentEvents.add("toast", writer.beginObject().field("title", toast.title).field("content", toast.content).endObject().take());
         }
-        menu.pushToast(std::move(toast.title), std::move(toast.content));
+        if (mods->filterToast(toast)) {
+            menu.pushToast(std::move(toast.title), std::move(toast.content));
+        }
     }
     for (std::string& text : menu.takeChatMessages()) {
-        session.sendChat(std::move(text));
+        if (mods->sendChat(text)) {
+            session.sendChat(std::move(text));
+        }
     }
 }
 

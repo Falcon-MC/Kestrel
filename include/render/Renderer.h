@@ -191,6 +191,61 @@ struct CompletedFrame {
     uint32_t opaqueChunks = 0;
 };
 
+/**
+ * Shader code that arrives at run time, from a mod, instead of being built
+ * in: SPIR-V for Vulkan, HLSL and Metal source compiled when the pipeline is
+ * made. Every backend looks for the entry points vs_main and ps_main.
+ */
+struct ShaderSource {
+    std::vector<uint32_t> spirvVertex;
+    std::vector<uint32_t> spirvPixel;
+    std::string hlsl;
+    std::string metal;
+};
+
+enum class CustomBlend {
+    Opaque,
+    Alpha,
+    Premultiplied,
+    Multiply,
+};
+
+/**
+ * Where custom draws go: into the world after everything in it, over the
+ * world but under the interface, or over the interface.
+ */
+enum class CustomLayer {
+    World,
+    BelowUi,
+    AboveUi,
+};
+
+inline constexpr size_t CustomLayerCount = 3;
+inline constexpr size_t CustomParamCount = 12;
+
+struct CustomVertex {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    uint32_t color = 0xFFFFFFFFu;
+};
+
+static_assert(sizeof(CustomVertex) == 24);
+
+/**
+ * A triangle list drawn with a custom shader. Its constants are the layer's
+ * transform (16 floats), the seconds since start, the frame width and height
+ * in pixels, one unused float, then params.
+ */
+struct CustomDraw {
+    uint32_t shader = 0;
+    uint32_t firstVertex = 0;
+    uint32_t vertexCount = 0;
+    std::array<float, CustomParamCount> params {};
+};
+
 class Renderer {
 public:
     virtual ~Renderer() = default;
@@ -218,6 +273,19 @@ public:
     virtual void drawWorld(const WorldView& view) = 0;
     virtual void drawUi(const ui::DrawList& list) = 0;
     virtual void endFrame() = 0;
+
+    /**
+     * Builds a pipeline from shader code; 0 with error set when the backend
+     * has nothing to build from or the code does not compile.
+     */
+    virtual uint32_t createShader(const ShaderSource& source, CustomBlend blend, std::string& error) = 0;
+    virtual void destroyShader(uint32_t shader) = 0;
+
+    /**
+     * Draws triangle lists with custom shaders. transform takes positions to
+     * clip space with y up, column major, like the world's view projection.
+     */
+    virtual void drawCustom(CustomLayer layer, const std::vector<CustomVertex>& vertices, const std::vector<CustomDraw>& draws, const std::array<float, 16>& transform, float seconds) = 0;
 
     /**
      * Asks for the next frame to be read back once it is drawn. False when

@@ -17,6 +17,7 @@
 #include "world/Mesher.h"
 #include "menu/Menu.h"
 #include "menu/ServerStore.h"
+#include "modding/ModManager.h"
 #include "platform/System.h"
 #include "ui/Context.h"
 #include "ui/DrawList.h"
@@ -99,6 +100,7 @@ private:
         int framesLeft = 0;
     };
 
+    void startMods();
     void startAgent();
     void serveAgent();
     bool handleAgentRequest(agent::Request& request);
@@ -317,6 +319,8 @@ private:
     std::vector<AgentCapture> agentCaptures;
     std::vector<ui::Widget> agentWidgets;
     bool agentQuit = false;
+    // Last, so the mods go before anything they hold on to.
+    std::unique_ptr<modding::ModManager> mods;
 };
 
 }

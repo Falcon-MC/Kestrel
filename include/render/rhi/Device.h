@@ -1,5 +1,7 @@
 #pragma once
 
+#include "render/Renderer.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -90,7 +92,12 @@ struct BindingLayout {
     SamplerMode sampler = SamplerMode::PixelClamp;
 };
 
+/**
+ * With source set the pipeline is built from that code, and library and the
+ * entry names are ignored.
+ */
 struct PipelineDesc {
+    const ShaderSource* source = nullptr;
     ShaderLibrary library = ShaderLibrary::Ui;
     const char* vertexEntry = "";
     const char* pixelEntry = "";

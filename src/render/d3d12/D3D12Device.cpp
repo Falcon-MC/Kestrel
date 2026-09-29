@@ -66,10 +66,20 @@ D3D12_RESOURCE_DESC bufferDescription(UINT64 size)
     return description;
 }
 
-ComPtr<ID3DBlob> compile(ShaderLibrary library, const char* entry, const char* target)
+ComPtr<ID3DBlob> compile(const PipelineDesc& desc, bool vertex)
 {
-    const char* source = library == ShaderLibrary::Ui ? d3d12::UiShader : d3d12::WorldShader;
-    size_t size = library == ShaderLibrary::Ui ? sizeof(d3d12::UiShader) - 1 : sizeof(d3d12::WorldShader) - 1;
+    const char* entry = vertex ? desc.vertexEntry : desc.pixelEntry;
+    const char* target = vertex ? "vs_5_0" : "ps_5_0";
+    const char* source = desc.library == ShaderLibrary::Ui ? d3d12::UiShader : d3d12::WorldShader;
+    size_t size = desc.library == ShaderLibrary::Ui ? sizeof(d3d12::UiShader) - 1 : sizeof(d3d12::WorldShader) - 1;
+    if (desc.source) {
+        if (desc.source->hlsl.empty()) {
+            throw std::runtime_error("The shader has no HLSL, which Direct3D 12 needs");
+        }
+        source = desc.source->hlsl.data();
+        size = desc.source->hlsl.size();
+        entry = vertex ? "vs_main" : "ps_main";
+    }
     ComPtr<ID3DBlob> code;
     ComPtr<ID3DBlob> errors;
     HRESULT hr = D3DCompile(source, size, "kestrel.hlsl", nullptr, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
@@ -464,8 +474,8 @@ public:
         auto pipeline = std::make_unique<D3D12Pipeline>();
         pipeline->signature = rootSignature(desc.bindings);
 
-        ComPtr<ID3DBlob> vertexShader = compile(desc.library, desc.vertexEntry, "vs_5_0");
-        ComPtr<ID3DBlob> pixelShader = compile(desc.library, desc.pixelEntry, "ps_5_0");
+        ComPtr<ID3DBlob> vertexShader = compile(desc, true);
+        ComPtr<ID3DBlob> pixelShader = compile(desc, false);
 
         std::vector<D3D12_INPUT_ELEMENT_DESC> layout;
         D3D12_INPUT_CLASSIFICATION classification = desc.vertices.perInstance ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;

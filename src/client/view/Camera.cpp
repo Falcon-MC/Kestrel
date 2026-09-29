@@ -34,6 +34,13 @@ void FreeCamera::placeAt(double x, double y, double z, float minecraftYawDegrees
     pitch = std::clamp(-minecraftPitchDegrees * toRadians, -PitchLimit, PitchLimit);
 }
 
+void FreeCamera::setRotation(float minecraftYawDegrees, float minecraftPitchDegrees)
+{
+    constexpr float toRadians = 3.14159265f / 180.0f;
+    yaw = 3.14159265f - minecraftYawDegrees * toRadians;
+    pitch = std::clamp(-minecraftPitchDegrees * toRadians, -PitchLimit, PitchLimit);
+}
+
 void FreeCamera::update(const InputState& input, const KeyBindings& bindings, float deltaSeconds, bool captured)
 {
     if (captured) {

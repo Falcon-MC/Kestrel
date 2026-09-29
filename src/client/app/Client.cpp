@@ -83,6 +83,7 @@ Client::Client(LaunchOptions options)
     if (!vanilla.empty() && std::filesystem::is_directory(vanilla.parent_path() / "oreui", oreuiError)) {
         ui::Localization::shared().setInterfacePack(std::make_shared<world::PackSource>(vanilla.parent_path() / "oreui"));
     }
+    startMods();
     if (launch.agent) {
         startAgent();
     }
@@ -114,6 +115,7 @@ int Client::run()
             Profiler::Section section(profiler, "agent");
             serveAgent();
         }
+        mods->handleInput(window->input(), menu.capturesMouse());
         if (window->consumeFocusLost() && !agentServer) {
             menu.pauseIfPlaying();
         }
@@ -147,6 +149,7 @@ int Client::run()
             syncSession();
             syncChat();
             syncForms();
+            mods->update(deltaSeconds);
         }
         {
             Profiler::Section section(profiler, "mesh upload");
@@ -178,6 +181,7 @@ int Client::run()
                 }
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
+                mods->adjustMovement(input);
                 session.setMotionInput(input);
                 float fovTarget = playerView.flying ? 1.1f : 1.0f;
                 fovTarget *= (playerView.movementSpeed / 0.1f + 1.0f) * 0.5f;
@@ -249,6 +253,9 @@ int Client::run()
             menu.frame(context, window->width() / scale, window->height() / scale);
             if (agentServer) {
                 agentWidgets = context.widgets();
+            }
+            if (menu.worldVisible()) {
+                mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
             for (auto& command : menu.inventoryPanel().takeCommands()) session.requestInventory(std::move(command));
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
@@ -394,13 +401,16 @@ int Client::run()
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
             renderer->drawWorld(view);
+            mods->drawWorld(view.viewProjection, { camera.x(), camera.y(), camera.z() });
         } else {
             Profiler::Section section(profiler, "begin frame");
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
         }
         {
             Profiler::Section section(profiler, "draw ui");
+            mods->drawScreen(CustomLayer::BelowUi);
             renderer->drawUi(drawList);
+            mods->drawScreen(CustomLayer::AboveUi);
         }
         {
             Profiler::Section section(profiler, "present gpu");
@@ -447,7 +457,7 @@ void Client::syncForms()
         }
         if (request.close) {
             menu.formPanel().closeAll();
-        } else {
+        } else if (mods->filterForm(request)) {
             menu.openForm(request.id, request.data);
         }
     }
@@ -897,6 +907,7 @@ void Client::syncSession()
     if (agentSession) {
         agentSession->observe(snapshot);
     }
+    mods->observe(snapshot);
     playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
     if (menu.debugVisible()) {
         menu.setDebugView(buildDebugView(snapshot));
