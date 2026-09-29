@@ -96,6 +96,8 @@ private:
     void updateMusic(const SessionSnapshot& snapshot);
     void applyMeshUpdates();
     size_t visibleTerrain() const;
+    uint8_t lightAt(double x, double y, double z) const;
+    void lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, double x, double y, double z) const;
     void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
     ActorView localActorView(float deltaSeconds);
@@ -178,6 +180,7 @@ private:
     SessionSnapshot timeState;
     double startSeconds = 0.0;
     std::unordered_map<uint64_t, std::array<int32_t, 3>> opaqueChunks;
+    std::unordered_map<uint64_t, std::shared_ptr<const world::ChunkMesh>> litChunks;
     std::optional<uint64_t> readinessFrame;
     bool terrainReleased = false;
     std::vector<ActorView> actorViews;

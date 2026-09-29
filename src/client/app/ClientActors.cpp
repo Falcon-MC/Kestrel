@@ -245,7 +245,8 @@ std::optional<world::BoneMatrix> invert(const world::BoneMatrix& m)
  * in 1/256 block: every bone posed by the entity's animations, then the model
  * scaled and turned to its body yaw. Entity quads set bit 5 of the shade word
  * so they sample the entity textures, and bit 6 when their material adds
- * light. Quads whose material blends go to blended. Zero scale entities draw
+ * light; the rest take the light around the entity. Quads whose material
+ * blends go to blended. Zero scale entities draw
  * nothing; invisible ones hide their body but keep their armor and held item.
  */
 void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
@@ -286,9 +287,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (!frustum.contains(cullView, blockX - 8, blockY - 7, blockZ - 8)) {
             continue;
         }
+        size_t firstOpaque = out.size();
+        size_t firstBlended = blended.size();
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
                 appendDroppedItem(actor, origin, now, out);
+                lightQuads(out, firstOpaque, actor.x, actor.y, actor.z);
             }
             continue;
         }
@@ -508,6 +512,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (actor.runtimeId == LocalActorId) {
             appendThirdPersonItem(rig, matrices, toWorld, out);
         }
+        lightQuads(out, firstOpaque, actor.x, actor.y, actor.z);
+        lightQuads(blended, firstBlended, actor.x, actor.y, actor.z);
     }
     for (auto it = animators.begin(); it != animators.end();) {
         if (present.count(it->first)) {
