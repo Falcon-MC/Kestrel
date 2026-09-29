@@ -38,6 +38,7 @@ struct HostState {
     const InputState* input = nullptr;
     bool inGame = false;
     double seconds = 0.0;
+    mod::Environment environment;
     std::filesystem::path root;
     std::vector<mod::ModInfo> loaded;
 

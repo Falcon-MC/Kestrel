@@ -422,20 +422,20 @@ public:
         device->drawIndexed(static_cast<uint32_t>(list.indices().size()));
     }
 
-    uint32_t createShader(const ShaderSource& source, CustomBlend blend, std::string& error) override
+    uint32_t createShader(const ShaderSource& source, CustomBlend blend, bool post, std::string& error) override
     {
         PipelineDesc desc;
         desc.source = &source;
         desc.vertexEntry = "vs_main";
         desc.pixelEntry = "ps_main";
         desc.vertices = customLayout();
-        desc.bindings = { 32, false, 1, SamplerMode::PixelClamp };
-        desc.blend = customBlend(blend);
+        desc.bindings = { 32, false, post ? PostTextureCount : 1u, SamplerMode::PixelClamp };
+        desc.blend = post ? BlendMode::None : customBlend(blend);
         desc.depthWrite = false;
         desc.depthCompare = DepthCompare::LessEqual;
         try {
             uint32_t id = nextShader++;
-            customPipelines.emplace(id, device->createPipeline(desc));
+            customPipelines.emplace(id, CustomPipeline { device->createPipeline(desc), post });
             return id;
         } catch (const std::exception& failure) {
             error = failure.what();
@@ -470,15 +470,56 @@ public:
         constants[18] = static_cast<float>(device->height());
         for (const CustomDraw& draw : draws) {
             auto found = customPipelines.find(draw.shader);
-            if (found == customPipelines.end() || draw.vertexCount == 0 || size_t(draw.firstVertex) + draw.vertexCount > vertices.size()) {
+            if (found == customPipelines.end() || found->second.post || draw.vertexCount == 0 || size_t(draw.firstVertex) + draw.vertexCount > vertices.size()) {
                 continue;
             }
             std::copy(draw.params.begin(), draw.params.end(), constants.begin() + 20);
-            device->setPipeline(*found->second);
+            device->setPipeline(*found->second.pipeline);
             device->setTextures(*uiTextures);
             device->setConstants(constants.data(), static_cast<uint32_t>(constants.size()));
             device->setVertexBuffer(*buffer, sizeof(CustomVertex), bytes);
             device->draw(draw.vertexCount, 1, draw.firstVertex, 0);
+        }
+    }
+
+    bool supportsPostProcess() const override
+    {
+        return device->supportsSceneCopy();
+    }
+
+    void drawPost(const std::vector<CustomDraw>& passes, const std::array<float, 16>& inverseViewProjection, float seconds) override
+    {
+        if (passes.empty() || !device->recording() || !device->supportsSceneCopy()) {
+            return;
+        }
+        // A full screen quad, clip space with y up and uvs from the top left.
+        static constexpr CustomVertex Quad[6] = {
+            { -1.0f, 1.0f, 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f, 1.0f, 1.0f },
+            { -1.0f, 1.0f, 0.0f, 0.0f, 0.0f }, { 1.0f, -1.0f, 0.0f, 1.0f, 1.0f }, { -1.0f, -1.0f, 0.0f, 0.0f, 1.0f },
+        };
+        std::unique_ptr<Buffer>& buffer = frames[device->frameSlot()].postQuad;
+        ensure(buffer, sizeof(Quad));
+        std::memcpy(buffer->mapped(), Quad, sizeof(Quad));
+
+        std::array<float, 32> constants {};
+        std::copy(inverseViewProjection.begin(), inverseViewProjection.end(), constants.begin());
+        constants[16] = seconds;
+        constants[17] = static_cast<float>(device->width());
+        constants[18] = static_cast<float>(device->height());
+        bool first = true;
+        for (const CustomDraw& pass : passes) {
+            auto found = customPipelines.find(pass.shader);
+            if (found == customPipelines.end() || !found->second.post) {
+                continue;
+            }
+            device->copyScene(first, pass.keepInput);
+            first = false;
+            std::copy(pass.params.begin(), pass.params.end(), constants.begin() + 20);
+            device->setPipeline(*found->second.pipeline);
+            device->setTextures(*device->sceneTextures());
+            device->setConstants(constants.data(), static_cast<uint32_t>(constants.size()));
+            device->setVertexBuffer(*buffer, sizeof(CustomVertex), sizeof(Quad));
+            device->draw(6, 1, 0, 0);
         }
     }
 
@@ -513,7 +554,15 @@ private:
         std::unique_ptr<Buffer> sky;
         std::unique_ptr<Buffer> entities;
         std::array<std::unique_ptr<Buffer>, CustomLayerCount> custom;
+        std::unique_ptr<Buffer> postQuad;
     };
+
+    struct CustomPipeline {
+        std::unique_ptr<Pipeline> pipeline;
+        bool post = false;
+    };
+
+    static constexpr uint32_t PostTextureCount = 4;
 
     void retire(ChunkBuffer& chunk)
     {
@@ -553,7 +602,7 @@ private:
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
-    std::unordered_map<uint32_t, std::unique_ptr<Pipeline>> customPipelines;
+    std::unordered_map<uint32_t, CustomPipeline> customPipelines;
     uint32_t nextShader = 1;
     std::vector<FrameBuffers> frames;
     std::vector<CompletedFrame> slotFrames;

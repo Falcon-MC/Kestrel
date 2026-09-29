@@ -87,6 +87,13 @@ public:
     void drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera);
 
     /**
+     * Runs the mods' post processing passes over the world just drawn.
+     */
+    void drawPost(const std::array<float, 16>& viewProjection);
+
+    void setEnvironment(const mod::Environment& environment);
+
+    /**
      * Draws the HUD layer's shader draws queued by drawHud, under or over the
      * interface.
      */

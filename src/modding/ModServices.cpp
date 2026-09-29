@@ -390,6 +390,11 @@ mod::Sidebar WorldService::sidebar() const
     return { view.visible && joined(host), view.title, view.lines };
 }
 
+mod::Environment WorldService::environment() const
+{
+    return host.environment;
+}
+
 NetworkService::NetworkService(HostState& host, size_t owner)
     : host(host)
     , owner(owner)
@@ -527,7 +532,12 @@ ShaderService::ShaderService(HostState& host, size_t owner)
 
 std::shared_ptr<mod::Shader> ShaderService::create(const mod::ShaderSource& source)
 {
-    return host.shaders.create(owner, source);
+    return host.shaders.create(owner, source, false);
+}
+
+std::shared_ptr<mod::Shader> ShaderService::createPost(const mod::ShaderSource& source)
+{
+    return host.shaders.create(owner, source, true);
 }
 
 std::string_view ShaderService::backend() const

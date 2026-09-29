@@ -31,6 +31,9 @@ public:
     virtual std::vector<std::string> players() const = 0;
     virtual Sidebar sidebar() const = 0;
 
+    // As of the last frame that drew the world.
+    virtual Environment environment() const = 0;
+
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {
         std::optional<Entity> best;

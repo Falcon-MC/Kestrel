@@ -8,8 +8,9 @@ namespace kestrel::modding {
  */
 class ShaderStore::Program final : public mod::Shader {
 public:
-    Program(ShaderStore& store, uint32_t id, std::string error)
-        : store(&store)
+    Program(ShaderStore& store, uint32_t id, bool post, std::string error)
+        : post(post)
+        , store(&store)
         , alive(store.alive)
         , id(id)
         , failure(std::move(error))
@@ -45,6 +46,8 @@ public:
         failure = "The mod that made this shader was unloaded";
     }
 
+    const bool post;
+
 private:
     ShaderStore* store;
     std::weak_ptr<bool> alive;
@@ -73,12 +76,12 @@ ShaderStore::~ShaderStore()
     }
 }
 
-std::shared_ptr<mod::Shader> ShaderStore::create(size_t owner, const mod::ShaderSource& source)
+std::shared_ptr<mod::Shader> ShaderStore::create(size_t owner, const mod::ShaderSource& source, bool post)
 {
     ShaderSource code { source.spirvVertex, source.spirvFragment, source.hlsl, source.metal };
     std::string error;
-    uint32_t id = renderer.createShader(code, static_cast<CustomBlend>(source.blend), error);
-    auto program = std::make_shared<Program>(*this, id, std::move(error));
+    uint32_t id = renderer.createShader(code, static_cast<CustomBlend>(source.blend), post, error);
+    auto program = std::make_shared<Program>(*this, id, post, std::move(error));
     if (id != 0) {
         programs[id] = { owner, program };
     }
@@ -108,7 +111,7 @@ std::string_view ShaderStore::backend() const
 void ShaderStore::queue(CustomLayer layer, const mod::Shader& shader, const CustomVertex* vertices, size_t count, const mod::ShaderParams& params)
 {
     const auto* program = dynamic_cast<const Program*>(&shader);
-    if (!program || program->pipeline() == 0 || count == 0) {
+    if (!program || program->post || program->pipeline() == 0 || count == 0) {
         return;
     }
     Batch& batch = batches[static_cast<size_t>(layer)];
@@ -129,8 +132,33 @@ void ShaderStore::submit(CustomLayer layer, const std::array<float, 16>& transfo
     batch.draws.clear();
 }
 
+void ShaderStore::queuePost(const mod::Shader& shader, const mod::ShaderParams& params, bool keepInput)
+{
+    const auto* program = dynamic_cast<const Program*>(&shader);
+    if (!program || !program->post || program->pipeline() == 0) {
+        return;
+    }
+    CustomDraw pass;
+    pass.shader = program->pipeline();
+    pass.params = params.values;
+    pass.keepInput = keepInput;
+    postPasses.push_back(pass);
+}
+
+void ShaderStore::submitPost(const std::array<float, 16>& inverseViewProjection, float seconds)
+{
+    renderer.drawPost(postPasses, inverseViewProjection, seconds);
+    postPasses.clear();
+}
+
+bool ShaderStore::supportsPost() const
+{
+    return renderer.supportsPostProcess();
+}
+
 void ShaderStore::clear()
 {
+    postPasses.clear();
     for (Batch& batch : batches) {
         batch.vertices.clear();
         batch.draws.clear();

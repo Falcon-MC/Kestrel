@@ -275,6 +275,7 @@ public:
     {
         vkDeviceWaitIdle(device);
         retired.clear();
+        sceneSet.reset();
         blankImage.reset();
         blankArray.reset();
         for (auto& [count, layout] : pipelineLayouts) {
@@ -288,6 +289,7 @@ public:
         vkDestroySampler(device, terrainSampler, nullptr);
         destroySwapchain();
         vkDestroyRenderPass(device, renderPass, nullptr);
+        vkDestroyRenderPass(device, resumePass, nullptr);
         for (uint32_t i = 0; i < FramesInFlight; ++i) {
             vkDestroySemaphore(device, imageAvailable[i], nullptr);
             vkDestroyFence(device, inFlight[i], nullptr);
@@ -744,6 +746,94 @@ public:
         frame = (frame + 1) % FramesInFlight;
     }
 
+    bool supportsSceneCopy() const override
+    {
+        return captureSupported;
+    }
+
+    const TextureSet* sceneTextures() const override
+    {
+        return sceneSet.get();
+    }
+
+    void copyScene(bool first, bool keep) override
+    {
+        if (!active || !captureSupported) {
+            return;
+        }
+        ensureSceneImages();
+        vkCmdEndRenderPass(command);
+
+        enum { Color, Depth, Original, Kept };
+        std::vector<VkImageMemoryBarrier> barriers;
+        auto transition = [&](VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to, VkAccessFlags src, VkAccessFlags dst) {
+            VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            barrier.oldLayout = from;
+            barrier.newLayout = to;
+            barrier.srcAccessMask = src;
+            barrier.dstAccessMask = dst;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image;
+            barrier.subresourceRange = { aspect, 0, 1, 0, 1 };
+            barriers.push_back(barrier);
+        };
+        std::vector<VulkanTexture*> colorTargets { sceneImages[Color].get() };
+        if (first || keep) {
+            colorTargets.push_back(sceneImages[Kept].get());
+        }
+        if (first) {
+            colorTargets.push_back(sceneImages[Original].get());
+        }
+        std::vector<VulkanTexture*> targets = colorTargets;
+        if (first) {
+            targets.push_back(sceneImages[Depth].get());
+        }
+
+        VkImageLayout presented = offscreen ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        transition(images[imageIndex], VK_IMAGE_ASPECT_COLOR_BIT, presented, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        transition(depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        for (VulkanTexture* target : targets) {
+            VkImageAspectFlags aspect = target == sceneImages[Depth].get() ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            transition(target->image, aspect, target->sampled ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        }
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+
+        VkImageCopy region {};
+        region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.dstSubresource = region.srcSubresource;
+        region.extent = { extent.width, extent.height, 1 };
+        for (VulkanTexture* target : colorTargets) {
+            vkCmdCopyImage(command, images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        }
+        if (first) {
+            region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            vkCmdCopyImage(command, depthImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sceneImages[Depth]->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        }
+
+        barriers.clear();
+        for (VulkanTexture* target : targets) {
+            VkImageAspectFlags aspect = target == sceneImages[Depth].get() ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            transition(target->image, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            target->sampled = true;
+        }
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+
+        VkRenderPassBeginInfo pass { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+        pass.renderPass = resumePass;
+        pass.framebuffer = framebuffers[imageIndex];
+        pass.renderArea = { { 0, 0 }, extent };
+        vkCmdBeginRenderPass(command, &pass, VK_SUBPASS_CONTENTS_INLINE);
+        viewport.maxDepth = 1.0f;
+        VkRect2D scissor { { 0, 0 }, extent };
+        vkCmdSetViewport(command, 0, 1, &viewport);
+        vkCmdSetScissor(command, 0, 1, &scissor);
+        bound = nullptr;
+        boundSet = VK_NULL_HANDLE;
+    }
+
     bool requestCapture() override
     {
         captureWanted = captureSupported;
@@ -852,6 +942,55 @@ private:
         std::unique_ptr<Buffer> buffer;
         uint64_t frame = 0;
     };
+
+    /**
+     * The scene copies live as long as the swapchain; the first copy after it
+     * was made creates them and points the scene set at them.
+     */
+    void ensureSceneImages()
+    {
+        if (!sceneSet) {
+            sceneSet = createTextureSet(static_cast<uint32_t>(sceneImages.size()), false, SamplerMode::PixelClamp);
+        }
+        if (sceneImages[0]) {
+            return;
+        }
+        for (size_t slot = 0; slot < sceneImages.size(); ++slot) {
+            bool depth = slot == 1;
+            auto texture = std::make_unique<VulkanTexture>(device);
+            texture->description = { extent.width, extent.height, 1, 1, false };
+            VkFormat format = depth ? DepthFormat : surfaceFormat.format;
+            VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.format = format;
+            imageInfo.extent = { extent.width, extent.height, 1 };
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            check(vkCreateImage(device, &imageInfo, nullptr, &texture->image), "vkCreateImage");
+            VkMemoryRequirements requirements;
+            vkGetImageMemoryRequirements(device, texture->image, &requirements);
+            VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            check(vkAllocateMemory(device, &allocation, nullptr, &texture->memory), "vkAllocateMemory");
+            vkBindImageMemory(device, texture->image, texture->memory, 0);
+            VkImageViewCreateInfo viewInfo { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            viewInfo.image = texture->image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = { static_cast<VkImageAspectFlags>(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT), 0, 1, 0, 1 };
+            check(vkCreateImageView(device, &viewInfo, nullptr, &texture->view), "vkCreateImageView");
+            sceneImages[slot] = std::move(texture);
+        }
+        // Nothing reads the set until this frame's first pass, recorded after this.
+        for (size_t slot = 0; slot < sceneImages.size(); ++slot) {
+            writeDescriptor(static_cast<const VulkanTextureSet&>(*sceneSet), static_cast<uint32_t>(slot), sceneImages[slot].get());
+        }
+    }
 
     VkShaderModule shaderModule(const SpirV& code)
     {
@@ -1233,7 +1372,7 @@ private:
         depth.format = DepthFormat;
         depth.samples = VK_SAMPLE_COUNT_1_BIT;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1260,6 +1399,21 @@ private:
         info.dependencyCount = 1;
         info.pDependencies = &dependency;
         check(vkCreateRenderPass(device, &info, nullptr, &renderPass), "vkCreateRenderPass");
+
+        // The same attachments picked up again after a scene copy left them
+        // as copy sources; compatible with renderPass, so pipelines and
+        // framebuffers work with both.
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        VkAttachmentDescription resumed[] = { color, depth };
+        dependency.srcStageMask |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependency.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        dependency.dstStageMask |= VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependency.dstAccessMask |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        info.pAttachments = resumed;
+        check(vkCreateRenderPass(device, &info, nullptr, &resumePass), "vkCreateRenderPass");
     }
 
     void createDepth()
@@ -1272,7 +1426,7 @@ private:
         imageInfo.arrayLayers = 1;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         check(vkCreateImage(device, &imageInfo, nullptr, &depthImage), "vkCreateImage");
         VkMemoryRequirements requirements;
@@ -1292,6 +1446,9 @@ private:
 
     void destroySwapchain()
     {
+        for (std::unique_ptr<VulkanTexture>& image : sceneImages) {
+            image.reset();
+        }
         for (VkFramebuffer framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -1360,6 +1517,9 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     std::vector<VkSemaphore> renderFinished;
     VkRenderPass renderPass = VK_NULL_HANDLE;
+    VkRenderPass resumePass = VK_NULL_HANDLE;
+    std::array<std::unique_ptr<VulkanTexture>, 4> sceneImages;
+    std::unique_ptr<TextureSet> sceneSet;
     VkImage depthImage = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
     VkImageView depthView = VK_NULL_HANDLE;

@@ -237,6 +237,31 @@ public:
     virtual void drawIndexed(uint32_t indexCount) = 0;
     virtual void endFrame() = 0;
 
+    virtual bool supportsSceneCopy() const
+    {
+        return false;
+    }
+
+    /**
+     * Copies what the frame has drawn so far into the scene textures and
+     * carries on drawing on top of it: slot 0 always, slot 3 with keep, and
+     * with first the depth into slot 1 and the color into slots 2 and 3 too.
+     */
+    virtual void copyScene(bool first, bool keep)
+    {
+        (void)first;
+        (void)keep;
+    }
+
+    /**
+     * The four scene textures for post pipelines, sampled nearest; null
+     * without scene copies.
+     */
+    virtual const TextureSet* sceneTextures() const
+    {
+        return nullptr;
+    }
+
     /**
      * Asks for the next frame to be read back once it is drawn. False when
      * the backend cannot read its frames back.

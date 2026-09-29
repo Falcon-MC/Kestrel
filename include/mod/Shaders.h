@@ -106,6 +106,25 @@ public:
     virtual std::shared_ptr<Shader> create(const ShaderSource& source) = 0;
 
     /**
+     * Builds a post processing shader for PostProcessEvent. It draws a full
+     * screen quad (position already in clip space, uv from the top left) and
+     * replaces the frame with what it returns. It reads four textures, set 0
+     * bindings 0 to 3 (t0 to t3 with sampler s0 in HLSL, texture(0..3) with
+     * sampler(0) in Metal), all sampled nearest:
+     *
+     *   0  the frame as the previous pass left it
+     *   1  depth, 0 at the near plane and 1 where nothing was drawn (sky);
+     *      below 0.05 is the first person hand
+     *   2  the frame before the first pass
+     *   3  the input of the last pass that kept it
+     *
+     * transform holds the inverse view projection: transform * (ndc.x, ndc.y
+     * with y up, depth, 1), divided by w, is the position relative to the
+     * camera. The blend setting is ignored.
+     */
+    virtual std::shared_ptr<Shader> createPost(const ShaderSource& source) = 0;
+
+    /**
      * "Vulkan", "Direct3D 12" or "Metal", to pick which code to load.
      */
     virtual std::string_view backend() const = 0;
@@ -124,6 +143,28 @@ struct WorldVertex {
     float u = 0.0f;
     float v = 0.0f;
     Color color { 255, 255, 255, 255 };
+};
+
+/**
+ * The post processing passes of this frame, run in the order added after the
+ * world is drawn and before the HUD.
+ */
+class PostChain {
+public:
+    virtual ~PostChain() = default;
+
+    /**
+     * False when the graphics backend cannot copy the frame for post
+     * processing (only Vulkan can for now); passes are then ignored.
+     */
+    virtual bool supported() const = 0;
+
+    /**
+     * Adds a pass. keepInput stores what the pass reads as texture 3, so a
+     * later pass can combine it with its own input, the way bloom adds a
+     * blurred copy back onto the sharp frame.
+     */
+    virtual void pass(const Shader& shader, const ShaderParams& params = {}, bool keepInput = false) = 0;
 };
 
 /**

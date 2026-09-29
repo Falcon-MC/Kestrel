@@ -78,6 +78,7 @@ with `ListenOptions::receiveCancelled`.
 | `KeyPressEvent`, `MouseClickEvent` | input | the client ignores the press |
 | `MovementEvent` | movement keys each frame, all fields writable | |
 | `HudRenderEvent` | draw over the HUD with `event.canvas` | |
+| `PostProcessEvent` | add full screen passes with `event.chain` | |
 | `WorldRenderEvent` | draw into the world with `event.painter` | |
 | `PacketReceivedEvent`, `PacketSentEvent` | copies of packets, after the fact | |
 
@@ -115,6 +116,15 @@ painter.box(*glow, min, max);                    // world, depth tested
 `kestrel_mod_spirv(target shader.vert ...)` compiles GLSL with `glslc` from the Vulkan SDK into
 `shader.vert.spv.inc`, which goes straight into a `std::vector<uint32_t>` initializer. `shader_demo` shows
 all three backends.
+
+## Post processing
+
+`shaders().createPost(source)` builds a full screen pass for `PostProcessEvent`, which fires after the world is
+drawn. Each pass reads the frame as the previous pass left it, the depth buffer, the frame before the first pass
+and whatever an earlier pass kept with `keepInput`, and replaces the frame with its output. The transform
+constants hold the inverse view projection, so a pass can rebuild world positions from depth;
+`world().environment()` has the sun, fog, weather and camera to go with them. Only Vulkan copies the frame for
+now; elsewhere `event.chain.supported()` is false and passes are skipped.
 
 ## Threads
 

@@ -111,6 +111,21 @@ void UiCanvas::shaderTriangles(const mod::Shader& shader, const std::vector<mod:
     shaders.queue(aboveHud ? CustomLayer::AboveUi : CustomLayer::BelowUi, shader, scratch.data(), scratch.size(), params);
 }
 
+PostPasses::PostPasses(ShaderStore& shaders)
+    : shaders(shaders)
+{
+}
+
+bool PostPasses::supported() const
+{
+    return shaders.supportsPost();
+}
+
+void PostPasses::pass(const mod::Shader& shader, const mod::ShaderParams& params, bool keepInput)
+{
+    shaders.queuePost(shader, params, keepInput);
+}
+
 WorldCanvas::WorldCanvas(ShaderStore& shaders, const mod::Vec3& camera)
     : shaders(shaders)
     , eye(camera)
