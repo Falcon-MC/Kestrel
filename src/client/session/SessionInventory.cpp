@@ -124,6 +124,8 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         inventoryModel.type = ContainerType::Inventory;
         inventoryModel.windowId = 0;
         inventoryModel.containerSize = 0;
+        current.hud.container.recipeGhost = {};
+        current.hud.container.recipeGhostOutput = {};
         ++current.hud.container.closeRevision;
         publishInventory();
     } else if (auto response = std::dynamic_pointer_cast<ItemStackResponsePacket>(packet)) {
@@ -179,18 +181,24 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         if (recipes->mCleanRecipes) inventoryModel.recipes.clear();
         auto append = [&](const auto& entries, bool shaped) {
             for (const auto& entry : entries) {
-                if (entry.mOutputs.size() != 1 || (entry.mBlockName != "crafting_table" && entry.mBlockName != "minecraft:crafting_table")) continue;
+                if (entry.mOutputs.empty() || (entry.mBlockName != "crafting_table" && entry.mBlockName != "minecraft:crafting_table")) continue;
                 if (entry.mInputs.size() > 9 || (shaped && (entry.mWidth < 1 || entry.mHeight < 1))) continue;
-                const auto& output = entry.mOutputs.front();
-                ItemStack stack;
-                stack.mDefinition = itemDefinitions.getDefinition(output.mRuntimeId);
-                if (!stack.mDefinition) continue;
-                stack.mCount = output.mCount;
-                stack.mDamage = output.mMeta;
-                stack.mTag = output.mTag;
-                stack.mBlockDefinition = blockDefinitions.getDefinition(output.mBlockRuntimeId);
+                std::vector<ItemStack> stacks;
+                for (const auto& output : entry.mOutputs) {
+                    ItemStack stack;
+                    stack.mDefinition = itemDefinitions.getDefinition(output.mRuntimeId);
+                    if (!stack.mDefinition) break;
+                    stack.mCount = output.mCount;
+                    stack.mDamage = output.mMeta;
+                    stack.mTag = output.mTag;
+                    stack.mBlockDefinition = blockDefinitions.getDefinition(output.mBlockRuntimeId);
+                    stacks.push_back(std::move(stack));
+                }
+                if (stacks.size() != entry.mOutputs.size()) continue;
                 std::erase_if(inventoryModel.recipes, [&](const auto& existing) { return existing.recipe.mRecipeNetId == entry.mRecipeNetId; });
-                inventoryModel.recipes.push_back({ entry, std::move(stack), shaped });
+                ItemStack first = std::move(stacks.front());
+                stacks.erase(stacks.begin());
+                inventoryModel.recipes.push_back({ entry, std::move(first), shaped, std::move(stacks) });
             }
         };
         append(recipes->mShapedRecipes, true);
@@ -259,7 +267,23 @@ void Session::flushInventory()
     if (inventoryRequestId < std::numeric_limits<int32_t>::min() + 2) inventoryRequestId = -1;
     ItemStackRequest request = inventoryModel.plan(command, inventoryRequestId);
     inventoryRequestId -= 2;
-    if (request.mActions.empty()) { inventoryBefore.reset(); return; }
+    auto& ghost = current.hud.container;
+    if (command.action == InventoryAction::SelectRecipe) {
+        std::array<HudItem, 9> cells {};
+        HudItem output;
+        if (inventoryModel.recipeGhost(command.value, cells, output)) {
+            ghost.recipeGhost = cells;
+            ghost.recipeGhostOutput = output;
+        }
+    } else {
+        ghost.recipeGhost = {};
+        ghost.recipeGhostOutput = {};
+    }
+    if (request.mActions.empty()) {
+        inventoryBefore.reset();
+        publishInventory();
+        return;
+    }
     inventoryChangedSlots.clear();
     for (int i = 0; i < SlotCount; ++i) {
         const auto& before = (*inventoryBefore)[i];
@@ -271,7 +295,6 @@ void Session::flushInventory()
     ItemStackRequestPacket packet;
     packet.mRequests.push_back(std::move(request));
     connection->send(packet);
-    current.hud.container.recipeGhost = {};
     publishInventory();
 }
 }

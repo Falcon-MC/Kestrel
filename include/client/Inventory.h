@@ -58,6 +58,7 @@ struct InventoryState {
     std::shared_ptr<const std::vector<InventoryCatalogItem>> recipes;
     std::vector<int> craftable;
     std::array<HudItem, 9> recipeGhost {};
+    HudItem recipeGhostOutput;
     ContainerType type = ContainerType::Inventory;
     int windowId = 0;
     int containerSize = 0;
@@ -69,10 +70,15 @@ struct InventoryState {
     float furnaceFlame = 0.0f;
 };
 
+/**
+ * A crafting recipe with its results; output is the first one, which the
+ * grid shows, and extras are the rest, such as the buckets a cake gives back.
+ */
 struct InventoryRecipe {
     CraftingRecipeEntry recipe;
     ItemStack output;
     bool shaped = false;
+    std::vector<ItemStack> extras;
 };
 
 /** Pure inventory rules and request planning, independent of rendering and networking. */
@@ -99,6 +105,19 @@ public:
     ItemStackRequest plan(const InventoryCommand& command, int requestId);
     const InventoryRecipe* matchingRecipe(std::vector<std::pair<int, int>>* consumption = nullptr) const;
     bool canCraft(const InventoryRecipe& recipe) const;
+
+    /**
+     * The grid cell, counted on a 3 wide row for the workbench and a 2 wide
+     * one otherwise, that a recipe's input at index goes in.
+     */
+    int recipeCell(const InventoryRecipe& recipe, int index) const;
+    bool fitsGrid(const InventoryRecipe& recipe) const;
+
+    /**
+     * What a recipe shows in the grid and the result slot when picked from
+     * the recipe book, one example item per ingredient.
+     */
+    bool recipeGhost(int recipeNetId, std::array<HudItem, 9>& cells, HudItem& output) const;
     bool ingredientMatches(const RecipeIngredientEntry& ingredient, const ItemStack& item) const;
 
 private:
@@ -107,7 +126,16 @@ private:
     void remove(ItemStackRequest& request, int slot, int count, ItemStackRequestActionType type);
     void quickMove(ItemStackRequest& request, int slot);
     void returnItems(ItemStackRequest& request);
+    /**
+     * Crafts the recipe in the grid once into the cursor, or as many times as
+     * the grid and the inventory allow when toInventory, in a single craft
+     * action the way the game sends it.
+     */
     bool craft(ItemStackRequest& request, const InventoryRecipe& recipe, const std::vector<std::pair<int, int>>& consumption, bool toInventory);
+    int inventoryRoom(const ItemStack& item) const;
+    void placeInInventory(ItemStackRequest& request);
+
+    static constexpr int MaxCraftRepetitions = 64;
 };
 
 }
