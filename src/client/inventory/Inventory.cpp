@@ -294,6 +294,44 @@ const InventoryRecipe* InventoryModel::matchingRecipe(std::vector<std::pair<int,
     return nullptr;
 }
 
+bool InventoryModel::fitsGrid(const InventoryRecipe& entry) const
+{
+    if (entry.shaped) return entry.recipe.mWidth <= gridSize() && entry.recipe.mHeight <= gridSize();
+    int ingredients = int(std::count_if(entry.recipe.mInputs.begin(), entry.recipe.mInputs.end(), [](const auto& input) { return input.mHasItem; }));
+    return ingredients <= gridSize() * gridSize();
+}
+
+int InventoryModel::recipeCell(const InventoryRecipe& entry, int index) const
+{
+    return entry.shaped ? (index / entry.recipe.mWidth) * gridSize() + index % entry.recipe.mWidth : index;
+}
+
+bool InventoryModel::recipeGhost(int recipeNetId, std::array<HudItem, 9>& cells, HudItem& output) const
+{
+    auto found = std::find_if(recipes.begin(), recipes.end(), [&](const auto& r) { return r.recipe.mRecipeNetId == recipeNetId; });
+    if (found == recipes.end() || !fitsGrid(*found)) return false;
+    cells = {};
+    int index = 0;
+    for (const auto& ingredient : found->recipe.mInputs) {
+        int cell = recipeCell(*found, index++);
+        if (!ingredient.mHasItem || cell < 0 || cell >= 9) continue;
+        HudItem& ghost = cells[cell];
+        if (ingredient.mType == RecipeIngredientType::ItemTag) {
+            auto tagged = itemTags.find(ingredient.mItemTag);
+            if (tagged == itemTags.end() || tagged->second.empty()) continue;
+            ghost.identifier = tagged->second.front();
+        } else if (ingredient.mType == RecipeIngredientType::Name) {
+            ghost.identifier = ingredient.mItemId.find(':') == std::string::npos ? "minecraft:" + ingredient.mItemId : ingredient.mItemId;
+            ghost.aux = ingredient.mAuxValue < 0 || ingredient.mAuxValue == 32767 ? 0 : ingredient.mAuxValue;
+        } else {
+            continue;
+        }
+        ghost.count = std::max(1, ingredient.mCount);
+    }
+    output = hudItemOf(found->output);
+    return true;
+}
+
 bool InventoryModel::canCraft(const InventoryRecipe& entry) const
 {
     if (entry.shaped && (entry.recipe.mWidth > gridSize() || entry.recipe.mHeight > gridSize())) return false;
@@ -311,24 +349,102 @@ bool InventoryModel::canCraft(const InventoryRecipe& entry) const
     return true;
 }
 
+int InventoryModel::inventoryRoom(const ItemStack& item) const
+{
+    int room = 0;
+    int limit = maxStack(item);
+    for (int i = 0; i < 36; ++i) {
+        if (empty(slots[i])) room += limit;
+        else if (same(slots[i], item)) room += std::max(0, limit - slots[i].mCount);
+    }
+    return room;
+}
+
+/**
+ * Moves what is in the created output into the inventory, topping up
+ * matching stacks before filling empty slots, hotbar first.
+ */
+void InventoryModel::placeInInventory(ItemStackRequest& request)
+{
+    for (bool merging : { true, false }) {
+        for (int i = 0; i < 9; ++i) if (!empty(slots[Output]) && empty(slots[i]) != merging) move(request, Output, i, slots[Output].mCount);
+        for (int i = 35; i >= 9; --i) if (!empty(slots[Output]) && empty(slots[i]) != merging) move(request, Output, i, slots[Output].mCount);
+    }
+}
+
 bool InventoryModel::craft(ItemStackRequest& request, const InventoryRecipe& entry, const std::vector<std::pair<int, int>>& consumption, bool toInventory)
 {
-    int target = Cursor;
-    if (toInventory) {
-        target = -1;
-        for (int i = 0; i < 36; ++i) if (same(slots[i], entry.output) && maxStack(slots[i]) - slots[i].mCount >= entry.output.mCount) { target = i; break; }
-        if (target < 0) for (int i = 0; i < 36; ++i) if (empty(slots[i])) { target = i; break; }
+    int perCraft = std::max(1, entry.output.mCount);
+    int repetitions = 1;
+    if (!entry.extras.empty()) {
+        auto before = slots;
+        bool cursorFree = empty(slots[Cursor]) || (same(slots[Cursor], entry.output) && slots[Cursor].mCount + perCraft <= maxStack(entry.output));
+        if (!toInventory && !cursorFree) return false;
+        if (toInventory && inventoryRoom(entry.output) < perCraft) return false;
+
+        ItemStackRequestAction action;
+        action.mType = ItemStackRequestActionType::CraftRecipe;
+        action.mRecipeNetworkId = entry.recipe.mRecipeNetId;
+        action.mNumberOfRequestedCrafts = 1;
+        request.mActions.push_back(action);
+        ItemStackRequestAction results;
+        results.mType = ItemStackRequestActionType::CraftResultsDeprecated;
+        results.mResultItems.push_back(entry.output);
+        results.mResultItems.insert(results.mResultItems.end(), entry.extras.begin(), entry.extras.end());
+        results.mTimesCrafted = 1;
+        request.mActions.push_back(results);
+        for (auto [slot, count] : consumption) remove(request, slot, count, ItemStackRequestActionType::Consume);
+
+        for (size_t index = 0; index <= entry.extras.size(); ++index) {
+            const ItemStack& result = index == 0 ? entry.output : entry.extras[index - 1];
+            ItemStackRequestAction create;
+            create.mType = ItemStackRequestActionType::Create;
+            create.mSlot = static_cast<int32_t>(index);
+            request.mActions.push_back(create);
+            slots[Output] = result;
+            slots[Output].mCount = std::max(1, result.mCount);
+            slots[Output].mNetId = request.mRequestId;
+            if (index == 0 && !toInventory) move(request, Output, Cursor, slots[Output].mCount);
+            else placeInInventory(request);
+            if (!empty(slots[Output])) {
+                slots = before;
+                request.mActions.clear();
+                return false;
+            }
+        }
+        return true;
     }
-    if (target < 0 || (!empty(slots[target]) && (!same(slots[target], entry.output) || slots[target].mCount + entry.output.mCount > maxStack(entry.output)))) return false;
+    if (toInventory) {
+        repetitions = MaxCraftRepetitions;
+        for (auto [slot, count] : consumption) repetitions = std::min(repetitions, slots[slot].mCount / std::max(1, count));
+        repetitions = std::min(repetitions, inventoryRoom(entry.output) / perCraft);
+        if (repetitions < 1) return false;
+    } else if (!empty(slots[Cursor]) && (!same(slots[Cursor], entry.output) || slots[Cursor].mCount + perCraft > maxStack(entry.output))) {
+        return false;
+    }
+
     ItemStackRequestAction action;
     action.mType = ItemStackRequestActionType::CraftRecipe;
     action.mRecipeNetworkId = entry.recipe.mRecipeNetId;
-    action.mNumberOfRequestedCrafts = 1;
+    action.mNumberOfRequestedCrafts = repetitions;
     request.mActions.push_back(action);
-    for (auto [slot, count] : consumption) remove(request, slot, count, ItemStackRequestActionType::Consume);
+
+    ItemStackRequestAction results;
+    results.mType = ItemStackRequestActionType::CraftResultsDeprecated;
+    results.mResultItems.push_back(entry.output);
+    results.mTimesCrafted = repetitions;
+    request.mActions.push_back(results);
+
+    for (auto [slot, count] : consumption) remove(request, slot, count * repetitions, ItemStackRequestActionType::Consume);
     slots[Output] = entry.output;
+    slots[Output].mCount = perCraft * repetitions;
     slots[Output].mNetId = request.mRequestId;
-    move(request, Output, target, entry.output.mCount);
+    if (!toInventory) {
+        move(request, Output, Cursor, slots[Output].mCount);
+        return true;
+    }
+    placeInInventory(request);
+    slots[Output] = ItemStack::air();
     return true;
 }
 
@@ -359,28 +475,22 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     if (command.action == InventoryAction::SelectRecipe) {
         auto found = std::find_if(recipes.begin(), recipes.end(), [&](const auto& r) { return r.recipe.mRecipeNetId == command.value; });
         if (found == recipes.end()) return request;
-        auto before = slots;
+        if (!fitsGrid(*found)) return request;
         returnItems(request);
-        if (!canCraft(*found)) { slots = before; request.mActions.clear(); return request; }
         int index = 0;
         for (const auto& ingredient : found->recipe.mInputs) {
-            int dest = Craft + (found->shaped ? (index / found->recipe.mWidth) * gridSize() + index % found->recipe.mWidth : index);
+            int dest = Craft + recipeCell(*found, index);
             ++index;
             if (!ingredient.mHasItem) continue;
             int remaining = std::max(1, ingredient.mCount);
             auto one = ingredient; one.mCount = 1;
             for (int i = 0; i < 36 && remaining > 0; ++i) if (ingredientMatches(one, slots[i])) remaining -= move(request, i, dest, remaining);
-            if (remaining) { slots = before; request.mActions.clear(); return request; }
         }
         return request;
     }
     if (slot == Output || command.action == InventoryAction::Craft) {
-        int crafts = command.all || command.action == InventoryAction::QuickMove ? 64 : 1;
-        for (int i = 0; i < crafts; ++i) {
-            std::vector<std::pair<int, int>> consumption;
-            auto recipe = matchingRecipe(&consumption);
-            if (!recipe || !craft(request, *recipe, consumption, command.all || command.action == InventoryAction::QuickMove)) break;
-        }
+        std::vector<std::pair<int, int>> consumption;
+        if (auto recipe = matchingRecipe(&consumption)) craft(request, *recipe, consumption, command.all || command.action == InventoryAction::QuickMove);
         return request;
     }
     if (command.action == InventoryAction::Distribute) {

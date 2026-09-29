@@ -112,6 +112,13 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
     auto slot = [&](int index, float x, float y, const std::string& overlay = std::string()) {
         const auto& value = state.slots[index];
         l.image(x,y,18,18,"ui/cell_image",true);
+        const HudItem* ghost = nullptr;
+        if (value.empty() && index >= inventory::Craft && index < inventory::Craft + 9) ghost = &state.recipeGhost[index - inventory::Craft];
+        else if (value.empty() && index == inventory::Output) ghost = &state.recipeGhostOutput;
+        if (ghost && !ghost->empty()) {
+            ui.fill(l.rect(x+1,y+1,16,16),{170,40,40,200});
+            item(*ghost,x,y,index == inventory::Output,160);
+        }
         if (value.empty() && !overlay.empty()) l.image(x+1,y+1,16,16,overlay);
         item(value,x,y);
         if (ui.hovered(l.rect(x,y,18,18))) {
