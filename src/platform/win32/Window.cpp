@@ -21,7 +21,8 @@ constexpr DWORD CaptionTextColorAttribute = 36;
 
 class Win32Window final : public Window {
 public:
-    Win32Window(const std::string& title, uint32_t w, uint32_t h)
+    Win32Window(const std::string& title, uint32_t w, uint32_t h, bool shown)
+        : shown(shown)
     {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -78,7 +79,14 @@ public:
         RAWINPUTDEVICE mouseDevice { 0x01, 0x02, 0, hwnd };
         RegisterRawInputDevices(&mouseDevice, 1, sizeof(mouseDevice));
 
-        ShowWindow(hwnd, SW_SHOW);
+        if (shown) {
+            ShowWindow(hwnd, SW_SHOW);
+        }
+    }
+
+    bool visible() const override
+    {
+        return shown;
     }
 
     ~Win32Window() override
@@ -496,6 +504,7 @@ private:
         }
     }
 
+    bool shown = true;
     HWND hwnd = nullptr;
     UINT dpi = 96;
     uint32_t clientWidth = 0;
@@ -515,9 +524,9 @@ private:
 
 }
 
-std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height)
+std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height, bool visible)
 {
-    return std::make_unique<Win32Window>(title, width, height);
+    return std::make_unique<Win32Window>(title, width, height, visible);
 }
 
 }

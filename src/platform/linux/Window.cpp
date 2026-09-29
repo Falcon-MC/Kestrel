@@ -15,13 +15,16 @@ namespace {
 
 class GlfwWindow final : public Window {
 public:
-    GlfwWindow(const std::string& title, uint32_t w, uint32_t h)
+    GlfwWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
+        : shown(shown)
     {
         if (!glfwInit()) {
             throw std::runtime_error("glfwInit failed");
         }
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+        glfwWindowHint(GLFW_VISIBLE, shown ? GLFW_TRUE : GLFW_FALSE);
+        glfwWindowHint(GLFW_FOCUS_ON_SHOW, shown ? GLFW_TRUE : GLFW_FALSE);
         window = glfwCreateWindow(static_cast<int>(w), static_cast<int>(h), title.c_str(), nullptr, nullptr);
         if (!window) {
             glfwTerminate();
@@ -260,6 +263,11 @@ public:
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
+    bool visible() const override
+    {
+        return shown;
+    }
+
 private:
     // Wayland hides window positions, so our GLFW patch lets the compositor pick the output there.
     GLFWmonitor* currentMonitor() const
@@ -379,6 +387,7 @@ private:
         state.mouseY = static_cast<float>(y) * ratioY;
     }
 
+    bool shown = true;
     GLFWwindow* window = nullptr;
     GLFWcursor* cursors[3] {};
     Cursor cursor = Cursor::Arrow;
@@ -397,9 +406,9 @@ private:
 
 }
 
-std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height)
+std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height, bool visible)
 {
-    return std::make_unique<GlfwWindow>(title, width, height);
+    return std::make_unique<GlfwWindow>(title, width, height, visible);
 }
 
 }

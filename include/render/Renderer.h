@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace kestrel {
 
@@ -217,6 +218,26 @@ public:
     virtual void drawWorld(const WorldView& view) = 0;
     virtual void drawUi(const ui::DrawList& list) = 0;
     virtual void endFrame() = 0;
+
+    /**
+     * Asks for the next frame to be read back once it is drawn. False when
+     * the backend cannot read its frames back.
+     */
+    virtual bool requestCapture()
+    {
+        return false;
+    }
+
+    /**
+     * The captured frame as RGBA rows from the top, once one is ready.
+     */
+    virtual bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height)
+    {
+        (void)rgba;
+        (void)width;
+        (void)height;
+        return false;
+    }
 
     static std::unique_ptr<Renderer> create(Window& window);
 };

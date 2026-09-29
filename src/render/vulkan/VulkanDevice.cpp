@@ -250,6 +250,7 @@ public:
         : glfwWindow(static_cast<GLFWwindow*>(window.nativeHandle()))
         , requestedWidth(window.width())
         , requestedHeight(window.height())
+        , offscreen(!window.visible())
     {
         createInstance();
         check(glfwCreateWindowSurface(instance, glfwWindow, nullptr, &surface), "glfwCreateWindowSurface");
@@ -559,13 +560,17 @@ public:
         if (slotSubmissions[frame] > completed) {
             completed = slotSubmissions[frame];
         }
-        VkResult acquired = vkAcquireNextImageKHR(device, swapchain, std::numeric_limits<uint64_t>::max(), imageAvailable[frame], VK_NULL_HANDLE, &imageIndex);
-        if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
-            swapchainDirty = true;
-            return submissions + 1;
-        }
-        if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) {
-            check(acquired, "vkAcquireNextImageKHR");
+        if (offscreen) {
+            imageIndex = 0;
+        } else {
+            VkResult acquired = vkAcquireNextImageKHR(device, swapchain, std::numeric_limits<uint64_t>::max(), imageAvailable[frame], VK_NULL_HANDLE, &imageIndex);
+            if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
+                swapchainDirty = true;
+                return submissions + 1;
+            }
+            if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) {
+                check(acquired, "vkAcquireNextImageKHR");
+            }
         }
         vkResetFences(device, 1, &inFlight[frame]);
 
@@ -689,19 +694,29 @@ public:
         }
         active = false;
         vkCmdEndRenderPass(command);
+        bool capturing = captureWanted && recordCapture();
         vkEndCommandBuffer(command);
 
         VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-        submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &imageAvailable[frame];
-        submit.pWaitDstStageMask = &waitStage;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command;
-        submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &renderFinished[imageIndex];
+        if (!offscreen) {
+            submit.waitSemaphoreCount = 1;
+            submit.pWaitSemaphores = &imageAvailable[frame];
+            submit.pWaitDstStageMask = &waitStage;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &renderFinished[imageIndex];
+        }
         check(vkQueueSubmit(queue, 1, &submit, inFlight[frame]), "vkQueueSubmit");
         slotSubmissions[frame] = ++submissions;
+        if (offscreen) {
+            if (capturing) {
+                finishCapture();
+            }
+            frame = (frame + 1) % FramesInFlight;
+            return;
+        }
 
         VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
@@ -715,7 +730,93 @@ public:
         } else {
             check(presented, "vkQueuePresentKHR");
         }
+        if (capturing) {
+            finishCapture();
+        }
         frame = (frame + 1) % FramesInFlight;
+    }
+
+    bool requestCapture() override
+    {
+        captureWanted = captureSupported;
+        return captureSupported;
+    }
+
+    bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override
+    {
+        if (capturedPixels.empty()) {
+            return false;
+        }
+        rgba = std::move(capturedPixels);
+        capturedPixels.clear();
+        width = capturedWidth;
+        height = capturedHeight;
+        return true;
+    }
+
+    /**
+     * Copies the swapchain image the frame drew into a host visible buffer,
+     * then hands the image back to presentation.
+     */
+    bool recordCapture()
+    {
+        captureWanted = false;
+        VkDeviceSize size = VkDeviceSize(extent.width) * extent.height * 4;
+        void* mapped = nullptr;
+        allocateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, captureBuffer, captureMemory, mapped);
+        captureMapped = mapped;
+        captureExtent = extent;
+
+        VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.oldLayout = offscreen ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = images[imageIndex];
+        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkBufferImageCopy region {};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent = { extent.width, extent.height, 1 };
+        vkCmdCopyImageToBuffer(command, images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, captureBuffer, 1, &region);
+        if (offscreen) {
+            return true;
+        }
+
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        return true;
+    }
+
+    void finishCapture()
+    {
+        vkWaitForFences(device, 1, &inFlight[frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        size_t pixels = size_t(captureExtent.width) * captureExtent.height;
+        capturedPixels.resize(pixels * 4);
+        const auto* source = static_cast<const uint8_t*>(captureMapped);
+        bool bgra = surfaceFormat.format == VK_FORMAT_B8G8R8A8_UNORM || surfaceFormat.format == VK_FORMAT_B8G8R8A8_SRGB;
+        for (size_t i = 0; i < pixels; ++i) {
+            const uint8_t* in = source + i * 4;
+            uint8_t* out = capturedPixels.data() + i * 4;
+            out[0] = bgra ? in[2] : in[0];
+            out[1] = in[1];
+            out[2] = bgra ? in[0] : in[2];
+            out[3] = 255;
+        }
+        capturedWidth = captureExtent.width;
+        capturedHeight = captureExtent.height;
+        vkUnmapMemory(device, captureMemory);
+        vkDestroyBuffer(device, captureBuffer, nullptr);
+        vkFreeMemory(device, captureMemory, nullptr);
+        captureBuffer = VK_NULL_HANDLE;
+        captureMemory = VK_NULL_HANDLE;
+        captureMapped = nullptr;
     }
 
     /**
@@ -982,8 +1083,43 @@ private:
         }
     }
 
+    /**
+     * Stands in for the swapchain while the window is hidden: one image the
+     * frames draw into and captures read from, never presented.
+     */
+    void createOffscreenTarget()
+    {
+        surfaceFormat = { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+        extent = { std::max(requestedWidth, 1u), std::max(requestedHeight, 1u) };
+        captureSupported = true;
+        VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = surfaceFormat.format;
+        imageInfo.extent = { extent.width, extent.height, 1 };
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        images.resize(1);
+        check(vkCreateImage(device, &imageInfo, nullptr, &images[0]), "vkCreateImage");
+        VkMemoryRequirements requirements;
+        vkGetImageMemoryRequirements(device, images[0], &requirements);
+        VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        check(vkAllocateMemory(device, &allocation, nullptr, &offscreenMemory), "vkAllocateMemory");
+        vkBindImageMemory(device, images[0], offscreenMemory, 0);
+    }
+
     void createSwapchain()
     {
+        if (offscreen) {
+            createOffscreenTarget();
+            createTargets();
+            return;
+        }
         VkSurfaceCapabilitiesKHR capabilities;
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
         uint32_t formatCount = 0;
@@ -1015,6 +1151,10 @@ private:
         info.imageExtent = extent;
         info.imageArrayLayers = 1;
         info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        captureSupported = (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+        if (captureSupported) {
+            info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        }
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.preTransform = capabilities.currentTransform;
         info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -1036,6 +1176,12 @@ private:
         vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
         images.resize(count);
         vkGetSwapchainImagesKHR(device, swapchain, &count, images.data());
+        createTargets();
+    }
+
+    void createTargets()
+    {
+        auto count = static_cast<uint32_t>(images.size());
         if (renderPass == VK_NULL_HANDLE) {
             createRenderPass();
         }
@@ -1074,7 +1220,7 @@ private:
         color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        color.finalLayout = offscreen ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         VkAttachmentDescription depth {};
         depth.format = DepthFormat;
         depth.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1166,6 +1312,16 @@ private:
             vkDestroySwapchainKHR(device, swapchain, nullptr);
             swapchain = VK_NULL_HANDLE;
         }
+        if (offscreen) {
+            for (VkImage image : images) {
+                vkDestroyImage(device, image, nullptr);
+            }
+            if (offscreenMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, offscreenMemory, nullptr);
+                offscreenMemory = VK_NULL_HANDLE;
+            }
+        }
+        images.clear();
     }
 
     void recreateSwapchain()
@@ -1179,6 +1335,8 @@ private:
     GLFWwindow* glfwWindow;
     uint32_t requestedWidth;
     uint32_t requestedHeight;
+    bool offscreen = false;
+    VkDeviceMemory offscreenMemory = VK_NULL_HANDLE;
     VkInstance instance = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -1221,6 +1379,15 @@ private:
     uint32_t imageIndex = 0;
     bool swapchainDirty = false;
     bool active = false;
+    bool captureSupported = false;
+    bool captureWanted = false;
+    VkBuffer captureBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory captureMemory = VK_NULL_HANDLE;
+    void* captureMapped = nullptr;
+    VkExtent2D captureExtent {};
+    std::vector<uint8_t> capturedPixels;
+    uint32_t capturedWidth = 0;
+    uint32_t capturedHeight = 0;
 };
 
 void VulkanTextureSet::bind(uint32_t slot, const Texture* texture)
