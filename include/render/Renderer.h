@@ -244,6 +244,8 @@ struct CustomDraw {
     uint32_t firstVertex = 0;
     uint32_t vertexCount = 0;
     std::array<float, CustomParamCount> params {};
+    // Post passes only: also keep the pass's input as the kept texture.
+    bool keepInput = false;
 };
 
 class Renderer {
@@ -276,9 +278,10 @@ public:
 
     /**
      * Builds a pipeline from shader code; 0 with error set when the backend
-     * has nothing to build from or the code does not compile.
+     * has nothing to build from or the code does not compile. A post shader
+     * reads the scene textures and replaces the frame.
      */
-    virtual uint32_t createShader(const ShaderSource& source, CustomBlend blend, std::string& error) = 0;
+    virtual uint32_t createShader(const ShaderSource& source, CustomBlend blend, bool post, std::string& error) = 0;
     virtual void destroyShader(uint32_t shader) = 0;
 
     /**
@@ -286,6 +289,17 @@ public:
      * clip space with y up, column major, like the world's view projection.
      */
     virtual void drawCustom(CustomLayer layer, const std::vector<CustomVertex>& vertices, const std::vector<CustomDraw>& draws, const std::array<float, 16>& transform, float seconds) = 0;
+
+    virtual bool supportsPostProcess() const = 0;
+
+    /**
+     * Runs full screen passes over the world drawn so far. Before each pass
+     * the frame is copied so the pass reads it: texture 0 is the frame as the
+     * previous pass left it, 1 the depth, 2 the frame before the first pass
+     * and 3 the input of the last pass that asked to keep it. The transform
+     * constants hold the inverse of the view projection.
+     */
+    virtual void drawPost(const std::vector<CustomDraw>& passes, const std::array<float, 16>& inverseViewProjection, float seconds) = 0;
 
     /**
      * Asks for the next frame to be read back once it is drawn. False when

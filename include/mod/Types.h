@@ -116,6 +116,26 @@ struct TargetBlock {
     std::vector<std::string> states;
 };
 
+/**
+ * What the sky and the camera look like this frame, for shaders that light
+ * or fog the world. sunDirection points at the sun (the moon is opposite),
+ * daylight runs from 0 at night to 1 at noon, medium is 0 in air, 1 in water
+ * and 2 in lava.
+ */
+struct Environment {
+    Vec3 camera;
+    std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
+    float daylight = 1.0f;
+    std::array<float, 3> fogColor { 0.6f, 0.75f, 1.0f };
+    float fogStart = 192.0f;
+    float fogEnd = 256.0f;
+    float rain = 0.0f;
+    float thunder = 0.0f;
+    int medium = 0;
+    float nightVision = 0.0f;
+    uint32_t moonPhase = 0;
+};
+
 struct Sidebar {
     bool visible = false;
     std::string title;

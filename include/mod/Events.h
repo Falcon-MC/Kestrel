@@ -189,6 +189,20 @@ struct WorldRenderEvent : Event {
 };
 
 /**
+ * Time to add post processing passes for this frame.
+ */
+struct PostProcessEvent : Event {
+    KESTREL_EVENT("kestrel:post_process")
+
+    explicit PostProcessEvent(PostChain& chain)
+        : chain(chain)
+    {
+    }
+
+    PostChain& chain;
+};
+
+/**
  * A packet that came in or went out, delivered on the main thread after the
  * fact. To change or drop packets use a PacketFilter.
  */

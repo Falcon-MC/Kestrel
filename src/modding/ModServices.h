@@ -97,6 +97,7 @@ public:
     std::optional<mod::TargetBlock> targetBlock() const override;
     std::vector<std::string> players() const override;
     mod::Sidebar sidebar() const override;
+    mod::Environment environment() const override;
 
 private:
     HostState& host;
@@ -174,6 +175,7 @@ public:
     ShaderService(HostState& host, size_t owner);
 
     std::shared_ptr<mod::Shader> create(const mod::ShaderSource& source) override;
+    std::shared_ptr<mod::Shader> createPost(const mod::ShaderSource& source) override;
     std::string_view backend() const override;
 
 private:

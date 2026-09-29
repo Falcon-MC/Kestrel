@@ -36,6 +36,17 @@ private:
     std::vector<CustomVertex> scratch;
 };
 
+class PostPasses final : public mod::PostChain {
+public:
+    explicit PostPasses(ShaderStore& shaders);
+
+    bool supported() const override;
+    void pass(const mod::Shader& shader, const mod::ShaderParams& params, bool keepInput) override;
+
+private:
+    ShaderStore& shaders;
+};
+
 /**
  * World space custom draws, stored relative to the camera so float
  * precision holds far from the origin.

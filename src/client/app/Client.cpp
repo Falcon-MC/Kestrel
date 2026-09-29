@@ -91,6 +91,8 @@ Client::Client(LaunchOptions options)
 
 Client::~Client()
 {
+    // Mods hold shaders on the renderer, so they go first.
+    mods.reset();
     renderer.reset();
     window.reset();
 }
@@ -400,8 +402,22 @@ int Client::run()
             view.entityQuads = entityQuads.data();
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
+            mod::Environment environment;
+            environment.camera = { camera.x(), camera.y(), camera.z() };
+            environment.sunDirection = sky.sunDirection;
+            environment.daylight = sky.daylight;
+            environment.fogColor = sky.fogColor;
+            environment.fogStart = sky.fogStart;
+            environment.fogEnd = sky.fogEnd;
+            environment.rain = timeState.rainLevel;
+            environment.thunder = timeState.thunderLevel;
+            environment.medium = timeState.cameraMedium;
+            environment.nightVision = view.nightVision;
+            environment.moonPhase = sky.moonPhase;
+            mods->setEnvironment(environment);
             renderer->drawWorld(view);
-            mods->drawWorld(view.viewProjection, { camera.x(), camera.y(), camera.z() });
+            mods->drawWorld(view.viewProjection, environment.camera);
+            mods->drawPost(view.viewProjection);
         } else {
             Profiler::Section section(profiler, "begin frame");
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
