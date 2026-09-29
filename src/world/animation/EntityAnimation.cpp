@@ -515,24 +515,26 @@ double EntityAnimator::evaluate(const molang::Script& script)
     return script.run(scope);
 }
 
-std::array<float, 3> EntityAnimator::evaluateKey(const std::array<molang::Script, 3>& values)
+std::array<float, 3> EntityAnimator::evaluateKey(const std::array<molang::Script, 3>& values, const std::array<float, 3>& current)
 {
     std::array<float, 3> out {};
     for (size_t axis = 0; axis < 3; ++axis) {
         scope.temps.clear();
+        scope.thisValue = current[axis];
         out[axis] = static_cast<float>(values[axis].run(scope));
     }
+    scope.thisValue = 0.0;
     return out;
 }
 
-std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, double time)
+std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, double time, const std::array<float, 3>& current)
 {
     const std::vector<AnimationKey>& keys = channel.keys;
     if (keys.size() == 1 || time <= keys.front().time) {
-        return evaluateKey(keys.size() == 1 ? keys.front().post : keys.front().pre);
+        return evaluateKey(keys.size() == 1 ? keys.front().post : keys.front().pre, current);
     }
     if (time >= keys.back().time) {
-        return evaluateKey(keys.back().post);
+        return evaluateKey(keys.back().post, current);
     }
     size_t index = 0;
     while (index + 1 < keys.size() && keys[index + 1].time <= time) {
@@ -541,16 +543,16 @@ std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, dou
     const AnimationKey& from = keys[index];
     const AnimationKey& to = keys[index + 1];
     if (from.lerp == LerpMode::Step) {
-        return evaluateKey(from.post);
+        return evaluateKey(from.post, current);
     }
     float span = to.time - from.time;
     float t = span > 0.0f ? static_cast<float>((time - from.time) / span) : 0.0f;
-    std::array<float, 3> a = evaluateKey(from.post);
-    std::array<float, 3> b = evaluateKey(to.pre);
+    std::array<float, 3> a = evaluateKey(from.post, current);
+    std::array<float, 3> b = evaluateKey(to.pre, current);
     std::array<float, 3> out {};
     if (from.lerp == LerpMode::CatmullRom || to.lerp == LerpMode::CatmullRom) {
-        std::array<float, 3> before = index > 0 ? evaluateKey(keys[index - 1].post) : a;
-        std::array<float, 3> after = index + 2 < keys.size() ? evaluateKey(keys[index + 2].pre) : b;
+        std::array<float, 3> before = index > 0 ? evaluateKey(keys[index - 1].post, current) : a;
+        std::array<float, 3> after = index + 2 < keys.size() ? evaluateKey(keys[index + 2].pre, current) : b;
         float t2 = t * t;
         float t3 = t2 * t;
         for (size_t axis = 0; axis < 3; ++axis) {
@@ -662,7 +664,8 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
             pose = BonePose {};
         }
         if (track.rotation.present()) {
-            std::array<float, 3> value = sample(track.rotation, sampleTime);
+            // "this" is the value the earlier animations left, in the pack's own signs.
+            std::array<float, 3> value = sample(track.rotation, sampleTime, { -pose.rotation[0], -pose.rotation[1], pose.rotation[2] });
             pose.rotation[0] -= value[0] * w;
             pose.rotation[1] -= value[1] * w;
             pose.rotation[2] += value[2] * w;
@@ -671,13 +674,13 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
             }
         }
         if (track.position.present()) {
-            std::array<float, 3> value = sample(track.position, sampleTime);
+            std::array<float, 3> value = sample(track.position, sampleTime, { -pose.position[0], pose.position[1], pose.position[2] });
             pose.position[0] -= value[0] * w;
             pose.position[1] += value[1] * w;
             pose.position[2] += value[2] * w;
         }
         if (track.scale.present()) {
-            std::array<float, 3> value = sample(track.scale, sampleTime);
+            std::array<float, 3> value = sample(track.scale, sampleTime, pose.scale);
             for (size_t axis = 0; axis < 3; ++axis) {
                 pose.scale[axis] *= 1.0f + (value[axis] - 1.0f) * w;
             }
@@ -902,6 +905,9 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     }
     for (const auto& [name, value] : input.engineVariables) {
         variables[name] = value;
+    }
+    for (const auto& [name, value] : input.contextVariables) {
+        scope.context[name] = value;
     }
     ++frame;
     poses.assign(bones.size(), BonePose {});

@@ -130,6 +130,7 @@ struct EntityBone {
     int32_t parent = -1;
     std::array<float, 3> pivot {};
     std::array<float, 3> rotation {};
+    bool bound = false;
 };
 
 /**
@@ -168,6 +169,7 @@ struct AnimationInput {
     std::string mainHandItem;
     std::string offHandItem;
     std::vector<std::pair<std::string, double>> engineVariables;
+    std::vector<std::pair<std::string, double>> contextVariables;
 };
 
 /**
@@ -228,8 +230,8 @@ private:
     void playController(const std::string& key, const AnimationController& controller, double weight, int depth);
     void playState(const std::string& key, const ControllerState& state, double weight, int depth, bool& all, bool& any);
     bool playClip(const std::string& key, const AnimationClip& clip, double weight);
-    std::array<float, 3> sample(const AnimationChannel& channel, double time);
-    std::array<float, 3> evaluateKey(const std::array<molang::Script, 3>& values);
+    std::array<float, 3> sample(const AnimationChannel& channel, double time, const std::array<float, 3>& current);
+    std::array<float, 3> evaluateKey(const std::array<molang::Script, 3>& values, const std::array<float, 3>& current);
     double evaluate(const molang::Script& script, double fallback);
     void updateVariables(const ControllerState& state);
 

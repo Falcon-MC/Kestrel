@@ -60,25 +60,46 @@ std::string definitionIcon(const json::Value& components)
     return fallback && fallback->isString() ? fallback->mString : std::string();
 }
 
+// Turns a standing banner so its front faces the viewer.
+constexpr size_t BannerIconStep = 14;
+
+/**
+ * The inventory view of a block: looked at from above the south east corner,
+ * with the top a rhombus half as tall as it is wide and the sides a little
+ * taller than that, the way the game draws them. The cube is as tall as the
+ * icon and centered across it.
+ */
+struct IconProjection {
+    static constexpr float SideRatio = 0.6123724f;
+    static constexpr float Width = static_cast<float>(ItemIconSize) / (0.5f + SideRatio);
+    static constexpr float Margin = (static_cast<float>(ItemIconSize) - Width) * 0.5f;
+    static constexpr float Half = Width * 0.5f;
+    static constexpr float Quarter = Width * 0.25f;
+    static constexpr float Side = Width * SideRatio;
+
+    static std::array<float, 2> project(const std::array<float, 3>& p)
+    {
+        return { Margin + Half * (1.0f + p[0] - p[2]), Quarter * (p[0] + p[2]) + Side * (1.0f - p[1]) };
+    }
+};
+
 /**
  * Draws a block as an inventory icon: its top, south and east faces as an
  * isometric cube, shaded brighter on top and darker on the right.
  */
 std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, const std::array<std::array<uint8_t, 3>, 3>& tints)
 {
-    constexpr float Size = static_cast<float>(ItemIconSize);
+    using P = IconProjection;
     struct Face {
         std::array<float, 2> origin;
         std::array<float, 2> axisU;
         std::array<float, 2> axisV;
         float shade;
     };
-    const float h = Size * 0.5f;
-    const float q = Size * 0.25f;
     const std::array<Face, 3> projected { {
-        { { h, 0.0f }, { h, q }, { -h, q }, 1.0f },
-        { { 0.0f, q }, { h, q }, { 0.0f, h }, 0.8f },
-        { { h, h }, { h, -q }, { 0.0f, h }, 0.62f },
+        { P::project({ 0.0f, 1.0f, 0.0f }), { P::Half, P::Quarter }, { -P::Half, P::Quarter }, 1.0f },
+        { P::project({ 0.0f, 1.0f, 1.0f }), { P::Half, P::Quarter }, { 0.0f, P::Side }, 0.8f },
+        { P::project({ 1.0f, 1.0f, 1.0f }), { P::Half, -P::Quarter }, { 0.0f, P::Side }, 0.62f },
     } };
     std::vector<uint8_t> out(size_t(ItemIconSize) * ItemIconSize * 4, 0);
     for (size_t face = 0; face < 3; ++face) {
@@ -123,11 +144,22 @@ std::vector<uint8_t> isometricIcon(const std::array<const uint8_t*, 3>& faces, c
 template <typename Texture>
 std::vector<uint8_t> modelIcon(const std::vector<ModelQuad>& quads, Texture texture)
 {
+    // Models reaching past their block, like a banner, are scaled on screen until they fit.
     constexpr float Size = static_cast<float>(ItemIconSize);
-    const float h = Size * 0.5f;
-    const float q = Size * 0.25f;
+    float left = 0.0f, top = 0.0f, right = Size, bottom = Size;
+    for (const ModelQuad& quad : quads) {
+        for (const auto& corner : quad.positions) {
+            auto at = IconProjection::project({ corner[0] / 256.0f, corner[1] / 256.0f, corner[2] / 256.0f });
+            left = std::min(left, at[0]);
+            right = std::max(right, at[0]);
+            top = std::min(top, at[1]);
+            bottom = std::max(bottom, at[1]);
+        }
+    }
+    float fit = Size / std::max(right - left, bottom - top);
     auto project = [&](const std::array<float, 3>& p) {
-        return std::array<float, 2> { h * (1.0f + p[0] - p[2]), q * (p[0] + p[2]) + h * (1.0f - p[1]) };
+        auto at = IconProjection::project(p);
+        return std::array<float, 2> { (at[0] - (left + right) * 0.5f) * fit + Size * 0.5f, (at[1] - (top + bottom) * 0.5f) * fit + Size * 0.5f };
     };
     std::vector<uint8_t> out(size_t(ItemIconSize) * ItemIconSize * 4, 0);
     std::vector<float> depth(size_t(ItemIconSize) * ItemIconSize, -1.0e9f);
@@ -251,7 +283,7 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
         return found->second.rgba.empty() ? nullptr : &found->second.rgba;
     };
     std::vector<std::string> atlases = pack.readTextLayers("textures/item_texture.json");
-    if (std::string archived; pack.readBaseArchived("textures", "item_texture.json", archived)) {
+    for (std::string& archived : pack.readArchivedLayers("textures", "item_texture.json")) {
         atlases.push_back(std::move(archived));
     }
     for (const std::string& name : pack.archiveEntries("textures/items")) {
@@ -381,6 +413,15 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         { "light_blue_dye", "dye_powder_light_blue" },
         { "magenta_dye", "dye_powder_magenta" },
         { "orange_dye", "dye_powder_orange" },
+        { "oak_sign", "sign" },
+        { "spruce_sign", "sign_spruce" },
+        { "birch_sign", "sign_birch" },
+        { "jungle_sign", "sign_jungle" },
+        { "acacia_sign", "sign_acacia" },
+        { "dark_oak_sign", "sign_darkoak" },
+        { "crimson_sign", "crimson_sign_item" },
+        { "warped_sign", "warped_sign_item" },
+        { "lodestone_compass", "lodestonecompass_item" },
     };
     std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     std::vector<std::string> names;
@@ -423,11 +464,6 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
             return file->second;
         }
     }
-    const BlockVisual* found = itemVisual(identifier);
-    if (!found) {
-        return {};
-    }
-    const BlockVisual& look = *found;
     const std::vector<uint8_t>& texels = textureArray.mips[0];
     size_t layerBytes = size_t(TextureSize) * TextureSize * 4;
     auto materialPixels = [&](uint32_t material, std::array<uint8_t, 3>& tint) -> const uint8_t* {
@@ -442,10 +478,19 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         size_t offset = size_t(entry.layer) * layerBytes;
         return offset + layerBytes <= texels.size() ? texels.data() + offset : nullptr;
     };
+    if (identifier == "minecraft:banner") {
+        uint32_t color = uint32_t(std::clamp(aux, 0, int32_t(DyeColors) - 1));
+        return modelIcon(templateQuads(entityTemplates.standingBanner[color][BannerIconStep]), materialPixels);
+    }
+    const BlockVisual* found = itemVisual(identifier);
+    if (!found) {
+        return {};
+    }
+    const BlockVisual& look = *found;
     auto facePixels = [&](size_t side, std::array<uint8_t, 3>& tint) {
         return materialPixels(look.faces[side], tint);
     };
-    if (look.hasModel() && look.blockEntity == EntityNone && look.modelTemplate < templates.size()) {
+    if (look.hasModel() && look.modelTemplate < templates.size()) {
         std::vector<ModelQuad> shape = itemGeometry(identifier);
         std::vector<uint8_t> icon = modelIcon(shape, materialPixels);
         for (size_t alpha = 3; alpha < icon.size(); alpha += 4) {
@@ -498,7 +543,7 @@ const BlockVisual* BlockAssets::itemCube(const std::string& identifier) const
 std::vector<ModelQuad> BlockAssets::itemGeometry(const std::string& identifier) const
 {
     const BlockVisual* look = itemVisual(identifier);
-    if (!look || !look->hasModel() || look->blockEntity != EntityNone || look->modelTemplate >= templates.size()) return {};
+    if (!look || !look->hasModel() || look->modelTemplate >= templates.size()) return {};
     std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     if (itemFiles.contains(shortName) || itemTextures.contains(identifier)) return {};
     const ModelTemplate& model = templates[look->modelTemplate];
@@ -516,10 +561,17 @@ std::vector<ModelQuad> BlockAssets::itemGeometry(const std::string& identifier) 
         shape.insert(shape.end(), arms.begin(), arms.end());
         return shape;
     }
+    std::vector<ModelQuad> shape = templateQuads(look->modelTemplate);
+    if (look->blockEntity == EntityNone && std::all_of(shape.begin(), shape.end(), [](const ModelQuad& quad) { return (quad.flags & QuadTwoSided) != 0; })) return {};
+    return shape;
+}
+
+std::vector<ModelQuad> BlockAssets::templateQuads(uint32_t modelTemplate) const
+{
+    if (modelTemplate >= templates.size()) return {};
+    const ModelTemplate& model = templates[modelTemplate];
     size_t end = std::min<size_t>(quads.size(), size_t(model.quadStart) + model.quadCount);
     if (model.quadStart >= end) return {};
-    if (std::all_of(quads.begin() + model.quadStart, quads.begin() + end,
-            [](const ModelQuad& quad) { return (quad.flags & QuadTwoSided) != 0; })) return {};
     return { quads.begin() + model.quadStart, quads.begin() + end };
 }
 

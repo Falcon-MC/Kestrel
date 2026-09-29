@@ -202,6 +202,42 @@ uint32_t pickChoice(world::EntityAnimator& animator, const world::molang::Script
     return choices[index];
 }
 
+world::BoneMatrix compose(const world::BoneMatrix& a, const world::BoneMatrix& b)
+{
+    world::BoneMatrix out {};
+    for (size_t row = 0; row < 3; ++row) {
+        for (size_t column = 0; column < 4; ++column) {
+            float sum = column == 3 ? a[row * 4 + 3] : 0.0f;
+            for (size_t k = 0; k < 3; ++k) {
+                sum += a[row * 4 + k] * b[k * 4 + column];
+            }
+            out[row * 4 + column] = sum;
+        }
+    }
+    return out;
+}
+
+std::optional<world::BoneMatrix> invert(const world::BoneMatrix& m)
+{
+    const float a = m[0], b = m[1], c = m[2];
+    const float d = m[4], e = m[5], f = m[6];
+    const float g = m[8], h = m[9], i = m[10];
+    float determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (std::abs(determinant) < 1.0e-8f) {
+        return std::nullopt;
+    }
+    float s = 1.0f / determinant;
+    world::BoneMatrix out {
+        (e * i - f * h) * s, (c * h - b * i) * s, (b * f - c * e) * s, 0.0f,
+        (f * g - d * i) * s, (a * i - c * g) * s, (c * d - a * f) * s, 0.0f,
+        (d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s, 0.0f,
+    };
+    for (size_t row = 0; row < 3; ++row) {
+        out[row * 4 + 3] = -(out[row * 4] * m[3] + out[row * 4 + 1] * m[7] + out[row * 4 + 2] * m[11]);
+    }
+    return out;
+}
+
 }
 
 /**
@@ -542,6 +578,94 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
             appendTiled(corners, look.layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | shadeFlags, out);
         }
     }
+}
+
+/**
+ * The held item's attachable from a server pack, drawn on the holder the way
+ * the game binds it: the bone with a binding hangs from the holder's right
+ * item bone instead of its own parents, and the bones under it follow. An
+ * attachable without a binding hangs from that bone as a whole. Returns false
+ * when the item has no attachable, so the caller draws it as usual.
+ */
+bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
+{
+    const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
+    if (!model || model->rigs.empty()) {
+        return false;
+    }
+    int32_t itemBone = -1;
+    for (size_t bone = 0; bone < holder.bones.size() && bone < holderMatrices.size(); ++bone) {
+        if (lowercase(holder.bones[bone].name) == "rightitem") {
+            itemBone = static_cast<int32_t>(bone);
+        }
+    }
+    if (itemBone < 0) {
+        return false;
+    }
+    if (state.identifier != held.identifier) {
+        state = HeldAttachable {};
+        state.identifier = held.identifier;
+    }
+    const world::EntityRig& rig = model->rigs.front();
+    world::AnimationInput input;
+    input.now = secondsNow();
+    input.worldTime = currentWorldTime(timeState);
+    input.identifier = held.identifier;
+    input.mainHandItem = held.identifier;
+    input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", 0.0 } };
+    state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
+    const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
+    if (matrices.size() != rig.bones.size()) {
+        return true;
+    }
+
+    int32_t bound = -1;
+    for (size_t bone = 0; bone < rig.bones.size() && bound < 0; ++bone) {
+        if (rig.bones[bone].bound) {
+            bound = static_cast<int32_t>(bone);
+        }
+    }
+    world::BoneMatrix detach { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
+    if (bound >= 0 && rig.bones[size_t(bound)].parent >= 0) {
+        std::optional<world::BoneMatrix> inverse = invert(matrices[size_t(rig.bones[size_t(bound)].parent)]);
+        if (!inverse) {
+            return true;
+        }
+        detach = *inverse;
+    }
+    world::BoneMatrix hand = compose(holderMatrices[size_t(itemBone)], detach);
+    std::vector<uint8_t> attached(rig.bones.size(), bound < 0 ? 1 : 0);
+    for (size_t bone = 0; bone < rig.bones.size() && bound >= 0; ++bone) {
+        for (int32_t walker = static_cast<int32_t>(bone), steps = 0; walker >= 0 && steps <= int32_t(rig.bones.size()); walker = rig.bones[size_t(walker)].parent, ++steps) {
+            if (walker == bound) {
+                attached[bone] = 1;
+                break;
+            }
+        }
+    }
+    std::pair<uint32_t, uint32_t> grid = blockAssets->entityTileGrid(model->layer);
+    for (size_t index = 0; index < rig.quads.size(); ++index) {
+        size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
+        if (bone >= rig.bones.size() || !attached[bone]) {
+            continue;
+        }
+        world::BoneMatrix m = compose(hand, matrices[bone]);
+        const world::ModelQuad& quad = rig.quads[index];
+        std::array<QuadCorner, 4> corners;
+        for (size_t corner = 0; corner < 4; ++corner) {
+            float x = quad.positions[corner][0] / 16.0f;
+            float y = quad.positions[corner][1] / 16.0f;
+            float z = quad.positions[corner][2] / 16.0f;
+            corners[corner].position = toWorld({
+                m[0] * x + m[1] * y + m[2] * z + m[3],
+                m[4] * x + m[5] * y + m[6] * z + m[7],
+                m[8] * x + m[9] * y + m[10] * z + m[11],
+            });
+            corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
+        }
+        appendTiled(corners, model->layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag, out);
+    }
+    return true;
 }
 
 /**

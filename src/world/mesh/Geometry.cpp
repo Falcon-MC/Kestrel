@@ -135,6 +135,7 @@ void mergeBone(GeometryBone& base, const GeometryBone& child)
 {
     if (child.reset) base.cubes.clear();
     if (child.parentSet) base.parent = child.parent;
+    if (child.bindingSet) base.binding = child.binding;
     if (child.pivotSet) base.pivot = child.pivot;
     if (child.rotationSet) base.rotation = child.rotation;
     if (child.mirrorSet) base.mirror = child.mirror;
@@ -156,6 +157,10 @@ void parseBones(const json::Value* bones, Geometry& geometry)
         if (const json::Value* parent = bone->get("parent"); parent && parent->isString()) {
             parsed.parent = parent->string();
             parsed.parentSet = true;
+        }
+        if (const json::Value* binding = bone->get("binding"); binding && binding->isString()) {
+            parsed.binding = binding->string();
+            parsed.bindingSet = true;
         }
         parsed.pivot = readVec3(bone->get("pivot"));
         parsed.pivotSet = bone->get("pivot") != nullptr;

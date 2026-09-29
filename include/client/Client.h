@@ -106,6 +106,11 @@ private:
     void startSwing(double now);
     void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
     void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
+    struct HeldAttachable {
+        std::string identifier;
+        world::EntityAnimator animator;
+    };
+    bool appendAttachable(const HudItem& held, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
     void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out);
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
@@ -209,6 +214,8 @@ private:
     world::EntityAnimator handAnimator;
     world::EntityAnimator handRestAnimator;
     world::EntityAnimator paperDollAnimator;
+    HeldAttachable handAttachable;
+    HeldAttachable bodyAttachable;
     double paperDollShownAt = 0.0;
     std::unordered_map<uint64_t, float> swimAmounts;
     double lastActorTime = 0.0;

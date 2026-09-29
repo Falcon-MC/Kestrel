@@ -319,15 +319,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     float unit = handAnimator.scale() * 16.0f;
     float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
     float handZoom = camera.halfVerticalTangent(aspect) / std::tan(HandFovDegrees * 0.5f * Pi / 180.0f);
-    auto modelToWorld = [&](const world::BoneMatrix& m, const Vec3& pixels) {
-        float x = pixels[0] / 16.0f;
-        float y = pixels[1] / 16.0f;
-        float z = pixels[2] / 16.0f;
-        Vec3 posed {
-            m[0] * x + m[1] * y + m[2] * z + m[3] - body[3],
-            m[4] * x + m[5] * y + m[6] * z + m[7] - body[7],
-            m[8] * x + m[9] * y + m[10] * z + m[11] - body[11],
-        };
+    auto posedToWorld = [&](const Vec3& model) {
+        Vec3 posed { model[0] - body[3], model[1] - body[7], model[2] - body[11] };
         Vec3 local {
             inverse[0] * posed[0] + inverse[1] * posed[1] + inverse[2] * posed[2] - neck[0],
             inverse[3] * posed[0] + inverse[4] * posed[1] + inverse[5] * posed[2] - neck[1],
@@ -335,6 +328,16 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         };
         Vec3 offset = add(add(scaled(axes[0], -local[0] * handZoom), scaled(axes[1], local[1] * handZoom)), scaled(axes[2], -local[2]));
         return add(eyePoint, scaled(offset, unit));
+    };
+    auto modelToWorld = [&](const world::BoneMatrix& m, const Vec3& pixels) {
+        float x = pixels[0] / 16.0f;
+        float y = pixels[1] / 16.0f;
+        float z = pixels[2] / 16.0f;
+        return posedToWorld({
+            m[0] * x + m[1] * y + m[2] * z + m[3],
+            m[4] * x + m[5] * y + m[6] * z + m[7],
+            m[8] * x + m[9] * y + m[10] * z + m[11],
+        });
     };
     for (size_t index = 0; index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
@@ -349,6 +352,9 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         out.push_back(packQuad(corners, quad.uvs, skinLayer,(quad.flags & world::QuadFaceMask) | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
     }
     if (heldName.empty() || itemBone < 0) {
+        return;
+    }
+    if (appendAttachable(held, rig, matrices, true, handAttachable, posedToWorld, out)) {
         return;
     }
 
@@ -536,6 +542,9 @@ void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vecto
     const world::BoneMatrix& m = matrices[static_cast<size_t>(armBone)];
     const Vec3& shoulder = rig.bones[static_cast<size_t>(armBone)].pivot;
     const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
+    if (appendAttachable(held, rig, matrices, false, bodyAttachable, toWorld, out)) {
+        return;
+    }
     auto place = [&](const Vec3& local, bool cube) {
         const ItemDisplay& display = cube ? BlockThirdPerson : held.handEquipped ? HandheldThirdPerson : GeneratedThirdPerson;
         Vec3 p = scaled(local, display.scale / (cube ? HeldCubeSize : HeldItemSize));
