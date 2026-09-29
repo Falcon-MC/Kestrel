@@ -156,6 +156,7 @@ struct ActorView {
     bool onGround = true;
     // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
     std::array<std::string, 4> armor {};
+    HudItem held;
     uint64_t moves = 0;
     uint64_t teleports = 0;
     // A dropped item: the stack it shows, and once picked up who took it and when.

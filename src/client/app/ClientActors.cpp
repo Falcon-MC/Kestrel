@@ -368,8 +368,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 { "is_holding_right", held.empty() ? 0.0 : 1.0 },
                 { "is_first_person", 0.0 },
             };
-        } else if (actor.lastSwing > 0.0) {
-            input.engineVariables = { { "attack_time", swingProgressSince(actor.lastSwing, now) } };
+        } else {
+            input.mainHandItem = actor.held.empty() ? std::string() : actor.held.identifier;
+            input.engineVariables.push_back({ "is_holding_right", actor.held.empty() ? 0.0 : 1.0 });
+            if (actor.lastSwing > 0.0) {
+                input.engineVariables.push_back({ "attack_time", swingProgressSince(actor.lastSwing, now) });
+            }
         }
         float& swimAmount = swimAmounts[actor.runtimeId];
         bool swimmingFlag = (actor.flags[SwimmingFlag / 64] >> (SwimmingFlag % 64)) & 1;
@@ -549,7 +553,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out);
         }
         if (actor.runtimeId == LocalActorId) {
-            appendThirdPersonItem(rig, matrices, toWorld, out);
+            appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], bodyAttachable, rig, matrices, toWorld, out);
+        } else if (actor.identifier == "minecraft:player" && !actor.held.empty()) {
+            appendThirdPersonItem(actor.held, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
         }
         lightQuads(out, firstWorn, light);
     }
@@ -565,6 +571,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             ++it;
         } else {
             it = swimAmounts.erase(it);
+        }
+    }
+    for (auto it = actorAttachables.begin(); it != actorAttachables.end();) {
+        if (present.count(it->first)) {
+            ++it;
+        } else {
+            it = actorAttachables.erase(it);
         }
     }
     lastActorTime = now;

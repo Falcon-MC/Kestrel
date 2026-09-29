@@ -150,11 +150,11 @@ private:
     float swingProgressSince(double start, double now) const;
     void startSwing(double now);
     void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
-    void appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
     struct HeldAttachable {
         std::string identifier;
         world::EntityAnimator animator;
     };
+    void appendThirdPersonItem(const HudItem& held, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
     bool appendAttachable(const HudItem& held, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
     void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones = nullptr);
     bool paperDollVisible();
@@ -265,6 +265,7 @@ private:
     HeldAttachable bodyAttachable;
     double paperDollShownAt = 0.0;
     std::unordered_map<uint64_t, float> swimAmounts;
+    std::unordered_map<uint64_t, HeldAttachable> actorAttachables;
     double lastActorTime = 0.0;
     static constexpr int PerspectiveFirst = 0;
     static constexpr int PerspectiveBack = 1;
