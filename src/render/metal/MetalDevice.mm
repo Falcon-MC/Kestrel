@@ -161,6 +161,7 @@ public:
     explicit MetalDevice(Window& window)
         : surfaceWidth(window.width())
         , surfaceHeight(window.height())
+        , offscreen(!window.visible())
     {
         device = MTLCreateSystemDefaultDevice();
         if (!device) {
@@ -172,7 +173,7 @@ public:
         layer = (__bridge CAMetalLayer*)window.nativeHandle();
         layer.device = device;
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        layer.framebufferOnly = YES;
+        layer.framebufferOnly = NO;
         layer.displaySyncEnabled = NO;
         layer.drawableSize = CGSizeMake(surfaceWidth, surfaceHeight);
 
@@ -354,19 +355,30 @@ public:
     uint64_t beginFrame(float r, float g, float b) override
     {
         encoder = nil;
-        drawable = [layer nextDrawable];
-        if (!drawable) {
+        drawable = nil;
+        id<MTLTexture> color = nil;
+        if (offscreen) {
+            ensureOffscreenColor();
+            color = offscreenColor;
+        } else {
+            drawable = [layer nextDrawable];
+            if (!drawable) {
+                return submissions + 1;
+            }
+            color = drawable.texture;
+        }
+        if (!color) {
             return submissions + 1;
         }
         dispatch_semaphore_wait(completion->slots, DISPATCH_TIME_FOREVER);
 
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture = drawable.texture;
+        pass.colorAttachments[0].texture = color;
         pass.colorAttachments[0].loadAction = MTLLoadActionClear;
         pass.colorAttachments[0].storeAction = MTLStoreActionStore;
         pass.colorAttachments[0].clearColor = MTLClearColorMake(r, g, b, 1.0);
-        if (!depthTexture || depthTexture.width != drawable.texture.width || depthTexture.height != drawable.texture.height) {
-            MTLTextureDescriptor* depthDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:drawable.texture.width height:drawable.texture.height mipmapped:NO];
+        if (!depthTexture || depthTexture.width != color.width || depthTexture.height != color.height) {
+            MTLTextureDescriptor* depthDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:color.width height:color.height mipmapped:NO];
             depthDescriptor.usage = MTLTextureUsageRenderTarget;
             depthDescriptor.storageMode = MTLStorageModePrivate;
             depthTexture = [device newTextureWithDescriptor:depthDescriptor];
@@ -470,7 +482,10 @@ public:
             return;
         }
         [encoder endEncoding];
-        [commandBuffer presentDrawable:drawable];
+        const bool capturing = captureWanted && recordCapture();
+        if (drawable) {
+            [commandBuffer presentDrawable:drawable];
+        }
         uint64_t submission = ++submissions;
         std::shared_ptr<CompletionState> state = completion;
         [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
@@ -480,6 +495,10 @@ public:
             dispatch_semaphore_signal(state->slots);
         }];
         [commandBuffer commit];
+        if (capturing) {
+            [commandBuffer waitUntilCompleted];
+            finishCapture();
+        }
         encoder = nil;
         commandBuffer = nil;
         drawable = nil;
@@ -487,7 +506,77 @@ public:
         frame = (frame + 1) % FramesInFlight;
     }
 
+    bool requestCapture() override
+    {
+        captureWanted = true;
+        return true;
+    }
+
+    bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override
+    {
+        if (capturedPixels.empty()) {
+            return false;
+        }
+        rgba = std::move(capturedPixels);
+        capturedPixels.clear();
+        width = capturedWidth;
+        height = capturedHeight;
+        return true;
+    }
+
 private:
+    void ensureOffscreenColor()
+    {
+        if (offscreenColor && offscreenColor.width == surfaceWidth && offscreenColor.height == surfaceHeight) {
+            return;
+        }
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:std::max(surfaceWidth, 1u) height:std::max(surfaceHeight, 1u) mipmapped:NO];
+        descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        descriptor.storageMode = MTLStorageModeShared;
+        offscreenColor = [device newTextureWithDescriptor:descriptor];
+    }
+
+    bool recordCapture()
+    {
+        captureWanted = false;
+        id<MTLTexture> source = drawable ? drawable.texture : offscreenColor;
+        if (!source) {
+            return false;
+        }
+        captureExtentWidth = static_cast<uint32_t>(source.width);
+        captureExtentHeight = static_cast<uint32_t>(source.height);
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:source.width height:source.height mipmapped:NO];
+        descriptor.usage = MTLTextureUsageShaderRead;
+        descriptor.storageMode = MTLStorageModeShared;
+        captureStaging = [device newTextureWithDescriptor:descriptor];
+        id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+        [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(source.width, source.height, 1) toTexture:captureStaging destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [blit endEncoding];
+        return true;
+    }
+
+    void finishCapture()
+    {
+        if (!captureStaging) {
+            return;
+        }
+        const uint32_t width = captureExtentWidth;
+        const uint32_t height = captureExtentHeight;
+        const size_t rowBytes = size_t(width) * 4;
+        std::vector<uint8_t> bgra(rowBytes * height);
+        [captureStaging getBytes:bgra.data() bytesPerRow:rowBytes fromRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0];
+        capturedPixels.resize(bgra.size());
+        for (size_t i = 0; i < size_t(width) * height; ++i) {
+            capturedPixels[i * 4 + 0] = bgra[i * 4 + 2];
+            capturedPixels[i * 4 + 1] = bgra[i * 4 + 1];
+            capturedPixels[i * 4 + 2] = bgra[i * 4 + 0];
+            capturedPixels[i * 4 + 3] = 255;
+        }
+        capturedWidth = width;
+        capturedHeight = height;
+        captureStaging = nil;
+    }
+
     id<MTLLibrary> compileLibrary(const char* source)
     {
         NSError* error = nil;
@@ -514,6 +603,7 @@ private:
 
     uint32_t surfaceWidth;
     uint32_t surfaceHeight;
+    bool offscreen = false;
     id<MTLDevice> device;
     std::string adapterName;
     id<MTLCommandQueue> queue;
@@ -535,6 +625,14 @@ private:
     const MetalTextureSet* boundTextures = nullptr;
     uint64_t submissions = 0;
     uint32_t frame = 0;
+    bool captureWanted = false;
+    id<MTLTexture> offscreenColor;
+    id<MTLTexture> captureStaging;
+    uint32_t captureExtentWidth = 0;
+    uint32_t captureExtentHeight = 0;
+    std::vector<uint8_t> capturedPixels;
+    uint32_t capturedWidth = 0;
+    uint32_t capturedHeight = 0;
 };
 
 }

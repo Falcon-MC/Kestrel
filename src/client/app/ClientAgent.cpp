@@ -503,7 +503,7 @@ bool Client::handleAgentRequest(Request& request)
             capture.crop = ui::Rect { util::jsonNumber(crop->get("x"), 0.0f), util::jsonNumber(crop->get("y"), 0.0f),
                 util::jsonNumber(crop->get("width"), 0.0f), util::jsonNumber(crop->get("height"), 0.0f) };
         }
-        capture.framesLeft = 10;
+        capture.framesLeft = 45;
         capture.request = std::make_shared<Request>(std::move(request));
         agentCaptures.push_back(std::move(capture));
     } else if (method == "ui.widgets") {

@@ -286,7 +286,7 @@ public:
         check(sc1.As(&swapChain), "IDXGISwapChain3");
 
         D3D12_DESCRIPTOR_HEAP_DESC rtvDesc {};
-        rtvDesc.NumDescriptors = FrameCount;
+        rtvDesc.NumDescriptors = FrameCount + 1;
         rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         check(device->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&rtvHeap)), "CreateDescriptorHeap");
         rtvStride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -537,10 +537,9 @@ public:
 
         allocators[frameIndex]->Reset();
         commandList->Reset(allocators[frameIndex].Get(), nullptr);
-        transition(commandList.Get(), targets[frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        rtv.ptr += static_cast<SIZE_T>(frameIndex) * rtvStride;
+        rtv.ptr += static_cast<SIZE_T>(FrameCount) * rtvStride;
         D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsvHeap->GetCPUDescriptorHandleForHeapStart();
         const float color[4] = { r, g, b, 1.0f };
         commandList->ClearRenderTargetView(rtv, color, 0, nullptr);
@@ -637,16 +636,100 @@ public:
 
     void endFrame() override
     {
-        transition(commandList.Get(), targets[frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        const bool capturing = captureWanted && recordCapture();
+        if (!capturing) {
+            transition(commandList.Get(), colorBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        }
+        transition(commandList.Get(), targets[frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
+        commandList->CopyResource(targets[frameIndex].Get(), colorBuffer.Get());
+        transition(commandList.Get(), targets[frameIndex].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+        transition(commandList.Get(), colorBuffer.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
         commandList->Close();
         ID3D12CommandList* lists[] = { commandList.Get() };
         queue->ExecuteCommandLists(1, lists);
-        swapChain->Present(1, 0);
         fenceValues[frameIndex] = ++fenceCounter;
         queue->Signal(fence.Get(), fenceCounter);
         slotSubmissions[frameIndex] = ++submissions;
         active = false;
+        if (capturing) {
+            finishCapture();
+        }
+        swapChain->Present(1, 0);
         frameIndex = swapChain->GetCurrentBackBufferIndex();
+    }
+
+    bool requestCapture() override
+    {
+        captureWanted = true;
+        return true;
+    }
+
+    bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override
+    {
+        if (capturedPixels.empty()) {
+            return false;
+        }
+        rgba = std::move(capturedPixels);
+        capturedPixels.clear();
+        width = capturedWidth;
+        height = capturedHeight;
+        return true;
+    }
+
+    bool recordCapture()
+    {
+        captureWanted = false;
+        debugLog("D3D12 recordCapture " + std::to_string(surfaceWidth) + "x" + std::to_string(surfaceHeight));
+        D3D12_RESOURCE_DESC description = colorBuffer->GetDesc();
+        UINT64 total = 0;
+        UINT rowCount = 0;
+        UINT64 rowSize = 0;
+        device->GetCopyableFootprints(&description, 0, 1, 0, &captureFootprint, &rowCount, &rowSize, &total);
+        captureRows = rowCount;
+        captureReadback.Reset();
+        D3D12_HEAP_PROPERTIES readbackHeap = heapProperties(D3D12_HEAP_TYPE_READBACK);
+        D3D12_RESOURCE_DESC buffer = bufferDescription(total);
+        HRESULT created = device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&captureReadback));
+        if (FAILED(created)) {
+            debugLog("D3D12 capture readback alloc failed");
+            return false;
+        }
+        transition(commandList.Get(), colorBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_TEXTURE_COPY_LOCATION destination {};
+        destination.pResource = captureReadback.Get();
+        destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        destination.PlacedFootprint = captureFootprint;
+        D3D12_TEXTURE_COPY_LOCATION source {};
+        source.pResource = colorBuffer.Get();
+        source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        captureExtentWidth = surfaceWidth;
+        captureExtentHeight = surfaceHeight;
+        return true;
+    }
+
+    void finishCapture()
+    {
+        waitFor(fenceValues[frameIndex]);
+        uint8_t* mapped = nullptr;
+        if (FAILED(captureReadback->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || !mapped) {
+            debugLog("D3D12 capture map failed");
+            captureReadback.Reset();
+            return;
+        }
+        const uint32_t width = captureExtentWidth;
+        const uint32_t height = captureExtentHeight;
+        capturedPixels.resize(size_t(width) * height * 4);
+        for (uint32_t y = 0; y < height; ++y) {
+            const uint8_t* in = mapped + size_t(y) * captureFootprint.Footprint.RowPitch;
+            uint8_t* out = capturedPixels.data() + size_t(y) * width * 4;
+            std::memcpy(out, in, size_t(width) * 4);
+        }
+        captureReadback->Unmap(0, nullptr);
+        captureReadback.Reset();
+        capturedWidth = width;
+        capturedHeight = height;
+        debugLog("D3D12 captured " + std::to_string(width) + "x" + std::to_string(height));
     }
 
     /**
@@ -728,7 +811,33 @@ private:
             device->CreateRenderTargetView(targets[i].Get(), nullptr, rtv);
             rtv.ptr += rtvStride;
         }
+        createColorBuffer();
         createDepth();
+    }
+
+    void createColorBuffer()
+    {
+        colorBuffer.Reset();
+        D3D12_RESOURCE_DESC description {};
+        description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        description.Width = std::max<uint32_t>(surfaceWidth, 1);
+        description.Height = std::max<uint32_t>(surfaceHeight, 1);
+        description.DepthOrArraySize = 1;
+        description.MipLevels = 1;
+        description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        description.SampleDesc.Count = 1;
+        description.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        D3D12_CLEAR_VALUE clear {};
+        clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        clear.Color[0] = 0.0f;
+        clear.Color[1] = 0.0f;
+        clear.Color[2] = 0.0f;
+        clear.Color[3] = 1.0f;
+        D3D12_HEAP_PROPERTIES defaultHeap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
+        check(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_RENDER_TARGET, &clear, IID_PPV_ARGS(&colorBuffer)), "CreateCommittedResource: color buffer");
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        rtv.ptr += static_cast<SIZE_T>(FrameCount) * rtvStride;
+        device->CreateRenderTargetView(colorBuffer.Get(), nullptr, rtv);
     }
 
     void createDepth()
@@ -793,6 +902,7 @@ private:
     ComPtr<ID3D12DescriptorHeap> srvHeap;
     ComPtr<ID3D12DescriptorHeap> dsvHeap;
     ComPtr<ID3D12Resource> depthBuffer;
+    ComPtr<ID3D12Resource> colorBuffer;
     std::array<ComPtr<ID3D12Resource>, FrameCount> targets;
     std::array<ComPtr<ID3D12CommandAllocator>, FrameCount> allocators;
     ComPtr<ID3D12GraphicsCommandList> commandList;
@@ -816,6 +926,15 @@ private:
     uint32_t srvStride = 0;
     uint32_t rtvStride = 0;
     uint32_t frameIndex = 0;
+    bool captureWanted = false;
+    ComPtr<ID3D12Resource> captureReadback;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT captureFootprint {};
+    UINT captureRows = 0;
+    uint32_t captureExtentWidth = 0;
+    uint32_t captureExtentHeight = 0;
+    std::vector<uint8_t> capturedPixels;
+    uint32_t capturedWidth = 0;
+    uint32_t capturedHeight = 0;
 };
 
 void D3D12TextureSet::bind(uint32_t slot, const Texture* texture)
