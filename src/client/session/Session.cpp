@@ -863,6 +863,12 @@ void Session::handleWorldPacket(std::string& payload)
         }
     }
 
+    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet); equipment && equipment->mContainerId == 0) {
+        if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
+            actor->second.held = hudItemOf(equipment->mItem);
+        }
+    }
+
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         if (world.stats().levelChunks < 8) {
             debugLog("LevelChunk received x=" + std::to_string(levelChunk->mChunkX) + " z=" + std::to_string(levelChunk->mChunkZ)
@@ -930,6 +936,7 @@ void Session::handleWorldPacket(std::string& payload)
                 actor.skinSlot = skin->second.first;
                 actor.slim = skin->second.second;
             }
+            actor.held = hudItemOf(player->mHand);
             actor.scale = metadataScale(player->mMetadata, 1.0f);
             applyActorMetadata(player->mMetadata, actor);
             actors[runtime] = actor;

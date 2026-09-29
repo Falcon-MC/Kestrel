@@ -523,7 +523,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         out.push_back(packQuad(corners, quad.uvs, skinLayer, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | hurt));
     }
     appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
-    appendThirdPersonItem(rig, matrices, toWorld, out);
+    appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], bodyAttachable, rig, matrices, toWorld, out);
 }
 
 /**
@@ -534,7 +534,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
+void Client::appendThirdPersonItem(const HudItem& held, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
@@ -547,8 +547,7 @@ void Client::appendThirdPersonItem(const world::EntityRig& rig, const std::vecto
     }
     const world::BoneMatrix& m = matrices[static_cast<size_t>(armBone)];
     const Vec3& shoulder = rig.bones[static_cast<size_t>(armBone)].pivot;
-    const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
-    if (appendAttachable(held, rig, matrices, false, bodyAttachable, toWorld, out)) {
+    if (appendAttachable(held, rig, matrices, false, attachable, toWorld, out)) {
         return;
     }
     auto place = [&](const Vec3& local, bool cube) {
