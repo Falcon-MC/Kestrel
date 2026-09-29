@@ -265,7 +265,7 @@ void Menu::screenContent(Context& ui, float width, float height)
         todoScreen(ui, width, height, tr("menu.store", "Marketplace"));
         break;
     case Screen::DressingRoom:
-        todoScreen(ui, width, height, tr("profileScreen.header", "Dressing Room"));
+        dressingRoom(ui, width, height);
         break;
     case Screen::Profile:
         profile(ui, width, height);
@@ -534,7 +534,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         { { -4.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 0.0f, 16.0f }, { 0.0f, 32.0f }, false },
         { { 0.0f, 0.0f, -2.0f }, { 4.0f, 12.0f, 4.0f }, { 16.0f, 48.0f }, { 0.0f, 48.0f }, false },
     };
-    std::string_view Skin = inventoryPreview && ui.skin().sprite("dynamic/inventory_skin").valid ? "dynamic/inventory_skin" : "textures/entity/steve";
+    std::string_view Skin = inventoryPreview && ui.skin().sprite("dynamic/inventory_skin").valid ? std::string_view("dynamic/inventory_skin") : std::string_view(playerSkin);
     constexpr float Degrees = 3.14159265f / 180.0f;
     constexpr float NeckY = 24.0f;
 
@@ -1358,6 +1358,8 @@ std::string* Menu::focusedText()
         return &editPort;
     case Field::SocialSearch:
         return &socialSearch;
+    case Field::DressingSearch:
+        return &dressingState.search;
     case Field::Chat:
         return dialog == Dialog::Chat ? &chatDraft : nullptr;
     case Field::None:

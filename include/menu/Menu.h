@@ -91,6 +91,7 @@ enum class Field {
     ServerAddress,
     ServerPort,
     SocialSearch,
+    DressingSearch,
     Chat,
 };
 
@@ -177,6 +178,76 @@ struct ProfileAchievement {
  * What the profile page shows: achievement and gamerscore totals, suggested
  * and recently earned achievements, and play statistics.
  */
+/**
+ * A piece of a dressing room page as the grid shows it: its offer, title,
+ * rarity, creator, price, whether it is owned, and its thumbnail sprite.
+ */
+struct DressingPiece {
+    std::string id;
+    std::string title;
+    std::string rarity;
+    std::string creator;
+    bool owned = false;
+    std::string sprite;
+    std::string packType;
+    int coins = 0;
+    int bonus = 0;
+    std::string header;
+    std::string coinText;
+    std::string footer;
+};
+
+struct DressingPageView {
+    bool loading = false;
+    bool loaded = false;
+    std::string error;
+    std::vector<DressingPiece> owned;
+    std::vector<DressingPiece> others;
+    int balance = -1;
+};
+
+using DressingRoomView = std::map<std::string, DressingPageView>;
+
+enum class DressingSection {
+    Characters,
+    Creator,
+    ClassicSkins,
+    Emotes,
+    Capes,
+    Category,
+    Colors,
+    Fullscreen,
+    Coins,
+};
+
+enum class DressingDialog {
+    None,
+    DeleteCharacter,
+    Differences,
+    SkinModel,
+};
+
+/**
+ * Where the dressing room is: the section shown and the ones before it, the
+ * category page, the piece chosen and the one equipped, the chosen color,
+ * the sidebar, the creator's open groups, the dialog and the grid scroll.
+ */
+struct DressingState {
+    DressingSection section = DressingSection::Characters;
+    std::vector<DressingSection> trail;
+    std::string page;
+    std::string pageTitle;
+    std::string selected;
+    std::string equipped;
+    int color = -1;
+    bool sidebarOpen = false;
+    bool bodyOpen = true;
+    bool styleOpen = false;
+    DressingDialog dialog = DressingDialog::None;
+    float scroll = 0.0f;
+    std::string search;
+};
+
 struct ProfileInfo {
     bool achievementsLoaded = false;
     int achieved = 0;
@@ -399,6 +470,12 @@ public:
     }
 
     void setAccount(AccountInfo info);
+    void setDressingRoom(DressingRoomView view);
+
+    /**
+     * The dressing room pages the screen wants loaded since the last call.
+     */
+    std::vector<std::string> takeDressingRequests();
     void setSession(SessionInfo info);
 
     bool debugVisible() const
@@ -596,6 +673,21 @@ private:
     void settings(ui::Context& ui, float width, float height);
     void settingsPage(ui::Context& ui, const ui::Rect& area);
     void profile(ui::Context& ui, float width, float height);
+    void dressingRoom(ui::Context& ui, float width, float height);
+    void dressingHeader(ui::Context& ui, float width, std::string_view title, bool search);
+    void dressingSidebar(ui::Context& ui, float width, float height);
+    void dressingCharacters(ui::Context& ui, float left, float width, float height);
+    void dressingCreator(ui::Context& ui, const ui::Rect& panel);
+    void dressingPieces(ui::Context& ui, const ui::Rect& panel, const std::string& pageId, std::string_view ownedTitle, std::string_view othersTitle, std::string_view noneLabel);
+    void dressingColors(ui::Context& ui, const ui::Rect& panel);
+    void dressingCoins(ui::Context& ui, float left, float width, float height);
+    void dressingClassicSkins(ui::Context& ui, const ui::Rect& panel);
+    void applySkinChoice(ui::Context& ui);
+    std::string characterSprite(ui::Context& ui, const std::string& file);
+    void equipCharacter(ui::Context& ui, size_t index);
+    void dressingPreview(ui::Context& ui, const ui::Rect& area, bool colorable);
+    void dressingDialog(ui::Context& ui, float width, float height);
+    void openDressingSection(DressingSection section, const std::string& page = {}, const std::string& title = {});
     void profileCard(ui::Context& ui, const ui::Rect& card);
     void profileSummary(ui::Context& ui, const ui::Rect& area);
     void profileStats(ui::Context& ui, const ui::Rect& area);
@@ -685,6 +777,15 @@ private:
     ChromeInfo chrome;
     ChromeAction chromeAction = ChromeAction::None;
     AccountInfo account;
+    DressingRoomView dressing;
+    DressingState dressingState;
+    std::string playerSkin = "textures/entity/steve";
+    bool skinChoiceLoaded = false;
+    std::string classicSelected;
+    bool importedSlim = false;
+    size_t carouselIndex = 0;
+    bool carouselPlaced = false;
+    std::vector<std::string> dressingRequests;
     AccountRequest accountRequest = AccountRequest::None;
     SessionInfo session;
     bool errorDetailsShown = false;

@@ -4,6 +4,7 @@
 #include "client/Account.h"
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
+#include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
@@ -74,6 +75,7 @@ public:
 
 private:
     void syncAccount();
+    void syncDressingRoom();
     void syncSession();
     void syncFeatured();
     void collectFeaturedImages();
@@ -146,6 +148,9 @@ private:
     uint64_t profileRevision = 0;
     menu::ProfileInfo profileInfo;
     std::vector<std::string> profileSprites;
+    DressingRoomCatalog dressingCatalog;
+    std::map<std::string, uint64_t> dressingRevisions;
+    std::map<std::string, std::vector<std::string>> dressingSprites;
     std::shared_ptr<const std::vector<uint8_t>> shownTitle;
     FreeCamera camera;
     uint64_t seenJoin = 0;

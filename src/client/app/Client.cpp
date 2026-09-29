@@ -113,6 +113,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "account");
             syncAccount();
+            syncDressingRoom();
         }
         {
             Profiler::Section section(profiler, "session sync");
@@ -620,6 +621,58 @@ float Client::guiScale() const
     float fit = std::min(static_cast<float>(window->width()) / 360.0f,
         static_cast<float>(window->height()) / 240.0f);
     return std::max(0.01f, std::min(automatic * menu.interfaceScale(), fit));
+}
+
+/**
+ * Loads the dressing room pages the menu asks for and hands it every page
+ * that changed, the thumbnails put in the skin as sprites.
+ */
+void Client::syncDressingRoom()
+{
+    for (const std::string& page : menu.takeDressingRequests()) {
+        dressingCatalog.request(page, account.signedInAuthentication());
+    }
+    std::map<std::string, DressingPage> pages = dressingCatalog.snapshot();
+    bool changed = false;
+    for (const auto& [id, page] : pages) {
+        uint64_t& seen = dressingRevisions[id];
+        if (seen == page.revision) {
+            continue;
+        }
+        seen = page.revision;
+        changed = true;
+        for (const std::string& sprite : dressingSprites[id]) {
+            skin.clearDynamic(sprite);
+        }
+        dressingSprites[id].clear();
+    }
+    if (!changed) {
+        return;
+    }
+    menu::DressingRoomView view;
+    for (const auto& [id, page] : pages) {
+        menu::DressingPageView& target = view[id];
+        target.loading = page.loading;
+        target.loaded = page.loaded;
+        target.error = page.error;
+        target.balance = page.balance;
+        auto convert = [&](const std::vector<DressingItem>& items, std::vector<menu::DressingPiece>& out, bool owned) {
+            for (const DressingItem& item : items) {
+                menu::DressingPiece piece { item.id, item.title, item.rarity, item.creator, owned, {}, item.packType, item.coins, item.bonus, item.header, item.coinText, item.footer };
+                if (!item.thumbnail.empty()) {
+                    piece.sprite = "dressing/" + id + "/" + item.id;
+                    if (std::find(dressingSprites[id].begin(), dressingSprites[id].end(), piece.sprite) == dressingSprites[id].end()) {
+                        skin.setDynamic(piece.sprite, { item.thumbnailWidth, item.thumbnailHeight, item.thumbnail });
+                        dressingSprites[id].push_back(piece.sprite);
+                    }
+                }
+                out.push_back(std::move(piece));
+            }
+        };
+        convert(page.owned, target.owned, true);
+        convert(page.others, target.others, false);
+    }
+    menu.setDressingRoom(std::move(view));
 }
 
 void Client::uploadAtlas()

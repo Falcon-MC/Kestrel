@@ -5,8 +5,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <commdlg.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace kestrel::platform {
@@ -71,6 +73,25 @@ std::string pasteText()
     }
     CloseClipboard();
     return text;
+}
+
+std::string pickPngFile()
+{
+    wchar_t path[MAX_PATH] = {};
+    OPENFILENAMEW dialog {};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = GetActiveWindow();
+    dialog.lpstrFilter = L"PNG\0*.png\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = MAX_PATH;
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) {
+        return {};
+    }
+    int length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    std::string chosen(static_cast<size_t>(std::max(length - 1, 0)), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, chosen.data(), length, nullptr, nullptr);
+    return chosen;
 }
 
 }
