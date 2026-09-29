@@ -725,6 +725,7 @@ private:
     };
     PlayerMotion motion;
     std::deque<SentMotionTick> motionHistory;
+    bool enderChestOpen = false;
     MotionInput motionInput;
     MotionInput lastMotionInput;
     bool motionStarted = false;

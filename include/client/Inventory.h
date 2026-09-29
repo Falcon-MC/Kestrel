@@ -62,6 +62,8 @@ struct InventoryState {
     ContainerType type = ContainerType::Inventory;
     int windowId = 0;
     int containerSize = 0;
+    bool enderChest = false;
+    std::string customName;
     uint64_t openRevision = 0;
     uint64_t closeRevision = 0;
     uint64_t revision = 0;

@@ -247,7 +247,7 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
             slot(Output,right+(workbench?123:152),workbench?30:26);
             if(workbench) l.text(right+8,72,ui::tr("container.inventory","Inventory"));
         } else if (furnace) {
-            std::string label=ui::tr(state.type==ContainerType::Smoker?"container.smoker":state.type==ContainerType::BlastFurnace?"container.blast_furnace":"container.furnace","Furnace");
+            std::string label=!state.customName.empty()?state.customName:ui::tr(state.type==ContainerType::Smoker?"container.smoker":state.type==ContainerType::BlastFurnace?"container.blast_furnace":"container.furnace","Furnace");
             l.text(right+(176-ui.measure(label,ui::TextStyle::Pixel))*0.5f,7,label);
             slot(Container,right+55,16);slot(Container+1,right+55,52);slot(Container+2,right+115,34);
             l.image(right+79,35,22,16,"ui/arrow_inactive");
@@ -256,8 +256,8 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
             if(state.furnaceFlame>0) {ui.setClip(l.rect(right+57,50-14*state.furnaceFlame,14,14*state.furnaceFlame));l.image(right+57,36,14,14,"ui/flame_full_image");ui.clearClip();}
             l.text(right+8,72,ui::tr("container.inventory","Inventory"));
         } else {
-            const char* title=state.containerSize>27?"container.chestDouble":state.type==ContainerType::Hopper?"container.hopper":state.type==ContainerType::Dispenser?"container.dispenser":state.type==ContainerType::Dropper?"container.dropper":"container.chest";
-            l.text(right+7,11,ui::tr(title,state.containerSize>27?"Large Chest":"Chest"));
+            const char* title=state.enderChest?"container.enderchest":state.containerSize>27?"container.chestDouble":state.type==ContainerType::Hopper?"container.hopper":state.type==ContainerType::Dispenser?"container.dispenser":state.type==ContainerType::Dropper?"container.dropper":"container.chest";
+            l.text(right+7,11,!state.customName.empty()?state.customName:ui::tr(title,state.enderChest?"Ender Chest":state.containerSize>27?"Large Chest":"Chest"));
             int columns=state.containerSize==9?3:state.containerSize==5?5:9;
             float start=right+(176-columns*18)*0.5f;
             for(int i=0;i<state.containerSize;++i)slot(Container+i,start+(i%columns)*18,21+(i/columns)*18);
