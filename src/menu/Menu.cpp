@@ -1428,6 +1428,13 @@ void debugColumn(Context& ui, const std::vector<std::string>& lines, float width
 
 void Menu::gameView(Context& ui, float width, float height)
 {
+    if (hudToggledOff) {
+        if (debugShown) {
+            debugColumn(ui, debugView.left, width, false);
+            debugColumn(ui, debugView.right, width, true);
+        }
+        return;
+    }
     {
         WholeScreen whole(ui, screenBounds);
         drawNameTags(ui, hud.nameTags);
@@ -1580,6 +1587,9 @@ void Menu::handleKeys(Context& ui)
 
     if (input.pressedKey == Key::F11) {
         chromeAction = ChromeAction::Fullscreen;
+    }
+    if (input.pressedKey == Key::F1) {
+        hudToggledOff = !hudToggledOff;
     }
     if (input.pressedKey == Key::F3) {
         debugShown = !debugShown;
