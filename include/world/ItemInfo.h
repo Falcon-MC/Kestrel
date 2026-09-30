@@ -30,4 +30,16 @@ std::string itemArmorTexture(const std::string& identifier, size_t slot);
  */
 std::string itemDisplayName(const std::string& identifier);
 
+/**
+ * How many ticks a vanilla item can be held in use before it finishes on its
+ * own, or 0 for items that are not used over time. Only the bow so far.
+ */
+int32_t itemMaxUseTicks(const std::string& identifier);
+
+/**
+ * The frame query.get_animation_frame gives for an item that has been in use
+ * for the given ticks: 0 while idle, then the bow's three pulling stages.
+ */
+int32_t itemUseAnimationFrame(const std::string& identifier, double ticksUsed);
+
 }

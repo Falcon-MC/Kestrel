@@ -215,6 +215,7 @@ void Session::interact(bool use)
         packet.mTransactionType = InventoryTransactionType::ItemUse;
         packet.mActionType = ClickAir;
         packet.mBlockFace = -1;
+        packet.mTriggerType = ItemUseTriggerType::Unknown;
         debugLog("use item in the air");
         // Throwing swings the arm; items used in place, like food or a bow, do not.
         static constexpr std::string_view Thrown[] = {
@@ -238,6 +239,9 @@ void Session::interact(bool use)
         }
     }
     transmit(packet);
+    if (!target) {
+        startItemUse(slot, packet.mItemInHand);
+    }
 }
 
 std::vector<uint64_t> Session::takeAttacks()
@@ -433,7 +437,8 @@ void Session::tickHeldUse()
         buildLast.reset();
         return;
     }
-    if (++useRepeatTicks < RepeatTicks) {
+    // A drawn bow stays drawn; repeating the click would only start it over.
+    if (itemInUse || ++useRepeatTicks < RepeatTicks) {
         return;
     }
     std::optional<BlockHit> hit = traceBlock(InteractReach);

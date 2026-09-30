@@ -157,4 +157,17 @@ std::string itemDisplayName(const std::string& identifier)
     return name;
 }
 
+int32_t itemMaxUseTicks(const std::string& identifier)
+{
+    return identifier == "minecraft:bow" ? 72000 : 0;
+}
+
+int32_t itemUseAnimationFrame(const std::string& identifier, double ticksUsed)
+{
+    if (identifier != "minecraft:bow" || ticksUsed <= 0.0) {
+        return 0;
+    }
+    return ticksUsed >= 18.0 ? 3 : ticksUsed > 13.0 ? 2 : 1;
+}
+
 }
