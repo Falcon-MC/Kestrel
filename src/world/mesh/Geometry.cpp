@@ -85,7 +85,11 @@ Vec3f rotateAround(const Vec3f& point, const Vec3f& pivot, const Vec3f& degrees)
     return add(rotate(subtract(point, pivot), degrees), pivot);
 }
 
-GeometryFace parseFace(const json::Value* face)
+/**
+ * One face of a per-face UV map. Without uv_size the face samples as many
+ * texels as it is wide and tall, which is how the arrow maps its fins.
+ */
+GeometryFace parseFace(const json::Value* face, std::array<float, 2> faceSize)
 {
     GeometryFace result;
     if (!face || !face->isObject()) {
@@ -93,7 +97,8 @@ GeometryFace parseFace(const json::Value* face)
     }
     result.present = true;
     result.uv = readVec2(face->get("uv"));
-    result.size = readVec2(face->get("uv_size"));
+    const json::Value* size = face->get("uv_size");
+    result.size = size ? readVec2(size) : faceSize;
     if (const json::Value* instance = face->get("material_instance"); instance && instance->isString()) {
         result.materialInstance = instance->string();
     }
@@ -118,7 +123,11 @@ GeometryCube parseCube(const json::Value& value)
     if (uv && uv->isObject()) {
         cube.boxUv = false;
         for (int side = 0; side < 6; ++side) {
-            cube.faces[side] = parseFace(uv->get(SideNames[side]));
+            // West and east span depth by height, down and up width by depth, north and south width by height.
+            std::array<float, 2> faceSize = side < 2 ? std::array<float, 2> { cube.size[2], cube.size[1] }
+                : side < 4                            ? std::array<float, 2> { cube.size[0], cube.size[2] }
+                                                      : std::array<float, 2> { cube.size[0], cube.size[1] };
+            cube.faces[side] = parseFace(uv->get(SideNames[side]), faceSize);
         }
     } else {
         cube.uv = readVec2(uv);
