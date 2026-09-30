@@ -228,13 +228,13 @@ float4 sampleLayer(texture2d_array<float> blocks, texture2d_array<float> blocksH
 
 float4 sampleMaterial(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, constant DrawData& draw, uint material, float2 uv)
 {
-    uint layer = material & 0xfff;
-    uint count = ((material >> 14) & 0x7f) + 1;
+    uint layer = material & 0x1fff;
+    uint count = ((material >> 15) & 0x3f) + 1;
     uint ticksPerFrame = ((material >> 21) & 0x7ff) + 1;
     float timeline = draw.origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
     float4 texel = sampleLayer(blocks, blocksHigh, blockSampler, uv, layer + frame);
-    if (count > 1 && ((material >> 13) & 1) != 0) {
+    if (count > 1 && ((material >> 14) & 1) != 0) {
         float4 next = sampleLayer(blocks, blocksHigh, blockSampler, uv, layer + (frame + 1) % count);
         texel = mix(texel, next, fract(timeline));
     }
@@ -252,15 +252,20 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
     return mix(color, draw.fog.rgb, amount);
 }
 
-float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, sampler blockSampler, float2 uv, uint material)
+float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, float2 uv, uint material)
 {
-    uint layer = material & 0xfff;
-    return layer < 2048u ? entities.sample(blockSampler, uv, layer) : entitiesHigh.sample(blockSampler, uv, layer - 2048u);
+    uint layer = material & 0x1fffu;
+    uint page = layer >> 11;
+    uint index = layer & 2047u;
+    if (page == 0u) return entities.sample(blockSampler, uv, index);
+    if (page == 1u) return entitiesHigh.sample(blockSampler, uv, index);
+    if (page == 2u) return entities2.sample(blockSampler, uv, index);
+    return entities3.sample(blockSampler, uv, index);
 }
 
-fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, blockSampler, in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (texel.a < 0.004) {
@@ -330,9 +335,9 @@ fragment float4 overlay_fragment(WorldOut in [[stage_in]], texture2d_array<float
     return float4(crack.rgb, 1.0);
 }
 
-fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
-    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, blockSampler, in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (in.entity != 0) {

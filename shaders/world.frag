@@ -12,6 +12,8 @@ layout(set = 0, binding = 0) uniform sampler2DArray blocks;
 layout(set = 0, binding = 1) uniform sampler2DArray blocksHigh;
 layout(set = 0, binding = 2) uniform sampler2DArray entities;
 layout(set = 0, binding = 3) uniform sampler2DArray entitiesHigh;
+layout(set = 0, binding = 4) uniform sampler2DArray entities2;
+layout(set = 0, binding = 5) uniform sampler2DArray entities3;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -32,20 +34,23 @@ vec4 sampleLayer(vec2 uv, uint layer)
 
 vec4 sampleEntity(vec2 uv, uint layer)
 {
-    vec4 low = texture(entities, vec3(uv, float(min(layer, 2047u))));
-    vec4 high = texture(entitiesHigh, vec3(uv, float(layer >= 2048u ? layer - 2048u : 0u)));
-    return layer >= 2048u ? high : low;
+    uint page = layer >> 11;
+    uint index = layer & 2047u;
+    if (page == 0u) return texture(entities, vec3(uv, float(index)));
+    if (page == 1u) return texture(entitiesHigh, vec3(uv, float(index)));
+    if (page == 2u) return texture(entities2, vec3(uv, float(index)));
+    return texture(entities3, vec3(uv, float(index)));
 }
 
 vec4 sampleMaterial(uint material, vec2 uv)
 {
-    uint layer = material & 0xfffu;
-    uint count = ((material >> 14) & 0x7fu) + 1u;
+    uint layer = material & 0x1fffu;
+    uint count = ((material >> 15) & 0x3fu) + 1u;
     uint ticksPerFrame = ((material >> 21) & 0x7ffu) + 1u;
     float timeline = draw.origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
     vec4 texel = sampleLayer(uv, layer + frame);
-    if (count > 1u && ((material >> 13) & 1u) != 0u) {
+    if (count > 1u && ((material >> 14) & 1u) != 0u) {
         vec4 next = sampleLayer(uv, layer + (frame + 1u) % count);
         texel = mix(texel, next, fract(timeline));
     }
@@ -89,7 +94,7 @@ void main()
     }
     outColor = vec4(crack.rgb, 1.0);
 #else
-    vec4 texel = inEntity != 0u ? sampleEntity(inUv, inMaterial & 0xfffu) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    vec4 texel = inEntity != 0u ? sampleEntity(inUv, inMaterial & 0x1fffu) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
     if ((inEntity & 4u) != 0u) texel.rgb = mix(texel.rgb, vec3(1.0, 0.0, 0.0), 0.5);
 #ifdef BLEND

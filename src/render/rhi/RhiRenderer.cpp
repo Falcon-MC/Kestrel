@@ -226,7 +226,7 @@ public:
         debugLog("RHI entity textures size=" + std::to_string(size) + " layers=" + std::to_string(layers)
                  + " bytes=" + std::to_string(uint64_t(size) * size * layers * 4));
         if (layers > EntityTexturePageLayers * EntityTexturePages) {
-            throw std::runtime_error("Entity textures exceed the 4096-layer material index capacity");
+            throw std::runtime_error("Entity textures exceed the 8192-layer material index capacity");
         }
         device->waitIdle();
         entitySize = size;
