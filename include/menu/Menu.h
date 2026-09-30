@@ -520,6 +520,16 @@ public:
         hidePaperDoll = hidden;
     }
 
+    bool vsync() const
+    {
+        return verticalSync;
+    }
+
+    void setVsync(bool enabled)
+    {
+        verticalSync = enabled;
+    }
+
     /**
      * The share of the screen the HUD keeps to, between MinSafeArea and
      * MaxSafeArea, the way the game stores gfx_safe_zone_all.
@@ -1129,6 +1139,7 @@ private:
     int fpsLimit = DefaultMaxFps;
     int fieldOfView = DefaultFov;
     bool hidePaperDoll = false;
+    bool verticalSync = false;
     float safeZone = MaxSafeArea;
     int brightnessPercent = DefaultBrightness;
     std::string languageCode = "en_US";

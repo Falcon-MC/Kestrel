@@ -347,6 +347,15 @@ public:
         swapchainDirty = true;
     }
 
+    void setVsync(bool enabled) override
+    {
+        if (vsync == enabled) {
+            return;
+        }
+        vsync = enabled;
+        swapchainDirty = true;
+    }
+
     void waitIdle() override
     {
         vkDeviceWaitIdle(device);
@@ -1311,7 +1320,7 @@ private:
         vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, modes.data());
         info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         for (VkPresentModeKHR preferred : { VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR }) {
-            if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
+            if (!vsync && std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
                 info.presentMode = preferred;
                 break;
             }
@@ -1546,6 +1555,7 @@ private:
     uint32_t frame = 0;
     uint32_t imageIndex = 0;
     bool swapchainDirty = false;
+    bool vsync = false;
     bool active = false;
     bool captureSupported = false;
     bool captureWanted = false;

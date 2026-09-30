@@ -873,6 +873,12 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
+        settingsRow(ui, x, y, w, tr("options.vsync", "VSync"), "Waits for the screen to refresh before showing each frame, trading latency for no tearing", 31.33f);
+        if (toggle(ui, "video:vsync", { x + w - 12.0f - 38.0f, rowY + 7.67f, 38.0f, 16.0f }, verticalSync)) {
+            verticalSync = !verticalSync;
+        }
+
+        rowY = y;
         settingsRow(ui, x, y, w, tr("options.guiScale.optionName", "GUI scale"), "Rescales and repositions the menus and in-game HUD", 60.0f);
         float segment = std::floor((w - 24.0f) / static_cast<float>(std::size(InterfaceScales)));
         for (size_t i = 0; i < std::size(InterfaceScales); ++i) {

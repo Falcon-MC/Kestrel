@@ -391,6 +391,10 @@ void Session::runMotionTick(double now)
     packet.mInteractRotationY = yaw;
     constexpr float Radians = 3.14159265f / 180.0f;
     packet.mCameraOrientation = Vector3f(-std::sin(yaw * Radians) * std::cos(pitch * Radians), -std::sin(pitch * Radians), std::cos(yaw * Radians) * std::cos(pitch * Radians));
+    tickEye = { double(packet.mPosition.x), double(packet.mPosition.y), double(packet.mPosition.z) };
+    tickDirection = { packet.mCameraOrientation.x, packet.mCameraOrientation.y, packet.mCameraOrientation.z };
+    tickSneaking = tick.sneaking;
+    tickSpeed = std::sqrt(double(tick.movement.x) * tick.movement.x + double(tick.movement.y) * tick.movement.y + double(tick.movement.z) * tick.movement.z) / TickSeconds;
 
     auto flag = [&](PlayerAuthInputData value) {
         packet.mInputData.push_back(static_cast<int32_t>(value));
@@ -517,12 +521,17 @@ void Session::runMotionTick(double now)
     if (missedSwing.exchange(false)) {
         flag(PlayerAuthInputData::MissedSwing);
     }
+    if (useRequested.exchange(false)) {
+        lastItemRepeatTick = clientTick;
+        interact(true);
+    } else {
+        tickHeldUse();
+    }
     tickBreaking(packet, tick);
     tickItemUse(packet);
     tickCracks();
     tickChestLids();
     transmit(packet);
-    tickHeldUse();
     connection->flush();
     lastMotionInput = input;
 

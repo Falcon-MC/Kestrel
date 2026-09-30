@@ -589,6 +589,11 @@ public:
         return device->requestCapture();
     }
 
+    void setVsync(bool enabled) override
+    {
+        device->setVsync(enabled);
+    }
+
     bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override
     {
         return device->takeCapture(rgba, width, height);

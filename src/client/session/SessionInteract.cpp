@@ -126,6 +126,15 @@ bool Session::unselectable(uint32_t value) const
  */
 std::optional<BlockHit> Session::traceBlock(double reach)
 {
+    return traceBlock(lookOrigin, lookDirection, reach);
+}
+
+/**
+ * The first block within reach along a ray from origin toward direction, as
+ * traceBlock above describes.
+ */
+std::optional<BlockHit> Session::traceBlock(const std::array<double, 3>& lookOrigin, const std::array<float, 3>& lookDirection, double reach)
+{
     if (!assets) {
         return std::nullopt;
     }
@@ -161,7 +170,7 @@ std::optional<BlockHit> Session::traceBlock(double reach)
                 hit.distance = *entry;
                 hit.face = axis < 0 ? 1 : Faces[axis][direction[axis] < 0.0 ? 1 : 0];
                 for (int i = 0; i < 3; ++i) {
-                    hit.point[i] = lookOrigin[i] + direction[i] * *entry;
+                    hit.point[i] = std::clamp(lookOrigin[i] + direction[i] * *entry, low[i], high[i]);
                 }
                 hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
                 return hit;
@@ -216,12 +225,19 @@ void Session::interact(bool use)
     bool creative = false;
     {
         std::lock_guard<std::mutex> guard(mutex);
-        origin = lookOrigin;
-        direction = { lookDirection[0], lookDirection[1], lookDirection[2] };
+        origin = use ? tickEye : lookOrigin;
+        const std::array<float, 3>& look = use ? tickDirection : lookDirection;
+        direction = { look[0], look[1], look[2] };
         slot = std::clamp(current.hud.selectedSlot, 0, 8);
         creative = current.gameMode == "Creative";
     }
-    std::optional<BlockHit> block = traceBlock(InteractReach);
+    std::optional<BlockHit> block = use ? traceBlock(tickEye, tickDirection, InteractReach) : traceBlock(InteractReach);
+    if (use && block && !withinPickRange(*block)) {
+        block.reset();
+    }
+    if (use && !block && holdsBlock(inventoryModel.slots[size_t(slot)])) {
+        block = bridgeHit();
+    }
     double nearest = 0.0;
     double entityReach = creative ? CreativeEntityReach : EntityReach;
     const ActorView* target = traceActor(origin, direction, std::min(block ? block->distance : InteractReach, entityReach), nearest);
@@ -241,19 +257,25 @@ void Session::interact(bool use)
         packet.mRuntimeActorId = static_cast<int64_t>(target->runtimeId);
         packet.mClickPosition = Vector3f(float(origin[0] + direction[0] * nearest - target->x), float(origin[1] + direction[1] * nearest - target->y), float(origin[2] + direction[2] * nearest - target->z));
         debugLog(std::string(use ? "interact with " : "attack ") + target->identifier + " " + std::to_string(target->runtimeId));
+        if (!use) {
+            trySwing("Attack");
+        }
     } else if (!use) {
+        trySwing(block ? "Mine" : "Attack");
         if (!block) {
             missedSwing = true;
         }
         return;
     } else if (block) {
-        useOnBlock(*block);
-        return;
-    } else if (std::optional<BlockHit> ahead = heldBlockBridge()) {
-        useOnBlock(*ahead);
+        if (!useSelectionVerified()) {
+            recordUse(false, secondsNow(), BlockUse::Nothing);
+            return;
+        }
+        BlockUse outcome = localUse(*block, packet.mItemInHand);
+        recordUse(false, secondsNow(), outcome);
+        useOnBlock(*block, false, outcome);
         return;
     } else {
-        buildLast.reset();
         packet.mTransactionType = InventoryTransactionType::ItemUse;
         packet.mActionType = ClickAir;
         packet.mBlockFace = -1;
@@ -270,9 +292,6 @@ void Session::interact(bool use)
             current.hud.lastSwing = secondsNow();
         }
     }
-    if (target) {
-        buildLast.reset();
-    }
     if (target && !use) {
         constexpr size_t MaxPendingAttacks = 16;
         std::lock_guard<std::mutex> guard(mutex);
@@ -286,6 +305,51 @@ void Session::interact(bool use)
     }
 }
 
+/**
+ * Starts an arm swing, telling the server where it came from, unless the
+ * swing under way is not yet half done. Haste and conduit power shorten a
+ * swing and mining fatigue lengthens it.
+ */
+bool Session::trySwing(std::string_view source)
+{
+    constexpr int32_t DefaultSwingTicks = 6;
+    constexpr int32_t HasteEffect = 3;
+    constexpr int32_t MiningFatigueEffect = 4;
+    constexpr int32_t ConduitPowerEffect = 26;
+    int32_t haste = 0;
+    int32_t fatigue = 0;
+    double now = secondsNow();
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        for (const HudEffect& effect : current.hud.effects) {
+            if (effect.expires >= 0.0 && effect.expires < now) {
+                continue;
+            }
+            if (effect.id == HasteEffect || effect.id == ConduitPowerEffect) {
+                haste = std::max(haste, effect.amplifier + 1);
+            } else if (effect.id == MiningFatigueEffect) {
+                fatigue = effect.amplifier + 1;
+            }
+        }
+    }
+    int32_t duration = haste > 0 ? DefaultSwingTicks - haste : DefaultSwingTicks + fatigue * 2;
+    uint64_t half = static_cast<uint64_t>(std::max(duration, 1) / 2);
+    if (swingStarted && clientTick >= lastSwingTick && clientTick - lastSwingTick < half) {
+        return false;
+    }
+    swingStarted = true;
+    lastSwingTick = clientTick;
+    AnimatePacket swing;
+    swing.mAction = AnimatePacket::Action::SwingArm;
+    swing.mRuntimeActorId = localRuntimeId;
+    swing.mData = 0.0f;
+    swing.mSwingSource = std::string(source);
+    transmit(swing);
+    std::lock_guard<std::mutex> guard(mutex);
+    current.hud.lastSwing = now;
+    return true;
+}
+
 std::vector<uint64_t> Session::takeAttacks()
 {
     std::lock_guard<std::mutex> guard(mutex);
@@ -295,66 +359,282 @@ std::vector<uint64_t> Session::takeAttacks()
 }
 
 /**
- * Uses the held item on one face of a block, and remembers the cell a block
- * placed there would fill as the head of the line held use extends.
+ * What a click on a block does on this side: the block's own use unless
+ * sneaking with an item, otherwise a placement when the held item places a
+ * block and the cell it would fill is free.
  */
-void Session::useOnBlock(const BlockHit& block)
+Session::BlockUse Session::localUse(const BlockHit& block, const ItemStack& item)
+{
+    bool holding = !item.isAir();
+    if (usableBlock(block.name) && !(tickSneaking && holding)) {
+        return BlockUse::Interact;
+    }
+    std::array<int32_t, 3> placed = replaceableAt(block.cell) ? block.cell : placedCell(block);
+    if (holdsBlock(item) && placeableAt(placed)) {
+        return BlockUse::Place;
+    }
+    return BlockUse::Nothing;
+}
+
+/**
+ * Sends one click-block transaction for a hit the ray really made, from the
+ * eye of the latest movement tick, swinging first when the local use does
+ * something. A request with a face, slot or click point outside its range,
+ * or with a value that is not finite, is dropped.
+ */
+void Session::useOnBlock(const BlockHit& block, bool repeat, BlockUse outcome)
 {
     int32_t slot = 0;
     {
         std::lock_guard<std::mutex> guard(mutex);
-        slot = std::clamp(current.hud.selectedSlot, 0, 8);
+        slot = current.hud.selectedSlot;
+    }
+    std::array<double, 3> click { block.point[0] - block.cell[0], block.point[1] - block.cell[1], block.point[2] - block.cell[2] };
+    bool valid = block.face >= 0 && block.face <= 5 && slot >= 0 && slot < 9;
+    for (int axis = 0; axis < 3; ++axis) {
+        valid = valid && std::isfinite(tickEye[axis]) && std::isfinite(click[axis]) && click[axis] >= 0.0 && click[axis] <= 1.0;
+    }
+    if (!valid) {
+        debugLog("dropped invalid use on " + block.name);
+        return;
+    }
+    if (outcome != BlockUse::Nothing) {
+        trySwing(outcome == BlockUse::Interact ? "Interact" : "Build");
     }
     InventoryTransactionPacket packet;
     packet.mHotbarSlot = slot;
     packet.mItemInHand = inventoryModel.slots[size_t(slot)];
-    packet.mPlayerPosition = Vector3f(float(lookOrigin[0]), float(lookOrigin[1]), float(lookOrigin[2]));
-    bool holding = !packet.mItemInHand.isAir();
-    std::array<int32_t, 3> placed = replaceableAt(block.cell) ? block.cell : placedCell(block);
-    BlockUse outcome = BlockUse::Nothing;
-    if (usableBlock(block.name) && !(motion.sneaking() && holding)) {
-        outcome = BlockUse::Interact;
-    } else if (holdsBlock(packet.mItemInHand) && placeableAt(placed)) {
-        outcome = BlockUse::Place;
-    }
-    if (outcome != BlockUse::Nothing) {
-        AnimatePacket swing;
-        swing.mAction = AnimatePacket::Action::SwingArm;
-        swing.mRuntimeActorId = localRuntimeId;
-        swing.mData = 0.0f;
-        swing.mSwingSource = outcome == BlockUse::Interact ? "Interact" : "Build";
-        transmit(swing);
-        std::lock_guard<std::mutex> guard(mutex);
-        current.hud.lastSwing = secondsNow();
-    }
-    packet.mTriggerType = ItemUseTriggerType::PlayerInput;
+    packet.mPlayerPosition = Vector3f(float(tickEye[0]), float(tickEye[1]), float(tickEye[2]));
+    packet.mTriggerType = repeat ? ItemUseTriggerType::SimulationTick : ItemUseTriggerType::PlayerInput;
     packet.mClientInteractPrediction = outcome == BlockUse::Nothing ? ItemUsePredictedResult::Failure : ItemUsePredictedResult::Success;
     packet.mTransactionType = InventoryTransactionType::ItemUse;
     packet.mActionType = ClickBlock;
     packet.mBlockPosition = Vector3i(block.cell[0], block.cell[1], block.cell[2]);
     packet.mBlockFace = block.face;
-    packet.mClickPosition = Vector3f(float(block.point[0] - block.cell[0]), float(block.point[1] - block.cell[1]), float(block.point[2] - block.cell[2]));
+    packet.mClickPosition = Vector3f(float(click[0]), float(click[1]), float(click[2]));
     packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
     debugLog("use item on " + block.name);
     transmit(packet);
-
-    buildFace = block.face;
-    buildLast = placed;
 }
 
-bool Session::holdsBlock(const ItemStack& item) const
+/**
+ * Whether the held stack is the one the server agrees on: no inventory
+ * request is waiting for its answer or queued, and no hotbar change is
+ * still to be sent.
+ */
+bool Session::useSelectionVerified()
 {
-    return !item.isAir() && assets && assets->placesBlock(item.mDefinition->getIdentifier());
+    std::lock_guard<std::mutex> guard(mutex);
+    return pendingInventoryRequest == 0 && inventoryCommands.empty() && requestedSlot.load() < 0;
 }
 
-std::optional<BlockHit> Session::heldBlockBridge()
+/**
+ * Whether a hit block lies within pick range: the distance from the eye to
+ * the block's centre, not the length of the ray.
+ */
+bool Session::withinPickRange(const BlockHit& hit) const
 {
+    double distance = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        double gap = hit.cell[axis] + 0.5 - tickEye[axis];
+        distance += gap * gap;
+    }
+    return distance <= InteractReach * InteractReach;
+}
+
+/**
+ * The block a held use repeats on: what the ray from the latest movement
+ * tick hits within pick range, unless an entity stands in front of it.
+ */
+std::optional<BlockHit> Session::useTarget()
+{
+    std::optional<BlockHit> hit = traceBlock(tickEye, tickDirection, InteractReach);
+    if (!hit || !withinPickRange(*hit)) {
+        return bridgeHit();
+    }
+    double distance = 0.0;
+    std::array<double, 3> direction { tickDirection[0], tickDirection[1], tickDirection[2] };
+    if (traceActor(tickEye, direction, hit->distance, distance)) {
+        return std::nullopt;
+    }
+    return hit;
+}
+
+/**
+ * Bedrock builds against blocks the crosshair never touches: with nothing in
+ * reach, the look ray from the latest movement tick is walked cell by cell
+ * and the first empty cell with the block underfoot behind it, on a side
+ * turned toward the viewer, takes the block. Looking ahead and down past an
+ * edge finds the cell in front of the block underfoot, which is how players
+ * bridge.
+ */
+std::optional<BlockHit> Session::bridgeHit()
+{
+    constexpr double SideAlignment = 0.1;
+    if (!assets) {
+        return std::nullopt;
+    }
+    std::array<size_t, 6> sides { 0, 1, 2, 3, 4, 5 };
+    auto alignment = [&](size_t face) {
+        const std::array<int32_t, 3>& offset = FaceOffsets[face];
+        return offset[0] * tickDirection[0] + offset[1] * tickDirection[1] + offset[2] * tickDirection[2];
+    };
+    std::sort(sides.begin(), sides.end(), [&](size_t a, size_t b) {
+        return alignment(a) > alignment(b);
+    });
+    constexpr double HalfWidth = DefaultActorWidth * 0.5;
+    const MotionVector& feet = motion.position();
+    int32_t underfoot = int32_t(std::floor(feet.y - 0.01));
+    auto standingOn = [&](const std::array<int32_t, 3>& block) {
+        return block[1] == underfoot && feet.x + HalfWidth > block[0] && feet.x - HalfWidth < block[0] + 1.0
+            && feet.z + HalfWidth > block[2] && feet.z - HalfWidth < block[2] + 1.0;
+    };
+
+    std::array<int32_t, 3> cell { int32_t(std::floor(tickEye[0])), int32_t(std::floor(tickEye[1])), int32_t(std::floor(tickEye[2])) };
+    std::array<int32_t, 3> step {};
+    std::array<double, 3> next {};
+    std::array<double, 3> delta {};
+    for (int axis = 0; axis < 3; ++axis) {
+        double along = tickDirection[axis];
+        step[axis] = along > 0.0 ? 1 : -1;
+        delta[axis] = std::abs(along) > 1.0e-9 ? std::abs(1.0 / along) : std::numeric_limits<double>::infinity();
+        double boundary = along > 0.0 ? cell[axis] + 1.0 - tickEye[axis] : tickEye[axis] - cell[axis];
+        next[axis] = std::abs(along) > 1.0e-9 ? boundary * delta[axis] : std::numeric_limits<double>::infinity();
+    }
+    for (double travelled = 0.0; travelled <= InteractReach;) {
+        if (placeableAt(cell)) {
+            for (size_t face : sides) {
+                if (alignment(face) < SideAlignment) {
+                    break;
+                }
+                const std::array<int32_t, 3>& offset = FaceOffsets[face];
+                std::array<int32_t, 3> against { cell[0] - offset[0], cell[1] - offset[1], cell[2] - offset[2] };
+                uint32_t value = blockAt(against[0], against[1], against[2]);
+                if (value == world::ImplicitAir || !standingOn(against) || replaceableAt(against)) {
+                    continue;
+                }
+                BlockHit hit;
+                hit.cell = against;
+                hit.value = value;
+                hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
+                hit.face = int32_t(face);
+                hit.distance = travelled;
+                for (int axis = 0; axis < 3; ++axis) {
+                    hit.point[axis] = against[axis] + 0.5 + offset[axis] * 0.5;
+                }
+                if (!withinPickRange(hit)) {
+                    return std::nullopt;
+                }
+                return hit;
+            }
+        }
+        int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2) : (next[1] < next[2] ? 1 : 2);
+        travelled = next[axis];
+        next[axis] += delta[axis];
+        cell[axis] += step[axis];
+    }
+    return std::nullopt;
+}
+
+/**
+ * Seconds until the next held-use repeat. Sneaking, a block's own use and a
+ * placement whose line is not yet under way repeat slowly; standing still
+ * repeats at a steady pace, moving faster the quicker the player goes, and
+ * survival never repeats faster than its floor.
+ */
+double Session::repeatInterval(bool sneaking, bool slow, double speed, bool survival)
+{
+    constexpr double SlowRepeat = 0.3;
+    constexpr double StillRepeat = 0.2;
+    constexpr double MovingRepeatMaximum = 0.18;
+    constexpr double MovingRepeatPerBlock = 0.9;
+    constexpr double SurvivalRepeatFloor = 0.1;
+    double interval = StillRepeat;
+    if (sneaking || slow) {
+        interval = SlowRepeat;
+    } else if (std::isfinite(speed) && speed > 0.0) {
+        interval = std::min(MovingRepeatPerBlock / speed, MovingRepeatMaximum);
+    }
+    return survival ? std::max(interval, SurvivalRepeatFloor) : interval;
+}
+
+/**
+ * Records one use attempt on the repeat schedule. A moving repeat keeps to
+ * its schedule unless it has fallen too far behind; a press and a still
+ * repeat restart it from now. A failed attempt moves the schedule on too,
+ * so it tries again once the next repeat is due rather than every tick.
+ */
+void Session::recordUse(bool repeat, double due, BlockUse outcome)
+{
+    constexpr double RepeatMaximumLag = 0.18;
+    double now = secondsNow();
+    lastUseAttemptTick = clientTick;
+    if (repeat && std::isfinite(tickSpeed) && tickSpeed > 0.0) {
+        lastUseTime = std::max(due, now - RepeatMaximumLag);
+    } else {
+        lastUseTime = now;
+    }
+    if (outcome != BlockUse::Nothing) {
+        slowRepeat = outcome == BlockUse::Interact || (outcome == BlockUse::Place && !repeat);
+    }
+}
+
+/**
+ * Held use repeats on the block the ray from the latest movement tick hits
+ * while the button stays down, once the schedule says a repeat is due and at
+ * most once a tick. Only a held block item keeps using; a drawn bow stays
+ * drawn.
+ */
+void Session::tickHeldUse()
+{
+    if (!useHeld.load() || !connection || !codecContext || !assets) {
+        slowRepeat = false;
+        return;
+    }
+    if (itemInUse || lastUseAttemptTick == clientTick) {
+        return;
+    }
+    constexpr uint64_t ItemRepeatTicks = 4;
+    bool survival = false;
+    int32_t heldSlot = 0;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        survival = current.hud.gameType == 0;
+        heldSlot = std::clamp(current.hud.selectedSlot, 0, 8);
+    }
+    if (!holdsBlock(inventoryModel.slots[size_t(heldSlot)])) {
+        if (clientTick - lastItemRepeatTick >= ItemRepeatTicks) {
+            lastItemRepeatTick = clientTick;
+            lastUseAttemptTick = clientTick;
+            interact(true);
+        }
+        return;
+    }
+    double due = lastUseTime ? *lastUseTime + repeatInterval(tickSneaking, slowRepeat, tickSpeed, survival) : 0.0;
+    if (secondsNow() <= due) {
+        return;
+    }
+    std::optional<BlockHit> hit = useTarget();
+    if (!hit || !useSelectionVerified()) {
+        recordUse(true, due, BlockUse::Nothing);
+        return;
+    }
     int32_t slot = 0;
     {
         std::lock_guard<std::mutex> guard(mutex);
         slot = std::clamp(current.hud.selectedSlot, 0, 8);
     }
-    return holdsBlock(inventoryModel.slots[size_t(slot)]) ? bridgeHit() : std::nullopt;
+    const ItemStack& item = inventoryModel.slots[size_t(slot)];
+    BlockUse outcome = localUse(*hit, item);
+    recordUse(true, due, outcome);
+    if (holdsBlock(item)) {
+        useOnBlock(*hit, true, outcome);
+    }
+}
+
+bool Session::holdsBlock(const ItemStack& item) const
+{
+    return !item.isAir() && assets && assets->placesBlock(item.mDefinition->getIdentifier());
 }
 
 std::array<int32_t, 3> Session::placedCell(const BlockHit& hit)
@@ -442,183 +722,6 @@ bool Session::usableBlock(std::string_view name)
     return std::any_of(std::begin(Suffixes), std::end(Suffixes), [name](std::string_view suffix) {
         return name.size() >= suffix.size() && name.substr(name.size() - suffix.size()) == suffix;
     });
-}
-
-/**
- * Bedrock builds against blocks the crosshair never touches: with nothing in
- * reach, the look ray is walked cell by cell and the first empty cell with a
- * solid block behind it, on a side turned toward the viewer, takes the block.
- * Looking ahead and down past an edge finds the cell in front of the block
- * underfoot, which is how players bridge. Only the block the player stands on
- * can be built off this way, so it takes walking up to the edge.
- */
-std::optional<BlockHit> Session::bridgeHit()
-{
-    // A side counts when the look runs at least this much along it, away from the block built off.
-    constexpr double SideAlignment = 0.1;
-    if (!assets) {
-        return std::nullopt;
-    }
-    std::array<size_t, 6> sides { 0, 1, 2, 3, 4, 5 };
-    auto alignment = [&](size_t face) {
-        const std::array<int32_t, 3>& offset = FaceOffsets[face];
-        return offset[0] * lookDirection[0] + offset[1] * lookDirection[1] + offset[2] * lookDirection[2];
-    };
-    std::sort(sides.begin(), sides.end(), [&](size_t a, size_t b) { return alignment(a) > alignment(b); });
-    constexpr double HalfWidth = DefaultActorWidth * 0.5;
-    const MotionVector& feet = motion.position();
-    int32_t underfoot = int32_t(std::floor(feet.y - 0.01));
-    auto standingOn = [&](const std::array<int32_t, 3>& block) {
-        return block[1] == underfoot && feet.x + HalfWidth > block[0] && feet.x - HalfWidth < block[0] + 1.0
-            && feet.z + HalfWidth > block[2] && feet.z - HalfWidth < block[2] + 1.0;
-    };
-
-    std::array<int32_t, 3> cell { int32_t(std::floor(lookOrigin[0])), int32_t(std::floor(lookOrigin[1])), int32_t(std::floor(lookOrigin[2])) };
-    std::array<int32_t, 3> step {};
-    std::array<double, 3> next {};
-    std::array<double, 3> delta {};
-    for (int axis = 0; axis < 3; ++axis) {
-        double along = lookDirection[axis];
-        step[axis] = along > 0.0 ? 1 : -1;
-        delta[axis] = std::abs(along) > 1.0e-9 ? std::abs(1.0 / along) : std::numeric_limits<double>::infinity();
-        double boundary = along > 0.0 ? cell[axis] + 1.0 - lookOrigin[axis] : lookOrigin[axis] - cell[axis];
-        next[axis] = std::abs(along) > 1.0e-9 ? boundary * delta[axis] : std::numeric_limits<double>::infinity();
-    }
-    for (double travelled = 0.0; travelled <= InteractReach;) {
-        if (placeableAt(cell)) {
-            for (size_t face : sides) {
-                if (alignment(face) < SideAlignment) {
-                    break;
-                }
-                const std::array<int32_t, 3>& offset = FaceOffsets[face];
-                std::array<int32_t, 3> against { cell[0] - offset[0], cell[1] - offset[1], cell[2] - offset[2] };
-                uint32_t value = blockAt(against[0], against[1], against[2]);
-                if (value == world::ImplicitAir || !standingOn(against) || replaceableAt(against)) {
-                    continue;
-                }
-                BlockHit hit;
-                hit.cell = against;
-                hit.value = value;
-                hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
-                hit.face = int32_t(face);
-                hit.distance = travelled;
-                for (int axis = 0; axis < 3; ++axis) {
-                    hit.point[axis] = against[axis] + 0.5 + offset[axis] * 0.5;
-                }
-                return hit;
-            }
-        }
-        int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2) : (next[1] < next[2] ? 1 : 2);
-        travelled = next[axis];
-        next[axis] += delta[axis];
-        cell[axis] += step[axis];
-    }
-    return std::nullopt;
-}
-
-/**
- * Held use places again every few ticks, the way the game builds while the
- * button stays down. A placement keeps to the face the first one used: when
- * the crosshair has moved on, onto the top of the new block or past its edge
- * into the air, the next block still goes against that face of the last one
- * placed, as long as it is in reach. That is what lets a player bridge
- * forward.
- */
-void Session::tickHeldUse()
-{
-    constexpr uint32_t RepeatTicks = 4;
-    if (!useHeld.load() || !connection || !codecContext || !assets) {
-        useRepeatTicks = 0;
-        buildLast.reset();
-        return;
-    }
-    // A drawn bow stays drawn; repeating the click would only start it over.
-    if (itemInUse || ++useRepeatTicks < RepeatTicks) {
-        return;
-    }
-    int32_t slot = 0;
-    {
-        std::lock_guard<std::mutex> guard(mutex);
-        slot = std::clamp(current.hud.selectedSlot, 0, 8);
-    }
-    if (!holdsBlock(inventoryModel.slots[size_t(slot)])) {
-        return;
-    }
-    std::optional<BlockHit> hit = traceBlock(InteractReach);
-    if (hit && hit->face == buildFace) {
-        useRepeatTicks = 0;
-        interact(true);
-        return;
-    }
-    // With nothing to extend, held use keeps building out from underfoot like a fresh click would.
-    auto bridge = [&] {
-        if (std::optional<BlockHit> ahead = hit ? std::nullopt : heldBlockBridge()) {
-            useRepeatTicks = 0;
-            useOnBlock(*ahead);
-        }
-    };
-    if (!buildLast) {
-        bridge();
-        return;
-    }
-    const std::array<int32_t, 3>& last = *buildLast;
-    uint32_t air = ids.hashed ? assets->airNetworkHash() : assets->airSequentialId();
-    auto isAir = [&](const std::array<int32_t, 3>& cell) {
-        uint32_t value = blockAt(cell[0], cell[1], cell[2]);
-        return value == world::ImplicitAir || value == air;
-    };
-    if (isAir(last)) {
-        return;
-    }
-    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(buildFace, 0, 5)];
-    std::array<int32_t, 3> nextCell { last[0] + offset[0], last[1] + offset[1], last[2] + offset[2] };
-    double reach = 0.0;
-    for (int axis = 0; axis < 3; ++axis) {
-        double gap = nextCell[axis] + 0.5 - lookOrigin[axis];
-        reach += gap * gap;
-    }
-    if (!isAir(nextCell) || reach > InteractReach * InteractReach) {
-        return;
-    }
-    BlockHit extend;
-    extend.cell = last;
-    extend.value = blockAt(last[0], last[1], last[2]);
-    extend.name = assets->describe(extend.value, ids.hashed, ids.sequential.get());
-    extend.face = buildFace;
-    if (!faceClickPoint(last, buildFace, extend.point)) {
-        bridge();
-        return;
-    }
-    useRepeatTicks = 0;
-    useOnBlock(extend);
-}
-
-/**
- * The point of one face of a cell nearest the crosshair: where the look ray
- * crosses the face's plane, kept inside the face. The point must lie within
- * a comfortable cone of the look direction, as a placement the player aims at
- * would; otherwise there is none.
- */
-bool Session::faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const
-{
-    constexpr double MaximumAngleCosine = 0.5;
-    const std::array<int32_t, 3>& offset = FaceOffsets[std::clamp(face, 0, 5)];
-    int normalAxis = offset[0] != 0 ? 0 : (offset[1] != 0 ? 1 : 2);
-    double plane = cell[normalAxis] + (offset[normalAxis] > 0 ? 1.0 : 0.0);
-    double along = lookDirection[normalAxis];
-    double travel = std::abs(along) > 1.0e-6 ? (plane - lookOrigin[normalAxis]) / along : -1.0;
-    for (int axis = 0; axis < 3; ++axis) {
-        double ahead = travel > 0.0 ? lookOrigin[axis] + lookDirection[axis] * travel : cell[axis] + 0.5;
-        point[axis] = axis == normalAxis ? plane : std::clamp(ahead, double(cell[axis]) + 0.01, double(cell[axis]) + 0.99);
-    }
-    double length = 0.0;
-    double dot = 0.0;
-    for (int axis = 0; axis < 3; ++axis) {
-        double to = point[axis] - lookOrigin[axis];
-        length += to * to;
-        dot += to * lookDirection[axis];
-    }
-    return length > 1.0e-8 && dot / std::sqrt(length) >= MaximumAngleCosine;
 }
 
 void Session::setUseHeld(bool held)

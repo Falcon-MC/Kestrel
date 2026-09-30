@@ -311,6 +311,11 @@ public:
     }
 
     /**
+     * Whether presenting waits for the display's refresh.
+     */
+    virtual void setVsync(bool enabled) = 0;
+
+    /**
      * The captured frame as RGBA rows from the top, once one is ready.
      */
     virtual bool takeCapture(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height)

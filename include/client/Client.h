@@ -207,6 +207,7 @@ private:
     int savedMaxFps = menu::DefaultMaxFps;
     int savedFov = menu::DefaultFov;
     bool savedPaperDollHidden = false;
+    bool savedVsync = false;
     float savedSafeArea = menu::MaxSafeArea;
     int savedBrightness = menu::DefaultBrightness;
     bool savedFullscreen = false;

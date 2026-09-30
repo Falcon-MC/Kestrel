@@ -682,16 +682,17 @@ private:
     bool skinWorn(const std::string& uuid) const;
     std::optional<TargetBlock> traceTarget();
     std::optional<BlockHit> traceBlock(double reach);
+    std::optional<BlockHit> traceBlock(const std::array<double, 3>& origin, const std::array<float, 3>& direction, double reach);
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
-    void useOnBlock(const BlockHit& block);
-    std::optional<BlockHit> bridgeHit();
     bool holdsBlock(const ItemStack& item) const;
-    std::optional<BlockHit> heldBlockBridge();
     static std::array<int32_t, 3> placedCell(const BlockHit& hit);
     bool replaceableAt(const std::array<int32_t, 3>& cell);
     bool placeableAt(const std::array<int32_t, 3>& cell);
     static bool usableBlock(std::string_view name);
+    bool trySwing(std::string_view source);
+    uint64_t lastSwingTick = 0;
+    bool swingStarted = false;
 
     /**
      * What a click on a block does on this side, which decides whether the
@@ -702,8 +703,15 @@ private:
         Interact,
         Place,
     };
+    BlockUse localUse(const BlockHit& block, const ItemStack& item);
+    void useOnBlock(const BlockHit& block, bool repeat, BlockUse outcome);
+    bool useSelectionVerified();
+    bool withinPickRange(const BlockHit& hit) const;
+    std::optional<BlockHit> useTarget();
+    std::optional<BlockHit> bridgeHit();
+    void recordUse(bool repeat, double due, BlockUse outcome);
+    static double repeatInterval(bool sneaking, bool slow, double speed, bool survival);
     bool unselectable(uint32_t value) const;
-    bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);
     void tickHeldUse();
     bool startItemUse(int32_t slot, const ItemStack& item);
@@ -801,9 +809,14 @@ private:
     std::atomic<bool> attackHeld { false };
     std::atomic<bool> useHeld { false };
     std::atomic<int> pickRequested { 0 };
-    std::optional<std::array<int32_t, 3>> buildLast;
-    int32_t buildFace = 0;
-    uint32_t useRepeatTicks = 0;
+    std::array<double, 3> tickEye {};
+    std::array<float, 3> tickDirection { 0.0f, 0.0f, -1.0f };
+    bool tickSneaking = false;
+    double tickSpeed = 0.0;
+    std::optional<double> lastUseTime;
+    bool slowRepeat = false;
+    uint64_t lastUseAttemptTick = 0;
+    uint64_t lastItemRepeatTick = 0;
 
     /**
      * The item held in use: the hotbar slot it sits in, what it is, and
