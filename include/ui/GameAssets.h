@@ -27,6 +27,18 @@ struct NineSlice {
 };
 
 /**
+ * One frame of an animated texture sheet: the texel box it shows and how long
+ * it stays, in seconds.
+ */
+struct SpriteFrame {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    double duration = 0.0;
+};
+
+/**
  * Reads menu art and fonts out of the installed game. Classic screens live in the vanilla
  * resource pack, the newer HTML based ones ship their files under gui/dist/hbui with a
  * content hash glued onto every name.
@@ -41,7 +53,7 @@ public:
         return pack != nullptr;
     }
 
-    bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr, NineSlice* texels = nullptr);
+    bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr, NineSlice* texels = nullptr, std::vector<SpriteFrame>* frames = nullptr);
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
     bool readHbuiImage(std::string_view name, Bitmap& out);
     std::vector<unsigned char> readHbuiFont(std::string_view name);

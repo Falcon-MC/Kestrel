@@ -255,6 +255,7 @@ struct PlayerView {
     bool sprinting = false;
     bool swimming = false;
     bool flying = false;
+    bool mayFly = false;
     float movementSpeed = 0.1f;
 
     double eyeHeight() const
@@ -491,6 +492,8 @@ struct SessionSnapshot {
     uint32_t lastUnresolved = 0;
     std::optional<TargetBlock> targetBlock;
     std::optional<BlockSelection> selection;
+    // The identifier of the entity the local player rides, empty on foot.
+    std::string riding;
     std::vector<BlockCrack> cracks;
     std::vector<ChestLidView> chestLids;
     std::shared_ptr<const world::BlockAssets> assets;
@@ -764,6 +767,7 @@ private:
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
     std::map<int64_t, uint64_t> runtimeByUnique;
+    int64_t ridingUnique = 0;
     std::map<uint64_t, std::string> uuidByRuntime;
     std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
     std::map<std::string, SerializedSkin> knownSkins;

@@ -22,6 +22,7 @@ constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 2
 constexpr double ChatLifetime = 10.0;
 constexpr double ChatBackgroundOpacity = 0.7;
 constexpr double TextBackgroundOpacity = 0.6;
+constexpr double GameTipFadeIn = 0.5;
 constexpr const char* ItemNameTextOffset = "0,-11";
 
 const char* effectSprite(int32_t id)
@@ -348,7 +349,7 @@ ui::UiData hudData(const HudView& view)
             { "#bar_color", text(BossBarColors[std::clamp(bar.color, 0, 7)]) },
         });
     }
-    g["#boss_hud_padding"] = flag(!view.bossBars.empty());
+    g["#boss_hud_padding"] = flag(false);
     g["#boss_hud_touch_padding"] = flag(false);
     g["#on_new_death_screen"] = flag(false);
     g["#interact_visible"] = flag(false);
@@ -414,6 +415,18 @@ ui::UiData hudData(const HudView& view)
             { "$subtitle_initially_visible", flag(view.title.subtitleWithTitle) },
             { "$title_shadow", flag(false) },
         }, view.title.serial });
+    }
+
+    g["#text"] = text(view.gameTip.text);
+    g["#animation_name"] = text(view.gameTip.animation);
+    if (view.gameTip.serial != 0 && !view.gameTip.text.empty()) {
+        data.factories["game_tip_item_factory"].push_back({ "game_tip", {
+            { "$anim_alpha_from", number(0.0) },
+            { "$anim_alpha_to", number(1.0) },
+            { "$anim_duration", number(GameTipFadeIn) },
+            { "$ignore_arrow", flag(true) },
+            { "$game_tip_offset", text("[-4, 26]") },
+        }, view.gameTip.serial });
     }
 
     std::vector<ui::UiRow>& chat = data.collections["chat_text_grid"];

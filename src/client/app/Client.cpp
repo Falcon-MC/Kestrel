@@ -232,6 +232,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "hud");
             handleHotbarInput();
+            updateGameTips();
             interpolateActors(secondsNow());
             menu.setHud(buildHudView());
             if (!worldShown) {
@@ -1028,6 +1029,7 @@ void Client::syncSession()
         tipMessage = {};
         actionbarMessage = {};
         titleView = {};
+        gameTip = {};
         renderer->clearChunkMeshes();
         opaqueChunks.clear();
         litChunks.clear();
@@ -1117,6 +1119,8 @@ void Client::syncSession()
     hudState = std::move(snapshot.hud);
     sidebarView = std::move(snapshot.sidebar);
     selectionView = std::move(snapshot.selection);
+    ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
+    targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();
     crackViews = std::move(snapshot.cracks);
     chestLidViews = std::move(snapshot.chestLids);
     for (const ParticleBurst& burst : session.takeParticleBursts()) {

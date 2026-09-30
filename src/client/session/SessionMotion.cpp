@@ -105,6 +105,9 @@ bool Session::motionAreaLoaded(const MotionVector& feet)
     for (int32_t x = minX; x <= maxX; ++x) {
         for (int32_t z = minZ; z <= maxZ; ++z) {
             if (!world.store().isLoaded({ motionDimension, x, z })) {
+                if (world.settled()) {
+                    continue;
+                }
                 return false;
             }
             for (int32_t y = minY; y <= maxY; ++y) {
@@ -259,6 +262,8 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             }
         }
         motion.setAbilities(mayFly, flying, noClip, flySpeed, verticalFlySpeed);
+        std::lock_guard<std::mutex> guard(mutex);
+        current.player.mayFly = mayFly;
     } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
         motion.setGameType(mode->mGamemode);
     }

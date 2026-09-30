@@ -17,6 +17,7 @@ struct Sprite {
     float height = 0.0f;
     NineSlice slice;
     NineSlice texels;
+    std::vector<SpriteFrame> frames;
     bool valid = false;
 };
 

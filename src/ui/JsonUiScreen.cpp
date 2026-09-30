@@ -789,6 +789,7 @@ void JsonUiRuntime::paint(Node& node)
         const json::Value* uvSize = property(node, "uv_size");
         std::array<float, 2> origin { 0.0f, 0.0f };
         bool region = false;
+        std::array<float, 2> frameSize { 0.0f, 0.0f };
         if (std::optional<float> u = animated(node, "uv", 0, 0.0f)) {
             origin = { *u, animated(node, "uv", 1, 0.0f).value_or(0.0f) };
             region = true;
@@ -802,6 +803,26 @@ void JsonUiRuntime::paint(Node& node)
             probe.props = track.props;
             std::string type = text(probe, "anim_type");
             if (type != "flip_book" && type != "aseprite_flip_book") {
+                continue;
+            }
+            if (type == "aseprite_flip_book" && !sprite.frames.empty()) {
+                double total = 0.0;
+                for (const SpriteFrame& frame : sprite.frames) {
+                    total += frame.duration;
+                }
+                double elapsed = std::max(0.0, now - track.start);
+                elapsed = flag(probe, "looping", true) ? std::fmod(elapsed, total) : std::min(elapsed, total - 0.0001);
+                const SpriteFrame* shown = &sprite.frames.back();
+                for (const SpriteFrame& frame : sprite.frames) {
+                    if (elapsed < frame.duration) {
+                        shown = &frame;
+                        break;
+                    }
+                    elapsed -= frame.duration;
+                }
+                origin = { shown->x, shown->y };
+                frameSize = { shown->width, shown->height };
+                region = true;
                 continue;
             }
             const json::Value* initial = property(probe, "initial_uv");
@@ -826,6 +847,11 @@ void JsonUiRuntime::paint(Node& node)
         if (uv && uv->isArray() && uv->mArray.size() == 2 && !region) {
             origin = { term(node, uv->mArray[0].get(), 0.0f), term(node, uv->mArray[1].get(), 0.0f) };
             region = true;
+        }
+        if (frameSize[0] > 0.0f && frameSize[1] > 0.0f) {
+            float scale = rect.h / frameSize[1];
+            ui->spriteRegion({ rect.x, rect.y, frameSize[0] * scale, rect.h }, node.texture, { origin[0], origin[1], frameSize[0], frameSize[1] }, color);
+            return;
         }
         if (region || (uvSize && uvSize->isArray())) {
             float uw = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[0].get(), 0.0f) : sprite.width;
@@ -1111,6 +1137,11 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
             Node* box = r.find(node, r.text(node, "scrollbar_box"));
             if (content && port) {
                 float range = std::max(0.0f, content->h - port->h);
+                bool grew = r.flag(node, "jump_to_bottom_on_update", false) && content->h != node.scrolledContent;
+                if (grew || r.lookup(node, "#force_scroll_to_end").truthy()) {
+                    node.scroll = range;
+                }
+                node.scrolledContent = content->h;
                 node.scroll = std::clamp(node.scroll, 0.0f, range);
                 if (box && box->parent) {
                     bool always = r.flag(node, "scrollbar_always_visible", false);
@@ -1174,6 +1205,11 @@ std::vector<UiEvent> JsonUiScreen::takeEvents()
     std::vector<UiEvent> taken = std::move(runtime->events);
     runtime->events.clear();
     return taken;
+}
+
+void JsonUiScreen::blur()
+{
+    runtime->focused = 0;
 }
 
 bool JsonUiScreen::editing() const

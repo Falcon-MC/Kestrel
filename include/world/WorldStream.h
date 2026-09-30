@@ -61,6 +61,12 @@ public:
     bool centerLoaded() const;
 
     /**
+     * The server has sent nothing new for a while and nothing is on its way:
+     * the columns still missing are never coming, so waiting on them stops.
+     */
+    bool settled() const;
+
+    /**
      * Whether a sub-chunk was asked for and has not arrived yet, so its
      * blocks are unknown rather than air.
      */

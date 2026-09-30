@@ -162,6 +162,7 @@ menu::HudView Client::buildHudView()
     view.tip = hudText(tipMessage, 1.0f);
     view.actionbar = hudText(actionbarMessage, 0.0f);
     view.title = titleView;
+    view.gameTip = gameTip.view;
 
     view.health = state.health;
     view.maxHealth = state.maxHealth;
