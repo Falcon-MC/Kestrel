@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string_view>
 
 namespace kestrel::modding {
 
@@ -12,6 +13,48 @@ namespace {
 using AbiFunction = const char* (*)();
 using CreateFunction = mod::Mod* (*)();
 using DestroyFunction = void (*)(mod::Mod*);
+
+constexpr std::string_view AbiPrefix = "kestrel-mod/";
+
+/**
+ * Splits "kestrel-mod/<version>/<toolchain>" into its API version and the
+ * toolchain part; false when the text has another shape.
+ */
+bool splitAbi(std::string_view abi, long& version, std::string_view& toolchain)
+{
+    if (abi.substr(0, AbiPrefix.size()) != AbiPrefix) {
+        return false;
+    }
+    abi.remove_prefix(AbiPrefix.size());
+    size_t slash = abi.find('/');
+    if (slash == 0 || slash == std::string_view::npos) {
+        return false;
+    }
+    version = 0;
+    for (char c : abi.substr(0, slash)) {
+        if (c < '0' || c > '9' || version > 100000) {
+            return false;
+        }
+        version = version * 10 + (c - '0');
+    }
+    toolchain = abi.substr(slash + 1);
+    return version > 0;
+}
+
+/**
+ * A mod loads when it was built with the same compiler and runtime for this
+ * API version or an older one: the interfaces only grow at their end, so
+ * what an older mod calls is still where it expects it.
+ */
+bool compatibleAbi(std::string_view built, std::string_view host)
+{
+    long builtVersion = 0;
+    long hostVersion = 0;
+    std::string_view builtToolchain;
+    std::string_view hostToolchain;
+    return splitAbi(built, builtVersion, builtToolchain) && splitAbi(host, hostVersion, hostToolchain)
+        && builtToolchain == hostToolchain && builtVersion <= hostVersion;
+}
 
 }
 
@@ -40,8 +83,8 @@ std::unique_ptr<ModSlot> ModSlot::load(const std::filesystem::path& file, HostSt
     }
     const char* wanted = KESTREL_MOD_ABI;
     const char* built = abi();
-    if (!built || std::strcmp(built, wanted) != 0) {
-        error = std::string("built for ") + (built ? built : "?") + " but this Kestrel needs " + wanted;
+    if (!built || !compatibleAbi(built, wanted)) {
+        error = std::string("built for ") + (built ? built : "?") + " but this Kestrel runs " + wanted + " and older API versions";
         return nullptr;
     }
     mod::Mod* instance = nullptr;
@@ -128,6 +171,9 @@ void ModSlot::releaseAll()
     host.cursorOwners.erase(id);
     host.cameras.erase(id);
     if (host.hiddenBlocks.erase(id)) {
+        host.hiddenChanged = true;
+    }
+    if (host.visibleBlocks.erase(id)) {
         host.hiddenChanged = true;
     }
 }

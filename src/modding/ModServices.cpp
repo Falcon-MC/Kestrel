@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <set>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace kestrel::modding {
 
@@ -717,6 +719,128 @@ void WorldService::clearHiddenBlocks()
     if (host.hiddenBlocks.erase(owner)) {
         host.hiddenChanged = true;
     }
+}
+
+std::vector<std::string> WorldService::blockNames() const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!area || !area->assets) {
+        return {};
+    }
+    return area->assets->blockNames();
+}
+
+void WorldService::setVisibleBlocks(const std::vector<std::string>& names)
+{
+    std::set<std::string> qualified;
+    for (const std::string& name : names) {
+        qualified.insert(name.find(':') == std::string::npos ? "minecraft:" + name : name);
+    }
+    auto found = host.visibleBlocks.find(owner);
+    if (qualified.empty()) {
+        if (found != host.visibleBlocks.end()) {
+            host.visibleBlocks.erase(found);
+            host.hiddenChanged = true;
+        }
+        return;
+    }
+    if (found != host.visibleBlocks.end() && found->second == qualified) {
+        return;
+    }
+    host.visibleBlocks[owner] = std::move(qualified);
+    host.hiddenChanged = true;
+}
+
+/**
+ * Looks through the loaded sub-chunks near the center, skipping those whose
+ * palettes hold none of the names, and keeps the nearest matches.
+ */
+std::vector<mod::FoundBlock> WorldService::findBlocks(const std::vector<std::string>& names, const mod::Vec3& center, double radius, size_t limit) const
+{
+    std::vector<mod::FoundBlock> found;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->assets || names.empty() || radius <= 0.0 || limit == 0) {
+        return found;
+    }
+    std::set<std::string> wanted;
+    for (const std::string& name : names) {
+        wanted.insert(name.find(':') == std::string::npos ? "minecraft:" + name : name);
+    }
+    std::unordered_map<uint32_t, const std::string*> matches;
+    auto match = [&](uint32_t value) -> const std::string* {
+        auto cached = matches.find(value);
+        if (cached != matches.end()) {
+            return cached->second;
+        }
+        const std::string* result = nullptr;
+        if (value != world::ImplicitAir) {
+            std::string name = area->assets->blockName(value, area->ids.hashed, area->ids.sequential.get());
+            if (name.find(':') == std::string::npos) {
+                name = "minecraft:" + name;
+            }
+            auto hit = wanted.find(name);
+            result = hit == wanted.end() ? nullptr : &*hit;
+        }
+        matches.emplace(value, result);
+        return result;
+    };
+
+    struct Candidate {
+        double distance = 0.0;
+        mod::BlockPos position;
+        const std::string* name = nullptr;
+    };
+    std::vector<Candidate> candidates;
+    double reach = radius * radius;
+    double subChunkReach = (radius + 14.0) * (radius + 14.0);
+    for (const auto& [key, subChunk] : area->subChunks) {
+        if (!subChunk || subChunk->storages().empty()) {
+            continue;
+        }
+        double cx = key.x * 16.0 + 8.0 - center.x;
+        double cy = key.y * 16.0 + 8.0 - center.y;
+        double cz = key.z * 16.0 + 8.0 - center.z;
+        if (cx * cx + cy * cy + cz * cz > subChunkReach) {
+            continue;
+        }
+        bool present = false;
+        for (uint32_t value : subChunk->storages().front().palette()) {
+            if (match(value)) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            continue;
+        }
+        for (uint32_t y = 0; y < 16; ++y) {
+            for (uint32_t z = 0; z < 16; ++z) {
+                for (uint32_t x = 0; x < 16; ++x) {
+                    const std::string* name = match(subChunk->runtimeId(0, x, y, z));
+                    if (!name) {
+                        continue;
+                    }
+                    mod::BlockPos position { key.x * 16 + int32_t(x), key.y * 16 + int32_t(y), key.z * 16 + int32_t(z) };
+                    double dx = position.x + 0.5 - center.x;
+                    double dy = position.y + 0.5 - center.y;
+                    double dz = position.z + 0.5 - center.z;
+                    double distance = dx * dx + dy * dy + dz * dz;
+                    if (distance <= reach) {
+                        candidates.push_back({ distance, position, name });
+                    }
+                }
+            }
+        }
+    }
+    size_t kept = std::min(limit, candidates.size());
+    std::partial_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(kept), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.distance < b.distance;
+    });
+    found.reserve(kept);
+    for (size_t i = 0; i < kept; ++i) {
+        found.push_back({ candidates[i].position, *candidates[i].name });
+    }
+    return found;
 }
 
 CameraService::CameraService(HostState& host, size_t owner)

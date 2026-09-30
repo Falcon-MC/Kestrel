@@ -149,6 +149,19 @@ struct MouseClickEvent : CancellableEvent {
 };
 
 /**
+ * The mouse wheel turned; delta is positive rolling up, in notches. x and y
+ * are in interface units. Cancelling keeps the scroll from the rest of the
+ * client.
+ */
+struct MouseScrollEvent : CancellableEvent {
+    KESTREL_EVENT("kestrel:mouse_scroll")
+    float delta = 0.0f;
+    float x = 0.0f;
+    float y = 0.0f;
+    bool inGame = false;
+};
+
+/**
  * The movement the player's keys ask for this frame, before it reaches the
  * physics. forward and sideways run from -1 to 1.
  */

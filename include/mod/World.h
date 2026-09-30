@@ -58,6 +58,27 @@ public:
     virtual void setBlockHidden(std::string_view name, bool hidden) = 0;
     virtual void clearHiddenBlocks() = 0;
 
+    /**
+     * Every block name the world can hold, vanilla and the server's own,
+     * sorted, each with its namespace.
+     */
+    virtual std::vector<std::string> blockNames() const = 0;
+
+    /**
+     * Draws only the blocks of these names and everything else as air, for
+     * as long as the list is not empty; an empty list draws the world again.
+     * While it is set it wins over the blocks setBlockHidden hides.
+     */
+    virtual void setVisibleBlocks(const std::vector<std::string>& names) = 0;
+
+    /**
+     * Loaded blocks of these names within radius blocks of center, nearest
+     * first, at most limit of them. It reads the same world as block, a
+     * second old at most, and scans whole sub-chunks, so call it now and
+     * then rather than every frame.
+     */
+    virtual std::vector<FoundBlock> findBlocks(const std::vector<std::string>& names, const Vec3& center, double radius, size_t limit) const = 0;
+
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {
         std::optional<Entity> best;

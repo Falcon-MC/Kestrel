@@ -324,6 +324,12 @@ public:
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+
+    /**
+     * Every block name, vanilla and custom, once each, sorted and with its
+     * namespace.
+     */
+    std::vector<std::string> blockNames() const;
     const Tag* blockStates(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**

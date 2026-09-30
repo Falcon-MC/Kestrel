@@ -104,14 +104,14 @@ void Session::publishLoaded()
     current.loaded = std::move(area);
 }
 
-void Session::setHiddenBlocks(std::set<std::string> names)
+void Session::setHiddenBlocks(std::set<std::string> names, bool visibleOnly)
 {
     std::set<std::string> normalized;
     for (const std::string& name : names) {
         normalized.insert(qualified(name));
     }
     std::lock_guard<std::mutex> guard(mutex);
-    pendingHidden = std::move(normalized);
+    pendingHidden = std::make_pair(std::move(normalized), visibleOnly && !names.empty());
 }
 
 /**
@@ -120,7 +120,7 @@ void Session::setHiddenBlocks(std::set<std::string> names)
  */
 void Session::hideNewValues(const world::SubChunk* subChunk)
 {
-    if (!subChunk || hiddenNames.empty() || !assets) {
+    if (!subChunk || (hiddenNames.empty() && !hiddenInverted) || !assets) {
         return;
     }
     std::shared_ptr<std::unordered_set<uint32_t>> grown;
@@ -129,7 +129,9 @@ void Session::hideNewValues(const world::SubChunk* subChunk)
             if (value == world::ImplicitAir || hiddenChecked.count(value)) {
                 continue;
             }
-            bool hidden = hiddenNames.count(qualified(assets->blockName(value, ids.hashed, ids.sequential.get()))) != 0;
+            std::string name = qualified(assets->blockName(value, ids.hashed, ids.sequential.get()));
+            bool listed = hiddenNames.count(name) != 0;
+            bool hidden = hiddenInverted ? !listed && name != "minecraft:air" : listed;
             hiddenChecked[value] = hidden;
             if (!hidden) {
                 continue;
@@ -151,16 +153,17 @@ void Session::hideNewValues(const world::SubChunk* subChunk)
  */
 void Session::applyHiddenBlocks()
 {
-    std::optional<std::set<std::string>> names;
+    std::optional<std::pair<std::set<std::string>, bool>> rule;
     {
         std::lock_guard<std::mutex> guard(mutex);
-        names = std::move(pendingHidden);
+        rule = std::move(pendingHidden);
         pendingHidden.reset();
     }
-    if (!names || *names == hiddenNames) {
+    if (!rule || (rule->first == hiddenNames && rule->second == hiddenInverted)) {
         return;
     }
-    hiddenNames = std::move(*names);
+    hiddenNames = std::move(rule->first);
+    hiddenInverted = rule->second;
     hiddenChecked.clear();
     ids.hidden.reset();
     for (const auto& [key, subChunk] : world.store().allSubChunks()) {

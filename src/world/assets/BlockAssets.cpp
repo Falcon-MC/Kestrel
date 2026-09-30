@@ -21,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <thread>
 #include <unordered_set>
 
@@ -120,6 +121,23 @@ std::string BlockAssets::describe(uint32_t networkValue, bool hashed, const Sequ
         return "unknown #" + std::to_string(networkValue);
     }
     return nameAt(static_cast<size_t>(index)) + " #" + std::to_string(networkValue);
+}
+
+std::vector<std::string> BlockAssets::blockNames() const
+{
+    std::set<std::string> unique;
+    auto add = [&](const std::string& name) {
+        if (!name.empty()) {
+            unique.insert(name.find(':') == std::string::npos ? "minecraft:" + name : name);
+        }
+    };
+    for (const auto& record : registry.records()) {
+        add(record.name);
+    }
+    for (const CustomBlock& custom : customs) {
+        add(custom.name);
+    }
+    return { unique.begin(), unique.end() };
 }
 
 std::string BlockAssets::blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
