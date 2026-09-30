@@ -41,6 +41,29 @@ std::vector<std::string> itemTexturePaths(const json::Value& definition)
 }
 
 /**
+ * The shield's atlas entry points at its whole entity texture; the icon is
+ * its front face, the 12 by 22 texel board, fit to the icon height and
+ * centered like the game's front on view of it.
+ */
+std::vector<uint8_t> shieldIcon(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height)
+{
+    constexpr float FaceX = 1.0f, FaceY = 1.0f, FaceWidth = 12.0f, FaceHeight = 22.0f, TextureUnits = 64.0f;
+    std::vector<uint8_t> icon(size_t(ItemIconSize) * ItemIconSize * 4, 0);
+    float scaleX = float(width) / TextureUnits;
+    float scaleY = float(height) / TextureUnits;
+    uint32_t drawnWidth = uint32_t(std::lround(ItemIconSize * FaceWidth / FaceHeight));
+    uint32_t left = (ItemIconSize - drawnWidth) / 2;
+    for (uint32_t y = 0; y < ItemIconSize; ++y) {
+        uint32_t sourceY = std::min(height - 1, uint32_t((FaceY + (y + 0.5f) * FaceHeight / ItemIconSize) * scaleY));
+        for (uint32_t x = 0; x < drawnWidth; ++x) {
+            uint32_t sourceX = std::min(width - 1, uint32_t((FaceX + (x + 0.5f) * FaceWidth / drawnWidth) * scaleX));
+            std::copy_n(rgba.data() + (size_t(sourceY) * width + sourceX) * 4, 4, icon.data() + (size_t(y) * ItemIconSize + left + x) * 4);
+        }
+    }
+    return icon;
+}
+
+/**
  * The icon a resource pack item definition names under minecraft:icon, as a
  * plain name or as its texture or default texture.
  */
@@ -360,6 +383,10 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
                 uint32_t width = 0;
                 uint32_t height = 0;
                 const std::vector<uint8_t>* rgba = path.empty() ? nullptr : load(path, width, height);
+                if (rgba && identifier == "minecraft:shield" && path.starts_with("textures/entity/")) {
+                    variants.push_back(shieldIcon(*rgba, width, height));
+                    continue;
+                }
                 if (!rgba || width != height) {
                     variants.emplace_back();
                     continue;
@@ -469,6 +496,52 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         { "lodestone_compass", "lodestonecompass_item" },
         { "bow", "bow_standby" },
         { "crossbow", "crossbow_standby" },
+        { "redstone", "redstone_dust" },
+        { "book", "book_normal" },
+        { "slime_ball", "slimeball" },
+        { "minecart", "minecart_normal" },
+    };
+    // The game gives these items one frame of a shared atlas entry.
+    struct Frame {
+        const char* item;
+        const char* atlas;
+        size_t index;
+    };
+    static const Frame Frames[] = {
+        { "bucket", "bucket", 0 },
+        { "milk_bucket", "bucket", 1 },
+        { "water_bucket", "bucket", 2 },
+        { "lava_bucket", "bucket", 3 },
+        { "cod_bucket", "bucket", 4 },
+        { "salmon_bucket", "bucket", 5 },
+        { "tropical_fish_bucket", "bucket", 6 },
+        { "pufferfish_bucket", "bucket", 7 },
+        { "powder_snow_bucket", "bucket", 8 },
+        { "axolotl_bucket", "bucket", 9 },
+        { "tadpole_bucket", "bucket", 10 },
+        { "sulfur_cube_bucket", "bucket", 11 },
+        { "oak_boat", "boat", 0 },
+        { "spruce_boat", "boat", 1 },
+        { "birch_boat", "boat", 2 },
+        { "jungle_boat", "boat", 3 },
+        { "acacia_boat", "boat", 4 },
+        { "dark_oak_boat", "boat", 5 },
+        { "mangrove_boat", "boat", 6 },
+        { "bamboo_raft", "boat", 7 },
+        { "cherry_boat", "boat", 8 },
+        { "pale_oak_boat", "boat", 9 },
+        { "poplar_boat", "boat", 10 },
+        { "oak_chest_boat", "chest_boat", 0 },
+        { "spruce_chest_boat", "chest_boat", 1 },
+        { "birch_chest_boat", "chest_boat", 2 },
+        { "jungle_chest_boat", "chest_boat", 3 },
+        { "acacia_chest_boat", "chest_boat", 4 },
+        { "dark_oak_chest_boat", "chest_boat", 5 },
+        { "mangrove_chest_boat", "chest_boat", 6 },
+        { "bamboo_chest_raft", "chest_boat", 7 },
+        { "cherry_chest_boat", "chest_boat", 8 },
+        { "pale_oak_chest_boat", "chest_boat", 9 },
+        { "poplar_chest_boat", "chest_boat", 10 },
     };
     std::string shortName = identifier.substr(identifier.find(':') == std::string::npos ? 0 : identifier.find(':') + 1);
     std::vector<std::string> names;
@@ -486,6 +559,20 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         if (shortName == from) {
             names.push_back(to);
         }
+    }
+    if (iconHint.empty()) {
+        for (const Frame& frame : Frames) {
+            if (shortName != frame.item) {
+                continue;
+            }
+            auto found = itemTextures.find(std::string("minecraft:") + frame.atlas);
+            if (found != itemTextures.end() && frame.index < found->second.size() && !found->second[frame.index].empty()) {
+                return found->second[frame.index];
+            }
+        }
+    }
+    if (shortName.ends_with("_harness")) {
+        names.push_back("harness_" + shortName.substr(0, shortName.size() - std::char_traits<char>::length("_harness")));
     }
     for (const auto& [from, to] : { std::pair<const char*, const char*> { "wooden_", "wood_" }, { "golden_", "gold_" } }) {
         size_t length = std::char_traits<char>::length(from);
