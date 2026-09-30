@@ -38,7 +38,6 @@ public:
     virtual Logger& log() = 0;
     virtual Scheduler& scheduler() = 0;
     virtual Shaders& shaders() = 0;
-    virtual Camera& camera() = 0;
 
     /**
      * mods/<id>/, created on first use, for any files the mod keeps.
@@ -49,6 +48,9 @@ public:
      * Every loaded mod, this one included.
      */
     virtual std::vector<ModInfo> loadedMods() const = 0;
+
+    // Added in API 3 and kept last so older mods still find everything above.
+    virtual Camera& camera() = 0;
 };
 
 }

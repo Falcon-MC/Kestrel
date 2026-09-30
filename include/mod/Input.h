@@ -37,15 +37,6 @@ public:
     virtual float mouseY() const = 0;
 
     /**
-     * Frees the mouse while playing so it can point and click at what the
-     * mod draws: the cursor shows, the camera stops turning and the player
-     * stops moving and attacking. It stays free while any mod asks for it,
-     * and is given back when the mod unloads.
-     */
-    virtual void setCursorFree(bool free) = 0;
-    virtual bool cursorFree() const = 0;
-
-    /**
      * Runs action when key is pressed in game. The press is kept from the
      * rest of the client. The key is not listed in settings.
      */
@@ -55,6 +46,16 @@ public:
      * Same, and the player can change the key in Keyboard & Mouse.
      */
     virtual Subscription bind(KeyBindSpec spec, std::function<void()> action) = 0;
+
+    // Added in API 3 and kept last so older mods still find everything above.
+    /**
+     * Frees the mouse while playing so it can point and click at what the
+     * mod draws: the cursor shows, the camera stops turning and the player
+     * stops moving and attacking. It stays free while any mod asks for it,
+     * and is given back when the mod unloads.
+     */
+    virtual void setCursorFree(bool free) = 0;
+    virtual bool cursorFree() const = 0;
 };
 
 }
