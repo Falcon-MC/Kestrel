@@ -205,7 +205,7 @@ void InventoryScreen::draw(ui::Context& ui, float width, float height, const std
                 if (entry.group) tooltip=ui::tr(value.groupName,value.groupName); else tooltipItem=&value.item;
                 if (input.mousePressed || input.rightMousePressed) {
                     if (entry.group) { if (!expandedGroups.erase(value.group)) expandedGroups.insert(value.group); }
-                    else if (creativeMode) send(InventoryAction::Creative,input.isHeld(Key::Shift)?0:-1,value.networkId,input.mousePressed);
+                    else if (creativeMode) send(InventoryAction::Creative,input.isHeld(Key::Shift)?inventory::AnyInventorySlot:-1,value.networkId,input.mousePressed);
                     else send(InventoryAction::SelectRecipe,-1,value.networkId);
                 }
                 if (creativeMode && input.pressedKey>=Key::Num1 && input.pressedKey<=Key::Num9)
