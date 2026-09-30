@@ -12,6 +12,8 @@ namespace kestrel {
 namespace {
 
 constexpr int32_t ReleaseItem = 0;
+constexpr int16_t RiptideEnchantment = 30;
+constexpr double TridentChargeSeconds = 0.5;
 
 }
 
@@ -39,7 +41,7 @@ bool Session::startItemUse(int32_t slot, const ItemStack& item)
     };
     const auto& slots = inventoryModel.slots;
     bool armed = std::any_of(slots.begin(), slots.begin() + inventory::Armor, isArrow) || isArrow(slots[inventory::Offhand]);
-    if (!creative && !armed) {
+    if (identifier == "minecraft:bow" && !creative && !armed) {
         return false;
     }
     itemInUse = ItemInUse { slot, identifier, false };
@@ -85,6 +87,16 @@ void Session::tickItemUse(PlayerAuthInputPacket& packet)
     release.mHeadPosition = Vector3f(float(lookOrigin[0]), float(lookOrigin[1]), float(lookOrigin[2]));
     debugLog("release " + itemInUse->identifier);
     transmit(release);
+    if (itemInUse->identifier == "minecraft:trident") {
+        double started = 0.0;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            started = current.hud.itemUseStarted;
+        }
+        if (secondsNow() - started >= TridentChargeSeconds) {
+            pendingRiptide = session::enchantmentLevel(held, RiptideEnchantment);
+        }
+    }
     stopItemUse();
 }
 

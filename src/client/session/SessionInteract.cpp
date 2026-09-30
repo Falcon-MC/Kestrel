@@ -1,22 +1,60 @@
 #include "SessionData.h"
 
 #include "Network/BedrockConnection.h"
+#include "Protocol/Packets/AnimatePacket.h"
 #include "Protocol/Packets/BlockPickRequestPacket.h"
 #include "Protocol/Packets/InventoryTransactionPacket.h"
 #include "client/DebugLog.h"
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <string_view>
 #include <limits>
 
 namespace kestrel {
 
 namespace {
 
-constexpr double InteractReach = 6.0;
-// Hitting and using entities reaches three blocks from the eyes, five in creative.
+constexpr double InteractReach = 5.7;
+// Hitting and using entities reaches three blocks from the eyes, seven in creative.
 constexpr double EntityReach = 3.0;
-constexpr double CreativeEntityReach = 5.0;
+constexpr double CreativeEntityReach = 7.0;
+constexpr double ActorPickMargin = 0.1;
+
+constexpr std::string_view UnpickableActors[] = {
+    "minecraft:item",
+    "minecraft:xp_orb",
+    "minecraft:arrow",
+    "minecraft:thrown_trident",
+    "minecraft:snowball",
+    "minecraft:egg",
+    "minecraft:ender_pearl",
+    "minecraft:splash_potion",
+    "minecraft:lingering_potion",
+    "minecraft:xp_bottle",
+    "minecraft:fireball",
+    "minecraft:small_fireball",
+    "minecraft:wither_skull",
+    "minecraft:wither_skull_dangerous",
+    "minecraft:dragon_fireball",
+    "minecraft:wind_charge_projectile",
+    "minecraft:breeze_wind_charge_projectile",
+    "minecraft:fishing_hook",
+    "minecraft:falling_block",
+    "minecraft:lightning_bolt",
+    "minecraft:area_effect_cloud",
+    "minecraft:evocation_fang",
+    "minecraft:eye_of_ender_signal",
+    "minecraft:fireworks_rocket",
+    "minecraft:llama_spit",
+    "minecraft:shulker_bullet",
+};
+
+bool pickable(const ActorView& actor)
+{
+    return std::find(std::begin(UnpickableActors), std::end(UnpickableActors), actor.identifier) == std::end(UnpickableActors);
+}
 constexpr int32_t ClickBlock = 0;
 constexpr int32_t ClickAir = 1;
 constexpr int32_t InteractEntity = 0;
@@ -146,13 +184,13 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
     const ActorView* target = nullptr;
     distance = reach;
     for (const auto& [runtimeId, actor] : actors) {
-        if (runtimeId == localRuntimeId) {
+        if (runtimeId == localRuntimeId || !pickable(actor)) {
             continue;
         }
-        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5;
+        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5 + ActorPickMargin;
         double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
-        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y, actor.z - half }, { actor.x + half, actor.y + height, actor.z + half });
-        if (entry && *entry < distance) {
+        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half });
+        if (entry && *entry + ActorPickMargin < reach && *entry < distance) {
             distance = *entry;
             target = &actor;
         }
@@ -203,6 +241,9 @@ void Session::interact(bool use)
         packet.mClickPosition = Vector3f(float(origin[0] + direction[0] * nearest - target->x), float(origin[1] + direction[1] * nearest - target->y), float(origin[2] + direction[2] * nearest - target->z));
         debugLog(std::string(use ? "interact with " : "attack ") + target->identifier + " " + std::to_string(target->runtimeId));
     } else if (!use) {
+        if (!block) {
+            missedSwing = true;
+        }
         return;
     } else if (block) {
         useOnBlock(*block);
@@ -267,8 +308,26 @@ void Session::useOnBlock(const BlockHit& block)
     packet.mHotbarSlot = slot;
     packet.mItemInHand = inventoryModel.slots[size_t(slot)];
     packet.mPlayerPosition = Vector3f(float(lookOrigin[0]), float(lookOrigin[1]), float(lookOrigin[2]));
+    bool holding = !packet.mItemInHand.isAir();
+    std::array<int32_t, 3> placed = replaceableAt(block.cell) ? block.cell : placedCell(block);
+    BlockUse outcome = BlockUse::Nothing;
+    if (usableBlock(block.name) && !(motion.sneaking() && holding)) {
+        outcome = BlockUse::Interact;
+    } else if (holdsBlock(packet.mItemInHand) && placeableAt(placed)) {
+        outcome = BlockUse::Place;
+    }
+    if (outcome != BlockUse::Nothing) {
+        AnimatePacket swing;
+        swing.mAction = AnimatePacket::Action::SwingArm;
+        swing.mRuntimeActorId = localRuntimeId;
+        swing.mData = 0.0f;
+        swing.mSwingSource = outcome == BlockUse::Interact ? "Interact" : "Build";
+        transmit(swing);
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.lastSwing = secondsNow();
+    }
     packet.mTriggerType = ItemUseTriggerType::PlayerInput;
-    packet.mClientInteractPrediction = ItemUsePredictedResult::Success;
+    packet.mClientInteractPrediction = outcome == BlockUse::Nothing ? ItemUsePredictedResult::Failure : ItemUsePredictedResult::Success;
     packet.mTransactionType = InventoryTransactionType::ItemUse;
     packet.mActionType = ClickBlock;
     packet.mBlockPosition = Vector3i(block.cell[0], block.cell[1], block.cell[2]);
@@ -277,13 +336,6 @@ void Session::useOnBlock(const BlockHit& block)
     packet.mBlockDefinition = std::make_shared<BlockDefinition>(block.name, static_cast<int>(block.value), Tag {});
     debugLog("use item on " + block.name);
     transmit(packet);
-    std::array<int32_t, 3> placed = placedCell(block);
-    // A block that has nowhere to go leaves the arm still, the way the game only swings for a placement.
-    bool swings = !packet.mItemInHand.isAir() && (!holdsBlock(packet.mItemInHand) || placeableAt(placed));
-    if (swings) {
-        std::lock_guard<std::mutex> guard(mutex);
-        current.hud.lastSwing = secondsNow();
-    }
 
     buildFace = block.face;
     buildLast = placed;
@@ -342,11 +394,53 @@ bool Session::placeableAt(const std::array<int32_t, 3>& cell)
         return false;
     }
     constexpr double HalfWidth = DefaultActorWidth * 0.5;
+    constexpr double Inset = 1.0E-5;
+    auto overlaps = [&](double x, double y, double z, double half, double height) {
+        return x + half - Inset > cell[0] && x - half + Inset < cell[0] + 1.0
+            && y + height - Inset > cell[1] && y + Inset < cell[1] + 1.0
+            && z + half - Inset > cell[2] && z - half + Inset < cell[2] + 1.0;
+    };
     const MotionVector& feet = motion.position();
-    bool overlaps = feet.x + HalfWidth > cell[0] && feet.x - HalfWidth < cell[0] + 1.0
-        && feet.y + DefaultActorHeight > cell[1] && feet.y < cell[1] + 1.0
-        && feet.z + HalfWidth > cell[2] && feet.z - HalfWidth < cell[2] + 1.0;
-    return !overlaps;
+    if (overlaps(feet.x, feet.y, feet.z, HalfWidth, DefaultActorHeight)) {
+        return false;
+    }
+    for (const auto& [runtimeId, actor] : actors) {
+        if (runtimeId == localRuntimeId || !pickable(actor)) {
+            continue;
+        }
+        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5;
+        double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
+        if (overlaps(actor.x, actor.y, actor.z, half, height)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Blocks whose own use answers a click, like containers, doors and redstone
+ * controls; iron doors and trapdoors only open with redstone.
+ */
+bool Session::usableBlock(std::string_view name)
+{
+    static constexpr std::string_view Usable[] = {
+        "minecraft:crafting_table", "minecraft:furnace", "minecraft:lit_furnace", "minecraft:blast_furnace", "minecraft:lit_blast_furnace",
+        "minecraft:smoker", "minecraft:lit_smoker", "minecraft:barrel", "minecraft:lever", "minecraft:anvil", "minecraft:enchanting_table",
+        "minecraft:brewing_stand", "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser", "minecraft:crafter", "minecraft:loom",
+        "minecraft:stonecutter_block", "minecraft:grindstone", "minecraft:cartography_table", "minecraft:smithing_table", "minecraft:beacon",
+        "minecraft:noteblock", "minecraft:unpowered_repeater", "minecraft:powered_repeater", "minecraft:unpowered_comparator",
+        "minecraft:powered_comparator", "minecraft:daylight_detector", "minecraft:daylight_detector_inverted", "minecraft:bell", "minecraft:bed",
+    };
+    static constexpr std::string_view Suffixes[] = { "_door", "_trapdoor", "_button", "fence_gate", "chest", "shulker_box", "_bed" };
+    if (std::find(std::begin(Usable), std::end(Usable), name) != std::end(Usable)) {
+        return true;
+    }
+    if (name == "minecraft:iron_door" || name == "minecraft:iron_trapdoor") {
+        return false;
+    }
+    return std::any_of(std::begin(Suffixes), std::end(Suffixes), [name](std::string_view suffix) {
+        return name.size() >= suffix.size() && name.substr(name.size() - suffix.size()) == suffix;
+    });
 }
 
 /**
@@ -439,6 +533,14 @@ void Session::tickHeldUse()
     }
     // A drawn bow stays drawn; repeating the click would only start it over.
     if (itemInUse || ++useRepeatTicks < RepeatTicks) {
+        return;
+    }
+    int32_t slot = 0;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        slot = std::clamp(current.hud.selectedSlot, 0, 8);
+    }
+    if (!holdsBlock(inventoryModel.slots[size_t(slot)])) {
         return;
     }
     std::optional<BlockHit> hit = traceBlock(InteractReach);

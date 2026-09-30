@@ -60,6 +60,12 @@ public:
     bool cohortLoaded() const;
     bool centerLoaded() const;
 
+    /**
+     * Whether a sub-chunk was asked for and has not arrived yet, so its
+     * blocks are unknown rather than air.
+     */
+    bool subChunkPending(const SubChunkKey& key) const;
+
 private:
     struct PendingSubChunk {
         Clock::time_point deadline {};

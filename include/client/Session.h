@@ -653,7 +653,8 @@ private:
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
-    void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector& velocity, bool onGround);
+    void runMotionTick(double now);
+    void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
@@ -690,6 +691,17 @@ private:
     static std::array<int32_t, 3> placedCell(const BlockHit& hit);
     bool replaceableAt(const std::array<int32_t, 3>& cell);
     bool placeableAt(const std::array<int32_t, 3>& cell);
+    static bool usableBlock(std::string_view name);
+
+    /**
+     * What a click on a block does on this side, which decides whether the
+     * arm swings and what the transaction predicts.
+     */
+    enum class BlockUse {
+        Nothing,
+        Interact,
+        Place,
+    };
     bool unselectable(uint32_t value) const;
     bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);
@@ -847,14 +859,16 @@ private:
     std::unordered_map<uint32_t, bool> hiddenChecked;
     std::vector<uint64_t> pendingAttacks;
     /**
-     * One sent movement tick: its number, the input it ran with and the
-     * motion state it ended in, kept so a server correction of that tick can
-     * be replayed forward to the present.
+     * One sent movement tick: its number, the input it ran with, the server
+     * knockback it took and the motion state it ended in, kept so a server
+     * correction of that tick can be replayed forward to the present.
      */
     struct SentMotionTick {
         uint64_t tick = 0;
         MotionInput input;
         PlayerMotion after;
+        bool knockedBack = false;
+        MotionVector knockback;
     };
     PlayerMotion motion;
     std::deque<SentMotionTick> motionHistory;
@@ -863,6 +877,8 @@ private:
     MotionInput lastMotionInput;
     bool motionStarted = false;
     bool teleportHandled = false;
+    std::atomic<bool> missedSwing { false };
+    std::atomic<int32_t> pendingRiptide { 0 };
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
     int32_t motionDimension = 0;

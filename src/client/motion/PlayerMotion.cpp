@@ -28,7 +28,16 @@ void PlayerMotion::reset(const MotionVector& position)
     stuckInCollider = false;
     hasSupportingBlock = false;
     teleported = false;
+    jumpArc = false;
+    isGliding = false;
+    isCrawling = false;
+    forcedSneak = false;
     ready = true;
+}
+
+void PlayerMotion::hold()
+{
+    velocity = {};
 }
 
 void PlayerMotion::teleport(const MotionVector& position)
@@ -73,14 +82,20 @@ void PlayerMotion::knockback(const MotionVector& motion)
     hasKnockback = true;
 }
 
+/**
+ * Takes the movement attribute the server computed, effects included. The
+ * server counts the sprint modifier in it while the player sprints, so that
+ * part is taken back out; each tick puts it on again while sprinting, which
+ * keeps Speed and Slowness through sprint changes.
+ */
 void PlayerMotion::setMovementSpeed(float current, float base)
 {
-    if (std::isfinite(current)) {
-        movementSpeed = current;
+    float value = std::isfinite(current) && current >= 0.0f ? current : base;
+    if (!std::isfinite(value) || value < 0.0f) {
+        return;
     }
-    if (std::isfinite(base) && base > 0.0f) {
-        defaultMovementSpeed = base;
-    }
+    baseMovementSpeed = isSprinting ? value / SprintSpeedMultiplier : value;
+    movementSpeed = isSprinting ? baseMovementSpeed * SprintSpeedMultiplier : baseMovementSpeed;
 }
 
 void PlayerMotion::setServerSprint(bool sprinting)
@@ -137,9 +152,77 @@ void PlayerMotion::setEffects(int32_t jumpBoost, int32_t levitation, bool slow, 
     slowFalling = slow;
 }
 
+void PlayerMotion::takeSettings(const PlayerMotion& other)
+{
+    movementSpeed = other.movementSpeed;
+    baseMovementSpeed = other.baseMovementSpeed;
+    affectedByGravity = other.affectedByGravity;
+    immobile = other.immobile;
+    scale = other.scale;
+    mayFly = other.mayFly;
+    noClip = other.noClip;
+    flySpeed = other.flySpeed;
+    verticalFlySpeed = other.verticalFlySpeed;
+    gameType = other.gameType;
+    jumpBoostLevel = other.jumpBoostLevel;
+    levitationLevel = other.levitationLevel;
+    slowFalling = other.slowFalling;
+    weaving = other.weaving;
+    hunger = other.hunger;
+}
+
 void PlayerMotion::setHunger(float value)
 {
     hunger = value;
+}
+
+/**
+ * Whether the player box would fit at the feet with the given pose height,
+ * touching solids counting as fitting.
+ */
+bool PlayerMotion::poseFits(float poseHeight) const
+{
+    world::CollisionBox box = boundingBox();
+    box.maxY = box.minY + poseHeight * scale - PoseFitInset;
+    box.minY = box.minY + PoseFitInset;
+    return collisionBoxes(box).empty();
+}
+
+/**
+ * Forces the lower poses when the standing box no longer fits: sneaking when
+ * the sneaking box fits, and crawling for a player already crawling or just
+ * out of a swim when only the low box fits.
+ */
+void PlayerMotion::updatePose(const MotionInput& input, MotionTick& tick)
+{
+    bool wasCrawling = isCrawling;
+    forcedSneak = false;
+    bool crawl = false;
+    if (!isFlying && !isGliding && !isSwimming && !noClip && !poseFits(StandingHeight)) {
+        if (poseFits(SneakingHeight)) {
+            forcedSneak = !input.sneak;
+        } else if ((wasCrawling || swimAmount > 0.0f) && poseFits(LowPoseHeight)) {
+            crawl = true;
+        }
+    }
+    isCrawling = crawl;
+    tick.startCrawling = crawl && !wasCrawling;
+    tick.stopCrawling = !crawl && wasCrawling;
+    tick.crawling = crawl;
+    tick.forcedSneak = forcedSneak;
+}
+
+/**
+ * Opens the elytra on a jump press in the air and closes it once the player
+ * lands, enters a liquid, starts flying or takes it off.
+ */
+void PlayerMotion::updateGliding(const MotionInput& input, bool jumpPressed, MotionTick& tick)
+{
+    bool was = isGliding;
+    bool usable = input.elytra && !onGround && !isFlying && !noClip && levitationLevel <= 0 && touchingLiquid(false).empty() && touchingLiquid(true).empty();
+    isGliding = usable && (was || jumpPressed);
+    tick.startGliding = isGliding && !was;
+    tick.stopGliding = !isGliding && was;
 }
 
 void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
@@ -147,69 +230,129 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
     yaw = input.yaw;
     pitch = input.pitch;
     pressingSneak = input.sneak;
+    wearsElytra = input.elytra;
+    depthStriderLevel = std::clamp(input.depthStrider, 0, DepthStriderMaxLevel);
+    soulSpeedLevel = std::max(input.soulSpeed, 0);
+    swiftSneakLevel = std::max(input.swiftSneak, 0);
+    updatePose(input, tick);
 
-    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !input.usingItem && hunger > 6.0f;
+    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !forcedSneak && !isCrawling && !isGliding && !input.usingItem && hunger > 6.0f;
     bool startSprint = wantSprint && !isSprinting;
     bool stopSprint = !wantSprint && isSprinting;
-    bool adjustSpeed = false;
     if (!startSprint && !stopSprint && !serverSprintApplied && serverSprint != isSprinting) {
         isSprinting = serverSprint;
-        airSpeed = isSprinting ? 0.026f : 0.02f;
     } else if (startSprint) {
         isSprinting = true;
-        airSpeed = 0.026f;
-        adjustSpeed = true;
     } else if (stopSprint) {
         isSprinting = false;
-        airSpeed = 0.02f;
-        adjustSpeed = true;
     }
     serverSprintApplied = true;
-    if (adjustSpeed) {
-        movementSpeed = defaultMovementSpeed;
-        if (isSprinting) {
-            movementSpeed *= 1.3f;
-        }
-    }
+    airSpeed = isSprinting ? SprintAirSpeed : WalkAirSpeed;
+    movementSpeed = isSprinting ? baseMovementSpeed * SprintSpeedMultiplier : baseMovementSpeed;
     tick.startSprinting = startSprint;
     tick.stopSprinting = stopSprint;
-
-    bool wantSneak = input.sneak && !isFlying;
-    tick.startSneaking = wantSneak && !isSneaking;
-    tick.stopSneaking = !wantSneak && isSneaking;
-    isSneaking = wantSneak;
-    height = isSneaking ? 1.5f : 1.8f;
-
-    float maximumInput = 1.0f;
-    if (isSneaking) {
-        maximumInput *= SneakInput;
-    }
-    float itemUse = input.usingItem ? ItemUseInput : 1.0f;
-    impulseSideways = std::clamp(input.sideways, -maximumInput, maximumInput) * itemUse * 0.98f;
-    impulseForward = std::clamp(input.forward, -maximumInput, maximumInput) * itemUse * 0.98f;
-
-    jumping = input.jump;
-    pressingJump = input.jump;
-    jumpHeight = 0.42f + static_cast<float>(jumpBoostLevel) * 0.1f;
-    if (!pressingJump) {
-        jumpDelay = 0;
-    }
-    gravity = slowFalling ? SlowFallingGravity : NormalGravity;
 
     if (flyToggleTicks > 0) {
         --flyToggleTicks;
     }
     bool jumpPressed = input.jump && !jumpWasHeld;
     jumpWasHeld = input.jump;
+    bool toggledFlight = false;
     if (jumpPressed && mayFly && gameType != GameSpectator) {
         if (flyToggleTicks > 0) {
             isFlying = !isFlying;
             tick.startFlying = isFlying;
             tick.stopFlying = !isFlying;
             flyToggleTicks = 0;
+            toggledFlight = true;
         } else {
             flyToggleTicks = FlyToggleWindow;
         }
+    }
+    updateGliding(input, jumpPressed && !toggledFlight, tick);
+
+    bool wantSneak = (input.sneak || forcedSneak) && !isFlying && !isGliding;
+    tick.startSneaking = wantSneak && !isSneaking;
+    tick.stopSneaking = !wantSneak && isSneaking;
+    isSneaking = wantSneak;
+    if (isCrawling || isGliding) {
+        height = LowPoseHeight;
+    } else {
+        height = isSneaking ? SneakingHeight : StandingHeight;
+    }
+
+    float sideways = std::clamp(input.sideways, -1.0f, 1.0f);
+    float forward = std::clamp(input.forward, -1.0f, 1.0f);
+    float lengthSquared = sideways * sideways + forward * forward;
+    if (lengthSquared > 1.0f) {
+        float inverse = 1.0f / std::sqrt(lengthSquared);
+        sideways *= inverse;
+        forward *= inverse;
+    }
+    float factor = input.usingItem ? ItemUseInput : 1.0f;
+    if (isSneaking || isCrawling) {
+        factor *= std::min(1.0f, SneakInput + SwiftSneakPerLevel * static_cast<float>(swiftSneakLevel));
+    }
+    tick.moveSideways = sideways * factor;
+    tick.moveForward = forward * factor;
+    impulseSideways = tick.moveSideways * 0.98f;
+    impulseForward = tick.moveForward * 0.98f;
+
+    jumping = input.jump;
+    pressingJump = input.jump;
+    jumpHeight = JumpVelocity;
+    if (!pressingJump) {
+        jumpDelay = 0;
+    }
+    gravity = slowFalling ? SlowFallingGravity : NormalGravity;
+}
+
+/**
+ * Rain reaches the player when nothing stands in the column above the head.
+ */
+bool PlayerMotion::exposedToRain() const
+{
+    world::CollisionBox box = boundingBox();
+    int32_t x = floorInt(feet.x);
+    int32_t z = floorInt(feet.z);
+    for (int32_t y = floorInt(box.maxY); y < SkyCheckTop; ++y) {
+        if (cell(x, y, z).primary) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void PlayerMotion::launchRiptide(int32_t level, MotionTick& tick)
+{
+    float yawAngle = yaw * Pi / 180.0f;
+    float pitchAngle = pitch * Pi / 180.0f;
+    MotionVector push { -sine(yawAngle) * cosine(pitchAngle), -sine(pitchAngle), cosine(yawAngle) * cosine(pitchAngle) };
+    float length = std::sqrt(push.lengthSquared());
+    if (length <= 0.0f) {
+        return;
+    }
+    float strength = 3.0f * (1.0f + static_cast<float>(level)) / 4.0f;
+    velocity = velocity + push.scaled(strength / length);
+    if (onGround) {
+        world::CollisionBox lifted = offset(boundingBox(), { 0.0f, RiptideLift, 0.0f });
+        if (collisionBoxes(lifted).empty()) {
+            feet.y += RiptideLift;
+            onGround = false;
+        }
+    }
+    tick.startSpinAttack = spinAttackTicks == 0;
+    spinAttackTicks = SpinAttackTicks;
+}
+
+void PlayerMotion::updateSpinAttack(MotionTick& tick)
+{
+    if (spinAttackTicks <= 0) {
+        return;
+    }
+    --spinAttackTicks;
+    if (spinAttackTicks == 0) {
+        tick.stopSpinAttack = true;
     }
 }
 
@@ -218,6 +361,8 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     lookup = &cells;
     MotionTick tick;
     jumped = false;
+    bool knockbackPending = hasKnockback;
+    tick.knockback = pendingKnockback;
     MotionInput effective = input;
     if (immobile) {
         effective.forward = 0.0f;
@@ -226,7 +371,12 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     }
     updateInput(effective, tick);
     updateSwimming(!touchingLiquid(false).empty(), tick);
+    updateSpinAttack(tick);
+    if (effective.riptide > 0 && !isFlying && !noClip && (!touchingLiquid(false).empty() || (effective.raining && exposedToRain()))) {
+        launchRiptide(effective.riptide, tick);
+    }
 
+    MotionVector start = feet;
     if (teleported) {
         teleported = false;
         velocity = {};
@@ -236,6 +386,9 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         }
     } else if (isFlying || noClip) {
         runFlight(input);
+    } else if (isGliding) {
+        applyKnockback();
+        runGlide();
     } else {
         if (velocity.lengthSquared() < 1.0E-12f) {
             velocity = {};
@@ -246,12 +399,26 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         isFlying = false;
         tick.stopFlying = true;
     }
+    if (isGliding && onGround) {
+        isGliding = false;
+        bool startedNow = tick.startGliding;
+        tick.startGliding = false;
+        tick.stopGliding = !startedNow;
+        height = isSneaking ? SneakingHeight : StandingHeight;
+    }
     tick.startedJump = jumped;
+    tick.knockedBack = knockbackPending && !hasKnockback;
+    if (jumped) {
+        jumpArc = true;
+    } else if (onGround || isFlying || isGliding) {
+        jumpArc = false;
+    }
 
     if (jumpDelay > 0) {
         --jumpDelay;
     }
     tick.position = feet;
+    tick.movement = feet - start;
     tick.velocity = velocity;
     tick.onGround = onGround;
     tick.horizontalCollision = collideX || collideZ;
@@ -260,6 +427,8 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     tick.sprinting = isSprinting;
     tick.flying = isFlying;
     tick.swimming = isSwimming;
+    tick.gliding = isGliding;
+    tick.jumping = jumpArc;
     lookup = nullptr;
     return tick;
 }
@@ -320,14 +489,14 @@ void PlayerMotion::applyJump()
         return;
     }
     float x = velocity.x;
-    float y = jumpHeight * jumpPreventionMultiplier();
+    float y = std::max(velocity.y, jumpHeight * jumpPreventionMultiplier() + JumpBoostStep * static_cast<float>(jumpBoostLevel));
     float z = velocity.z;
     jumpDelay = JumpDelayTicks;
     jumped = true;
     if (isSprinting) {
         float direction = yaw * 0.017453292f;
-        x -= sine(direction) * 0.2f;
-        z += cosine(direction) * 0.2f;
+        x -= sine(direction) * SprintJumpImpulse;
+        z += cosine(direction) * SprintJumpImpulse;
     }
     velocity = { x, y, z };
 }
@@ -405,7 +574,7 @@ void PlayerMotion::postCollisionMotion(const MotionVector& oldVelocity, bool old
                 y = 0.0f;
             }
         } else if (named(blockUnderFeet, "bed")) {
-            y = -0.75f * oldVelocity.y;
+            y = std::min(-BedBounce * oldVelocity.y, BedBounceLimit);
         } else {
             y = 0.0f;
         }
@@ -422,8 +591,11 @@ void PlayerMotion::runGroundAndAir()
     float acceleration = airSpeed;
     if (onGround) {
         float speed = movementSpeed;
+        float soulSpeed = 1.0f + SoulSpeedPerLevel * static_cast<float>(soulSpeedLevel);
         if (named(under, "soul_sand")) {
-            speed *= 0.543f;
+            speed *= soulSpeedLevel > 0 ? std::max(SoulSandSpeed, soulSpeed) : SoulSandSpeed;
+        } else if (soulSpeedLevel > 0 && named(under, "soul_soil")) {
+            speed *= soulSpeed;
         }
         frictionFactor *= friction(under);
         float cubed = frictionFactor * frictionFactor;
@@ -522,12 +694,22 @@ void PlayerMotion::runWater(const Fluid& fluid, bool touchingWater)
             velocity.y += WaterAscent;
         }
     }
-    moveRelative(WaterAcceleration);
+    float drag = isSprinting || stoppedSwimmingThisTick ? WaterFastDrag : WaterDrag;
+    float acceleration = WaterAcceleration;
+    float strider = static_cast<float>(depthStriderLevel);
+    if (!onGround) {
+        strider *= 0.5f;
+    }
+    if (strider > 0.0f) {
+        float blend = strider / static_cast<float>(DepthStriderMaxLevel);
+        drag += (DepthStriderDrag - drag) * blend;
+        acceleration += (movementSpeed - acceleration) * blend;
+    }
+    moveRelative(acceleration);
 
     float boxBottom = boundingBox().minY;
     move();
 
-    float drag = isSprinting || stoppedSwimmingThisTick ? WaterFastDrag : WaterDrag;
     velocity = { velocity.x * drag, velocity.y * WaterDrag, velocity.z * drag };
     if (levitationLevel > 0) {
         float target = static_cast<float>(levitationLevel) * LevitationMultiplier;
@@ -594,6 +776,49 @@ void PlayerMotion::runFlight(const MotionInput& input)
         }
     }
     velocity = { velocity.x * AirFriction, velocity.y * 0.6f, velocity.z * AirFriction };
+}
+
+/**
+ * Elytra flight: gravity is partly lifted the flatter the player looks,
+ * falling speed turns into forward speed, looking up trades speed for
+ * height, and the horizontal speed turns toward where the player looks.
+ */
+void PlayerMotion::runGlide()
+{
+    float pitchAngle = pitch * Pi / 180.0f;
+    float yawAngle = yaw * Pi / 180.0f;
+    float pitchCosine = cosine(pitchAngle);
+    MotionVector look { -sine(yawAngle) * pitchCosine, -sine(pitchAngle), cosine(yawAngle) * pitchCosine };
+    float lookHorizontal = std::sqrt(look.x * look.x + look.z * look.z);
+    float speedHorizontal = std::sqrt(velocity.horizontalLengthSquared());
+    float lift = pitchCosine * pitchCosine;
+    float fall = slowFalling && velocity.y <= 0.0f ? SlowFallingGravity : NormalGravity;
+    if (affectedByGravity) {
+        velocity.y += fall * (-1.0f + lift * GlideLift);
+    }
+    if (lookHorizontal > 0.0f) {
+        if (velocity.y < 0.0f) {
+            float converted = velocity.y * -GlideFallConversion * lift;
+            velocity = { velocity.x + look.x * converted / lookHorizontal, velocity.y + converted, velocity.z + look.z * converted / lookHorizontal };
+        }
+        if (pitchAngle < 0.0f) {
+            float converted = speedHorizontal * -sine(pitchAngle) * GlideClimbConversion;
+            velocity = { velocity.x - look.x * converted / lookHorizontal, velocity.y + converted * GlideClimbBoost, velocity.z - look.z * converted / lookHorizontal };
+        }
+        velocity.x += (look.x / lookHorizontal * speedHorizontal - velocity.x) * GlideAlignment;
+        velocity.z += (look.z / lookHorizontal * speedHorizontal - velocity.z) * GlideAlignment;
+    }
+    velocity = { velocity.x * GlideHorizontalDrag, velocity.y * GlideVerticalDrag, velocity.z * GlideHorizontalDrag };
+    move();
+    if (collideX) {
+        velocity.x = 0.0f;
+    }
+    if (collideY) {
+        velocity.y = 0.0f;
+    }
+    if (collideZ) {
+        velocity.z = 0.0f;
+    }
 }
 
 }
