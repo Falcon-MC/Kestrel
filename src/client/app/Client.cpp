@@ -153,8 +153,8 @@ int Client::run()
             syncChat();
             syncForms();
             mods->update(deltaSeconds);
-            if (std::optional<std::set<std::string>> hidden = mods->takeHiddenBlocks()) {
-                session.setHiddenBlocks(std::move(*hidden));
+            if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
+                session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
             }
             menu.setModKeyBinds(mods->listedKeyBinds());
         }

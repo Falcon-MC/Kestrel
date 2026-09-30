@@ -103,6 +103,9 @@ public:
     std::optional<mod::RaycastHit> raycast(const mod::Vec3& from, const mod::Vec3& direction, double reach, bool entities) const override;
     void setBlockHidden(std::string_view name, bool hidden) override;
     void clearHiddenBlocks() override;
+    std::vector<std::string> blockNames() const override;
+    void setVisibleBlocks(const std::vector<std::string>& names) override;
+    std::vector<mod::FoundBlock> findBlocks(const std::vector<std::string>& names, const mod::Vec3& center, double radius, size_t limit) const override;
 
 private:
     HostState& host;

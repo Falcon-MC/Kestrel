@@ -126,6 +126,14 @@ struct BlockInfo {
 };
 
 /**
+ * A block World::findBlocks found: where it is and its full name.
+ */
+struct FoundBlock {
+    BlockPos position;
+    std::string name;
+};
+
+/**
  * What a ray met first. For a block, face is the side it entered through:
  * 0 down, 1 up, 2 north, 3 south, 4 west, 5 east. For an entity, entity is
  * its runtime id.

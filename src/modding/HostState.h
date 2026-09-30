@@ -45,6 +45,7 @@ struct HostState {
     std::set<size_t> cursorOwners;
     std::map<size_t, CameraRequest> cameras;
     std::map<size_t, std::set<std::string>> hiddenBlocks;
+    std::map<size_t, std::set<std::string>> visibleBlocks;
     bool hiddenChanged = false;
     mod::Vec3 viewPosition;
     mod::Rotation viewRotation;

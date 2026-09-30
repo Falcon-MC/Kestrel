@@ -31,6 +31,15 @@ class ModSlot;
 class ChatService;
 
 /**
+ * Which blocks to draw as air: the listed names, or every block except them
+ * when visibleOnly is set.
+ */
+struct BlockFilter {
+    std::set<std::string> names;
+    bool visibleOnly = false;
+};
+
+/**
  * What one mod asked of the camera: to draw from its own place, and how
  * wide to make the view.
  */
@@ -99,10 +108,11 @@ public:
     void setView(const mod::Vec3& position, mod::Rotation rotation);
 
     /**
-     * Every block name the mods hide, when the list changed since the last
-     * call.
+     * The blocks the mods want drawn as air, when that changed since the
+     * last call: the names they hide, or, when visibleOnly is set, every
+     * block but these names.
      */
-    std::optional<std::set<std::string>> takeHiddenBlocks();
+    std::optional<BlockFilter> takeHiddenBlocks();
     void observe(const SessionSnapshot& snapshot);
     void update(float deltaSeconds);
     void adjustMovement(MotionInput& input);

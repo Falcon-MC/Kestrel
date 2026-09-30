@@ -594,10 +594,10 @@ public:
     std::vector<world::ParticleSpawn> takeParticles();
 
     /**
-     * Draws every block of the given names as air, redrawing the loaded
-     * terrain when the list changes.
+     * Draws every block of the given names as air, or with visibleOnly every
+     * block but them, redrawing the loaded terrain when that changes.
      */
-    void setHiddenBlocks(std::set<std::string> names);
+    void setHiddenBlocks(std::set<std::string> names, bool visibleOnly = false);
 
     /**
      * The runtime ids of the entities the local player hit since the last
@@ -825,8 +825,9 @@ private:
     std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;
     std::vector<world::ParticleSpawn> pendingParticles;
-    std::optional<std::set<std::string>> pendingHidden;
+    std::optional<std::pair<std::set<std::string>, bool>> pendingHidden;
     std::set<std::string> hiddenNames;
+    bool hiddenInverted = false;
     std::unordered_map<uint32_t, bool> hiddenChecked;
     std::vector<uint64_t> pendingAttacks;
     /**

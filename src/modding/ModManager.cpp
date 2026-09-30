@@ -205,17 +205,18 @@ void ModManager::setView(const mod::Vec3& position, mod::Rotation rotation)
     host->viewRotation = rotation;
 }
 
-std::optional<std::set<std::string>> ModManager::takeHiddenBlocks()
+std::optional<BlockFilter> ModManager::takeHiddenBlocks()
 {
     if (!host->hiddenChanged) {
         return std::nullopt;
     }
     host->hiddenChanged = false;
-    std::set<std::string> names;
-    for (const auto& [owner, hidden] : host->hiddenBlocks) {
-        names.insert(hidden.begin(), hidden.end());
+    BlockFilter filter;
+    filter.visibleOnly = !host->visibleBlocks.empty();
+    for (const auto& [owner, names] : filter.visibleOnly ? host->visibleBlocks : host->hiddenBlocks) {
+        filter.names.insert(names.begin(), names.end());
     }
-    return names;
+    return filter;
 }
 
 void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
@@ -268,6 +269,17 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
     click(input.mousePressed, mod::MouseButton::Left);
     click(input.rightMousePressed, mod::MouseButton::Right);
     click(input.middleMousePressed, mod::MouseButton::Middle);
+    if (input.wheel != 0.0f) {
+        mod::MouseScrollEvent event;
+        event.delta = input.wheel;
+        event.x = input.mouseX / host->uiScale;
+        event.y = input.mouseY / host->uiScale;
+        event.inGame = inGame;
+        host->events.dispatch(event);
+        if (event.isCancelled()) {
+            input.wheel = 0.0f;
+        }
+    }
 }
 
 void ModManager::observe(const SessionSnapshot& snapshot)
