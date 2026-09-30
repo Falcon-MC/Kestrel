@@ -195,7 +195,7 @@ if(KESTREL_BUILD_TESTS)
         src/util/JsonText.cpp
         src/util/Text.cpp)
     target_include_directories(KestrelParticleEffectsTest PRIVATE include)
-    target_link_libraries(KestrelParticleEffectsTest PRIVATE FalconProtocol ZLIB::ZLIB)
+    target_link_libraries(KestrelParticleEffectsTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME particle-effects COMMAND KestrelParticleEffectsTest)
 endif()
 option(KESTREL_BUILD_EXAMPLE_MODS "Build the example mods" OFF)
