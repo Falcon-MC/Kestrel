@@ -333,8 +333,22 @@ ui::UiData hudData(const HudView& view)
     g["#player_position_visible"] = flag(false);
     g["#number_of_days_played_visible"] = flag(false);
     g["#hud_text_background_alpha"] = number(TextBackgroundOpacity);
-    g["#boss_grid_dimension"] = text("1,0");
-    g["#boss_hud_padding"] = flag(false);
+    static constexpr const char* BossBarColors[8] = {
+        "0.925,0.282,0.8", "0.216,0.675,0.933", "0.918,0.243,0.235", "0.282,0.839,0.267",
+        "0.933,0.847,0.204", "0.588,0.251,0.871", "0.4,0.2,0.6", "1,1,1",
+    };
+    g["#boss_grid_dimension"] = text("1," + std::to_string(view.bossBars.size()));
+    std::vector<ui::UiRow>& bossBars = data.collections["boss_bars"];
+    bossBars.reserve(view.bossBars.size());
+    for (const HudBossBar& bar : view.bossBars) {
+        bossBars.push_back({
+            { "#bossName", text(bar.title) },
+            { "#bar_visible", flag(true) },
+            { "#progress_percentage", number(1.0 - std::clamp(static_cast<double>(bar.progress), 0.0, 1.0)) },
+            { "#bar_color", text(BossBarColors[std::clamp(bar.color, 0, 7)]) },
+        });
+    }
+    g["#boss_hud_padding"] = flag(!view.bossBars.empty());
     g["#boss_hud_touch_padding"] = flag(false);
     g["#on_new_death_screen"] = flag(false);
     g["#interact_visible"] = flag(false);
@@ -451,42 +465,6 @@ void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& re
         if (!view.hidden(HudElement::AirBubbles)) drawBubbles(ui, view, rect.right(), rect.y, tint);
     } else if (renderer == "mob_effects_renderer") {
         if (!view.hidden(HudElement::StatusEffects)) drawEffects(ui, view, rect.right(), alpha);
-    }
-}
-
-void drawBossBars(ui::Context& ui, const HudView& view, float width, float height)
-{
-    static constexpr ui::Color BarColors[8] = {
-        { 236, 72, 204, 255 }, { 55, 172, 238, 255 }, { 234, 62, 60, 255 }, { 72, 214, 68, 255 },
-        { 238, 216, 52, 255 }, { 150, 64, 222, 255 }, { 102, 51, 153, 255 }, { 255, 255, 255, 255 },
-    };
-    constexpr float CellWidth = 182.0f;
-    constexpr float CellHeight = 20.0f;
-    constexpr float GridTop = 2.0f;
-    constexpr float BarOffset = 10.0f;
-    constexpr float BarHeight = 5.0f;
-    if (!view.visible) {
-        return;
-    }
-    size_t fitting = static_cast<size_t>(std::floor(height * 0.3f / CellHeight));
-    size_t count = std::min(view.bossBars.size(), fitting);
-    float left = std::floor((width - CellWidth) * 0.5f);
-    for (size_t index = 0; index < count; ++index) {
-        const HudBossBar& bar = view.bossBars[index];
-        ui::Color tint = BarColors[std::clamp(bar.color, 0, 7)];
-        float top = GridTop + static_cast<float>(index) * CellHeight;
-        if (!bar.title.empty()) {
-            float x = std::floor((width - ui.measure(bar.title, ui::TextStyle::Pixel)) * 0.5f);
-            ui.textShadowed(bar.title, ui::TextStyle::Pixel, x, top, White, TextShadow);
-        }
-        ui::Rect track { left, top + BarOffset, CellWidth, BarHeight };
-        ui.nineSlice(track, "ui/empty_progress_bar", tint);
-        float filled = std::clamp(bar.progress, 0.0f, 1.0f) * track.w;
-        if (filled > 0.0f) {
-            ui.setClip({ track.x, track.y, filled, track.h });
-            ui.nineSlice(track, "ui/filled_progress_bar", tint);
-            ui.clearClip();
-        }
     }
 }
 

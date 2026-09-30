@@ -748,16 +748,16 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             uint32_t spanY = tilesY * EntityTextureSize;
             uint32_t usedX = std::min(width, spanX);
             uint32_t usedY = std::min(height, spanY);
-            static constexpr uint8_t Clear[4] = { 0, 0, 0, 0 };
             for (uint32_t tileY = 0; tileY < tilesY; ++tileY) {
                 for (uint32_t tileX = 0; tileX < tilesX; ++tileX) {
                     for (uint32_t y = 0; y < EntityTextureSize; ++y) {
                         uint32_t gridY = tileY * EntityTextureSize + y;
                         for (uint32_t x = 0; x < EntityTextureSize; ++x) {
                             uint32_t gridX = tileX * EntityTextureSize + x;
-                            const uint8_t* texel = Clear;
+                            uint8_t texel[4] = { 0, 0, 0, 0 };
                             if (gridX < usedX && gridY < usedY) {
-                                texel = rgba.data() + (size_t(gridY * height / usedY) * width + gridX * width / usedX) * 4;
+                                averageArea(rgba, width, gridX * width / usedX, std::max(gridX * width / usedX + 1, (gridX + 1) * width / usedX),
+                                    gridY * height / usedY, std::max(gridY * height / usedY + 1, (gridY + 1) * height / usedY), texel);
                             }
                             entityPixels.insert(entityPixels.end(), texel, texel + 4);
                         }

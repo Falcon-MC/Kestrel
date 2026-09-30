@@ -80,6 +80,7 @@ private:
     int32_t centerZ = 0;
     int32_t chunkRadius = 0;
     int32_t publisherRadius = 0;
+    Clock::time_point lastColumnAt {};
     WorldStats counters;
 };
 

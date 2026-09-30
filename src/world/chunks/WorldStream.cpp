@@ -21,6 +21,7 @@ namespace {
 
 constexpr uint8_t MaxRetries = 2;
 constexpr auto ResponseTimeout = std::chrono::seconds(2);
+constexpr auto CohortSettleTime = std::chrono::seconds(3);
 
 int32_t floorDiv16(int32_t value)
 {
@@ -156,6 +157,7 @@ void WorldStream::handle(const LevelChunkPacket& packet)
     if (packet.mRequestSubChunks) {
         int32_t count = packet.mSubChunkLimit < 0 ? range.subChunkCount : std::min(packet.mSubChunkLimit, range.subChunkCount);
         chunks.markLoaded(key);
+        lastColumnAt = Clock::now();
         ByteReader reader(reinterpret_cast<const uint8_t*>(packet.mData.data()), packet.mData.size());
         std::vector<std::shared_ptr<const PalettedStorage>> biomes;
         std::string error;
@@ -215,6 +217,7 @@ void WorldStream::handle(const LevelChunkPacket& packet)
     pending.erase(key);
     chunks.evict(key);
     chunks.markLoaded(key);
+    lastColumnAt = Clock::now();
     if (hasBiomes) {
         chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
     }
@@ -341,6 +344,8 @@ void WorldStream::handle(const UpdateSubChunkBlocksPacket& packet)
  * arrived. The edge ring is left out because servers round the circle
  * differently. Some servers announce a publisher radius wider than the chunk
  * radius they agreed to and never send the difference, so the smaller wins.
+ * Others stop even shorter than both; once the columns around the center are
+ * in and none has come for a while, what arrived is taken as the whole set.
  */
 bool WorldStream::cohortLoaded() const
 {
@@ -349,14 +354,19 @@ bool WorldStream::cohortLoaded() const
         return false;
     }
     int32_t inner = std::max(radius - 1, 0);
-    for (int32_t dx = -inner; dx <= inner; ++dx) {
+    bool complete = true;
+    for (int32_t dx = -inner; dx <= inner && complete; ++dx) {
         for (int32_t dz = -inner; dz <= inner; ++dz) {
             if (dx * dx + dz * dz <= inner * inner && !chunks.isLoaded({ dimension, centerX + dx, centerZ + dz })) {
-                return false;
+                complete = false;
+                break;
             }
         }
     }
-    return true;
+    if (complete) {
+        return true;
+    }
+    return pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime && centerLoaded();
 }
 
 /**

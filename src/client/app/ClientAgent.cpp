@@ -706,6 +706,10 @@ bool Client::handleAgentRequest(Request& request)
         agentServer->respond(request, "{\"open\":false}");
     } else if (method == "forms.list") {
         agentServer->respond(request, agentForms());
+    } else if (method == "forms.tree") {
+        JsonWriter writer;
+        writer.beginObject().field("tree", menu.formPanel().describeScreen()).endObject();
+        agentServer->respond(request, writer.take());
     } else if (method == "forms.answer") {
         std::vector<std::pair<uint32_t, std::string>> open = menu.formPanel().openForms();
         if (open.empty()) {

@@ -177,14 +177,6 @@ ui::UiData hudData(const HudView& view);
 void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup);
 
 /**
- * The boss bars laid out like the game's boss grid: one 182 by 20 cell per
- * bar down from two pixels under the top, as many as fit in three tenths of
- * the screen, the title centered on top and the bar ten pixels lower, tinted
- * with the bar's color and filled to the boss's health.
- */
-void drawBossBars(ui::Context& ui, const HudView& view, float width, float height);
-
-/**
  * Draws the name tags in the order given, each line centered on a
  * translucent strip, lines of one tag stacking upward.
  */

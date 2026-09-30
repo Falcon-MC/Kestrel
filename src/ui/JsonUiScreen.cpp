@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <limits>
 
 namespace kestrel::ui {
 
@@ -722,6 +724,19 @@ void JsonUiRuntime::paint(Node& node)
                 const json::Value* channel = resolve(node, color->mArray[i].get());
                 rgba[i] = channel ? static_cast<float>(channel->number(1.0)) : 1.0f;
             }
+        } else if (color && color->isString() && !color->mString.empty() && color->mString.front() == '#') {
+            if (auto bound = node.bound.find(color->mString); bound != node.bound.end() && bound->second.kind == UiValue::Kind::String) {
+                const std::string& channels = bound->second.text;
+                size_t start = 0;
+                for (size_t i = 0; i < 4 && start <= channels.size(); ++i) {
+                    size_t end = channels.find(',', start);
+                    rgba[i] = std::strtof(channels.substr(start, end == std::string::npos ? std::string::npos : end - start).c_str(), nullptr);
+                    if (end == std::string::npos) {
+                        break;
+                    }
+                    start = end + 1;
+                }
+            }
         }
         if (!node.enabled) {
             if (node.props.count("locked_alpha")) {
@@ -839,6 +854,11 @@ void JsonUiRuntime::paint(Node& node)
         }
         if (sprite.slice.left > 0.0f || sprite.slice.top > 0.0f || sprite.slice.right > 0.0f || sprite.slice.bottom > 0.0f) {
             ui->nineSlice(rect, node.texture, color);
+        } else if (flag(node, "keep_ratio", false) && sprite.width > 0.0f && sprite.height > 0.0f) {
+            float fit = std::min(rect.w / sprite.width, rect.h / sprite.height);
+            float w = sprite.width * fit;
+            float h = sprite.height * fit;
+            ui->sprite({ rect.x + (rect.w - w) * 0.5f, rect.y + (rect.h - h) * 0.5f, w, h }, node.texture, color);
         } else {
             ui->sprite(rect, node.texture, color);
         }
@@ -855,6 +875,7 @@ void JsonUiRuntime::paint(Node& node)
         bool shadow = flag(node, "shadow", false);
         TextStyle style = labelStyle(node);
         std::string alignment = text(node, "text_alignment");
+        float bottom = property(node, "max_size") ? rect.bottom() + 0.5f : std::numeric_limits<float>::infinity();
         float lineY = rect.y;
         size_t start = 0;
         std::string carried;
@@ -867,6 +888,9 @@ void JsonUiRuntime::paint(Node& node)
                 wrapped.assign(1, segment);
             }
             for (size_t i = 0; i < wrapped.size(); ++i) {
+                if (lineY + LabelLineHeight * scale > bottom) {
+                    return;
+                }
                 std::string line = i == 0 ? std::string(wrapped[i]) : carried + std::string(wrapped[i]);
                 carried = formatting(line);
                 float width = ui->measure(line, style) * scale;
@@ -889,10 +913,52 @@ void JsonUiRuntime::paint(Node& node)
         paintHoverText(node, alpha);
         return;
     }
+    if (node.type == "custom" && text(node, "renderer") == "gradient_renderer") {
+        paintGradient(node, rect, alpha);
+        return;
+    }
     if (node.type == "custom" && renderer) {
         std::string name = text(node, "renderer");
         UiLookup find = [&](const std::string& key) { return lookup(node, key); };
         renderer(*ui, name, rect, alpha, find);
+    }
+}
+
+/**
+ * The game draws gradient_renderer itself: color1 at the top fading to
+ * color2 at the bottom, or left to right when gradient_direction is
+ * horizontal, drawn as thin bands.
+ */
+void JsonUiRuntime::paintGradient(const Node& node, const Rect& rect, float alpha)
+{
+    constexpr int Bands = 32;
+    auto colorOf = [&](const char* name) {
+        std::array<float, 4> rgba { 1.0f, 1.0f, 1.0f, 1.0f };
+        if (const json::Value* color = property(node, name); color && color->isArray()) {
+            for (size_t i = 0; i < std::min<size_t>(4, color->mArray.size()); ++i) {
+                const json::Value* channel = resolve(node, color->mArray[i].get());
+                rgba[i] = channel ? static_cast<float>(channel->number(1.0)) : 1.0f;
+            }
+        }
+        return rgba;
+    };
+    std::array<float, 4> from = colorOf("color1");
+    std::array<float, 4> to = colorOf("color2");
+    bool horizontal = text(node, "gradient_direction") == "horizontal";
+    float span = horizontal ? rect.w : rect.h;
+    for (int band = 0; band < Bands; ++band) {
+        float start = std::floor(span * static_cast<float>(band) / Bands);
+        float end = std::floor(span * static_cast<float>(band + 1) / Bands);
+        if (end <= start) {
+            continue;
+        }
+        float t = (static_cast<float>(band) + 0.5f) / Bands;
+        auto channel = [&](size_t i, float scale) {
+            return static_cast<uint8_t>(std::clamp((from[i] + (to[i] - from[i]) * t) * scale, 0.0f, 1.0f) * 255.0f + 0.5f);
+        };
+        Color color { channel(0, 1.0f), channel(1, 1.0f), channel(2, 1.0f), channel(3, alpha) };
+        Rect strip = horizontal ? Rect { rect.x + start, rect.y, end - start, rect.h } : Rect { rect.x, rect.y + start, rect.w, end - start };
+        ui->fill(strip, color);
     }
 }
 
@@ -1107,6 +1173,36 @@ bool JsonUiScreen::editing() const
 bool JsonUiScreen::hovering() const
 {
     return runtime->hot != 0;
+}
+
+std::string JsonUiScreen::describe(size_t maxLines) const
+{
+    std::string out;
+    size_t lines = 0;
+    std::function<void(const jsonui::Node&, int)> walk = [&](const jsonui::Node& node, int depth) {
+        if (lines >= maxLines) {
+            return;
+        }
+        ++lines;
+        char box[96];
+        std::snprintf(box, sizeof(box), " [%.0f,%.0f %.0fx%.0f]", node.x, node.y, node.w, node.h);
+        out.append(static_cast<size_t>(depth) * 2, ' ');
+        out += node.name + " (" + node.type + ")" + (node.visible ? "" : " hidden") + (node.shown ? " shown" : "") + box;
+        if (!node.texture.empty()) {
+            out += " texture=" + node.texture;
+        }
+        if (!node.text.empty()) {
+            out += " text=" + node.text.substr(0, 40);
+        }
+        out += "\n";
+        for (const std::unique_ptr<jsonui::Node>& child : node.children) {
+            walk(*child, depth + 1);
+        }
+    };
+    if (runtime->root) {
+        walk(*runtime->root, 0);
+    }
+    return out;
 }
 
 }

@@ -14,6 +14,12 @@ namespace kestrel::world {
 std::vector<uint8_t> resizeNearest(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, uint32_t size);
 
 /**
+ * The average of the texels from x0 to x1 and y0 to y1 (both ends
+ * exclusive), colour weighted by coverage, written to out as RGBA.
+ */
+void averageArea(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t x0, uint32_t x1, uint32_t y0, uint32_t y1, uint8_t out[4]);
+
+/**
  * The image's top left square averaged down (or repeated up) to one block
  * texture layer.
  */
