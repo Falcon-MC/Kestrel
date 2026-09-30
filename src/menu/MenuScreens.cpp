@@ -710,7 +710,7 @@ void Menu::serverForm(Context& ui, float width, float height)
         if (ui.pressableButton("form:add", "pressableElevatedSecondary", tr("selectServer.add", "Add server"), left)) {
             saveServerForm(false);
         }
-        if (ui.pressableButton("form:play", "pressableElevatedPrimary", tr("addExternalServerScreen.playButtonLabel", "Add and play"), right)) {
+        if (ui.pressableButton("form:play", "pressableElevatedPrimary", tr("hbui.PlayScreen.serverTab.serverForm.addAndPlayButton", "Add and play"), right)) {
             saveServerForm(true);
         }
     }

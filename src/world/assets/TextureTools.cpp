@@ -4,6 +4,27 @@
 
 namespace kestrel::world {
 
+void averageArea(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t x0, uint32_t x1, uint32_t y0, uint32_t y1, uint8_t out[4])
+{
+    uint64_t color[3] {};
+    uint64_t alpha = 0;
+    uint64_t count = 0;
+    for (uint32_t y = y0; y < y1; ++y) {
+        for (uint32_t x = x0; x < x1; ++x) {
+            const uint8_t* texel = rgba.data() + (size_t(y) * width + x) * 4;
+            for (size_t channel = 0; channel < 3; ++channel) {
+                color[channel] += uint64_t(texel[channel]) * texel[3];
+            }
+            alpha += texel[3];
+            ++count;
+        }
+    }
+    for (size_t channel = 0; channel < 3; ++channel) {
+        out[channel] = alpha > 0 ? static_cast<uint8_t>(color[channel] / alpha) : 0;
+    }
+    out[3] = count > 0 ? static_cast<uint8_t>(alpha / count) : 0;
+}
+
 std::vector<uint8_t> resizeNearest(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, uint32_t size)
 {
     std::vector<uint8_t> out(size_t(size) * size * 4);

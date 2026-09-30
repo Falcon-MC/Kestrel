@@ -213,6 +213,12 @@ public:
      */
     bool hovering() const;
 
+    /**
+     * The control tree as last laid out, one line per control with its name,
+     * type, whether it shows and its box, for diagnosing packs.
+     */
+    std::string describe(size_t maxLines) const;
+
 private:
     std::unique_ptr<JsonUiRuntime> runtime;
 };

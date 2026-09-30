@@ -212,6 +212,16 @@ bool showsServerArt(SessionStatus status)
 Menu::Menu(ServerStore& store)
     : store(store)
 {
+    forms.renderer = [this](Context& ui, const std::string& renderer, const Rect& rect, float alpha, const ui::UiLookup&) {
+        if (alpha <= 0.0f || rect.w <= 0.0f || rect.h <= 0.0f) {
+            return;
+        }
+        if (renderer == "live_player_renderer" || renderer == "paper_doll_renderer") {
+            constexpr float ModelPixels = 32.0f;
+            float pixel = std::min(rect.h / ModelPixels, rect.w / (ModelPixels * 0.5f));
+            playerModel(ui, rect.x + rect.w * 0.5f, rect.y + (rect.h - pixel * ModelPixels) * 0.5f, pixel);
+        }
+    };
 }
 
 std::optional<ConnectRequest> Menu::takeConnectRequest()
@@ -1517,11 +1527,6 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
     bool blocked = ui.isBlocked();
     ui.setBlocked(true);
     hudScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
-    // Boss bars live in hud_screen.json too, so they fade along with it.
-    float faded = outCubic(progressSince(std::chrono::steady_clock::now(), hudChanged, ScreenTransitionSeconds));
-    ui.setLayer(0.0f, 0.0f, hudCovered ? 1.0f - faded : faded);
-    drawBossBars(ui, hud, width, height);
-    ui.clearLayer();
     ui.setBlocked(blocked);
     hudScreen->takeEvents();
 }

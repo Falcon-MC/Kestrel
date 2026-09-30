@@ -53,6 +53,12 @@ public:
      */
     std::function<std::string(const FormImage&)> imageSprite;
 
+    /**
+     * Draws the controls of type "custom" the forms name, like the player
+     * preview a profile form shows.
+     */
+    ui::UiRenderer renderer;
+
     bool active() const
     {
         return !forms.empty();
@@ -78,6 +84,14 @@ public:
      * with that id is open.
      */
     bool answer(uint32_t id, std::optional<std::string> data);
+
+    /**
+     * The JSON UI control tree of the form on top, for diagnosing packs.
+     */
+    std::string describeScreen() const
+    {
+        return screen ? screen->describe(4000) : std::string();
+    }
 
 private:
     enum class Kind {

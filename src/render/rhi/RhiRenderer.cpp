@@ -18,6 +18,47 @@ namespace {
 
 constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
 constexpr uint32_t WorldTextureCount = BlockTexturePages + EntityTexturePages;
+constexpr uint32_t EntityMipLevels = 5;
+
+/**
+ * The smaller levels of one square entity layer, each the average of the four
+ * texels above it with colour weighted by coverage, so cut-out edges keep
+ * their colour and a far face shows the texture's tone instead of moiré.
+ */
+std::vector<std::vector<uint8_t>> entityMips(const uint8_t* base, uint32_t size, uint32_t levels)
+{
+    std::vector<std::vector<uint8_t>> mips;
+    const uint8_t* source = base;
+    uint32_t side = size;
+    for (uint32_t level = 1; level < levels && side > 1; ++level) {
+        uint32_t half = side / 2;
+        std::vector<uint8_t> next(size_t(half) * half * 4);
+        for (uint32_t y = 0; y < half; ++y) {
+            for (uint32_t x = 0; x < half; ++x) {
+                uint32_t color[3] {};
+                uint32_t alpha = 0;
+                for (uint32_t dy = 0; dy < 2; ++dy) {
+                    for (uint32_t dx = 0; dx < 2; ++dx) {
+                        const uint8_t* texel = source + (size_t(y * 2 + dy) * side + x * 2 + dx) * 4;
+                        for (size_t channel = 0; channel < 3; ++channel) {
+                            color[channel] += uint32_t(texel[channel]) * texel[3];
+                        }
+                        alpha += texel[3];
+                    }
+                }
+                uint8_t* out = next.data() + (size_t(y) * half + x) * 4;
+                for (size_t channel = 0; channel < 3; ++channel) {
+                    out[channel] = alpha > 0 ? static_cast<uint8_t>(color[channel] / alpha) : 0;
+                }
+                out[3] = static_cast<uint8_t>(alpha / 4);
+            }
+        }
+        mips.push_back(std::move(next));
+        source = mips.back().data();
+        side = half;
+    }
+    return mips;
+}
 
 VertexLayout uiLayout()
 {
@@ -239,11 +280,17 @@ public:
                 worldTextures->bind(BlockTexturePages + page, nullptr);
                 continue;
             }
-            entityTextures[page] = device->createTexture({ size, size, count, 1, true });
+            entityTextures[page] = device->createTexture({ size, size, count, EntityMipLevels, true });
             std::vector<TextureData> data;
-            data.reserve(count);
+            std::vector<std::vector<std::vector<uint8_t>>> mips(count);
+            data.reserve(static_cast<size_t>(count) * EntityMipLevels);
             for (uint32_t layer = 0; layer < count; ++layer) {
-                data.push_back({ layer, 0, pixels + (static_cast<size_t>(first) + layer) * size * size * 4 });
+                const uint8_t* base = pixels + (static_cast<size_t>(first) + layer) * size * size * 4;
+                data.push_back({ layer, 0, base });
+                mips[layer] = entityMips(base, size, EntityMipLevels);
+                for (size_t level = 0; level < mips[layer].size(); ++level) {
+                    data.push_back({ layer, static_cast<uint32_t>(level + 1), mips[layer][level].data() });
+                }
             }
             device->uploadTexture(*entityTextures[page], data);
             worldTextures->bind(BlockTexturePages + page, entityTextures[page].get());
@@ -257,7 +304,13 @@ public:
             return;
         }
         device->waitIdle();
-        device->uploadTexture(*entityTextures[page], { { layer % EntityTexturePageLayers, 0, pixels } });
+        uint32_t slot = layer % EntityTexturePageLayers;
+        std::vector<std::vector<uint8_t>> mips = entityMips(pixels, entitySize, EntityMipLevels);
+        std::vector<TextureData> data { { slot, 0, pixels } };
+        for (size_t level = 0; level < mips.size(); ++level) {
+            data.push_back({ slot, static_cast<uint32_t>(level + 1), mips[level].data() });
+        }
+        device->uploadTexture(*entityTextures[page], data);
     }
 
     void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) override

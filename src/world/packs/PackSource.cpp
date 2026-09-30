@@ -147,6 +147,11 @@ std::vector<std::string> PackSource::readTextLayers(const std::string& relative)
 
 bool PackSource::readTexture(const std::string& texturePath, std::string& out)
 {
+    for (const char* extension : { ".png", ".tga", ".PNG", ".TGA" }) {
+        if (texturePath.ends_with(extension)) {
+            return readTexture(texturePath.substr(0, texturePath.size() - 4), out);
+        }
+    }
     fs::path path(texturePath);
     for (const std::shared_ptr<const PackFiles>& overlay : overlays) {
         for (const char* extension : { ".png", ".tga" }) {

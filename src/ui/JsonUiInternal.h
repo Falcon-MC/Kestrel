@@ -239,7 +239,12 @@ struct JsonUiRuntime {
     std::string factoryKey(const Node& node, const json::Value* ids, const std::string& id, const json::Value* fallback) const;
     void syncFactories(Node& node, int depth);
     void syncItems(Node& node, const std::vector<UiFactoryItem>& items, const json::Value* ids, const json::Value* fallback, size_t limit, int depth);
-    void syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth);
+    /**
+     * Makes count controls for a collection. With roles, the i-th control is
+     * the one control_ids names for roles[i], for collections the screen does
+     * not supply whose property_bag lists the ids under #collection_length.
+     */
+    void syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth, const std::vector<std::string>& roles = {});
     const UiRow* row(const Node& node, const std::string& collection) const;
     void bind(Node& node);
     void animate(Node& node);
@@ -270,6 +275,7 @@ struct JsonUiRuntime {
     void click(Node& node);
     void paint(Node& node);
     void paintHoverText(const Node& node, float alpha);
+    void paintGradient(const Node& node, const Rect& rect, float alpha);
     void emit(UiEvent::Kind kind, const Node& node, std::string name);
     void fire(Node& node, const std::string& event);
 };

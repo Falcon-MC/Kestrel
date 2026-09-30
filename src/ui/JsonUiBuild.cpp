@@ -609,7 +609,7 @@ std::vector<std::unique_ptr<Node>> JsonUiRuntime::takeGenerated(Node& node)
     return generated;
 }
 
-void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth)
+void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth, const std::vector<std::string>& roles)
 {
     count = std::min(count, MaxFactoryItems);
     const std::vector<UiRow>* rows = nullptr;
@@ -634,8 +634,8 @@ void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, si
     const std::string* space = node.props.count("factory") ? node.props.at("factory").space : node.props.count("grid_item_template") ? node.props.at("grid_item_template").space : nullptr;
     std::vector<std::unique_ptr<Node>> previous = takeGenerated(node);
     for (size_t i = 0; i < count; ++i) {
-        std::string id;
-        if (rows && i < rows->size()) {
+        std::string id = i < roles.size() ? roles[i] : std::string();
+        if (id.empty() && rows && i < rows->size()) {
             if (auto found = (*rows)[i].find(UiFactoryControl); found != (*rows)[i].end()) {
                 id = found->second.toText();
             }
@@ -716,14 +716,30 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
     std::string collection = text(node, "collection_name");
     if (!collection.empty() || node.bound.count("#collection_length")) {
         size_t count = 0;
-        if (auto length = node.bound.find("#collection_length"); length != node.bound.end()) {
+        bool supplied = false;
+        if (auto length = node.bound.find("#collection_length"); length != node.bound.end() && length->second.kind == UiValue::Kind::Number) {
             count = static_cast<size_t>(std::max(0.0, length->second.toNumber()));
+            supplied = true;
         } else if (data) {
             if (auto found = data->collections.find(collection); found != data->collections.end()) {
                 count = found->second.size();
+                supplied = true;
             }
         }
-        syncCollection(node, collection, count, factory, {}, depth);
+        std::vector<std::string> roles;
+        if (!supplied) {
+            const json::Value* bag = property(node, "property_bag");
+            const json::Value* ids = bag && bag->isObject() ? resolve(node, bag->get("#collection_length")) : nullptr;
+            if (ids && ids->isArray()) {
+                for (const std::unique_ptr<json::Value>& id : ids->mArray) {
+                    if (id && id->isString() && roles.size() < MaxFactoryItems) {
+                        roles.push_back(id->mString);
+                    }
+                }
+                count = roles.size();
+            }
+        }
+        syncCollection(node, collection, count, factory, {}, depth, roles);
         return;
     }
     const json::Value* nameValue = resolve(node, factory->get("name"));
@@ -774,6 +790,9 @@ void JsonUiRuntime::bind(Node& node)
             if (from) {
                 UiLookup find = [&](const std::string& key) { return bindingLookup(*from, key, [&](const std::string& name) { return lookup(*from, name); }); };
                 UiValue value = source->mString.front() == '(' ? jsonui::evaluate(source->mString, find) : lookup(*from, source->mString);
+                if (source->mString.front() == '$' && value.kind == UiValue::Kind::String && !value.text.empty() && value.text.front() == '(') {
+                    value = jsonui::evaluate(value.text, find);
+                }
                 node.bound[target->mString] = std::move(value);
             }
             continue;

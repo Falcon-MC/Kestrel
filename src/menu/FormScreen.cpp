@@ -443,6 +443,9 @@ void FormScreen::draw(ui::Context& ui, float width, float height)
     Form& form = forms.back();
     if (!screen || shownForm != form.id || shownDepth != forms.size()) {
         screen = definitions ? std::make_unique<ui::JsonUiScreen>(definitions, FormRoot) : nullptr;
+        if (screen && renderer) {
+            screen->setRenderer(renderer);
+        }
         shownForm = form.id;
         shownDepth = forms.size();
     }
