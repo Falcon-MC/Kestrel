@@ -278,6 +278,9 @@ public:
         scDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         scDesc.BufferCount = FrameCount;
         scDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        BOOL allowTearing = FALSE;
+        tearing = SUCCEEDED(factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))) && allowTearing;
+        scDesc.Flags = swapChainFlags();
 
         HWND hwnd = static_cast<HWND>(window.nativeHandle());
         ComPtr<IDXGISwapChain1> sc1;
@@ -372,7 +375,7 @@ public:
         for (auto& target : targets) {
             target.Reset();
         }
-        check(swapChain->ResizeBuffers(FrameCount, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, 0), "ResizeBuffers");
+        check(swapChain->ResizeBuffers(FrameCount, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, swapChainFlags()), "ResizeBuffers");
         surfaceWidth = newWidth;
         surfaceHeight = newHeight;
         createTargets();
@@ -654,8 +657,19 @@ public:
         if (capturing) {
             finishCapture();
         }
-        swapChain->Present(1, 0);
+        if (vsync) {
+            swapChain->Present(1, 0);
+        } else {
+            BOOL exclusive = FALSE;
+            swapChain->GetFullscreenState(&exclusive, nullptr);
+            swapChain->Present(0, tearing && !exclusive ? DXGI_PRESENT_ALLOW_TEARING : 0);
+        }
         frameIndex = swapChain->GetCurrentBackBufferIndex();
+    }
+
+    void setVsync(bool enabled) override
+    {
+        vsync = enabled;
     }
 
     bool requestCapture() override
@@ -883,6 +897,11 @@ private:
         list->ResourceBarrier(1, &barrier);
     }
 
+    UINT swapChainFlags() const
+    {
+        return tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+    }
+
     void waitFor(uint64_t value)
     {
         if (fence->GetCompletedValue() < value) {
@@ -893,6 +912,8 @@ private:
 
     uint32_t surfaceWidth;
     uint32_t surfaceHeight;
+    bool tearing = false;
+    bool vsync = false;
     ComPtr<IDXGIFactory6> factory;
     ComPtr<ID3D12Device> device;
     std::string adapterName;

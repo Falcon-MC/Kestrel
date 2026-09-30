@@ -462,6 +462,11 @@ public:
         [encoder setViewport:viewport];
     }
 
+    void setVsync(bool enabled) override
+    {
+        layer.displaySyncEnabled = enabled ? YES : NO;
+    }
+
     void draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) override
     {
         if (encoder) {

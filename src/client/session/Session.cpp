@@ -1728,9 +1728,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         if (attackRequested.exchange(false)) {
             interact(false);
         }
-        if (useRequested.exchange(false)) {
-            interact(true);
-        }
         if (int pick = pickRequested.exchange(0); pick != 0) {
             pickBlock(pick == 2);
         }

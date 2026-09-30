@@ -548,10 +548,6 @@ void Session::publishBreaking()
                     { hit->cell[0] + double(box.maxX), hit->cell[1] + double(box.maxY), hit->cell[2] + double(box.maxZ) },
                 };
             }
-        } else if (std::optional<BlockHit> ahead = heldBlockBridge()) {
-            // Looking out past the edge with a block in hand outlines where building ahead puts it.
-            std::array<int32_t, 3> cell = placedCell(*ahead);
-            selection = BlockSelection { cell, { double(cell[0]), double(cell[1]), double(cell[2]) }, { cell[0] + 1.0, cell[1] + 1.0, cell[2] + 1.0 } };
         }
     }
 
