@@ -32,6 +32,8 @@ HudItem hudItemOf(const ItemStack& stack);
 namespace inventory {
 inline constexpr int Armor = 36, Offhand = 40, Craft = 41, Cursor = 50, Output = 51, Container = 52;
 inline constexpr int SlotCount = Container + 54;
+// A creative pick that goes wherever the inventory has room, the way a shift click places it.
+inline constexpr int AnyInventorySlot = -2;
 }
 
 enum class InventoryAction { Open, Close, Primary, Secondary, QuickMove, Drop, HotbarSwap, Collect, Distribute, Creative, Craft, SelectRecipe };

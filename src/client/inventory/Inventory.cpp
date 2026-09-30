@@ -457,8 +457,10 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     if (command.action == InventoryAction::Creative) {
         auto found = creative.find(command.value);
         if (!creativeMode || found == creative.end()) return request;
+        bool anywhere = command.slot == AnyInventorySlot;
+        if (anywhere && inventoryRoom(found->second) <= 0) return request;
         int target = command.slot >= 0 && command.slot < 9 ? command.slot : Cursor;
-        if (!empty(slots[target])) remove(request, target, slots[target].mCount, ItemStackRequestActionType::Destroy);
+        if (!anywhere && !empty(slots[target])) remove(request, target, slots[target].mCount, ItemStackRequestActionType::Destroy);
         ItemStackRequestAction action;
         action.mType = ItemStackRequestActionType::CraftCreative;
         action.mCreativeItemNetworkId = command.value;
@@ -467,7 +469,8 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
         slots[Output] = found->second;
         slots[Output].mCount = maxStack(found->second);
         slots[Output].mNetId = requestId;
-        move(request, Output, target, command.all ? slots[Output].mCount : 1);
+        if (anywhere) placeInInventory(request);
+        else move(request, Output, target, command.all ? slots[Output].mCount : 1);
         // Creative crafting supplies a full stack; dispose of the unused generated items.
         if (!empty(slots[Output])) remove(request, Output, slots[Output].mCount, ItemStackRequestActionType::Destroy);
         return request;
