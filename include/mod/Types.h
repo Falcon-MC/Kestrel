@@ -117,6 +117,35 @@ struct TargetBlock {
 };
 
 /**
+ * A block of a loaded chunk: its name and its states, each as "name: value".
+ */
+struct BlockInfo {
+    BlockPos position;
+    std::string name;
+    std::vector<std::string> states;
+};
+
+/**
+ * What a ray met first. For a block, face is the side it entered through:
+ * 0 down, 1 up, 2 north, 3 south, 4 west, 5 east. For an entity, entity is
+ * its runtime id.
+ */
+struct RaycastHit {
+    enum class Kind {
+        Block,
+        Entity,
+    };
+
+    Kind kind = Kind::Block;
+    Vec3 point;
+    double distance = 0.0;
+    BlockPos block;
+    int face = 0;
+    uint64_t entity = 0;
+    std::string name;
+};
+
+/**
  * What the sky and the camera look like this frame, for shaders that light
  * or fog the world. sunDirection points at the sun (the moon is opposite),
  * daylight runs from 0 at night to 1 at noon, medium is 0 in air, 1 in water

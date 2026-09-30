@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mod/Camera.h"
 #include "mod/Chat.h"
 #include "mod/Commands.h"
 #include "mod/Config.h"
@@ -37,6 +38,7 @@ public:
     virtual Logger& log() = 0;
     virtual Scheduler& scheduler() = 0;
     virtual Shaders& shaders() = 0;
+    virtual Camera& camera() = 0;
 
     /**
      * mods/<id>/, created on first use, for any files the mod keeps.

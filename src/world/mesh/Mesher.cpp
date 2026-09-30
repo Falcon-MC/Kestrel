@@ -10,6 +10,11 @@ namespace kestrel::world {
 
 namespace {
 
+bool hiddenValue(const IdMapping& ids, uint32_t value)
+{
+    return ids.hidden && ids.hidden->count(value) != 0;
+}
+
 constexpr uint32_t Side = 16;
 constexpr uint32_t FullColumn = (1u << Side) - 1u;
 constexpr Face AllFaces[] = { Face::NegativeX, Face::PositiveX, Face::NegativeY, Face::PositiveY, Face::NegativeZ, Face::PositiveZ };
@@ -67,7 +72,7 @@ public:
         }
         storage = &subChunk->storages().front();
         for (uint32_t value : storage->palette()) {
-            resolved.push_back(&assets.visual(value, ids.hashed, ids.sequential.get()));
+            resolved.push_back(hiddenValue(ids, value) ? &air : &assets.visual(value, ids.hashed, ids.sequential.get()));
         }
         if (storage->isUniform()) {
             uniform = resolved.front();
@@ -532,7 +537,7 @@ private:
                     for (const PalettedStorage& storage : subChunk->storages()) {
                         std::vector<const BlockVisual*> palette;
                         for (uint32_t value : storage.palette()) {
-                            palette.push_back(value == ImplicitAir ? nullptr : &assets.visual(value, ids.hashed, ids.sequential.get()));
+                            palette.push_back(value == ImplicitAir || hiddenValue(ids, value) ? nullptr : &assets.visual(value, ids.hashed, ids.sequential.get()));
                         }
                         bool first = &storage == &subChunk->storages().front();
                         for (uint32_t x = 0; x < Side; ++x) {
@@ -612,7 +617,7 @@ private:
                         std::vector<uint8_t> filters;
                         bool anyFilter = false;
                         for (uint32_t value : storage.palette()) {
-                            bool filtering = value != ImplicitAir && assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter > 0;
+                            bool filtering = value != ImplicitAir && !hiddenValue(ids, value) && assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter > 0;
                             filters.push_back(filtering ? 1 : 0);
                             anyFilter |= filtering;
                         }
@@ -1112,7 +1117,7 @@ private:
         }
         for (const PalettedStorage& storage : input.center->storages()) {
             for (uint32_t value : storage.palette()) {
-                if (value != ImplicitAir && assets.visual(value, ids.hashed, ids.sequential.get()).liquid) {
+                if (value != ImplicitAir && !hiddenValue(ids, value) && assets.visual(value, ids.hashed, ids.sequential.get()).liquid) {
                     return true;
                 }
             }
@@ -1141,7 +1146,7 @@ private:
             return nullptr;
         }
         uint32_t value = subChunk->storages()[index].runtimeId(uint32_t(x), uint32_t(y), uint32_t(z));
-        if (value == ImplicitAir) {
+        if (value == ImplicitAir || hiddenValue(ids, value)) {
             return nullptr;
         }
         return &assets.visual(value, ids.hashed, ids.sequential.get());

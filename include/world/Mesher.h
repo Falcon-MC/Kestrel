@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 namespace kestrel::world {
@@ -112,9 +113,14 @@ struct MeshInput {
     bool skyLight = true;
 };
 
+/**
+ * How network block values map to blocks, and the values drawn as air
+ * because a mod hid them.
+ */
 struct IdMapping {
     bool hashed = false;
     std::shared_ptr<const SequentialMap> sequential;
+    std::shared_ptr<const std::unordered_set<uint32_t>> hidden;
 };
 
 ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input);

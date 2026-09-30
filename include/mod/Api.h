@@ -8,7 +8,7 @@
 
 // Bumped whenever an interface here changes shape; mods built against
 // another version are refused instead of crashing.
-#define KESTREL_MOD_API_VERSION 2
+#define KESTREL_MOD_API_VERSION 3
 
 #define KESTREL_MOD_STRINGIFY_(value) #value
 #define KESTREL_MOD_STRINGIFY(value) KESTREL_MOD_STRINGIFY_(value)

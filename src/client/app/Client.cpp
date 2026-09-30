@@ -117,7 +117,7 @@ int Client::run()
             Profiler::Section section(profiler, "agent");
             serveAgent();
         }
-        mods->handleInput(window->input(), menu.capturesMouse());
+        mods->handleInput(window->input(), menu.capturesMouse(), guiScale());
         if (window->consumeFocusLost() && !agentServer) {
             menu.pauseIfPlaying();
         }
@@ -152,6 +152,9 @@ int Client::run()
             syncChat();
             syncForms();
             mods->update(deltaSeconds);
+            if (std::optional<std::set<std::string>> hidden = mods->takeHiddenBlocks()) {
+                session.setHiddenBlocks(std::move(*hidden));
+            }
             menu.setModKeyBinds(mods->listedKeyBinds());
         }
         {
@@ -163,9 +166,9 @@ int Client::run()
             Profiler::Section section(profiler, "camera");
             menu.setInventory(hudState.container, hudState.gameType == 1);
             menu.prepareInventoryInput(window->input());
-            bool captured = menu.capturesMouse();
+            bool captured = menu.capturesMouse() && !mods->wantsCursor();
             window->setMouseCaptured(captured);
-            camera.setBaseFov(static_cast<float>(menu.fov()));
+            camera.setBaseFov(static_cast<float>(menu.fov()) * mods->fovScale());
             if (playerView.active) {
                 const InputState& keys = window->input();
                 const KeyBindings& bindings = menu.keyBindings();
@@ -338,6 +341,16 @@ int Client::run()
         }
 
         if (menu.worldVisible() || (worldShown && !terrainReleased)) {
+            std::optional<modding::CameraRequest> detachedView = mods->cameraView();
+            cameraDetached = detachedView.has_value();
+            std::array<double, 3> heldPosition { camera.x(), camera.y(), camera.z() };
+            float heldYaw = camera.minecraftYaw();
+            float heldPitch = camera.minecraftPitch();
+            if (detachedView) {
+                camera.setPosition(detachedView->position.x, detachedView->position.y, detachedView->position.z);
+                camera.setRotation(detachedView->rotation.yaw, detachedView->rotation.pitch);
+            }
+            mods->setView({ camera.x(), camera.y(), camera.z() }, { camera.minecraftYaw(), camera.minecraftPitch() });
             float renderDistance = static_cast<float>(std::max(timeState.chunkRadius, 4) * 16);
             SkyFrame sky;
             std::vector<SkyVertex> background;
@@ -375,7 +388,7 @@ int Client::run()
                 std::optional<ActorView> self;
                 if (playerView.active) {
                     self = localActorView(deltaSeconds);
-                    if (perspective != PerspectiveFirst) {
+                    if (perspective != PerspectiveFirst || cameraDetached) {
                         actorViews.push_back(*self);
                     }
                 }
@@ -385,6 +398,7 @@ int Client::run()
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
                 blockParticles.update(secondsNow());
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
+                appendParticles(deltaSeconds, entityOrigin, entityQuads, blendedQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 if (!menu.hudHidden()) {
                     appendFirstPerson(entityOrigin, handQuads);
@@ -421,6 +435,10 @@ int Client::run()
             renderer->drawWorld(view);
             mods->drawWorld(view.viewProjection, environment.camera);
             mods->drawPost(view.viewProjection);
+            if (detachedView) {
+                camera.setPosition(heldPosition[0], heldPosition[1], heldPosition[2]);
+                camera.setRotation(heldYaw, heldPitch);
+            }
         } else {
             Profiler::Section section(profiler, "begin frame");
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
@@ -972,7 +990,9 @@ void Client::syncSession()
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
         entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1 + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, assets->entityTextureLayers() + world::SkinSlots + 1 + world::DroppedIconSlots);
+        uint32_t particleBase = assets->entityTextureLayers() + world::SkinSlots + 1 + world::DroppedIconSlots;
+        uint32_t particleLayers = loadParticles(snapshot.packs, particleBase, entityPixels);
+        renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, particleBase + particleLayers);
         heldItemKey.clear();
         heldItemMesh.clear();
         droppedMeshes.clear();
@@ -1011,6 +1031,7 @@ void Client::syncSession()
     }
     if (snapshot.state != SessionState::Joined) {
         blockParticles.clear();
+        clearParticles();
         menu.inventoryPanel().reset();
         menu.formPanel().reset();
         terrainReleased = false;
@@ -1041,6 +1062,7 @@ void Client::syncSession()
     for (const ParticleBurst& burst : session.takeParticleBursts()) {
         blockParticles.spawn(burst);
     }
+    takeSessionParticles(snapshot);
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {
             renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());

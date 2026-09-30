@@ -109,6 +109,8 @@ void HeadlessClient::drainSession(const SessionSnapshot& snapshot)
     session.takeSkinUploads();
     session.takeSounds();
     session.takeParticleBursts();
+    session.takeParticles();
+    session.takeAttacks();
     for (const ChatMessage& message : session.takeChatMessages()) {
         std::string body = messageBody(message);
         std::string line = chatLine(message, body);

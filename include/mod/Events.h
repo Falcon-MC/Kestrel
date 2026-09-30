@@ -136,6 +136,10 @@ enum class MouseButton {
     Middle,
 };
 
+/**
+ * A mouse button went down; x and y are in interface units, the ones Canvas
+ * draws in. Cancelling keeps the click from the rest of the client.
+ */
 struct MouseClickEvent : CancellableEvent {
     KESTREL_EVENT("kestrel:mouse_click")
     MouseButton button = MouseButton::Left;
@@ -155,6 +159,13 @@ struct MovementEvent : Event {
     bool jump = false;
     bool sneak = false;
     bool sprint = false;
+
+    /**
+     * Set overrideRotation to send the server this rotation for the tick
+     * instead of where the player looks; the movement keys follow it too.
+     */
+    bool overrideRotation = false;
+    Rotation rotation;
 };
 
 /**

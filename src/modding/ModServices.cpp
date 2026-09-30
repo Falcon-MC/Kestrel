@@ -10,6 +10,8 @@
 #include "Protocol/MinecraftPacketIds.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
@@ -303,8 +305,9 @@ void PlayerService::respawn()
     host.session.requestRespawn();
 }
 
-WorldService::WorldService(HostState& host)
+WorldService::WorldService(HostState& host, size_t owner)
     : host(host)
+    , owner(owner)
 {
 }
 
@@ -462,12 +465,26 @@ bool InputService::inGame() const
 
 float InputService::mouseX() const
 {
-    return host.input ? host.input->mouseX : -1.0f;
+    return host.input ? host.input->mouseX / host.uiScale : -1.0f;
 }
 
 float InputService::mouseY() const
 {
-    return host.input ? host.input->mouseY : -1.0f;
+    return host.input ? host.input->mouseY / host.uiScale : -1.0f;
+}
+
+void InputService::setCursorFree(bool free)
+{
+    if (free) {
+        host.cursorOwners.insert(owner);
+    } else {
+        host.cursorOwners.erase(owner);
+    }
+}
+
+bool InputService::cursorFree() const
+{
+    return host.cursorOwners.count(owner) != 0;
 }
 
 mod::Subscription InputService::bind(mod::Key key, std::function<void()> action)
@@ -577,6 +594,180 @@ std::shared_ptr<mod::Shader> ShaderService::createPost(const mod::ShaderSource& 
 std::string_view ShaderService::backend() const
 {
     return host.shaders.backend();
+}
+
+
+bool WorldService::isLoaded(const mod::BlockPos& position) const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    return joined(host) && area && area->loaded(position.x, position.y, position.z);
+}
+
+std::optional<mod::BlockInfo> WorldService::block(const mod::BlockPos& position) const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z)) {
+        return std::nullopt;
+    }
+    return mod::BlockInfo { position, area->name(position.x, position.y, position.z), area->states(position.x, position.y, position.z) };
+}
+
+/**
+ * Walks the blocks the ray crosses one by one and stops at the first that
+ * catches it, then checks the entities in front of it.
+ */
+std::optional<mod::RaycastHit> WorldService::raycast(const mod::Vec3& from, const mod::Vec3& direction, double reach, bool entities) const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    double length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+    if (!joined(host) || length <= 0.0 || reach <= 0.0) {
+        return std::nullopt;
+    }
+    std::array<double, 3> origin { from.x, from.y, from.z };
+    std::array<double, 3> dir { direction.x / length, direction.y / length, direction.z / length };
+    std::optional<mod::RaycastHit> best;
+    if (area) {
+        std::array<int32_t, 3> cell {};
+        std::array<int32_t, 3> step {};
+        std::array<double, 3> next {};
+        std::array<double, 3> delta {};
+        for (size_t axis = 0; axis < 3; ++axis) {
+            cell[axis] = static_cast<int32_t>(std::floor(origin[axis]));
+            step[axis] = dir[axis] > 0.0 ? 1 : (dir[axis] < 0.0 ? -1 : 0);
+            delta[axis] = dir[axis] != 0.0 ? std::abs(1.0 / dir[axis]) : 1e30;
+            double boundary = dir[axis] > 0.0 ? double(cell[axis] + 1) - origin[axis] : origin[axis] - double(cell[axis]);
+            next[axis] = dir[axis] != 0.0 ? boundary * delta[axis] : 1e30;
+        }
+        static constexpr int Faces[3][2] = { { 4, 5 }, { 0, 1 }, { 2, 3 } };
+        double travelled = 0.0;
+        int enteredAxis = -1;
+        while (travelled <= reach) {
+            if (area->selectable(cell[0], cell[1], cell[2])) {
+                mod::RaycastHit hit;
+                hit.kind = mod::RaycastHit::Kind::Block;
+                hit.distance = travelled;
+                hit.point = { origin[0] + dir[0] * travelled, origin[1] + dir[1] * travelled, origin[2] + dir[2] * travelled };
+                hit.block = { cell[0], cell[1], cell[2] };
+                hit.face = enteredAxis < 0 ? 1 : Faces[enteredAxis][dir[enteredAxis] < 0.0 ? 1 : 0];
+                hit.name = area->name(cell[0], cell[1], cell[2]);
+                best = hit;
+                break;
+            }
+            int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2) : (next[1] < next[2] ? 1 : 2);
+            travelled = next[axis];
+            next[axis] += delta[axis];
+            cell[axis] += step[axis];
+            enteredAxis = axis;
+        }
+    }
+    if (!entities) {
+        return best;
+    }
+    double limit = best ? best->distance : reach;
+    for (const ActorView& actor : host.snapshot.actors) {
+        double half = (actor.width > 0.0f ? actor.width : 0.6f) * actor.scale * 0.5;
+        double height = (actor.height > 0.0f ? actor.height : 1.8f) * actor.scale;
+        std::array<double, 3> low { actor.x - half, actor.y, actor.z - half };
+        std::array<double, 3> high { actor.x + half, actor.y + height, actor.z + half };
+        double enter = 0.0;
+        double leave = limit;
+        bool crosses = true;
+        for (size_t axis = 0; axis < 3 && crosses; ++axis) {
+            if (std::abs(dir[axis]) < 1e-12) {
+                crosses = origin[axis] >= low[axis] && origin[axis] <= high[axis];
+                continue;
+            }
+            double a = (low[axis] - origin[axis]) / dir[axis];
+            double b = (high[axis] - origin[axis]) / dir[axis];
+            enter = std::max(enter, std::min(a, b));
+            leave = std::min(leave, std::max(a, b));
+            crosses = enter <= leave;
+        }
+        if (!crosses || enter > limit || enter <= 0.0) {
+            continue;
+        }
+        mod::RaycastHit hit;
+        hit.kind = mod::RaycastHit::Kind::Entity;
+        hit.distance = enter;
+        hit.point = { origin[0] + dir[0] * enter, origin[1] + dir[1] * enter, origin[2] + dir[2] * enter };
+        hit.entity = actor.runtimeId;
+        hit.name = actor.identifier;
+        limit = enter;
+        best = hit;
+    }
+    return best;
+}
+
+void WorldService::setBlockHidden(std::string_view name, bool hidden)
+{
+    std::string qualified(name);
+    if (qualified.find(':') == std::string::npos) {
+        qualified = "minecraft:" + qualified;
+    }
+    std::set<std::string>& names = host.hiddenBlocks[owner];
+    bool changed = hidden ? names.insert(qualified).second : names.erase(qualified) != 0;
+    if (names.empty()) {
+        host.hiddenBlocks.erase(owner);
+    }
+    host.hiddenChanged |= changed;
+}
+
+void WorldService::clearHiddenBlocks()
+{
+    if (host.hiddenBlocks.erase(owner)) {
+        host.hiddenChanged = true;
+    }
+}
+
+CameraService::CameraService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+mod::Vec3 CameraService::position() const
+{
+    return host.viewPosition;
+}
+
+mod::Rotation CameraService::rotation() const
+{
+    return host.viewRotation;
+}
+
+void CameraService::detach(const mod::Vec3& position, mod::Rotation rotation)
+{
+    CameraRequest& request = host.cameras[owner];
+    request.detached = true;
+    request.position = position;
+    request.rotation = rotation;
+}
+
+void CameraService::attach()
+{
+    auto found = host.cameras.find(owner);
+    if (found == host.cameras.end()) {
+        return;
+    }
+    found->second.detached = false;
+    if (found->second.fovScale == 1.0f) {
+        host.cameras.erase(found);
+    }
+}
+
+bool CameraService::detached() const
+{
+    auto found = host.cameras.find(owner);
+    return found != host.cameras.end() && found->second.detached;
+}
+
+void CameraService::setFovScale(float scale)
+{
+    CameraRequest& request = host.cameras[owner];
+    request.fovScale = std::isfinite(scale) ? std::clamp(scale, 0.05f, 3.0f) : 1.0f;
+    if (!request.detached && request.fovScale == 1.0f) {
+        host.cameras.erase(owner);
+    }
 }
 
 }

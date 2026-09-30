@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace kestrel::mod {
@@ -33,6 +34,29 @@ public:
 
     // As of the last frame that drew the world.
     virtual Environment environment() const = 0;
+
+    /**
+     * Whether the chunk holding the position is loaded. The world mods read
+     * is refreshed once a second, so a block changed a moment ago may still
+     * read as before.
+     */
+    virtual bool isLoaded(const BlockPos& position) const = 0;
+    virtual std::optional<BlockInfo> block(const BlockPos& position) const = 0;
+
+    /**
+     * The first block, or entity when entities is set, along a ray from a
+     * point in a direction, up to reach blocks away. Blocks count as full
+     * cubes; air, liquids and hidden blocks let the ray through.
+     */
+    virtual std::optional<RaycastHit> raycast(const Vec3& from, const Vec3& direction, double reach, bool entities = true) const = 0;
+
+    /**
+     * Draws every block of that name ("minecraft:stone" or "stone") as air,
+     * or back as itself. The terrain is redrawn when the list changes, and
+     * the blocks come back when the mod unloads.
+     */
+    virtual void setBlockHidden(std::string_view name, bool hidden) = 0;
+    virtual void clearHiddenBlocks() = 0;
 
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {

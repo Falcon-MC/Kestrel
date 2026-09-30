@@ -91,6 +91,9 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
         case 81:
             actor.alwaysShowName = entry.mByteValue != 0;
             break;
+        case 8:
+            actor.effectColor = static_cast<uint32_t>(entry.mIntValue);
+            break;
         default:
             break;
         }

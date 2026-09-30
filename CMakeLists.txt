@@ -184,6 +184,19 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelInventoryDecodeTest tests/InventoryDecode.cpp)
     target_link_libraries(KestrelInventoryDecodeTest PRIVATE FalconProtocol)
     add_test(NAME inventory-decode COMMAND KestrelInventoryDecodeTest)
+    add_executable(KestrelParticleEffectsTest
+        tests/ParticleEffects.cpp
+        src/world/particles/ParticleBinary.cpp
+        src/world/particles/ParticleLibrary.cpp
+        src/world/particles/ParticleSystem.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/world/animation/MolangScript.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelParticleEffectsTest PRIVATE include)
+    target_link_libraries(KestrelParticleEffectsTest PRIVATE FalconProtocol ZLIB::ZLIB)
+    add_test(NAME particle-effects COMMAND KestrelParticleEffectsTest)
 endif()
 option(KESTREL_BUILD_EXAMPLE_MODS "Build the example mods" OFF)
 if(KESTREL_BUILD_EXAMPLE_MODS)

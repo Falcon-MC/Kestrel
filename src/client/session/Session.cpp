@@ -68,6 +68,8 @@
 #include "Protocol/Packets/SetActorMotionPacket.h"
 #include "Protocol/Packets/TransferPacket.h"
 #include "Protocol/Packets/UpdateAbilitiesPacket.h"
+#include "Protocol/Packets/SpawnParticleEffectPacket.h"
+#include "client/ParticleTriggers.h"
 #include "world/BlockCollisions.h"
 
 #include "platform/Paths.h"
@@ -792,6 +794,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::PacketViolationWarning:
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
+    case MinecraftPacketIds::SpawnParticleEffect:
         break;
     default:
         return;
@@ -1068,8 +1071,29 @@ void Session::handleWorldPacket(std::string& payload)
             initializeLocalPlayer(*connection, localRuntimeId);
             dimensionSpawnReceived = true;
         }
+    } else if (auto effect = std::dynamic_pointer_cast<SpawnParticleEffectPacket>(packet)) {
+        if (effect->mDimensionId != motionDimension || effect->mIdentifier.empty()) {
+            return;
+        }
+        world::ParticleSpawn spawn = particleForSpawnPacket(effect->mIdentifier, { effect->mPosition.x, effect->mPosition.y, effect->mPosition.z },
+            effect->mHasMolangVariablesJson ? effect->mMolangVariablesJson : std::string());
+        if (effect->mUniqueActorId != -1) {
+            if (auto runtime = runtimeByUnique.find(effect->mUniqueActorId); runtime != runtimeByUnique.end()) {
+                spawn.attachedActor = runtime->second;
+            } else if (effect->mUniqueActorId == localUniqueId) {
+                spawn.attachedActor = localRuntimeId;
+            }
+        }
+        queueParticle(std::move(spawn));
     } else if (auto event = std::dynamic_pointer_cast<LevelEventPacket>(packet)) {
         handleBreakingEvent(*event);
+        int32_t eventId = event->mEventId;
+        bool breaking = eventId == LevelEventPacket::ParticleDestroy || eventId == LevelEventPacket::ParticlePunchBlock || (eventId >= 3600 && eventId <= 3608);
+        if (!breaking) {
+            if (std::optional<world::ParticleSpawn> spawn = particleForLevelEvent(eventId, { event->mPosition.x, event->mPosition.y, event->mPosition.z }, event->mData)) {
+                queueParticle(std::move(*spawn));
+            }
+        }
         std::lock_guard<std::mutex> guard(mutex);
         switch (event->mEventId) {
         case LevelEventPacket::StartRain:
@@ -1106,6 +1130,7 @@ void Session::handleWorldPacket(std::string& payload)
             releaseSkin(uuid);
         }
         std::lock_guard<std::mutex> guard(mutex);
+        pendingParticles.clear();
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
     } else if (auto action = std::dynamic_pointer_cast<PlayerActionPacket>(packet)) {
@@ -1113,6 +1138,27 @@ void Session::handleWorldPacket(std::string& payload)
             dimensionAckReceived = true;
         }
     }
+}
+
+/**
+ * Queues an effect for the client, dropping it once the queue is full so a
+ * client that stopped taking them does not grow it forever.
+ */
+void Session::queueParticle(world::ParticleSpawn spawn)
+{
+    constexpr size_t MaxPendingParticles = 1024;
+    std::lock_guard<std::mutex> guard(mutex);
+    if (pendingParticles.size() < MaxPendingParticles) {
+        pendingParticles.push_back(std::move(spawn));
+    }
+}
+
+std::vector<world::ParticleSpawn> Session::takeParticles()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<world::ParticleSpawn> spawns = std::move(pendingParticles);
+    pendingParticles.clear();
+    return spawns;
 }
 
 /**
@@ -1146,6 +1192,7 @@ void Session::finishDimensionChange()
 
 void Session::scheduleMeshes()
 {
+    applyHiddenBlocks();
     std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
     std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
     if (!assets) {
@@ -1188,6 +1235,9 @@ void Session::scheduleMeshes()
                     }
                 }
             }
+        }
+        for (const std::shared_ptr<const world::SubChunk>& around : input.around) {
+            hideNewValues(around.get());
         }
         input.skyLight = key.dimension == 0;
         input.blockEntities = world.store().blockEntities(key);
@@ -1570,6 +1620,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     ids = world::IdMapping {};
     ids.hashed = hashedNetworkIds;
+    hiddenChecked.clear();
     size_t customCount = 0;
     size_t customPermutationCount = 0;
     if (assets) {
