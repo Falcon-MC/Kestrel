@@ -49,6 +49,7 @@
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "Protocol/Packets/SetActorDataPacket.h"
+#include "Protocol/Packets/ServerboundLoadingScreenPacket.h"
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
 #include "Protocol/Packets/SetTimePacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
@@ -467,6 +468,9 @@ void Session::initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeI
     if (spawnInitialized) {
         return;
     }
+    ServerboundLoadingScreenPacket loading;
+    loading.mType = ServerboundLoadingScreenPacket::Type::EndLoadingScreen;
+    target.send(loading);
     SetLocalPlayerAsInitializedPacket initialized;
     initialized.mRuntimeActorId = runtimeId;
     target.send(initialized);
@@ -1483,7 +1487,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     motionStarted = false;
     teleportHandled = false;
     missedSwing = false;
-    clientTick = result.mConnection->getStartGame() ? static_cast<uint64_t>(std::max<int64_t>(result.mConnection->getStartGame()->mCurrentTick, 0)) : 0;
+    clientTick = 0;
     nextMotionTick = 0.0;
     lastMotionInput = MotionInput {};
     if (result.mConnection->isSpawnReceived()) {
