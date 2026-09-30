@@ -217,7 +217,13 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     lookup = &cells;
     MotionTick tick;
     jumped = false;
-    updateInput(input, tick);
+    MotionInput effective = input;
+    if (immobile) {
+        effective.forward = 0.0f;
+        effective.sideways = 0.0f;
+        effective.jump = false;
+    }
+    updateInput(effective, tick);
     updateSwimming(!touchingLiquid(false).empty(), tick);
 
     if (teleported) {
@@ -229,8 +235,6 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         }
     } else if (isFlying || noClip) {
         runFlight(input);
-    } else if (immobile) {
-        velocity = {};
     } else {
         if (velocity.lengthSquared() < 1.0E-12f) {
             velocity = {};
