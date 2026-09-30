@@ -535,6 +535,7 @@ public:
     void disconnect();
 
     static std::string_view gameVersion();
+    static int protocolVersion();
 
     SessionSnapshot snapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();

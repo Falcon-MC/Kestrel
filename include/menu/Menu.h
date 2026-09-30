@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client/SocialModel.h"
 #include "menu/ChatCommands.h"
 #include "menu/FormScreen.h"
 #include "menu/Hud.h"
@@ -41,6 +42,29 @@ inline constexpr int DefaultFov = 90;
 inline constexpr float MinSafeArea = 0.9f;
 inline constexpr float MaxSafeArea = 1.0f;
 inline constexpr size_t VolumeChannelCount = 10;
+inline constexpr int MinBrightness = 0;
+inline constexpr int MaxBrightness = 100;
+inline constexpr int DefaultBrightness = 0;
+inline constexpr float MaxBrightnessLift = 0.5f;
+
+/**
+ * How far the brightness setting lifts dark places toward full light, the way
+ * night vision does: nothing at the lowest setting, MaxBrightnessLift at the
+ * highest.
+ */
+inline float brightnessLift(int percent)
+{
+    int clamped = percent < MinBrightness ? MinBrightness : percent > MaxBrightness ? MaxBrightness : percent;
+    return MaxBrightnessLift * static_cast<float>(clamped) / static_cast<float>(MaxBrightness);
+}
+
+/**
+ * The skin sprite a person's profile picture is registered under.
+ */
+inline std::string socialAvatarSprite(const std::string& xuid)
+{
+    return "social/" + xuid;
+}
 
 enum class Screen {
     Title,
@@ -93,6 +117,9 @@ enum class Dialog {
     ProfileOptions,
     Death,
     SafeArea,
+    RealmInvites,
+    JoinRealm,
+    ConfirmRemoveFriend,
 };
 
 enum class Field {
@@ -103,6 +130,17 @@ enum class Field {
     SocialSearch,
     DressingSearch,
     Chat,
+    RealmCode,
+};
+
+/**
+ * What the People tab of the social drawer shows: the friends list, the
+ * friend requests, or the players a search found.
+ */
+enum class SocialPage {
+    Friends,
+    Requests,
+    Search,
 };
 
 /**
@@ -453,6 +491,40 @@ public:
     void setSafeArea(float value)
     {
         safeZone = value;
+    }
+
+    /**
+     * The brightness setting in percent, between MinBrightness and
+     * MaxBrightness.
+     */
+    int brightness() const
+    {
+        return brightnessPercent;
+    }
+
+    void setBrightness(int percent)
+    {
+        brightnessPercent = percent < MinBrightness ? MinBrightness : percent > MaxBrightness ? MaxBrightness : percent;
+    }
+
+    void setSocial(SocialSnapshot snapshot);
+
+    /**
+     * What the social screens asked of the online services since the last
+     * call, in order.
+     */
+    std::vector<SocialRequest> takeSocialRequests()
+    {
+        std::vector<SocialRequest> requests = std::move(socialRequests);
+        socialRequests.clear();
+        return requests;
+    }
+
+    bool takeRealmsRefreshRequest()
+    {
+        bool requested = realmsRefreshRequested;
+        realmsRefreshRequested = false;
+        return requested;
     }
 
     /**
@@ -825,6 +897,20 @@ private:
     void todoScreen(ui::Context& ui, float width, float height, std::string_view heading);
     void safeAreaDialog(ui::Context& ui);
     void socialDrawer(ui::Context& ui, float width, float height);
+    void socialFriends(ui::Context& ui, const ui::Rect& area);
+    void socialRequestsPage(ui::Context& ui, const ui::Rect& area);
+    void socialSearchPage(ui::Context& ui, const ui::Rect& area);
+    float personRow(ui::Context& ui, const SocialPerson& person, const ui::Rect& row, bool expandable);
+    bool listState(ui::Context& ui, const PeopleList& list, const ui::Rect& area, std::string_view emptyText, SocialAction retry);
+    ui::Rect modalFrame(ui::Context& ui, float width, float height, float frameWidth, float frameHeight, std::string_view heading, bool& closed);
+    void realmInvitesDialog(ui::Context& ui, float width, float height);
+    void joinRealmDialog(ui::Context& ui, float width, float height);
+    void openJoinRealm();
+    void submitRealmCode();
+    void requestSocial(SocialAction action, std::string target = {});
+    std::string onlineErrorText(OnlineError error, int retryAfterSeconds) const;
+    std::string realmCodeErrorText(OnlineError error) const;
+    const SocialOperation* operation(const std::string& key) const;
     void toast(ui::Context& ui, float width, float height);
     std::vector<HudChatLine> hudChat() const;
     void drawHudScreen(ui::Context& ui, float width, float height);
@@ -836,7 +922,6 @@ private:
     float scrollArea(ui::Context& ui, const ui::Rect& area, float& offset, float contentHeight);
     void settingsHeading(ui::Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail);
     void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight, float controlWidth = 66.0f);
-    void todoRow(ui::Context& ui, float x, float& y, float width, std::string_view label);
 
     std::vector<ServerRow> featuredRows(ServerGroup group) const;
     std::vector<ServerRow> savedRows() const;
@@ -878,6 +963,21 @@ private:
     std::string editAddress;
     std::string editPort;
     std::string socialSearch;
+    SocialSnapshot social;
+    std::vector<SocialRequest> socialRequests;
+    SocialPage socialPage = SocialPage::Friends;
+    std::string socialSelected;
+    float socialScroll = 0.0f;
+    float socialContent = 0.0f;
+    std::string removingXuid;
+    std::string removingName;
+    std::string realmCodeInput;
+    std::string realmCodeProblem;
+    float invitesScroll = 0.0f;
+    float invitesContent = 0.0f;
+    bool realmsRefreshRequested = false;
+    std::map<std::string, std::pair<bool, std::string>> answeredInvites;
+    std::map<std::string, SocialAction> personActions;
     std::map<std::string, ServerStatus> serverStatus;
     std::vector<FeaturedEntry> featured;
     bool featuredLoading = true;
@@ -971,6 +1071,7 @@ private:
     int fieldOfView = DefaultFov;
     bool hidePaperDoll = false;
     float safeZone = MaxSafeArea;
+    int brightnessPercent = DefaultBrightness;
     std::string languageCode = "en_US";
     std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;

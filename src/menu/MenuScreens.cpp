@@ -146,7 +146,7 @@ float Menu::header(Context& ui, float width, std::string_view heading, bool soci
         if (state.hovered) {
             ui.fill(button, { 0, 0, 0, 20 });
         }
-        std::string Label = tr("options.social", "Social") + " (0)";
+        std::string Label = tr("options.social", "Social") + " (" + std::to_string(onlineCount(this->social.friends)) + ")";
         float textWidth = ui.measure(Label, TextStyle::Ui);
         float x = std::round(button.x + (button.w - textWidth - 9.0f) * 0.5f);
         ui.sprite({ x - 3.0f, std::round((HeaderHeight - 2.0f - 11.0f) * 0.5f), 11.0f, 11.0f }, "hbui/friends");
@@ -303,11 +303,16 @@ void Menu::realmsTab(Context& ui, const Rect& area)
 
     float y = banner.bottom() + 5.0f;
     float center = std::round(area.x + area.w * 0.5f);
-    if (ui.pressableButton("realms:invites", "pressableElevatedSecondary", tr("realmsInvitationScreen.title", "Invitations"), { center - 128.0f, y, 126.0f, ButtonHeight })) {
-        notify("TODO: Realm invitations");
+    std::string invitesLabel = tr("hbui.JoinRealmsServerInvitationsButton.invitationsName", "Invitations");
+    if (!social.invites.empty()) {
+        invitesLabel += " (" + std::to_string(social.invites.size()) + ")";
     }
-    if (ui.pressableButton("realms:join", "pressableElevatedSecondary", tr("networkWorld.joinByCode", "Join a Realm"), { center + 2.0f, y, 126.0f, ButtonHeight })) {
-        notify("TODO: Joining a Realm by code");
+    if (ui.pressableButton("realms:invites", "pressableElevatedSecondary", invitesLabel, { center - 128.0f, y, 126.0f, ButtonHeight })) {
+        dialog = Dialog::RealmInvites;
+        requestSocial(SocialAction::RefreshInvites);
+    }
+    if (ui.pressableButton("realms:join", "pressableElevatedSecondary", tr("hbui.PlayScreen.realmsTab.buttonHeader.joinRealm", "Join a Realm"), { center + 2.0f, y, 126.0f, ButtonHeight })) {
+        openJoinRealm();
     }
     y += ButtonHeight + 8.0f;
 
@@ -319,10 +324,20 @@ void Menu::realmsTab(Context& ui, const Rect& area)
         }
         return;
     }
-    if (account.realmsLoading || !account.realmsError.empty() || account.realms.empty()) {
-        std::string_view message = account.realmsLoading ? "Loading your Realms..." : !account.realmsError.empty() ? std::string_view(account.realmsError) : "You aren't a member of any Realms yet";
+    if (account.realms.empty()) {
+        std::string message = account.realmsLoading ? tr("hbui.Realms.JoinRealmModals.fetchRealmInProgress", "Fetching Realm")
+            : !account.realmsError.empty()          ? tr("hbui.JoinRealmsServerError.unknown.message", "Please try again later.")
+                                                    : tr("kestrel.realms.noRealms", "You aren't a member of any Realms yet.");
         ui.textCentered(message, TextStyle::Ui, { list.x, list.y + 10.0f, list.w, 20.0f }, Muted0);
+        if (!account.realmsLoading && !account.realmsError.empty() && ui.pressableButton("realms:retry", "pressableElevatedSecondary", tr("hbui.AddFriendError.tryAgain", "Try again"), { center - 63.0f, list.y + 36.0f, 126.0f, ButtonHeight })) {
+            realmsRefreshRequested = true;
+        }
         return;
+    }
+    if (!account.realmsError.empty() && !account.realmsLoading) {
+        ui.text(tr("kestrel.realms.stale", "Couldn't update your Realms. The list may be out of date."), TextStyle::UiSmall, list.x, list.y, Muted1, list.w);
+        list.y += 12.0f;
+        list.h -= 12.0f;
     }
 
     constexpr float Row = 36.0f;
@@ -773,11 +788,6 @@ void Menu::settingsRow(Context& ui, float x, float& y, float width, std::string_
     divider(ui, x, y - css(2.0f), width);
 }
 
-void Menu::todoRow(Context& ui, float x, float& y, float width, std::string_view label)
-{
-    settingsRow(ui, x, y, width, label, "TODO", 31.33f);
-}
-
 void Menu::settingsPage(Context& ui, const Rect& area)
 {
     Rect view { area.x, area.y, area.w + 7.0f, area.h };
@@ -884,7 +894,14 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         if (ui.pressableButton("video:safearea", "pressableElevatedSecondary", safeArea, { x + w - 12.0f - safeAreaWidth, rowY + 8.67f, safeAreaWidth, 24.0f })) {
             dialog = Dialog::SafeArea;
         }
-        todoRow(ui, x, y, w, tr("options.gamma", "Brightness"));
+        rowY = y;
+        settingsRow(ui, x, y, w, tr("options.gamma", "Brightness"), tr("options.gamma.description", "If your screen is still too dark, change the settings on your device, TV, or monitor"), 44.0f);
+        std::string brightnessText = std::to_string(brightnessPercent) + "%";
+        ui.text(brightnessText, TextStyle::Ui, x + w - 12.0f - ui.measure(brightnessText, TextStyle::Ui), rowY + 7.0f, White);
+        float brightnessFraction = float(brightnessPercent - MinBrightness) / float(MaxBrightness - MinBrightness);
+        if (slider(ui, "video:brightness", { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, brightnessFraction)) {
+            setBrightness(MinBrightness + int(std::lround(brightnessFraction * float(MaxBrightness - MinBrightness))));
+        }
         break;
     }
     case SettingsPage::Audio: {
@@ -957,11 +974,38 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         y += 6.0f;
         break;
     }
-    default:
+    default: {
         settingsHeading(ui, x, y, w, entry ? tr(entry->key, entry->label) : tr("menu.settings", "Settings"), {});
-        ui.textCentered("TODO", TextStyle::Heading, { x, y + 20.0f, w, 20.0f }, Muted0);
-        y += 40.0f;
+        const char* key = "kestrel.settings.unavailable";
+        const char* fallback = "These settings aren't available in Kestrel yet.";
+        switch (settingsSection) {
+        case SettingsPage::Controller:
+            key = "kestrel.settings.unavailable.controller";
+            fallback = "Kestrel doesn't read game controllers yet, so there is nothing to set up here.";
+            break;
+        case SettingsPage::Touch:
+            key = "kestrel.settings.unavailable.touch";
+            fallback = "Kestrel is played with a keyboard and mouse; touch controls aren't supported.";
+            break;
+        case SettingsPage::Party:
+            key = "kestrel.settings.unavailable.party";
+            fallback = "Kestrel can't create or join parties yet, so there are no party settings.";
+            break;
+        case SettingsPage::Subscriptions:
+            key = "kestrel.settings.unavailable.subscriptions";
+            fallback = "Kestrel can't show or manage Realms and Marketplace subscriptions.";
+            break;
+        case SettingsPage::GlobalResources:
+            key = "kestrel.settings.unavailable.globalResources";
+            fallback = "Kestrel uses the vanilla resources and the packs servers send; global resource packs aren't supported yet.";
+            break;
+        default:
+            break;
+        }
+        y += 8.0f;
+        y += ui.paragraph(tr(key, fallback), TextStyle::Ui, x + 12.0f, y, w - 24.0f, Muted0) + 12.0f;
         break;
+    }
     }
     ui.clearClip();
     pageContent = y + pageScroll - area.y + 8.0f;
@@ -972,74 +1016,8 @@ void Menu::todoScreen(Context& ui, float width, float height, std::string_view h
     header(ui, width, upperCase(std::string(heading)), heading != tr("profileScreen.header", "Dressing Room"));
     Rect panel = column(width, 53.33f, height - 8.0f);
     ui.fill(panel, PanelDark);
-    ui.textCentered("TODO", TextStyle::HeadingLarge, { panel.x, panel.y + panel.h * 0.4f, panel.w, 20.0f }, White);
-    ui.textCentered(std::string(heading) + " isn't implemented in Kestrel yet", TextStyle::Ui, { panel.x, panel.y + panel.h * 0.4f + 24.0f, panel.w, 12.0f }, Muted0);
-}
-
-void Menu::socialDrawer(Context& ui, float width, float height)
-{
-    ui.fill(screenBounds, { 0, 0, 0, 150 });
-    Rect panel { width - 1.0f - 186.67f, 28.0f, 186.67f, height - 29.0f };
-    if (socialArmed && dialog == Dialog::None && ui.input().mousePressed && !panel.contains(ui.mouseX(), ui.mouseY())) {
-        socialOpen = false;
-        socialArmed = false;
-        return;
-    }
-    socialArmed = !ui.input().mouseDown;
-    ui.fill(panel, Divider);
-    Rect inner = panel.inset(2.0f);
-    ui.fill(inner, PanelDark);
-
-    Rect search { inner.x + 2.0f, inner.y + 2.0f, inner.w - 29.0f, 22.67f };
-    if (textField(ui, "social:search", tr("store.search.button", "Search for people"), socialSearch, search, field == Field::SocialSearch)) {
-        field = Field::SocialSearch;
-    }
-    Rect close { search.right() + 2.0f, search.y, 23.0f, 22.67f };
-    if (ui.pressable("social:close", "pressableElevatedSecondary", close).clicked) {
-        socialOpen = false;
-    }
-    ui.sprite({ close.x + 8.0f, close.y + 7.0f, 7.0f, 7.0f }, "hbui/Close", InkDark);
-
-    Rect tabs { inner.x + 2.0f, search.bottom() + 3.0f, inner.w - 4.0f, 21.0f };
-    Rect peopleTab { tabs.x, tabs.y, std::round(tabs.w * 0.5f), tabs.h };
-    Rect partyTab { peopleTab.right(), tabs.y, tabs.w - peopleTab.w, tabs.h };
-    if (ui.pressable("social:people", "tabBarNeutral", peopleTab, true, !socialParty).clicked) {
-        socialParty = false;
-    }
-    ui.sprite({ peopleTab.x + peopleTab.w * 0.5f - 4.0f, peopleTab.y + 5.0f, 8.0f, 8.0f }, "hbui/friends");
-    if (ui.pressable("social:party", "tabBarNeutral", partyTab, true, socialParty).clicked) {
-        socialParty = true;
-    }
-    ui.sprite({ partyTab.x + partyTab.w * 0.5f - 4.0f, partyTab.y + 5.0f, 8.0f, 8.0f }, "hbui/party");
-    tabUnderline(ui, socialParty ? partyTab : peopleTab);
-
-    float y = tabs.bottom() + 4.0f;
-    ui.textCentered(upperCase(socialParty ? tr("options.party", "Party") : tr("networkWorld.friends_label", "People")), TextStyle::Heading, { inner.x, y, inner.w, 12.0f }, White);
-    y += 16.0f;
-    if (socialParty) {
-        ui.textCentered("No parties available", TextStyle::Ui, { inner.x, inner.y + inner.h * 0.4f, inner.w, 12.0f }, White);
-        if (ui.pressableButton("social:create", "pressableElevatedSecondary", "Create party", { inner.x + 8.0f, inner.y + inner.h * 0.4f + 42.0f, inner.w - 16.0f, ButtonHeight })) {
-            notify("TODO: Parties");
-        }
-        return;
-    }
-
-    Rect you { inner.x + 4.0f, y, inner.w - 8.0f, 32.0f };
-    ui.fill(you, Panel);
-    bool hasAvatar = ui.skin().sprite("dynamic/avatar").valid;
-    ui.sprite({ you.x + 4.0f, you.y + 4.0f, 24.0f, 24.0f }, hasAvatar ? "dynamic/avatar" : "ui/profile_glyph_color");
-    ui.text(displayName + " (You)", TextStyle::Ui, you.x + 32.0f, you.y + 7.0f, White, you.w - 36.0f);
-    ui.text(inGame() ? tr("menu.servers", "Playing on a server") : tr("accessibility.screenName.start", "In the Minecraft Menus"), TextStyle::UiSmall, you.x + 32.0f, you.y + 18.0f, Muted0, you.w - 36.0f);
-    y = you.bottom() + 4.0f;
-
-    if (ui.pressableButton("social:requests", "pressableElevatedSecondary", "Friend requests", { you.x, y, you.w, ButtonHeight })) {
-        notify("TODO: Friend requests");
-    }
-    y += ButtonHeight + 6.0f;
-    ui.fill({ you.x, y, you.w, 10.0f }, Primary);
-    ui.text(tr("invite.OnlineFriends", "Online") + " (0)", TextStyle::UiSmall, you.x + 3.0f, y + 1.0f, White);
-    y += 12.0f;
-    ui.textCentered("TODO: Friends list", TextStyle::Ui, { you.x, y + 4.0f, you.w, 12.0f }, Muted0);
+    ui.textCentered(heading, TextStyle::HeadingLarge, { panel.x, panel.y + panel.h * 0.4f, panel.w, 20.0f }, White);
+    ui.textCentered(trf("kestrel.screen.unavailable", "%1$s isn't available in Kestrel yet.", { std::string(heading) }), TextStyle::Ui, { panel.x, panel.y + panel.h * 0.4f + 24.0f, panel.w, 12.0f }, Muted0);
 }
 
 }

@@ -14,6 +14,7 @@
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
 #include "client/Session.h"
+#include "client/Social.h"
 #include "world/EntityAnimation.h"
 #include "world/Mesher.h"
 #include "menu/Menu.h"
@@ -117,6 +118,7 @@ private:
     const std::string& offlineName() const;
 
     void syncAccount();
+    void syncSocial();
     void syncDressingRoom();
     void syncSession();
     void syncFeatured();
@@ -189,6 +191,11 @@ private:
     menu::ServerStore store;
     menu::Menu menu;
     Account account;
+    Social social;
+    std::string socialAccount;
+    uint64_t socialRevision = 0;
+    uint64_t realmsChangedSeen = 0;
+    std::vector<std::string> socialSprites;
     Session session;
     std::filesystem::path settingsFile;
     float savedScale = 1.0f;
@@ -198,6 +205,7 @@ private:
     int savedFov = menu::DefaultFov;
     bool savedPaperDollHidden = false;
     float savedSafeArea = menu::MaxSafeArea;
+    int savedBrightness = menu::DefaultBrightness;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;

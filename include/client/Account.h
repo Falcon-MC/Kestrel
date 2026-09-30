@@ -94,6 +94,18 @@ public:
     AccountSnapshot snapshot() const;
     MinecraftAuthentication* signedInAuthentication() const;
 
+    /**
+     * The sign in shared with services that may still finish a request after
+     * the account changed; null unless signed in.
+     */
+    std::shared_ptr<MinecraftAuthentication> sharedAuthentication() const;
+
+    /**
+     * Loads the Realms list again in the background, after the player joined
+     * or left one. Ignored while a load is already running.
+     */
+    void refreshRealms();
+
 private:
     void start(bool interactive);
     void stop();
@@ -106,9 +118,11 @@ private:
     std::string userAuthorization();
 
     std::filesystem::path cacheFile;
-    std::unique_ptr<MinecraftAuthentication> authentication;
+    std::shared_ptr<MinecraftAuthentication> authentication;
     std::thread worker;
     std::thread warmer;
+    std::thread realmsWorker;
+    std::atomic<bool> realmsRunning { false };
     std::atomic<bool> cancelled { false };
     mutable std::mutex mutex;
     AccountSnapshot current;
