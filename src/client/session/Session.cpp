@@ -1482,7 +1482,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     motionHistory.clear();
     motionStarted = false;
     teleportHandled = false;
-    clientTick = 0;
+    missedSwing = false;
+    clientTick = result.mConnection->getStartGame() ? static_cast<uint64_t>(std::max<int64_t>(result.mConnection->getStartGame()->mCurrentTick, 0)) : 0;
     nextMotionTick = 0.0;
     lastMotionInput = MotionInput {};
     if (result.mConnection->isSpawnReceived()) {

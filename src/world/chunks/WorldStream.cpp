@@ -128,6 +128,12 @@ void WorldStream::setChunkRadius(int32_t radius)
     retain();
 }
 
+bool WorldStream::subChunkPending(const SubChunkKey& key) const
+{
+    auto column = pending.find(key.chunk());
+    return column != pending.end() && column->second.contains(key.y);
+}
+
 void WorldStream::changeDimension(int32_t newDimension, int32_t chunkX, int32_t chunkZ)
 {
     for (const ChunkKey& key : chunks.columns()) {

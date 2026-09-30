@@ -23,9 +23,12 @@ namespace {
 
 using session::EyeHeight;
 using session::ScaleDataId;
+using session::enchantmentLevel;
 
 constexpr double TickSeconds = 0.05;
-constexpr size_t MotionHistoryTicks = 200;
+constexpr int32_t MaxCatchUpTicks = 8;
+constexpr double MaxCatchUpSeconds = 1.0;
+constexpr size_t MotionHistoryTicks = 32;
 constexpr uint64_t NearbyRefreshTicks = 10;
 constexpr uint64_t LoadedRefreshTicks = 20;
 constexpr int32_t FlagsDataId = 0;
@@ -36,6 +39,9 @@ constexpr int32_t JumpBoostEffect = 8;
 constexpr int32_t LevitationEffect = 24;
 constexpr int32_t SlowFallingEffect = 27;
 constexpr int32_t WeavingEffect = 33;
+constexpr int16_t DepthStriderEnchantment = 7;
+constexpr int16_t SoulSpeedEnchantment = 36;
+constexpr int16_t SwiftSneakEnchantment = 37;
 constexpr uint16_t BaseAbilityLayer = 1;
 constexpr uint32_t FlyingAbility = 1u << 9;
 constexpr uint32_t MayFlyAbility = 1u << 10;
@@ -81,11 +87,32 @@ MotionCell Session::motionCell(int32_t x, int32_t y, int32_t z)
     return cell;
 }
 
+/**
+ * Whether every column and sub-chunk the player can touch this tick has
+ * arrived: a sub-chunk still asked for is unknown ground, not air, so the
+ * player must not fall through it.
+ */
 bool Session::motionAreaLoaded(const MotionVector& feet)
 {
-    int32_t x = static_cast<int32_t>(std::floor(feet.x));
-    int32_t z = static_cast<int32_t>(std::floor(feet.z));
-    return world.store().isLoaded({ motionDimension, x >> 4, z >> 4 });
+    int32_t minX = static_cast<int32_t>(std::floor(feet.x - 1.0f)) >> 4;
+    int32_t maxX = static_cast<int32_t>(std::floor(feet.x + 1.0f)) >> 4;
+    int32_t minY = static_cast<int32_t>(std::floor(feet.y - 2.0f)) >> 4;
+    int32_t maxY = static_cast<int32_t>(std::floor(feet.y + 3.0f)) >> 4;
+    int32_t minZ = static_cast<int32_t>(std::floor(feet.z - 1.0f)) >> 4;
+    int32_t maxZ = static_cast<int32_t>(std::floor(feet.z + 1.0f)) >> 4;
+    for (int32_t x = minX; x <= maxX; ++x) {
+        for (int32_t z = minZ; z <= maxZ; ++z) {
+            if (!world.store().isLoaded({ motionDimension, x, z })) {
+                return false;
+            }
+            for (int32_t y = minY; y <= maxY; ++y) {
+                if (world.subChunkPending({ motionDimension, x, y, z })) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 /**
@@ -109,11 +136,18 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         MotionVector was = motion.position();
-        motionHistory.clear();
-        motion.teleport({ move->mPosition.x, move->mPosition.y - EyeHeight, move->mPosition.z });
-        teleportHandled = true;
+        MotionVector target { move->mPosition.x, move->mPosition.y - EyeHeight, move->mPosition.z };
+        bool hard = move->mMode == MovePlayerMode::Teleport || move->mMode == MovePlayerMode::Respawn || !motion.initialized();
         debugLog("server moved player at tick " + std::to_string(clientTick) + " mode " + std::to_string(static_cast<int>(move->mMode)) + " from " + std::to_string(was.x) + " " + std::to_string(was.y) + " " + std::to_string(was.z)
-            + " to " + std::to_string(move->mPosition.x) + " " + std::to_string(move->mPosition.y - EyeHeight) + " " + std::to_string(move->mPosition.z));
+            + " to " + std::to_string(target.x) + " " + std::to_string(target.y) + " " + std::to_string(target.z));
+        if (!hard) {
+            replayCorrection(static_cast<uint64_t>(std::max<int64_t>(move->mTick, 0)), target, nullptr, move->mOnGround);
+            return;
+        }
+        motionHistory.clear();
+        motion.teleport(target);
+        teleportHandled = true;
+        motionStarted = false;
         std::lock_guard<std::mutex> guard(mutex);
         MotionVector feet = motion.position();
         current.player.previous = { feet.x, feet.y, feet.z };
@@ -127,6 +161,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         MotionVector feet { respawn->mPosition.x, respawn->mPosition.y - EyeHeight, respawn->mPosition.z };
         motionHistory.clear();
         motion.reset(feet);
+        motionStarted = false;
         debugLog("respawn at " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
         bool dead = false;
         {
@@ -155,7 +190,8 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         debugLog("server corrected movement at tick " + std::to_string(clientTick) + " for tick " + std::to_string(correction->mTick));
-        replayCorrection(correction->mTick, { correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z }, correction->mOnGround);
+        MotionVector delta { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z };
+        replayCorrection(correction->mTick, { correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, &delta, correction->mOnGround);
     } else if (auto push = std::dynamic_pointer_cast<SetActorMotionPacket>(packet)) {
         if (push->mRuntimeActorId == localRuntimeId) {
             motion.knockback({ push->mMotion.x, push->mMotion.y, push->mMotion.z });
@@ -196,10 +232,9 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
 }
 
 /**
- * Runs one movement tick every 50 ms once the player has spawned and the
- * ground under it has loaded, and sends the server that tick as a
- * PlayerAuthInput: eye position, rotation, the movement vector, the velocity
- * after the tick and the input flags the server replays it with.
+ * Runs every movement tick that fell due since the last call, 50 ms apart,
+ * catching up to eight ticks at once after a stall; ticks further behind
+ * than that are dropped.
  */
 void Session::tickMotion()
 {
@@ -210,19 +245,34 @@ void Session::tickMotion()
     if (nextMotionTick == 0.0) {
         nextMotionTick = now;
     }
-    if (now < nextMotionTick) {
-        return;
+    if (now - nextMotionTick > MaxCatchUpSeconds) {
+        nextMotionTick = now - TickSeconds * MaxCatchUpTicks;
     }
-    nextMotionTick += TickSeconds;
-    if (now - nextMotionTick > TickSeconds * 5.0) {
-        nextMotionTick = now + TickSeconds;
+    int32_t due = 0;
+    while (now >= nextMotionTick) {
+        nextMotionTick += TickSeconds;
+        ++due;
     }
+    for (int32_t index = 0; index < std::min(due, MaxCatchUpTicks); ++index) {
+        runMotionTick(now);
+    }
+}
 
+/**
+ * Runs one movement tick once the player has spawned and the ground around
+ * it has loaded, and sends the server that tick as a PlayerAuthInput: eye
+ * position, rotation, the processed movement vector, the displacement the
+ * tick resolved to and the input flags the server replays it with. While the
+ * ground is missing the player is held in place and the tick says so.
+ */
+void Session::runMotionTick(double now)
+{
     MotionInput input;
     {
         std::lock_guard<std::mutex> guard(mutex);
         input = motionInput;
         input.usingItem = itemInUse.has_value();
+        input.raining = current.rainLevel > 0.0f;
         int32_t jumpBoost = 0;
         int32_t levitation = 0;
         bool slowFalling = false;
@@ -244,10 +294,18 @@ void Session::tickMotion()
         motion.setEffects(jumpBoost, levitation, slowFalling, weaving);
         motion.setHunger(current.hud.hunger);
     }
+    const ItemStack& chest = inventoryModel.slots[inventory::Armor + 1];
+    const ItemStack& legs = inventoryModel.slots[inventory::Armor + 2];
+    const ItemStack& feetSlot = inventoryModel.slots[inventory::Armor + 3];
+    input.elytra = !chest.isAir() && chest.mDefinition->getIdentifier() == "minecraft:elytra";
+    input.depthStrider = enchantmentLevel(feetSlot, DepthStriderEnchantment);
+    input.soulSpeed = enchantmentLevel(feetSlot, SoulSpeedEnchantment);
+    input.swiftSneak = enchantmentLevel(legs, SwiftSneakEnchantment);
+    input.riptide = pendingRiptide.exchange(0);
 
     bool waitingForWorld = false;
     if (!motionStarted) {
-        if (!world.cohortLoaded() || world.stats().pendingSubChunks > 0 || !motionAreaLoaded(motion.position())) {
+        if (!world.cohortLoaded() || !motionAreaLoaded(motion.position())) {
             waitingForWorld = true;
         } else {
             motionStarted = true;
@@ -258,30 +316,35 @@ void Session::tickMotion()
 
     MotionVector before = motion.position();
     MotionTick tick;
-    if (!waitingForWorld && motionAreaLoaded(before)) {
+    bool frozen = waitingForWorld || !motionAreaLoaded(before);
+    if (!frozen) {
         PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
             return motionCell(x, y, z);
         };
         tick = motion.step(input, lookup);
         playMotionSounds(tick, before);
     } else {
+        motion.hold();
         tick.position = before;
         tick.sneaking = motion.sneaking();
+        tick.onGround = motion.grounded();
     }
 
     float yaw = std::remainder(input.yaw, 360.0f);
     float pitch = std::clamp(input.pitch, -90.0f, 90.0f);
+    float rawSideways = frozen ? 0.0f : std::clamp(input.sideways, -1.0f, 1.0f);
+    float rawForward = frozen ? 0.0f : std::clamp(input.forward, -1.0f, 1.0f);
     PlayerAuthInputPacket packet;
     float eyeY = tick.position.y + EyeHeight;
     packet.mPosition = Vector3f(tick.position.x, eyeY, tick.position.z);
     packet.mRotation = Vector3f(pitch, yaw, yaw);
-    packet.mMotionX = input.sideways;
-    packet.mMotionY = input.forward;
-    packet.mAnalogMoveVectorX = input.sideways;
-    packet.mAnalogMoveVectorY = input.forward;
-    packet.mRawMoveVectorX = input.sideways;
-    packet.mRawMoveVectorY = input.forward;
-    packet.mDelta = Vector3f(tick.velocity.x, tick.velocity.y, tick.velocity.z);
+    packet.mMotionX = tick.moveSideways;
+    packet.mMotionY = tick.moveForward;
+    packet.mAnalogMoveVectorX = rawSideways;
+    packet.mAnalogMoveVectorY = rawForward;
+    packet.mRawMoveVectorX = rawSideways;
+    packet.mRawMoveVectorY = rawForward;
+    packet.mDelta = Vector3f(tick.movement.x, tick.movement.y, tick.movement.z);
     packet.mTick = static_cast<int64_t>(++clientTick);
     packet.mInputMode = PlayerInputMode::Mouse;
     packet.mPlayMode = PlayerClientPlayMode::Normal;
@@ -294,33 +357,47 @@ void Session::tickMotion()
     auto flag = [&](PlayerAuthInputData value) {
         packet.mInputData.push_back(static_cast<int32_t>(value));
     };
-    if (input.forward > 0.0f) {
+    if (rawForward > 0.0f) {
         flag(PlayerAuthInputData::Up);
     }
-    if (input.forward < 0.0f) {
+    if (rawForward < 0.0f) {
         flag(PlayerAuthInputData::Down);
     }
-    if (input.sideways > 0.0f) {
+    if (rawSideways > 0.0f) {
         flag(PlayerAuthInputData::Left);
     }
-    if (input.sideways < 0.0f) {
+    if (rawSideways < 0.0f) {
         flag(PlayerAuthInputData::Right);
     }
+    if (rawForward > 0.0f && rawSideways > 0.0f) {
+        flag(PlayerAuthInputData::UpLeft);
+    }
+    if (rawForward > 0.0f && rawSideways < 0.0f) {
+        flag(PlayerAuthInputData::UpRight);
+    }
+    if (rawForward < 0.0f && rawSideways > 0.0f) {
+        flag(PlayerAuthInputData::DownLeft);
+    }
+    if (rawForward < 0.0f && rawSideways < 0.0f) {
+        flag(PlayerAuthInputData::DownRight);
+    }
+    bool jumpPressed = input.jump && !lastMotionInput.jump;
     if (input.jump) {
         flag(PlayerAuthInputData::JumpDown);
-        flag(PlayerAuthInputData::Jumping);
         flag(PlayerAuthInputData::JumpCurrentRaw);
-        if (!lastMotionInput.jump) {
+        if (jumpPressed) {
             flag(PlayerAuthInputData::JumpPressedRaw);
         }
     } else if (lastMotionInput.jump) {
         flag(PlayerAuthInputData::JumpReleasedRaw);
     }
-    if (tick.startedJump) {
+    if (jumpPressed || tick.startedJump) {
         flag(PlayerAuthInputData::StartJumping);
     }
+    if (tick.jumping) {
+        flag(PlayerAuthInputData::Jumping);
+    }
     if (input.sneak) {
-        flag(PlayerAuthInputData::Sneaking);
         flag(PlayerAuthInputData::SneakCurrentRaw);
         if (!lastMotionInput.sneak) {
             flag(PlayerAuthInputData::SneakPressedRaw);
@@ -329,6 +406,7 @@ void Session::tickMotion()
         flag(PlayerAuthInputData::SneakReleasedRaw);
     }
     if (tick.sneaking) {
+        flag(PlayerAuthInputData::Sneaking);
         flag(PlayerAuthInputData::SneakDown);
     }
     if (tick.startSneaking) {
@@ -337,7 +415,10 @@ void Session::tickMotion()
     if (tick.stopSneaking) {
         flag(PlayerAuthInputData::StopSneaking);
     }
-    if (input.sprint) {
+    if (tick.forcedSneak) {
+        flag(PlayerAuthInputData::PersistSneak);
+    }
+    if (input.sprint || tick.sprinting) {
         flag(PlayerAuthInputData::SprintDown);
     }
     if (tick.sprinting) {
@@ -352,14 +433,38 @@ void Session::tickMotion()
     if (tick.startFlying) {
         flag(PlayerAuthInputData::StartFlying);
     }
+    if (tick.stopFlying) {
+        flag(PlayerAuthInputData::StopFlying);
+    }
+    if (tick.flying && input.jump) {
+        flag(PlayerAuthInputData::Ascend);
+    }
+    if (tick.flying && input.sneak) {
+        flag(PlayerAuthInputData::Descend);
+    }
     if (tick.startSwimming) {
         flag(PlayerAuthInputData::StartSwimming);
     }
     if (tick.stopSwimming) {
         flag(PlayerAuthInputData::StopSwimming);
     }
-    if (tick.stopFlying) {
-        flag(PlayerAuthInputData::StopFlying);
+    if (tick.startGliding) {
+        flag(PlayerAuthInputData::StartGliding);
+    }
+    if (tick.startSpinAttack) {
+        flag(PlayerAuthInputData::StartSpinAttack);
+    }
+    if (tick.stopSpinAttack) {
+        flag(PlayerAuthInputData::StopSpinAttack);
+    }
+    if (tick.stopGliding) {
+        flag(PlayerAuthInputData::StopGliding);
+    }
+    if (tick.startCrawling) {
+        flag(PlayerAuthInputData::StartCrawling);
+    }
+    if (tick.stopCrawling) {
+        flag(PlayerAuthInputData::StopCrawling);
     }
     if (tick.horizontalCollision) {
         flag(PlayerAuthInputData::HorizontalCollision);
@@ -371,7 +476,9 @@ void Session::tickMotion()
         flag(PlayerAuthInputData::HandleTeleport);
         teleportHandled = false;
     }
-    flag(PlayerAuthInputData::BlockBreakingDelayEnabled);
+    if (missedSwing.exchange(false)) {
+        flag(PlayerAuthInputData::MissedSwing);
+    }
     tickBreaking(packet, tick);
     tickItemUse(packet);
     tickCracks();
@@ -382,9 +489,11 @@ void Session::tickMotion()
     lastMotionInput = input;
 
     motion.anchor({ tick.position.x, eyeY - EyeHeight, tick.position.z });
-    motionHistory.push_back({ clientTick, input, motion });
-    while (motionHistory.size() > MotionHistoryTicks) {
-        motionHistory.pop_front();
+    if (!frozen) {
+        motionHistory.push_back({ clientTick, input, motion, tick.knockedBack, tick.knockback });
+        while (motionHistory.size() > MotionHistoryTicks) {
+            motionHistory.pop_front();
+        }
     }
     MotionVector feet = motion.position();
     if (clientTick % 20 == 0) {
@@ -414,25 +523,35 @@ void Session::tickMotion()
 
 /**
  * Takes the server's state for a tick already sent, then runs every tick
- * sent since then again with its own input, so the correction lands in the
- * present instead of pulling the player back to where they were.
+ * sent since then again with its own input and the knockback it took, so the
+ * correction lands in the present instead of pulling the player back to where
+ * they were. Without a velocity from the server, the one the tick ended with
+ * is kept.
  */
-void Session::replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector& velocity, bool onGround)
+void Session::replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround)
 {
     auto corrected = std::find_if(motionHistory.begin(), motionHistory.end(), [tick](const SentMotionTick& sent) {
         return sent.tick == tick;
     });
     if (corrected == motionHistory.end()) {
-        motion.correct(position, velocity, onGround);
+        motion.correct(position, velocity ? *velocity : motion.currentVelocity(), onGround);
         motionHistory.clear();
+        MotionVector feet = motion.position();
+        std::lock_guard<std::mutex> guard(mutex);
+        current.player.current = { feet.x, feet.y, feet.z };
         return;
     }
-    corrected->after.correct(position, velocity, onGround);
+    MotionVector kept = velocity ? *velocity : corrected->after.currentVelocity();
+    corrected->after.correct(position, kept, onGround);
     PlayerMotion replay = corrected->after;
     PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
         return motionCell(x, y, z);
     };
     for (auto sent = std::next(corrected); sent != motionHistory.end(); ++sent) {
+        replay.takeSettings(sent->after);
+        if (sent->knockedBack) {
+            replay.knockback(sent->knockback);
+        }
         MotionTick result = replay.step(sent->input, lookup);
         float eyeY = result.position.y + EyeHeight;
         replay.anchor({ result.position.x, eyeY - EyeHeight, result.position.z });
@@ -440,6 +559,7 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     }
     motionHistory.erase(motionHistory.begin(), corrected);
     replay.keepPendingKnockback(motion);
+    replay.takeSettings(motion);
     motion = replay;
     MotionVector feet = motion.position();
     std::lock_guard<std::mutex> guard(mutex);

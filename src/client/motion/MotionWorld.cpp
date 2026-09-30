@@ -101,16 +101,13 @@ float PlayerMotion::friction(const world::CollisionState* state) const
         return 0.6f;
     }
     const std::string& name = table->name(*state);
-    if (name.find("blue_ice") != std::string::npos) {
+    if (name == "blue_ice") {
         return 0.989f;
     }
-    if (name.find("ice") != std::string::npos) {
+    if (name == "ice" || name == "packed_ice" || name == "frosted_ice") {
         return 0.98f;
     }
-    if (name.find("slime") != std::string::npos) {
-        return 0.8f;
-    }
-    if (name == "honey_block") {
+    if (name == "slime" || name == "honey_block") {
         return 0.8f;
     }
     return 0.6f;
@@ -217,7 +214,7 @@ float PlayerMotion::jumpPreventionMultiplier() const
     auto prevents = [&](const world::CollisionState* state) {
         return named(state, "honey") || named(state, "honey_block");
     };
-    return prevents(blockView(x, feetY, z)) || prevents(blockView(x, feetY - 1, z)) ? PreventedJumpMultiplier : 1.0f;
+    return prevents(blockView(x, feetY, z)) || prevents(blockView(x, feetY - 1, z)) ? HoneyJumpFactor : 1.0f;
 }
 
 bool PlayerMotion::canClimbOut(float boxBottom) const

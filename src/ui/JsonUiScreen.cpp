@@ -979,8 +979,19 @@ void JsonUiRuntime::paintHoverText(const Node& node, float alpha)
     }
     float limit = static_cast<float>(number(node, "hover_text_max_width", 0.0));
     std::vector<std::string_view> lines;
-    if (limit <= 0.0f || ui->wrap(value, TextStyle::Pixel, limit, lines) == 0) {
-        lines.assign(1, value);
+    std::string_view rest = value;
+    while (true) {
+        size_t end = rest.find('\n');
+        std::string_view segment = rest.substr(0, end);
+        std::vector<std::string_view> wrapped;
+        if (limit <= 0.0f || ui->wrap(segment, TextStyle::Pixel, limit, wrapped) == 0) {
+            wrapped.assign(1, segment);
+        }
+        lines.insert(lines.end(), wrapped.begin(), wrapped.end());
+        if (end == std::string_view::npos) {
+            break;
+        }
+        rest.remove_prefix(end + 1);
     }
     float width = 0.0f;
     for (std::string_view line : lines) {

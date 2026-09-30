@@ -1,15 +1,32 @@
 #include "MotionMath.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace kestrel {
 
 using namespace motion;
 
+namespace {
+
+/**
+ * The value kept between zero and the limit, so a clipped step can only
+ * shorten the requested movement, never lengthen or reverse it.
+ */
+float towardZero(float value, float limit)
+{
+    if (limit >= 0.0f) {
+        return std::clamp(value, 0.0f, limit);
+    }
+    return std::clamp(value, limit, 0.0f);
+}
+
+}
+
 void PlayerMotion::move()
 {
     MotionVector requested = velocity;
-    if (isSneaking && onGround && requested.y <= 0.0f) {
+    if (isSneaking && !isCrawling && onGround && requested.y <= 0.0f) {
         requested = avoidEdge(boundingBox(), requested);
         velocity = requested;
     }
@@ -47,8 +64,10 @@ void PlayerMotion::move()
         MotionVector up = clipAll(filtered, box, { 0.0f, StepHeight, 0.0f }, oneWay, nullptr);
         box = offset(box, up);
         MotionVector x = clipAll(filtered, box, { requested.x, 0.0f, 0.0f }, oneWay, nullptr);
+        x = { towardZero(x.x, requested.x), 0.0f, 0.0f };
         box = offset(box, x);
         MotionVector z = clipAll(filtered, box, { 0.0f, 0.0f, requested.z }, oneWay, nullptr);
+        z = { 0.0f, 0.0f, towardZero(z.z, requested.z) };
         box = offset(box, z);
         MotionVector down = clipAll(filtered, box, up.scaled(-1.0f), oneWay, nullptr);
         box = offset(box, down);

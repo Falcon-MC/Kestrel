@@ -52,7 +52,7 @@ struct MotionCell {
 /**
  * What the player asks for during one tick: the movement keys as a vector
  * (x sideways with left positive, y forward), the held keys and where they
- * look, in degrees.
+ * look, in degrees, with the worn gear that changes how the player moves.
  */
 struct MotionInput {
     float sideways = 0.0f;
@@ -63,6 +63,12 @@ struct MotionInput {
     bool usingItem = false;
     float yaw = 0.0f;
     float pitch = 0.0f;
+    bool elytra = false;
+    int32_t depthStrider = 0;
+    int32_t soulSpeed = 0;
+    int32_t swiftSneak = 0;
+    int32_t riptide = 0;
+    bool raining = false;
 };
 
 /**
@@ -72,10 +78,25 @@ struct MotionInput {
 struct MotionTick {
     MotionVector position;
     MotionVector velocity;
+    MotionVector movement;
+    float moveSideways = 0.0f;
+    float moveForward = 0.0f;
+    MotionVector knockback;
+    bool knockedBack = false;
     bool onGround = false;
     bool horizontalCollision = false;
     bool verticalCollision = false;
     bool startedJump = false;
+    bool jumping = false;
+    bool startGliding = false;
+    bool stopGliding = false;
+    bool startCrawling = false;
+    bool stopCrawling = false;
+    bool gliding = false;
+    bool crawling = false;
+    bool forcedSneak = false;
+    bool startSpinAttack = false;
+    bool stopSpinAttack = false;
     bool startSprinting = false;
     bool stopSprinting = false;
     bool startSneaking = false;
@@ -114,10 +135,24 @@ public:
     void correct(const MotionVector& position, const MotionVector& motion, bool grounded);
 
     /**
+     * Holds the player still for a tick the world around it has not loaded
+     * yet: the velocity is dropped so nothing falls through missing ground.
+     */
+    void hold();
+
+    /**
      * Carries a knockback the live state received but has not run yet over
      * to this replayed state.
      */
     void keepPendingKnockback(const PlayerMotion& live);
+
+    /**
+     * Takes what the server sets rather than what the simulation moves from
+     * another state: movement speed, gravity, scale, abilities, game type,
+     * effects and hunger, so a replayed tick runs with the settings it first
+     * ran with.
+     */
+    void takeSettings(const PlayerMotion& other);
 
     void setMovementSpeed(float current, float base);
     void setServerSprint(bool sprinting);
@@ -134,6 +169,16 @@ public:
     const MotionVector& position() const
     {
         return feet;
+    }
+
+    const MotionVector& currentVelocity() const
+    {
+        return velocity;
+    }
+
+    bool grounded() const
+    {
+        return onGround;
     }
 
     bool sneaking() const
@@ -198,12 +243,24 @@ private:
     bool canClimbOut(float boxBottom) const;
     bool findSupportingBlock(const world::CollisionBox& area, std::array<int32_t, 3>& found) const;
 
+    bool poseFits(float poseHeight) const;
+    void updatePose(const MotionInput& input, MotionTick& tick);
+    void updateGliding(const MotionInput& input, bool jumpPressed, MotionTick& tick);
     void updateInput(const MotionInput& input, MotionTick& tick);
+    bool exposedToRain() const;
+
+    /**
+     * Throws the player along the look direction the way releasing a riptide
+     * trident does while wet, lifting it off the ground first.
+     */
+    void launchRiptide(int32_t level, MotionTick& tick);
+    void updateSpinAttack(MotionTick& tick);
     void simulate();
     void runGroundAndAir();
     void runWater(const Fluid& fluid, bool touchingWater);
     void runLava();
     void runFlight(const MotionInput& input);
+    void runGlide();
     void moveRelative(float speed);
     void applyKnockback();
     void applyJump();
@@ -236,7 +293,7 @@ private:
     float gravity = 0.08f;
     float jumpHeight = 0.42f;
     float movementSpeed = 0.1f;
-    float defaultMovementSpeed = 0.1f;
+    float baseMovementSpeed = 0.1f;
     float airSpeed = 0.02f;
     float flySpeed = 0.05f;
     float verticalFlySpeed = 1.0f;
@@ -271,7 +328,16 @@ private:
     bool ready = false;
     bool jumpWasHeld = false;
     bool jumped = false;
+    bool jumpArc = false;
+    bool isGliding = false;
+    bool isCrawling = false;
+    bool forcedSneak = false;
+    bool wearsElytra = false;
+    int32_t depthStriderLevel = 0;
+    int32_t soulSpeedLevel = 0;
+    int32_t swiftSneakLevel = 0;
     int32_t flyToggleTicks = 0;
+    int32_t spinAttackTicks = 0;
 };
 
 }

@@ -12,8 +12,9 @@ namespace kestrel {
 namespace {
 
 using session::EyeHeight;
+using session::enchantmentLevel;
 
-constexpr double BreakReach = 6.0;
+constexpr double BreakReach = 5.7;
 constexpr int32_t DestroyDelayTicks = 5;
 constexpr uint32_t HitSoundTicks = 4;
 constexpr double LocalBreakMemory = 1.0;
@@ -45,7 +46,14 @@ std::array<int32_t, 3> cellOf(const Vector3f& position)
     return { int32_t(std::floor(position.x)), int32_t(std::floor(position.y)), int32_t(std::floor(position.z)) };
 }
 
-int32_t enchantmentLevel(const ItemStack& stack, int16_t id)
+world::CollisionBox unitBox()
+{
+    return { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
+}
+
+}
+
+int32_t session::enchantmentLevel(const ItemStack& stack, int16_t id)
 {
     if (stack.isAir() || !stack.mTag.isCompound()) {
         return 0;
@@ -62,13 +70,6 @@ int32_t enchantmentLevel(const ItemStack& stack, int16_t id)
         }
     }
     return 0;
-}
-
-world::CollisionBox unitBox()
-{
-    return { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
-}
-
 }
 
 void Session::setAttackHeld(bool held)
