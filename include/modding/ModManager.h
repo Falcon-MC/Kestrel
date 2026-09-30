@@ -63,10 +63,11 @@ struct ClientBridge {
 };
 
 /**
- * Loads every mod library in the mods folder and sits between the client and
+ * Loads the mod libraries in the mods folder and sits between the client and
  * them: the client reports what happens each frame, the mods get their events
- * and act through their context. Every mod found is enabled; taking a mod out
- * of the folder is how it gets turned off.
+ * and act through their context. Every mod found runs unless the player
+ * turned it off, which disabled.txt in the folder remembers; mods can be
+ * turned on and off, reloaded or removed while the game runs.
  */
 class ModManager {
 public:
@@ -128,6 +129,18 @@ public:
     std::vector<menu::ModKeyBind> listedKeyBinds() const;
     bool setKeyBind(const std::string& id, Key key);
 
+    /**
+     * Every library in the mods folder, running or not, for the Mods
+     * settings page.
+     */
+    std::vector<menu::ModEntry> listedMods() const;
+
+    /**
+     * Queues what the player asked from the Mods settings page; it runs at
+     * the start of the next update, outside any mod callback.
+     */
+    void request(menu::ModAction action);
+
     void drawHud(ui::Context& context, float width, float height, bool screenOpen);
 
     /**
@@ -150,6 +163,26 @@ public:
     void drawScreen(CustomLayer layer);
 
 private:
+    /**
+     * One library found in the folder: whether the player wants it running,
+     * the slot running it (0 while it is not) and why it last failed.
+     */
+    struct Record {
+        std::filesystem::path file;
+        bool enabled = true;
+        size_t owner = 0;
+        mod::ModInfo info;
+        std::string error;
+    };
+
+    void scan();
+    void loadRecord(Record& record);
+    void unloadRecord(Record& record);
+    void applyActions();
+    void loadDisabled();
+    void saveDisabled() const;
+    Record* record(const std::string& file);
+    ModSlot* slot(size_t owner) const;
     void reportError(size_t owner, std::string_view what);
     void registerBuiltins();
     void drainPackets();
@@ -158,6 +191,10 @@ private:
     std::unique_ptr<HostState> host;
     std::unique_ptr<ChatService> hostChat;
     std::vector<std::unique_ptr<ModSlot>> slots;
+    std::vector<Record> records;
+    std::set<std::string> disabled;
+    std::vector<menu::ModAction> pending;
+    size_t nextOwner = 1;
     std::set<size_t> warned;
     double started = 0.0;
     double tickClock = 0.0;

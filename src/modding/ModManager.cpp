@@ -10,6 +10,7 @@
 #include "mod/Events.h"
 #include "platform/Input.h"
 #include "platform/Library.h"
+#include "platform/Shell.h"
 #include "ui/Localization.h"
 
 #include "Protocol/MinecraftPacketIds.h"
@@ -18,6 +19,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <utility>
 
 namespace kestrel::modding {
 
@@ -130,49 +133,233 @@ void ModManager::loadFolder(const std::filesystem::path& folder)
     host->root = folder;
     std::error_code error;
     std::filesystem::create_directories(folder, error);
+    loadDisabled();
+    host->session.setPacketHook(host->packets);
+    registerBuiltins();
+    scan();
+}
 
+/**
+ * Picks up the libraries added to the folder since the last look, loading
+ * the ones not turned off, and lets go of the ones taken out of it.
+ */
+void ModManager::scan()
+{
+    std::error_code error;
     std::vector<std::filesystem::path> files;
     std::string extension = platform::Library::extension();
-    for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
+    for (const auto& entry : std::filesystem::directory_iterator(host->root, error)) {
         if (entry.is_regular_file(error) && lowercase(entry.path().extension().string()) == extension) {
             files.push_back(entry.path());
         }
     }
     std::sort(files.begin(), files.end());
 
-    for (const std::filesystem::path& file : files) {
-        std::string reason;
-        std::unique_ptr<ModSlot> slot = ModSlot::load(file, *host, slots.size() + 1, reason);
-        if (!slot) {
-            debugLog("mods: skipped " + file.filename().string() + ", " + reason);
-            std::fprintf(stderr, "Kestrel skipped the mod %s: %s\n", file.filename().string().c_str(), reason.c_str());
+    for (auto gone = records.begin(); gone != records.end();) {
+        if (std::find(files.begin(), files.end(), gone->file) != files.end()) {
+            ++gone;
             continue;
         }
-        bool taken = std::any_of(slots.begin(), slots.end(), [&](const auto& other) { return other->info().id == slot->info().id; });
-        if (taken) {
-            debugLog("mods: skipped " + file.filename().string() + ", another mod already uses the id " + slot->info().id);
-            continue;
-        }
-        debugLog("mods: loaded " + slot->info().id + " " + slot->info().version + " from " + file.filename().string());
-        host->loaded.push_back(slot->info());
-        slots.push_back(std::move(slot));
+        unloadRecord(*gone);
+        gone = records.erase(gone);
     }
-    if (slots.empty()) {
+    for (const std::filesystem::path& file : files) {
+        if (record(file.filename().string())) {
+            continue;
+        }
+        Record added;
+        added.file = file;
+        added.enabled = !disabled.contains(file.filename().string());
+        records.push_back(std::move(added));
+        if (records.back().enabled) {
+            loadRecord(records.back());
+        }
+    }
+}
+
+void ModManager::loadRecord(Record& entry)
+{
+    if (entry.owner != 0) {
         return;
     }
+    std::string name = entry.file.filename().string();
+    std::string reason;
+    std::unique_ptr<ModSlot> loaded = ModSlot::load(entry.file, *host, nextOwner++, reason);
+    if (!loaded) {
+        entry.error = reason;
+        debugLog("mods: skipped " + name + ", " + reason);
+        std::fprintf(stderr, "Kestrel skipped the mod %s: %s\n", name.c_str(), reason.c_str());
+        return;
+    }
+    entry.info = loaded->info();
+    bool taken = std::any_of(slots.begin(), slots.end(), [&](const auto& other) { return other->info().id == entry.info.id; });
+    if (taken) {
+        entry.error = "another mod already uses the id " + entry.info.id;
+        debugLog("mods: skipped " + name + ", " + entry.error);
+        return;
+    }
+    host->loaded.push_back(entry.info);
+    if (!loaded->enable()) {
+        std::erase_if(host->loaded, [&](const mod::ModInfo& info) { return info.id == entry.info.id; });
+        entry.error = "it failed to start, see debug.txt";
+        return;
+    }
+    debugLog("mods: loaded " + entry.info.id + " " + entry.info.version + " from " + name);
+    entry.error.clear();
+    entry.owner = loaded->owner();
+    slots.push_back(std::move(loaded));
+}
 
-    host->session.setPacketHook(host->packets);
-    registerBuiltins();
-    for (auto slot = slots.begin(); slot != slots.end();) {
-        if ((*slot)->enable()) {
-            ++slot;
+void ModManager::unloadRecord(Record& entry)
+{
+    if (entry.owner == 0) {
+        return;
+    }
+    size_t owner = entry.owner;
+    entry.owner = 0;
+    std::erase_if(host->loaded, [&](const mod::ModInfo& info) { return info.id == entry.info.id; });
+    std::erase_if(slots, [owner](const std::unique_ptr<ModSlot>& running) { return running->owner() == owner; });
+    warned.erase(owner);
+    debugLog("mods: unloaded " + entry.info.id + " from " + entry.file.filename().string());
+}
+
+/**
+ * Carries out what the Mods settings page asked since the last frame. A
+ * changed setting reloads its mod so the mod reads it again.
+ */
+void ModManager::applyActions()
+{
+    std::vector<menu::ModAction> actions = std::exchange(pending, {});
+    for (const menu::ModAction& action : actions) {
+        if (action.kind == menu::ModAction::Kind::Rescan) {
+            scan();
             continue;
         }
-        std::string id = (*slot)->info().id;
-        std::erase_if(host->loaded, [&](const mod::ModInfo& info) { return info.id == id; });
-        host->cursorOwners.erase((*slot)->owner());
-        slot = slots.erase(slot);
+        if (action.kind == menu::ModAction::Kind::OpenFolder) {
+            platform::openUrl(host->root.string());
+            continue;
+        }
+        Record* entry = record(action.file);
+        if (!entry) {
+            continue;
+        }
+        switch (action.kind) {
+        case menu::ModAction::Kind::Enable:
+            entry->enabled = true;
+            disabled.erase(action.file);
+            saveDisabled();
+            loadRecord(*entry);
+            break;
+        case menu::ModAction::Kind::Disable:
+            entry->enabled = false;
+            entry->error.clear();
+            disabled.insert(action.file);
+            saveDisabled();
+            unloadRecord(*entry);
+            break;
+        case menu::ModAction::Kind::Reload:
+            unloadRecord(*entry);
+            if (entry->enabled) {
+                loadRecord(*entry);
+            }
+            break;
+        case menu::ModAction::Kind::Remove: {
+            unloadRecord(*entry);
+            std::error_code error;
+            std::filesystem::remove(entry->file, error);
+            if (error) {
+                entry->error = "couldn't delete the file: " + error.message();
+                break;
+            }
+            disabled.erase(action.file);
+            saveDisabled();
+            std::erase_if(records, [&](const Record& other) { return other.file.filename().string() == action.file; });
+            break;
+        }
+        case menu::ModAction::Kind::SetConfig:
+            if (ModSlot* running = slot(entry->owner)) {
+                running->configStore().put(action.key, action.value);
+                running->configStore().save();
+                unloadRecord(*entry);
+                loadRecord(*entry);
+            }
+            break;
+        default:
+            break;
+        }
     }
+}
+
+void ModManager::loadDisabled()
+{
+    disabled.clear();
+    std::ifstream in(host->root / "disabled.txt");
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            disabled.insert(line);
+        }
+    }
+}
+
+void ModManager::saveDisabled() const
+{
+    std::ofstream out(host->root / "disabled.txt", std::ios::trunc);
+    for (const std::string& file : disabled) {
+        out << file << '\n';
+    }
+}
+
+ModManager::Record* ModManager::record(const std::string& file)
+{
+    for (Record& entry : records) {
+        if (entry.file.filename().string() == file) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+ModSlot* ModManager::slot(size_t owner) const
+{
+    for (const auto& running : slots) {
+        if (running->owner() == owner) {
+            return running.get();
+        }
+    }
+    return nullptr;
+}
+
+std::vector<menu::ModEntry> ModManager::listedMods() const
+{
+    std::vector<menu::ModEntry> entries;
+    for (const Record& entry : records) {
+        menu::ModEntry listed;
+        listed.file = entry.file.filename().string();
+        listed.id = entry.info.id;
+        listed.name = entry.info.name;
+        listed.version = entry.info.version;
+        listed.author = entry.info.author;
+        listed.description = entry.info.description;
+        listed.enabled = entry.enabled;
+        listed.loaded = entry.owner != 0;
+        listed.error = entry.error;
+        if (ModSlot* running = slot(entry.owner)) {
+            for (const std::string& key : running->configStore().keys()) {
+                listed.config.emplace_back(key, running->configStore().find(key).value_or(std::string()));
+            }
+        }
+        entries.push_back(std::move(listed));
+    }
+    return entries;
+}
+
+void ModManager::request(menu::ModAction action)
+{
+    pending.push_back(std::move(action));
 }
 
 bool ModManager::wantsCursor() const
@@ -335,6 +522,7 @@ void ModManager::observe(const SessionSnapshot& snapshot)
 
 void ModManager::update(float deltaSeconds)
 {
+    applyActions();
     if (slots.empty()) {
         return;
     }

@@ -64,7 +64,7 @@ constexpr Named<menu::SettingsPage> PageNames[] = {
     { "video", menu::SettingsPage::Video },
     { "audio", menu::SettingsPage::Audio },
     { "account", menu::SettingsPage::Account },
-    { "subscriptions", menu::SettingsPage::Subscriptions },
+    { "mods", menu::SettingsPage::Mods },
     { "global_resources", menu::SettingsPage::GlobalResources },
     { "storage", menu::SettingsPage::Storage },
     { "language", menu::SettingsPage::Language },

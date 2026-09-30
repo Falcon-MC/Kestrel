@@ -1101,6 +1101,7 @@ void Session::handleWorldPacket(std::string& payload)
         motionDimension = dimension->mDimension;
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
         motionHistory.clear();
+        serverMotions.clear();
         motionStarted = false;
         actors.clear();
         runtimeByUnique.clear();
@@ -1484,6 +1485,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     spawnInitialized = false;
     motion = PlayerMotion {};
     motionHistory.clear();
+    serverMotions.clear();
     motionStarted = false;
     teleportHandled = false;
     missedSwing = false;

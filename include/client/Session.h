@@ -872,6 +872,16 @@ private:
     };
     PlayerMotion motion;
     std::deque<SentMotionTick> motionHistory;
+
+    /**
+     * A velocity the server set on the player, kept for the input tick it
+     * applies at so a replay over that tick sets it again.
+     */
+    struct ServerMotion {
+        uint64_t tick = 0;
+        MotionVector velocity;
+    };
+    std::deque<ServerMotion> serverMotions;
     bool enderChestOpen = false;
     MotionInput motionInput;
     MotionInput lastMotionInput;

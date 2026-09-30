@@ -47,7 +47,7 @@ constexpr SettingsEntry SettingsEntries[] = {
     { SettingsPage::Video, "menu.video.tab.title", "Video", "hbui/World", nullptr, nullptr },
     { SettingsPage::Audio, "menu.audio.tab.title", "Audio", "hbui/sound-block", nullptr, nullptr },
     { SettingsPage::Account, "menu.account.tab.title", "Account", "hbui/account", nullptr, nullptr },
-    { SettingsPage::Subscriptions, "options.viewSubscriptions", "Subscriptions", "hbui/subscriptions", nullptr, nullptr },
+    { SettingsPage::Mods, "kestrel.settings.mods", "Mods", "hbui/resource-packs-icon", nullptr, nullptr },
     { SettingsPage::GlobalResources, "menu.globalpacks", "Global Resources", "hbui/resource-packs-icon", nullptr, nullptr },
     { SettingsPage::Storage, "menu.storage.tab.title", "Storage", "hbui/storage", nullptr, nullptr },
     { SettingsPage::Language, "menu.language.tab.title", "Language", "hbui/language", nullptr, nullptr },
@@ -974,6 +974,9 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         y += 6.0f;
         break;
     }
+    case SettingsPage::Mods:
+        modsPage(ui, x, y, w);
+        break;
     default: {
         settingsHeading(ui, x, y, w, entry ? tr(entry->key, entry->label) : tr("menu.settings", "Settings"), {});
         const char* key = "kestrel.settings.unavailable";
@@ -991,10 +994,6 @@ void Menu::settingsPage(Context& ui, const Rect& area)
             key = "kestrel.settings.unavailable.party";
             fallback = "Kestrel can't create or join parties yet, so there are no party settings.";
             break;
-        case SettingsPage::Subscriptions:
-            key = "kestrel.settings.unavailable.subscriptions";
-            fallback = "Kestrel can't show or manage Realms and Marketplace subscriptions.";
-            break;
         case SettingsPage::GlobalResources:
             key = "kestrel.settings.unavailable.globalResources";
             fallback = "Kestrel uses the vanilla resources and the packs servers send; global resource packs aren't supported yet.";
@@ -1009,6 +1008,114 @@ void Menu::settingsPage(Context& ui, const Rect& area)
     }
     ui.clearClip();
     pageContent = y + pageScroll - area.y + 8.0f;
+}
+
+/**
+ * Every library in the mods folder, each one turned on or off, reloaded or
+ * deleted on the spot, with its saved settings editable underneath; changes
+ * reach the client as mod actions it applies between frames.
+ */
+void Menu::modsPage(Context& ui, float x, float& y, float w)
+{
+    auto act = [this](ModAction::Kind kind, const std::string& file, std::string key = {}, std::string value = {}) {
+        modActions.push_back({ kind, file, std::move(key), std::move(value) });
+    };
+    constexpr float ButtonWidth = 68.0f;
+    constexpr float ButtonHeight = 20.0f;
+
+    settingsHeading(ui, x, y, w, tr("kestrel.settings.mods", "Mods"), tr("kestrel.settings.mods.description", "Turn mods on and off, reload them after an update, change their settings or remove them. Changes apply right away, even in game."));
+    float rowY = y;
+    settingsRow(ui, x, y, w, tr("kestrel.settings.mods.folder", "Mods folder"), tr("kestrel.settings.mods.folder.description", "Drop mod libraries here, then rescan to load them"), 31.33f, ButtonWidth * 2.0f + 6.0f);
+    if (ui.pressableButton("mods:rescan", "pressableElevatedSecondary", tr("kestrel.settings.mods.rescan", "Rescan"), { x + w - 12.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+        act(ModAction::Kind::Rescan, {});
+    }
+    if (ui.pressableButton("mods:folder", "pressableElevatedSecondary", tr("kestrel.settings.mods.open", "Open"), { x + w - 12.0f - ButtonWidth * 2.0f - 6.0f, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+        act(ModAction::Kind::OpenFolder, {});
+    }
+
+    if (modEntries.empty()) {
+        y += 8.0f;
+        y += ui.paragraph(tr("kestrel.settings.mods.empty", "No mods found. Put a mod library in the mods folder and press Rescan."), TextStyle::Ui, x + 12.0f, y, w - 24.0f, Muted0) + 12.0f;
+        return;
+    }
+
+    for (const ModEntry& entry : modEntries) {
+        std::string title = entry.name.empty() ? (entry.id.empty() ? entry.file : entry.id) : entry.name;
+        if (!entry.version.empty()) {
+            title += " " + entry.version;
+        }
+        std::string detail;
+        if (!entry.error.empty()) {
+            detail = "§c" + entry.error;
+        } else if (!entry.enabled) {
+            detail = tr("kestrel.settings.mods.disabled", "Turned off");
+        } else {
+            detail = entry.description.empty() ? entry.file : entry.description;
+            if (!entry.author.empty()) {
+                detail += " - " + entry.author;
+            }
+        }
+        rowY = y;
+        settingsRow(ui, x, y, w, title, detail, 31.33f, 38.0f + ButtonWidth + 12.0f);
+        if (toggle(ui, "mods:toggle:" + entry.file, { x + w - 12.0f - 38.0f, rowY + 7.67f, 38.0f, 16.0f }, entry.enabled)) {
+            act(entry.enabled ? ModAction::Kind::Disable : ModAction::Kind::Enable, entry.file);
+        }
+        bool opened = openedMod == entry.file;
+        if (ui.pressableButton("mods:open:" + entry.file, opened ? "pressableElevatedPrimary" : "pressableElevatedSecondary", opened ? tr("kestrel.settings.mods.less", "Less") : tr("kestrel.settings.mods.more", "More"), { x + w - 12.0f - 38.0f - 6.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+            openedMod = opened ? std::string() : entry.file;
+            removingMod.clear();
+            if (field == Field::ModConfig) {
+                field = Field::None;
+            }
+        }
+        if (!opened) {
+            continue;
+        }
+
+        rowY = y;
+        std::string file = trf("kestrel.settings.mods.file", "File: %s", { entry.file });
+        settingsRow(ui, x, y, w, file, entry.id.empty() ? std::string() : trf("kestrel.settings.mods.id", "Id: %s", { entry.id }), 31.33f, ButtonWidth * 2.0f + 6.0f);
+        bool removing = removingMod == entry.file;
+        if (ui.pressableButton("mods:remove:" + entry.file, removing ? "pressableElevatedPrimary" : "pressableElevatedSecondary", removing ? tr("kestrel.settings.mods.confirm", "Sure?") : tr("kestrel.settings.mods.remove", "Remove"), { x + w - 12.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+            if (removing) {
+                act(ModAction::Kind::Remove, entry.file);
+                removingMod.clear();
+                openedMod.clear();
+            } else {
+                removingMod = entry.file;
+            }
+        }
+        if (entry.enabled && ui.pressableButton("mods:reload:" + entry.file, "pressableElevatedSecondary", tr("kestrel.settings.mods.reload", "Reload"), { x + w - 12.0f - ButtonWidth * 2.0f - 6.0f, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+            act(ModAction::Kind::Reload, entry.file);
+        }
+
+        if (entry.config.empty()) {
+            if (entry.loaded) {
+                rowY = y;
+                settingsRow(ui, x, y, w, tr("kestrel.settings.mods.noConfig", "This mod has no saved settings"), {}, 24.0f);
+            }
+            continue;
+        }
+        for (const auto& [key, value] : entry.config) {
+            rowY = y;
+            bool editing = field == Field::ModConfig && editModFile == entry.file && editModKey == key;
+            const std::string& shown = editing ? editModValue : value;
+            settingsRow(ui, x, y, w, key, {}, 31.33f, 150.0f + ButtonWidth + 6.0f);
+            Rect input { x + w - 12.0f - ButtonWidth - 6.0f - 150.0f, rowY + 5.0f, 150.0f, ButtonHeight };
+            if (textField(ui, "mods:config:" + entry.file + ":" + key, {}, shown, input, editing) && !editing) {
+                field = Field::ModConfig;
+                editModFile = entry.file;
+                editModKey = key;
+                editModValue = value;
+            }
+            bool changed = editing && editModValue != value;
+            if (changed && ui.pressableButton("mods:save:" + entry.file + ":" + key, "pressableElevatedPrimary", tr("kestrel.settings.mods.save", "Save"), { x + w - 12.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+                act(ModAction::Kind::SetConfig, entry.file, key, editModValue);
+                field = Field::None;
+            }
+        }
+    }
+    y += 6.0f;
 }
 
 void Menu::todoScreen(Context& ui, float width, float height, std::string_view heading)
