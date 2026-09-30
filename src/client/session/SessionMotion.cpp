@@ -244,18 +244,20 @@ void Session::tickMotion()
         motion.setHunger(current.hud.hunger);
     }
 
+    bool waitingForWorld = false;
     if (!motionStarted) {
         if (!world.cohortLoaded() || world.stats().pendingSubChunks > 0 || !motionAreaLoaded(motion.position())) {
-            return;
+            waitingForWorld = true;
+        } else {
+            motionStarted = true;
+            MotionVector start = motion.position();
+            debugLog("movement started at " + std::to_string(start.x) + " " + std::to_string(start.y) + " " + std::to_string(start.z));
         }
-        motionStarted = true;
-        MotionVector start = motion.position();
-        debugLog("movement started at " + std::to_string(start.x) + " " + std::to_string(start.y) + " " + std::to_string(start.z));
     }
 
     MotionVector before = motion.position();
     MotionTick tick;
-    if (motionAreaLoaded(before)) {
+    if (!waitingForWorld && motionAreaLoaded(before)) {
         PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
             return motionCell(x, y, z);
         };
