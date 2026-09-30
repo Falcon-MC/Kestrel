@@ -10,7 +10,10 @@
 #include "modding/ModManager.h"
 
 #include <filesystem>
+#include <map>
+#include <string>
 #include <memory>
+#include <set>
 #include <vector>
 
 namespace kestrel::modding {
@@ -38,6 +41,13 @@ struct HostState {
     SessionSnapshot snapshot;
     const InputState* input = nullptr;
     bool inGame = false;
+    float uiScale = 1.0f;
+    std::set<size_t> cursorOwners;
+    std::map<size_t, CameraRequest> cameras;
+    std::map<size_t, std::set<std::string>> hiddenBlocks;
+    bool hiddenChanged = false;
+    mod::Vec3 viewPosition;
+    mod::Rotation viewRotation;
     double seconds = 0.0;
     mod::Environment environment;
     std::filesystem::path root;

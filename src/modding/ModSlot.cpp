@@ -75,7 +75,7 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , eventService(host, owner)
     , chatService(host)
     , playerService(host)
-    , worldService(host)
+    , worldService(host, owner)
     , networkService(host, owner)
     , commandService(host, owner)
     , loggerService(instance->info().id)
@@ -83,6 +83,7 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , shaderService(host, owner)
     , settings(host.root / instance->info().id / "config.txt")
     , inputService(host, owner, settings)
+    , cameraService(host, owner)
 {
 }
 
@@ -124,6 +125,11 @@ void ModSlot::releaseAll()
     host.scheduler.release(id);
     host.packets->release(id);
     host.shaders.release(id);
+    host.cursorOwners.erase(id);
+    host.cameras.erase(id);
+    if (host.hiddenBlocks.erase(id)) {
+        host.hiddenChanged = true;
+    }
 }
 
 mod::EventBus& ModSlot::events()
@@ -179,6 +185,11 @@ mod::Scheduler& ModSlot::scheduler()
 mod::Shaders& ModSlot::shaders()
 {
     return shaderService;
+}
+
+mod::Camera& ModSlot::camera()
+{
+    return cameraService;
 }
 
 std::filesystem::path ModSlot::dataDirectory()

@@ -30,8 +30,20 @@ public:
      * inventory is open.
      */
     virtual bool inGame() const = 0;
+    /**
+     * The mouse position in interface units, the ones Canvas draws in.
+     */
     virtual float mouseX() const = 0;
     virtual float mouseY() const = 0;
+
+    /**
+     * Frees the mouse while playing so it can point and click at what the
+     * mod draws: the cursor shows, the camera stops turning and the player
+     * stops moving and attacking. It stays free while any mod asks for it,
+     * and is given back when the mod unloads.
+     */
+    virtual void setCursorFree(bool free) = 0;
+    virtual bool cursorFree() const = 0;
 
     /**
      * Runs action when key is pressed in game. The press is kept from the

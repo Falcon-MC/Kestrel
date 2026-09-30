@@ -10,6 +10,7 @@
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/LaunchOptions.h"
+#include "client/ParticleRenderer.h"
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
 #include "client/Session.h"
@@ -161,6 +162,11 @@ private:
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBlockOverlays(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendChestLids(const std::array<int32_t, 3>& origin, double deltaSeconds, std::vector<world::ModelQuadGpu>& out);
+    uint32_t loadParticles(const std::vector<std::shared_ptr<const world::PackFiles>>& packs, uint32_t firstLayer, std::vector<uint8_t>& entityPixels);
+    void takeSessionParticles(const SessionSnapshot& snapshot);
+    void clearParticles();
+    void refreshParticleBlocks(double now);
+    void appendParticles(double deltaSeconds, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& opaque, std::vector<world::ModelQuadGpu>& blended);
     menu::HudSlot inventoryIcon(const HudItem& item);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
@@ -247,6 +253,18 @@ private:
     std::vector<ChestLidView> chestLidViews;
     std::map<std::array<int32_t, 3>, float> chestLidShown;
     BlockParticles blockParticles;
+    world::ParticleLibrary particleLibrary;
+    world::ParticleSystem particleSystem { particleLibrary };
+    ParticleRenderer particleRenderer;
+    ClientParticleEmitters particleEmitters;
+    std::vector<world::ParticleSpawn> particleSpawns;
+    std::vector<uint64_t> particleAttacks;
+    std::shared_ptr<const NearbyBlocks> nearbyBlocks;
+    std::vector<ClientParticleEmitters::BlockState> particleBlocks;
+    std::unordered_map<uint32_t, bool> particleBlockKinds;
+    std::pair<const void*, const void*> particleBlockKindsKey {};
+    double particleBlocksAt = 0.0;
+    int particleDimension = 0;
     Profiler profiler;
     ServerPinger pinger;
     std::unique_ptr<FeaturedServers> featured;
@@ -273,6 +291,7 @@ private:
     static constexpr double ThirdPersonRadius = 4.0;
     static constexpr uint64_t LocalActorId = ~0ull;
     int perspective = PerspectiveFirst;
+    bool cameraDetached = false;
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
     float localBodyYaw = 0.0f;

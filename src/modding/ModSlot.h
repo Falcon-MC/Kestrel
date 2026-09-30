@@ -50,6 +50,7 @@ public:
     mod::Logger& log() override;
     mod::Scheduler& scheduler() override;
     mod::Shaders& shaders() override;
+    mod::Camera& camera() override;
     std::filesystem::path dataDirectory() override;
     std::vector<mod::ModInfo> loadedMods() const override;
 
@@ -77,6 +78,7 @@ private:
     ShaderService shaderService;
     ModConfig settings;
     InputService inputService;
+    CameraService cameraService;
 };
 
 /**

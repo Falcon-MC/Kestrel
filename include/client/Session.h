@@ -10,6 +10,7 @@
 #include "world/BlockAssets.h"
 #include "world/BlockCollisions.h"
 #include "world/MeshScheduler.h"
+#include "world/Particles.h"
 #include "world/WorldStream.h"
 
 #include <array>
@@ -18,12 +19,14 @@
 #include <optional>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 
 class BedrockConnection;
 class BossEventPacket;
@@ -157,6 +160,7 @@ struct ActorView {
     // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
     std::array<std::string, 4> armor {};
     HudItem held;
+    uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;
     // A dropped item: the stack it shows, and once picked up who took it and when.
@@ -366,6 +370,74 @@ struct SidebarView {
     std::vector<std::pair<std::string, int32_t>> lines;
 };
 
+/**
+ * The loaded sub-chunks around the local player as they were at one tick,
+ * with what it takes to read their blocks. Sub-chunks never change once
+ * shared, so the client reads them without a lock: particles collide with
+ * them and the lit blocks among them give off flames and smoke.
+ */
+struct NearbyBlocks {
+    static constexpr int32_t Radius = 2;
+    static constexpr int32_t Span = Radius * 2 + 1;
+
+    int32_t dimension = 0;
+    std::array<int32_t, 3> base {};
+    std::vector<std::shared_ptr<const world::SubChunk>> subChunks;
+    std::shared_ptr<const world::BlockAssets> assets;
+    world::IdMapping ids;
+
+    /**
+     * The network block value of the first layer at a cell, or ImplicitAir
+     * outside the area or in a sub-chunk that is not loaded.
+     */
+    uint32_t value(int32_t x, int32_t y, int32_t z) const;
+    std::string name(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * Appends the collision boxes, in world coordinates, of every block
+     * touching the box from low to high.
+     */
+    void collisionBoxes(const std::array<double, 3>& low, const std::array<double, 3>& high, std::vector<std::array<double, 6>>& out) const;
+
+    /**
+     * Appends every cell within radius blocks of center whose block value
+     * wanted accepts, skipping the sub-chunks whose palette has none.
+     */
+    void find(const std::array<double, 3>& center, int32_t radius, const std::function<bool(uint32_t)>& wanted, std::vector<std::pair<std::array<int32_t, 3>, uint32_t>>& out) const;
+};
+
+/**
+ * Every loaded sub-chunk of the current dimension as it was at one tick,
+ * with what it takes to read their blocks, shared with the main thread for
+ * mods that look anywhere in the world.
+ */
+struct LoadedBlocks {
+    int32_t dimension = 0;
+    std::map<world::SubChunkKey, std::shared_ptr<const world::SubChunk>> subChunks;
+    std::shared_ptr<const world::BlockAssets> assets;
+    world::IdMapping ids;
+
+    bool loaded(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * The network block value of the first layer, or ImplicitAir where no
+     * sub-chunk is loaded.
+     */
+    uint32_t value(int32_t x, int32_t y, int32_t z) const;
+    std::string name(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * The block's states, each as "name: value".
+     */
+    std::vector<std::string> states(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * Whether the look ray stops at the block: anything but air, liquids and
+     * the blocks a mod hid.
+     */
+    bool selectable(int32_t x, int32_t y, int32_t z) const;
+};
+
 struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
@@ -439,6 +511,8 @@ struct SessionSnapshot {
     bool cohortComplete = false;
     bool updatesPending = false;
     std::vector<ActorView> actors;
+    std::shared_ptr<const NearbyBlocks> nearby;
+    std::shared_ptr<const LoadedBlocks> loaded;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
     SidebarView sidebar;
@@ -510,6 +584,25 @@ public:
      */
     void requestPickBlock(bool withData);
     std::vector<ParticleBurst> takeParticleBursts();
+
+    /**
+     * The particle effects the server started since the last call: level
+     * event particles and SpawnParticleEffect packets of the current
+     * dimension.
+     */
+    std::vector<world::ParticleSpawn> takeParticles();
+
+    /**
+     * Draws every block of the given names as air, redrawing the loaded
+     * terrain when the list changes.
+     */
+    void setHiddenBlocks(std::set<std::string> names);
+
+    /**
+     * The runtime ids of the entities the local player hit since the last
+     * call.
+     */
+    std::vector<uint64_t> takeAttacks();
     void requestInventory(InventoryCommand command);
 
     /**
@@ -549,6 +642,11 @@ private:
     void handleFormPacket(const std::shared_ptr<Packet>& packet);
     void flushForms();
     void queueSound(SoundRequest request);
+    void queueParticle(world::ParticleSpawn spawn);
+    void publishNearby();
+    void publishLoaded();
+    void applyHiddenBlocks();
+    void hideNewValues(const world::SubChunk* subChunk);
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
@@ -725,6 +823,11 @@ private:
     std::map<std::array<int32_t, 3>, double> recentBreaks;
     std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;
+    std::vector<world::ParticleSpawn> pendingParticles;
+    std::optional<std::set<std::string>> pendingHidden;
+    std::set<std::string> hiddenNames;
+    std::unordered_map<uint32_t, bool> hiddenChecked;
+    std::vector<uint64_t> pendingAttacks;
     /**
      * One sent movement tick: its number, the input it ran with and the
      * motion state it ended in, kept so a server correction of that tick can

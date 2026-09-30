@@ -200,6 +200,28 @@ std::vector<ChunkKey> ChunkStore::columns() const
     return keys;
 }
 
+std::vector<std::pair<SubChunkKey, std::shared_ptr<const SubChunk>>> ChunkStore::allSubChunks() const
+{
+    std::vector<std::pair<SubChunkKey, std::shared_ptr<const SubChunk>>> list;
+    for (const auto& [key, column] : columnsByKey) {
+        for (const auto& [y, subChunk] : column.subChunks) {
+            if (subChunk) {
+                list.push_back({ { key.dimension, key.x, y, key.z }, subChunk });
+            }
+        }
+    }
+    return list;
+}
+
+void ChunkStore::markAllDirty()
+{
+    for (const auto& [key, column] : columnsByKey) {
+        for (const auto& [y, subChunk] : column.subChunks) {
+            dirty.insert({ key.dimension, key.x, y, key.z });
+        }
+    }
+}
+
 size_t ChunkStore::columnCount() const
 {
     return columnsByKey.size();

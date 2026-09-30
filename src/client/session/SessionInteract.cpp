@@ -230,7 +230,22 @@ void Session::interact(bool use)
     if (target) {
         buildLast.reset();
     }
+    if (target && !use) {
+        constexpr size_t MaxPendingAttacks = 16;
+        std::lock_guard<std::mutex> guard(mutex);
+        if (pendingAttacks.size() < MaxPendingAttacks) {
+            pendingAttacks.push_back(target->runtimeId);
+        }
+    }
     transmit(packet);
+}
+
+std::vector<uint64_t> Session::takeAttacks()
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    std::vector<uint64_t> attacks = std::move(pendingAttacks);
+    pendingAttacks.clear();
+    return attacks;
 }
 
 /**

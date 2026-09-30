@@ -65,6 +65,18 @@ public:
     void clear();
 
     std::vector<ChunkKey> columns() const;
+
+    /**
+     * Every loaded sub-chunk with its key; sub-chunks never change once
+     * committed, so they can be read from any thread afterwards.
+     */
+    std::vector<std::pair<SubChunkKey, std::shared_ptr<const SubChunk>>> allSubChunks() const;
+
+    /**
+     * Asks for a new mesh of every loaded sub-chunk, after something that
+     * changes how blocks are drawn.
+     */
+    void markAllDirty();
     size_t columnCount() const;
     size_t subChunkCount() const;
     std::vector<SubChunkKey> takeDirty();

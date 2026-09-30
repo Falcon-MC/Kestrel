@@ -82,7 +82,7 @@ private:
 
 class WorldService final : public mod::World {
 public:
-    explicit WorldService(HostState& host);
+    WorldService(HostState& host, size_t owner);
 
     mod::ConnectionState state() const override;
     std::string serverName() const override;
@@ -98,9 +98,31 @@ public:
     std::vector<std::string> players() const override;
     mod::Sidebar sidebar() const override;
     mod::Environment environment() const override;
+    bool isLoaded(const mod::BlockPos& position) const override;
+    std::optional<mod::BlockInfo> block(const mod::BlockPos& position) const override;
+    std::optional<mod::RaycastHit> raycast(const mod::Vec3& from, const mod::Vec3& direction, double reach, bool entities) const override;
+    void setBlockHidden(std::string_view name, bool hidden) override;
+    void clearHiddenBlocks() override;
 
 private:
     HostState& host;
+    size_t owner;
+};
+
+class CameraService final : public mod::Camera {
+public:
+    CameraService(HostState& host, size_t owner);
+
+    mod::Vec3 position() const override;
+    mod::Rotation rotation() const override;
+    void detach(const mod::Vec3& position, mod::Rotation rotation) override;
+    void attach() override;
+    bool detached() const override;
+    void setFovScale(float scale) override;
+
+private:
+    HostState& host;
+    size_t owner;
 };
 
 class NetworkService final : public mod::Network {
@@ -128,6 +150,8 @@ public:
     bool inGame() const override;
     float mouseX() const override;
     float mouseY() const override;
+    void setCursorFree(bool free) override;
+    bool cursorFree() const override;
     mod::Subscription bind(mod::Key key, std::function<void()> action) override;
     mod::Subscription bind(mod::KeyBindSpec spec, std::function<void()> action) override;
 

@@ -53,7 +53,7 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
  */
 void Client::handleHotbarInput()
 {
-    bool playing = menu.capturesMouse() && worldShown;
+    bool playing = menu.capturesMouse() && worldShown && !mods->wantsCursor();
     session.setAttackHeld(playing && window->input().mouseDown);
     session.setUseHeld(playing && window->input().rightMouseDown);
     if (!playing) {
@@ -138,7 +138,7 @@ menu::HudView Client::buildHudView()
     for (const BossBarView& bar : state.bossBars) {
         view.bossBars.push_back({ bar.title, bar.progress, bar.color });
     }
-    view.crosshair = perspective == PerspectiveFirst && !view.hidden(menu::HudElement::Crosshair);
+    view.crosshair = perspective == PerspectiveFirst && !cameraDetached && !view.hidden(menu::HudElement::Crosshair);
     view.showHotbar = state.gameType != 6;
     view.showStats = state.gameType == 0 || state.gameType == 2;
     view.selected = std::clamp(state.selectedSlot, 0, 8);

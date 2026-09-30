@@ -60,6 +60,7 @@ protected:
     Logger& log() const { return context().log(); }
     Scheduler& scheduler() const { return context().scheduler(); }
     Shaders& shaders() const { return context().shaders(); }
+    Camera& camera() const { return context().camera(); }
 
     /**
      * Listens with a lambda: on<ChatReceivedEvent>([](ChatReceivedEvent& event) { ... }).

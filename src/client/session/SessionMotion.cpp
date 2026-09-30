@@ -26,6 +26,8 @@ using session::ScaleDataId;
 
 constexpr double TickSeconds = 0.05;
 constexpr size_t MotionHistoryTicks = 200;
+constexpr uint64_t NearbyRefreshTicks = 10;
+constexpr uint64_t LoadedRefreshTicks = 20;
 constexpr int32_t FlagsDataId = 0;
 constexpr int SprintingFlag = 3;
 constexpr int NoAiFlag = 16;
@@ -386,6 +388,12 @@ void Session::tickMotion()
         std::snprintf(line, sizeof(line), "tick %llu feet %.4f %.4f %.4f velocity %.4f %.4f %.4f ground %d jump %d sprint %d sneak %d", static_cast<unsigned long long>(clientTick), feet.x, feet.y, feet.z,
             tick.velocity.x, tick.velocity.y, tick.velocity.z, tick.onGround ? 1 : 0, tick.startedJump ? 1 : 0, tick.sprinting ? 1 : 0, tick.sneaking ? 1 : 0);
         debugLog(line);
+    }
+    if (clientTick % NearbyRefreshTicks == 0) {
+        publishNearby();
+    }
+    if (clientTick % LoadedRefreshTicks == 0) {
+        publishLoaded();
     }
     std::lock_guard<std::mutex> guard(mutex);
     current.player.active = true;

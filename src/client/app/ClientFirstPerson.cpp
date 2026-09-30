@@ -206,7 +206,7 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
  */
 void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
 {
-    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst) {
+    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached) {
         return;
     }
     const world::EntityRig* chosenRig = nullptr;
@@ -589,7 +589,7 @@ float Client::swingProgressSince(double start, double now) const
 float Client::swingProgress()
 {
     double now = secondsNow();
-    if (menu.capturesMouse() && window->input().mousePressed) {
+    if (menu.capturesMouse() && !mods->wantsCursor() && window->input().mousePressed) {
         startSwing(now);
     }
     return swingStart >= 0.0 ? swingProgressSince(swingStart, now) : 0.0f;

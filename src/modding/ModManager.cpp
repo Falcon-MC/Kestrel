@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 
 namespace kestrel::modding {
@@ -169,14 +170,59 @@ void ModManager::loadFolder(const std::filesystem::path& folder)
         }
         std::string id = (*slot)->info().id;
         std::erase_if(host->loaded, [&](const mod::ModInfo& info) { return info.id == id; });
+        host->cursorOwners.erase((*slot)->owner());
         slot = slots.erase(slot);
     }
 }
 
-void ModManager::handleInput(InputState& input, bool inGame)
+bool ModManager::wantsCursor() const
+{
+    return !host->cursorOwners.empty();
+}
+
+std::optional<CameraRequest> ModManager::cameraView() const
+{
+    for (const auto& [owner, request] : host->cameras) {
+        if (request.detached) {
+            return request;
+        }
+    }
+    return std::nullopt;
+}
+
+float ModManager::fovScale() const
+{
+    float scale = 1.0f;
+    for (const auto& [owner, request] : host->cameras) {
+        scale *= request.fovScale;
+    }
+    return std::clamp(scale, 0.05f, 3.0f);
+}
+
+void ModManager::setView(const mod::Vec3& position, mod::Rotation rotation)
+{
+    host->viewPosition = position;
+    host->viewRotation = rotation;
+}
+
+std::optional<std::set<std::string>> ModManager::takeHiddenBlocks()
+{
+    if (!host->hiddenChanged) {
+        return std::nullopt;
+    }
+    host->hiddenChanged = false;
+    std::set<std::string> names;
+    for (const auto& [owner, hidden] : host->hiddenBlocks) {
+        names.insert(hidden.begin(), hidden.end());
+    }
+    return names;
+}
+
+void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
 {
     host->input = &input;
     host->inGame = inGame;
+    host->uiScale = uiScale > 0.0f ? uiScale : 1.0f;
     if (slots.empty()) {
         return;
     }
@@ -211,8 +257,8 @@ void ModManager::handleInput(InputState& input, bool inGame)
         }
         mod::MouseClickEvent event;
         event.button = button;
-        event.x = input.mouseX;
-        event.y = input.mouseY;
+        event.x = input.mouseX / host->uiScale;
+        event.y = input.mouseY / host->uiScale;
         event.inGame = inGame;
         host->events.dispatch(event);
         if (event.isCancelled()) {
@@ -312,12 +358,17 @@ void ModManager::adjustMovement(MotionInput& input)
     event.jump = input.jump;
     event.sneak = input.sneak;
     event.sprint = input.sprint;
+    event.rotation = { input.yaw, input.pitch };
     host->events.dispatch(event);
     input.forward = std::clamp(event.forward, -1.0f, 1.0f);
     input.sideways = std::clamp(event.sideways, -1.0f, 1.0f);
     input.jump = event.jump;
     input.sneak = event.sneak;
     input.sprint = event.sprint;
+    if (event.overrideRotation && std::isfinite(event.rotation.yaw) && std::isfinite(event.rotation.pitch)) {
+        input.yaw = event.rotation.yaw;
+        input.pitch = std::clamp(event.rotation.pitch, -90.0f, 90.0f);
+    }
 }
 
 bool ModManager::receiveChat(const ChatMessage& message, std::string& text)

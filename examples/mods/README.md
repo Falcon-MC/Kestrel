@@ -47,13 +47,14 @@ Kestrel down, though the handler that threw stops for that call.
 | `events()` | subscribe to any event by type, post your own events to other mods |
 | `chat()` | send to the server, print locally, toast, title, action bar, chat history |
 | `player()` | position, rotation (and turning), health, food, xp, inventory, effects, attack, use, drop, respawn |
-| `world()` | server, dimension, time, weather, entities, the targeted block, player list, sidebar |
+| `world()` | server, dimension, time, weather, entities, the targeted block, player list, sidebar, any block of a loaded chunk (`block`, `isLoaded`), `raycast` through blocks and entities, `setBlockHidden` to draw blocks as air |
 | `network()` | connect, disconnect, raw packets, form answers, packet filters |
-| `input()` | held keys, mouse, whether the player is in game, key bindings (`bind(key)` hidden, `bind({ id, label, defaultKey })` listed in Keyboard & Mouse while the mod is loaded) |
+| `input()` | held keys, mouse (in Canvas units), `setCursorFree(true)` to show the cursor and pause play while a mod menu is open, whether the player is in game, key bindings (`bind(key)` hidden, `bind({ id, label, defaultKey })` listed in Keyboard & Mouse while the mod is loaded) |
 | `commands()` | `.name args` chat commands that never reach the server; `.help` and `.mods` are built in |
 | `config()` | `key=value` settings in `mods/<id>/config.txt`, saved on unload |
 | `scheduler()` | `after`, `every`, `nextFrame` on the main thread, `post` from any thread |
 | `shaders()` | custom shaders for the HUD and the world |
+| `camera()` | where the view is drawn from, `detach(position, rotation)` for a free camera, `setFovScale` to zoom |
 | `log()` | lines in `debug.txt` and the console, prefixed with the mod id |
 
 Helpers on `Mod` shorten the common cases: `on<Event>(lambda)`, `on(&MyMod::method)`, `command(...)`,
@@ -76,7 +77,7 @@ with `ListenOptions::receiveCancelled`.
 | `TitleEvent`, `ActionbarEvent`, `ToastEvent` | HUD text from the server | not shown |
 | `FormEvent` | a server form | not opened, answer it yourself |
 | `KeyPressEvent`, `MouseClickEvent` | input | the client ignores the press |
-| `MovementEvent` | movement keys each frame, all fields writable | |
+| `MovementEvent` | movement keys each frame, all fields writable; `overrideRotation` sends another rotation | |
 | `HudRenderEvent` | draw over the HUD with `event.canvas` | |
 | `PostProcessEvent` | add full screen passes with `event.chain` | |
 | `WorldRenderEvent` | draw into the world with `event.painter` | |

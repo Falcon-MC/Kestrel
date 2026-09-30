@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -28,6 +29,17 @@ namespace kestrel::modding {
 struct HostState;
 class ModSlot;
 class ChatService;
+
+/**
+ * What one mod asked of the camera: to draw from its own place, and how
+ * wide to make the view.
+ */
+struct CameraRequest {
+    bool detached = false;
+    mod::Vec3 position;
+    mod::Rotation rotation;
+    float fovScale = 1.0f;
+};
 
 /**
  * What only the client knows how to do, handed to the mods' services.
@@ -64,9 +76,33 @@ public:
 
     /**
      * Key and click events for this frame's input, before anything else reads
-     * it; a cancelled press is taken out of input.
+     * it; a cancelled press is taken out of input. uiScale turns the pixel
+     * mouse position into the interface units mods draw in.
      */
-    void handleInput(InputState& input, bool inGame);
+    void handleInput(InputState& input, bool inGame, float uiScale);
+
+    /**
+     * Whether a mod has freed the mouse, so play should give the cursor back.
+     */
+    bool wantsCursor() const;
+
+    /**
+     * Where a mod wants the world drawn from this frame, if one detached the
+     * camera, and the field of view scale all mods asked for together.
+     */
+    std::optional<CameraRequest> cameraView() const;
+    float fovScale() const;
+
+    /**
+     * Tells the mods where the view was drawn from, for Camera::position.
+     */
+    void setView(const mod::Vec3& position, mod::Rotation rotation);
+
+    /**
+     * Every block name the mods hide, when the list changed since the last
+     * call.
+     */
+    std::optional<std::set<std::string>> takeHiddenBlocks();
     void observe(const SessionSnapshot& snapshot);
     void update(float deltaSeconds);
     void adjustMovement(MotionInput& input);
