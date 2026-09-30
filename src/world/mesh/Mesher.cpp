@@ -186,9 +186,14 @@ struct VisibilityMasks {
     }
 };
 
-bool cullsFace(uint8_t source, uint8_t neighbour)
+/**
+ * Whether a face is hidden by the block beside it: a full face covers it, and
+ * of the two faces two leaf blocks share only the one facing the negative way
+ * is kept, so the plane between them is drawn once.
+ */
+bool cullsFace(Face face, uint8_t source, uint8_t neighbour)
 {
-    return (neighbour & FlagOccludesFullFace) || ((source & FlagLeafModel) && (neighbour & FlagLeafModel));
+    return (neighbour & FlagOccludesFullFace) || (!isNegative(face) && (source & FlagLeafModel) && (neighbour & FlagLeafModel));
 }
 
 Columns exposedColumns(Face face, const PaletteFacts& facts, const VisibilityMasks& masks, const PaletteFacts& neighbour)
@@ -201,15 +206,14 @@ Columns exposedColumns(Face face, const PaletteFacts& facts, const VisibilityMas
             uint32_t occluderColumn = masks.occluders.column(face, u, v);
             uint32_t leafColumn = masks.leaves.column(face, u, v);
             uint32_t neighbourOccluders = isNegative(face) ? occluderColumn << 1 : occluderColumn >> 1;
-            uint32_t neighbourLeaves = isNegative(face) ? leafColumn << 1 : leafColumn >> 1;
-            uint32_t leafPairs = leafColumn & neighbourLeaves;
+            uint32_t leafPairs = isNegative(face) ? 0u : leafColumn & (leafColumn >> 1);
             uint32_t faces = geometryColumn & ~neighbourOccluders & ~leafPairs & FullColumn;
 
             if (faces & boundaryBit) {
                 uint32_t slice = isNegative(face) ? 0 : Side - 1;
                 auto [sx, sy, sz] = blockCoordinate(face, slice, u, v);
                 auto [nx, ny, nz] = neighbourBoundaryCoordinate(face, u, v);
-                if (cullsFace(facts.at(sx, sy, sz).flags, neighbour.at(nx, ny, nz).flags)) {
+                if (cullsFace(face, facts.at(sx, sy, sz).flags, neighbour.at(nx, ny, nz).flags)) {
                     faces &= ~boundaryBit;
                 }
             }

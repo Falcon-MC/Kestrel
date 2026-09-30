@@ -82,6 +82,16 @@ struct HudTitle {
 };
 
 /**
+ * The game tip over the hotbar: its text, the name of its animation under
+ * textures/ui/game_tip_animations and a serial, zero when no tip shows.
+ */
+struct HudGameTip {
+    std::string text;
+    std::string animation;
+    uint64_t serial = 0;
+};
+
+/**
  * A chat line the HUD shows until it fades; the serial tells lines apart so
  * each keeps its own fade.
  */
@@ -132,6 +142,7 @@ struct HudView {
     HudText tip;
     HudText actionbar;
     HudTitle title;
+    HudGameTip gameTip;
     std::vector<HudChatLine> chat;
     float health = 20.0f;
     float maxHealth = 20.0f;

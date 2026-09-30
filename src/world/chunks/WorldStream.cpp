@@ -21,7 +21,7 @@ namespace {
 
 constexpr uint8_t MaxRetries = 2;
 constexpr auto ResponseTimeout = std::chrono::seconds(2);
-constexpr auto CohortSettleTime = std::chrono::seconds(3);
+constexpr auto CohortSettleTime = std::chrono::seconds(2);
 
 int32_t floorDiv16(int32_t value)
 {
@@ -372,7 +372,12 @@ bool WorldStream::cohortLoaded() const
     if (complete) {
         return true;
     }
-    return pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime && centerLoaded();
+    return settled();
+}
+
+bool WorldStream::settled() const
+{
+    return pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime;
 }
 
 /**

@@ -1495,6 +1495,7 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
     jsonUi = std::move(definitions);
     hudScreen.reset();
     safeZoneScreen.reset();
+    chatUi.reset();
     forms.setDefinitions(jsonUi);
 }
 

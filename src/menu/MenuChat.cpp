@@ -23,48 +23,46 @@ constexpr size_t MaxFeedLines = 50;
 constexpr size_t MaxChatHistory = 100;
 constexpr float FeedLifetimeSeconds = 10.0f;
 constexpr float FeedFadeSeconds = 1.0f;
-constexpr float ChatTopBarHeight = 23.0f;
-constexpr float ChatBottomBarHeight = 27.0f;
-constexpr float SendButtonWidth = 44.0f;
-constexpr float HintRowHeight = 10.0f;
-constexpr Color ChatBackground { 0, 0, 0, 178 };
-constexpr Color CommandCover { 0, 0, 0, 110 };
-constexpr Color ChatTitleInk { 76, 76, 76, 255 };
-constexpr Color SelectionFill { 0x3c, 0x8a, 0xd6, 255 };
-constexpr Color HintBorder { 179, 179, 179, 255 };
-
-Interaction lightButton(Context& ui, std::string_view id, const Rect& rect, bool enabled)
-{
-    Interaction state = enabled ? ui.interact(id, rect) : Interaction {};
-    ui.fill(rect, { 19, 19, 19, 255 });
-    const char* face = !enabled ? "ui/button_borderless_dark"
-        : state.pressed ? "ui/button_borderless_lightpressed"
-        : state.hovered ? "ui/button_borderless_lighthover"
-                        : "ui/button_borderless_light";
-    ui.nineSlice(rect.inset(1.0f), face);
-    return state;
-}
+constexpr const char* ChatRoot = "chat.chat_screen";
+// commands_panel is the screen less 50px, and each auto_complete row is 10px tall.
+constexpr float ChatChromeHeight = 50.0f;
+constexpr float AutoCompleteRowHeight = 10.0f;
+constexpr const char* HelpAlias = "?";
+constexpr const char* HelpDescription = "commands.help.description";
+constexpr const char* Ellipsis = "\xE2\x80\xA6";
+constexpr const char* Italic = "\xC2\xA7o";
+constexpr const char* GreenSlash = "\xC2\xA7" "a/\xC2\xA7r";
 
 bool blank(std::string_view text)
 {
     return std::all_of(text.begin(), text.end(), [](char c) { return c == ' ' || c == '\t'; });
 }
 
-// The end of text that fits in width, so the box follows the caret like the game's edit box does.
-std::string_view visibleTail(Context& ui, std::string_view text, float width)
+/**
+ * A command description as the list shows it: servers send the game's own
+ * as language keys and their own as plain text.
+ */
+std::string commandDescription(const std::string& description)
 {
-    size_t start = 0;
-    while (start < text.size() && ui.measure(text.substr(start), TextStyle::Pixel) > width) {
-        nextCodepoint(text, start);
+    if (!description.empty() && description.front() == '%') {
+        return Localization::shared().translateMessage(description);
     }
-    return text.substr(start);
+    return Localization::shared().has(description) ? tr(description, description) : description;
 }
 
 CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand>>& commands,
     const std::vector<std::string>& players, std::string_view draft)
 {
     if (!draft.empty() && draft.front() == '/') {
-        return commands ? commandHints(*commands, players, draft) : CommandHints {};
+        CommandHints hints = commands ? commandHints(*commands, players, draft) : CommandHints {};
+        std::string_view typed = draft.substr(1);
+        bool naming = commands && typed.find_first_of(" \t") == std::string_view::npos;
+        bool listed = std::any_of(hints.suggestions.begin(), hints.suggestions.end(), [](const CommandSuggestion& suggestion) { return suggestion.text == HelpAlias; });
+        if (naming && std::string_view(HelpAlias).starts_with(typed) && !listed) {
+            hints.replaceFrom = 1;
+            hints.suggestions.insert(hints.suggestions.begin(), CommandSuggestion { HelpAlias, HelpDescription });
+        }
+        return hints;
     }
 
     CommandHints hints;
@@ -99,7 +97,7 @@ void Menu::addChatLine(std::string text)
 void Menu::clearChat()
 {
     chatLines.clear();
-    chatScroll = 0.0f;
+    chatToBottom = true;
 }
 
 void Menu::openChat(std::string draft)
@@ -109,7 +107,7 @@ void Menu::openChat(std::string draft)
     selectedField = Field::None;
     chatDraft = std::move(draft);
     chatRecall.reset();
-    chatScroll = 0.0f;
+    chatToBottom = true;
 }
 
 void Menu::closeChat()
@@ -140,7 +138,7 @@ void Menu::submitChat()
     chatDraft.clear();
     chatRecall.reset();
     selectedField = Field::None;
-    chatScroll = 0.0f;
+    chatToBottom = true;
     if (command) {
         closeChat();
     }
@@ -254,139 +252,167 @@ std::vector<HudChatLine> Menu::hudChat() const
 }
 
 /**
- * The list the game puts right above the box while a command is typed, drawn
- * straight on the chat cover: the completions for the word being typed and,
- * nearest the box, the syntax hint of every overload that still fits. The
- * log underneath dims while a command or an @ mention is being typed.
- * Clicking a completion takes it.
+ * The rows of the chat screen's auto_complete collection, top down: the
+ * completions for the word being typed, each with its description in
+ * italics, then the syntax hint of every overload that still fits. A list
+ * longer than the panel ends in an ellipsis, and while Tab cycles the window
+ * follows the pick.
  */
-void Menu::commandPanel(Context& ui, float width, float bottom, float top)
+std::vector<Menu::ChatRow> Menu::chatRows(size_t capacity) const
 {
-    if (chatDraft.empty()) {
-        return;
+    std::vector<ChatRow> rows;
+    if (chatDraft.empty() || capacity == 0) {
+        return rows;
     }
     bool cycling = !chatCycle.empty() && chatDraft == chatCycleDraft;
     CommandHints hints = chatCompletions(commands, players, chatDraft);
     const std::vector<CommandSuggestion>& suggestions = cycling ? chatCycle : hints.suggestions;
     std::string base = cycling ? chatCycleBase : chatDraft.substr(0, hints.replaceFrom);
-    bool commandNames = chatDraft.front() == '/' && base == "/";
 
-    size_t capacity = static_cast<size_t>(std::max(0.0f, std::floor((bottom - top) / HintRowHeight)));
-    size_t usageRows = std::min(hints.usage.size(), capacity);
-    size_t room = capacity - usageRows;
-    size_t first = cycling && chatCycleIndex >= room ? chatCycleIndex + 1 - room : 0;
-    size_t shown = std::min(room, suggestions.size() - std::min(first, suggestions.size()));
-    size_t rows = shown + usageRows;
-    // The log dims under a command being typed and under @ mention picks.
-    if (chatDraft.front() == '/' || rows > 0) {
-        ui.fill({ 0.0f, top, width, bottom - top }, CommandCover);
-    }
-    if (rows == 0) {
-        return;
-    }
-
-    float y = bottom - static_cast<float>(rows) * HintRowHeight;
-    std::optional<std::string> picked;
-    for (size_t i = first; i < first + shown; ++i) {
-        const CommandSuggestion& suggestion = suggestions[i];
-        Rect row { 0.0f, y, width, HintRowHeight };
-        Interaction state = ui.interact("chat:hint:" + suggestion.text, row);
-        if (state.hovered || (cycling && i == chatCycleIndex)) {
-            ui.outline(row, HintBorder);
-        }
-        std::string label = commandNames ? "/" + suggestion.text : suggestion.text;
+    std::vector<ChatRow> all;
+    for (const CommandSuggestion& suggestion : suggestions) {
+        std::string text = suggestion.text;
         if (!suggestion.description.empty()) {
-            // Servers send vanilla descriptions as language keys and their own as plain text.
-            label += "\xC2\xA7" "7 - " + tr(suggestion.description, suggestion.description);
+            text += std::string(" - ") + Italic + commandDescription(suggestion.description);
         }
-        ui.text(label, TextStyle::Pixel, 2.0f, y + 1.0f, White, width - 4.0f);
-        if (state.clicked) {
-            picked = suggestion.text;
-        }
-        y += HintRowHeight;
+        all.push_back({ std::move(text), base + suggestion.text });
     }
-    for (size_t i = hints.usage.size() - usageRows; i < hints.usage.size(); ++i) {
-        ui.text(hints.usage[i], TextStyle::Pixel, 2.0f, y + 1.0f, White, width - 4.0f);
-        y += HintRowHeight;
+    for (const std::string& line : hints.usage) {
+        all.push_back({ line, std::nullopt });
     }
-    if (picked) {
-        chatDraft = base + *picked;
-        chatCycle.clear();
-        chatRecall.reset();
+    if (all.size() <= capacity) {
+        return all;
     }
+    size_t room = capacity - 1;
+    size_t first = cycling && chatCycleIndex >= room ? chatCycleIndex + 1 - room : 0;
+    first = std::min(first, all.size() - room);
+    rows.assign(std::make_move_iterator(all.begin() + static_cast<std::ptrdiff_t>(first)), std::make_move_iterator(all.begin() + static_cast<std::ptrdiff_t>(first + room)));
+    rows.push_back({ Ellipsis, std::nullopt });
+    return rows;
 }
 
 /**
- * The chat screen: a dark cover, the top bar with Back and the title, every
- * kept line above the bottom bar scrolled to the newest, and the message box
- * with its send button.
+ * chat_screen.json, fed the way the game's chat screen controller feeds it:
+ * the kept lines in messages_factory, the completions in the auto_complete
+ * collection with the log hidden under them, the draft in the message box
+ * and the header, keyboard, settings and send buttons. The draft is typed
+ * and kept by the menu, so the edit box only shows it.
  */
 void Menu::chatScreen(Context& ui, float width, float height)
 {
-    field = Field::Chat;
-    ui.fill(screenBounds, ChatBackground);
-
-    Rect area { 2.0f, ChatTopBarHeight, width - 2.0f, height - ChatTopBarHeight - ChatBottomBarHeight };
-    float textWidth = area.w - 3.0f - 5.0f;
-    std::vector<float> heights;
-    heights.reserve(chatLines.size());
-    float content = 0.0f;
-    for (const ChatLine& line : chatLines) {
-        heights.push_back(ui.paragraphHeight(line.text, TextStyle::Pixel, textWidth));
-        content += heights.back();
-    }
-    float limit = std::max(0.0f, content - area.h);
-    float offset = limit - std::clamp(chatScroll, 0.0f, limit);
-    scrollArea(ui, area, offset, content);
-    chatScroll = limit - offset;
-    ui.setClip(area);
-    float y = area.bottom() - content + chatScroll;
-    for (size_t i = 0; i < chatLines.size(); ++i) {
-        if (y + heights[i] > area.y && y < area.bottom()) {
-            ui.paragraph(chatLines[i].text, TextStyle::Pixel, area.x, y, textWidth, White);
+    bool open = dialog == Dialog::Chat;
+    if (!jsonUi) {
+        if (open) {
+            closeChat();
         }
-        y += heights[i];
+        return;
     }
-    ui.clearClip();
-    commandPanel(ui, width, height - ChatBottomBarHeight, ChatTopBarHeight);
-
-    ui.nineSlice({ 0.0f, 0.0f, width, ChatTopBarHeight }, "ui/StoreTopBar");
-    std::string back = tr("controller.buttonTip.back", "Back");
-    Rect backRect { 2.0f, 2.0f, 4.0f + 4.0f + 4.0f + ui.measure(back, TextStyle::Pixel) + 8.0f, 18.0f };
-    Interaction backState = lightButton(ui, "chat:back", backRect, true);
-    float lift = backState.pressed ? 1.0f : 0.0f;
-    Color backInk = backState.hovered ? White : ButtonText;
-    ui.sprite({ backRect.x + 5.0f, backRect.y + 5.0f + lift, 4.0f, 7.0f }, "ui/chevron_left", backInk);
-    ui.text(back, TextStyle::Pixel, backRect.x + 13.0f, backRect.y + 5.0f + lift, backInk);
-    ui.textCentered(tr("chat.title", "Chat"), TextStyle::Pixel, { 0.0f, 0.0f, width, ChatTopBarHeight - 3.0f }, ChatTitleInk);
-
-    float barY = height - ChatBottomBarHeight;
-    Rect box { 0.0f, barY, width - SendButtonWidth, ChatBottomBarHeight };
-    ui.nineSlice(box, "ui/edit_box_indent");
-    float room = box.w - 6.0f;
-    float textY = std::round(box.y + (box.h - 8.0f) * 0.5f);
-    std::string_view shown = visibleTail(ui, chatDraft, room - 2.0f);
-    float shownWidth = shown.empty() ? 0.0f : ui.measure(shown, TextStyle::Pixel);
-    bool selected = selectedField == Field::Chat && !chatDraft.empty();
-    if (selected) {
-        ui.fill({ box.x + 2.0f, textY - 1.0f, shownWidth + 2.0f, 10.0f }, SelectionFill);
+    if (!chatUi) {
+        chatUi = std::make_unique<ui::JsonUiScreen>(jsonUi, ChatRoot);
     }
-    ui.text(shown, TextStyle::Pixel, box.x + 3.0f, textY, White);
+    if (!chatUi->valid()) {
+        if (open) {
+            closeChat();
+        }
+        return;
+    }
+    if (open) {
+        field = Field::Chat;
+    }
+
+    using ui::UiValue;
+    size_t capacity = static_cast<size_t>(std::max(0.0f, std::floor((height - ChatChromeHeight) / AutoCompleteRowHeight)));
+    std::vector<ChatRow> rows = chatRows(capacity);
+
+    ui::UiData data;
+    ui::UiRow& globals = data.globals;
+    bool cheats = commands && !commands->empty();
+    globals["#chat_title_text"] = UiValue::of(cheats ? tr("chat.title.cheats", "Chat and Commands") : tr("chat.title", "Chat"));
+    globals["#chat_title_visible"] = UiValue::of(true);
+    globals["#back_button_text"] = UiValue::of(tr("controller.buttonTip.back", "Back"));
+    globals["#chat_visible"] = UiValue::of(rows.empty());
+    globals["#scroll_chat_to_bottom"] = UiValue::of(chatToBottom);
+    globals["#has_new_messages"] = UiValue::of(false);
+    globals["#keyboard_button_visible"] = UiValue::of(true);
+    globals["#keyboard_being_used"] = UiValue::of(false);
+    globals["#gamepad_helper_visible"] = UiValue::of(false);
+    globals["#text_box_enabled"] = UiValue::of(true);
+    globals["#send_button_visible"] = UiValue::of(!blank(chatDraft));
+    globals["#send_button_accessibility_text"] = UiValue::of(tr("accessibility.chat.tts.sendChatMessage", "Send"));
+    globals["#chat_coordinate_dropdown_visible"] = UiValue::of(false);
+    globals["#copy_button_enabled"] = UiValue::of(false);
+    globals["#coordinates_text"] = UiValue::of(std::string());
+    globals["#cheats_on"] = UiValue::of(false);
+    for (const char* panel : { "#host_main_visible", "#host_teleport_main_visible", "#host_teleport_players_visible", "#host_time_visible", "#host_weather_visible" }) {
+        globals[panel] = UiValue::of(false);
+    }
+
+    std::string shown = chatDraft.starts_with('/') ? GreenSlash + chatDraft.substr(1) : chatDraft;
     bool caretOn = std::fmod(std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count(), 1.0f) < 0.5f;
-    if (!selected && caretOn) {
-        ui.fill({ box.x + 3.0f + shownWidth + (shown.empty() ? 0.0f : 1.0f), textY - 1.0f, 1.0f, 10.0f }, White);
+    if (open && caretOn) {
+        shown += "_";
+    }
+    globals["#message_text_box_content"] = UiValue::of(std::move(shown));
+
+    std::vector<ui::UiRow>& messages = data.collections["messages_factory"];
+    std::vector<ui::UiFactoryItem>& made = data.factories["messages_factory"];
+    for (const ChatLine& line : chatLines) {
+        messages.push_back({ { "#text", UiValue::of(line.text) } });
+        made.push_back({ "chat_screen_messages", {
+            { "$chat_font_scale_factor", UiValue::of(1.0) },
+            { "$chat_line_spacing", UiValue::of(0.0) },
+            { "$chat_font_type", UiValue::of(std::string("default")) },
+        }, line.serial });
     }
 
-    bool canSend = !blank(chatDraft);
-    Rect send { width - SendButtonWidth, barY, SendButtonWidth, ChatBottomBarHeight };
-    Interaction sendState = lightButton(ui, "chat:send", send, canSend);
-    ui.sprite({ std::round(send.x + (send.w - 21.0f) * 0.5f), std::round(send.y + (send.h - 18.0f) * 0.5f) + (sendState.pressed ? 1.0f : 0.0f), 21.0f, 18.0f }, "ui/chat_send");
-
-    if (sendState.clicked) {
-        submitChat();
+    std::vector<ui::UiRow>& completions = data.collections["auto_complete"];
+    for (const ChatRow& row : rows) {
+        completions.push_back({
+            { "#auto_complete_text", UiValue::of(row.text) },
+            { "#auto_complete_item", UiValue::of(0.0) },
+            { "#is_autocomplete_suggestion", UiValue::of(row.pick.has_value()) },
+        });
     }
-    if (backState.clicked) {
-        closeChat();
+
+    bool blocked = ui.isBlocked();
+    if (!open) {
+        ui.setBlocked(true);
+    }
+    chatUi->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    ui.setBlocked(blocked);
+    chatUi->blur();
+    std::vector<ui::UiEvent> events = chatUi->takeEvents();
+    if (!open) {
+        return;
+    }
+    chatToBottom = false;
+
+    for (const ui::UiEvent& event : events) {
+        if (event.kind != ui::UiEvent::Kind::Button) {
+            continue;
+        }
+        if (event.name == "button.send") {
+            if (!blank(chatDraft)) {
+                submitChat();
+            }
+        } else if (event.name == "button.menu_exit" || event.name == "button.chat_menu_cancel") {
+            closeChat();
+        } else if (event.name == "button.click_autocomplete" && event.index >= 0 && static_cast<size_t>(event.index) < rows.size()) {
+            if (const std::optional<std::string>& pick = rows[static_cast<size_t>(event.index)].pick) {
+                chatDraft = *pick;
+                chatCycle.clear();
+                chatRecall.reset();
+                selectedField = Field::None;
+            }
+        } else if (event.name == "button.keyboard_toggle") {
+            chatDraft = chatDraft == "/" ? std::string() : chatDraft.starts_with('/') ? chatDraft : "/" + chatDraft;
+            chatCycle.clear();
+            chatRecall.reset();
+            selectedField = Field::None;
+        }
+        if (dialog != Dialog::Chat) {
+            break;
+        }
     }
 }
 

@@ -906,6 +906,15 @@ private:
         uint64_t serial = 0;
     };
 
+    /**
+     * One row of the list above the chat box: what it shows and, for a
+     * completion, the draft that clicking it leaves.
+     */
+    struct ChatRow {
+        std::string text;
+        std::optional<std::string> pick;
+    };
+
     // Screens drawn with the classic textures.
     void safeFrame(ui::Context& ui, float width, float height);
     void panorama(ui::Context& ui);
@@ -996,7 +1005,7 @@ private:
     void submitChat();
     void recallChat(int step);
     void completeChat(bool backwards);
-    void commandPanel(ui::Context& ui, float width, float bottom, float top);
+    std::vector<ChatRow> chatRows(size_t capacity) const;
     void type(std::u32string_view text);
     std::string* focusedText();
     void navigate(Screen target);
@@ -1127,7 +1136,8 @@ private:
     std::vector<std::string> chatHistory;
     std::optional<size_t> chatRecall;
     std::vector<std::string> chatOutgoing;
-    float chatScroll = 0.0f;
+    bool chatToBottom = false;
+    std::unique_ptr<ui::JsonUiScreen> chatUi;
     std::shared_ptr<const std::vector<ChatCommand>> commands;
     std::vector<std::string> players;
     std::vector<CommandSuggestion> chatCycle;

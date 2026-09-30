@@ -64,6 +64,11 @@ std::unique_ptr<json::Value> toJson(const UiValue& value)
     case UiValue::Kind::Number:
         return json::Value::ofNumber(value.number);
     case UiValue::Kind::String:
+        if (!value.text.empty() && value.text.front() == '[') {
+            if (std::unique_ptr<json::Value> array = json::parse(value.text)) {
+                return array;
+            }
+        }
         return json::Value::ofString(value.text);
     case UiValue::Kind::None:
         break;
@@ -751,6 +756,11 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
     static const std::vector<UiFactoryItem> none;
     const json::Value* limit = resolve(node, factory->get("max_children_size"));
     syncItems(node, found == data->factories.end() ? none : found->second, resolve(node, factory->get("control_ids")), resolve(node, factory->get("control_name")), limit && limit->isNumber() ? static_cast<size_t>(std::max(0.0, limit->mNumber)) : MaxFactoryItems, depth);
+    for (std::unique_ptr<Node>& child : node.children) {
+        if (child->generated) {
+            child->collection = name;
+        }
+    }
 }
 
 /**

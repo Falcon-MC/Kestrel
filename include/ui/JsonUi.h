@@ -209,6 +209,12 @@ public:
     bool editing() const;
 
     /**
+     * Takes the keyboard back from the edit box that has it, for screens
+     * whose text is typed and kept outside the edit box.
+     */
+    void blur();
+
+    /**
      * Something under the mouse takes clicks, like a button or a slider.
      */
     bool hovering() const;

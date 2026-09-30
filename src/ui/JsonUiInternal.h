@@ -173,6 +173,7 @@ struct Node {
     bool dataToggle = false;
     bool hover = false;
     float scroll = 0.0f;
+    float scrolledContent = -1.0f;
     float value = 0.0f;
     std::string edit;
     std::unordered_map<const Node*, bool> states;

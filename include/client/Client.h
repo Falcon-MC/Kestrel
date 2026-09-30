@@ -178,6 +178,10 @@ private:
     void countFrame(std::chrono::steady_clock::time_point now);
     menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
     void handleHotbarInput();
+    void loadShownTips();
+    void markTipShown(const std::string& id);
+    void showGameTip(const std::string& id, const std::string& text, const std::string& animation, double now);
+    void updateGameTips();
     bool terrainReady(const SessionSnapshot& snapshot);
     float guiScale() const;
     void uploadAtlas();
@@ -260,6 +264,25 @@ private:
     HudMessage actionbarMessage;
     menu::HudTitle titleView;
     uint64_t titleSerial = 0;
+
+    /**
+     * The game tip on screen: which tip it is, what the HUD shows, when it
+     * came up and when the action it teaches was done, 0 until then.
+     */
+    struct GameTipState {
+        std::string id;
+        menu::HudGameTip view;
+        double shownAt = 0.0;
+        double doneAt = 0.0;
+    };
+    GameTipState gameTip;
+    double gameTipEndedAt = 0.0;
+    std::set<std::string> shownTips;
+    bool shownTipsLoaded = false;
+    uint64_t gameTipSerial = 0;
+    std::string ridingView;
+    std::string targetBlockName;
+    float tipLookTravel = 0.0f;
     std::optional<BlockSelection> selectionView;
     std::vector<BlockCrack> crackViews;
     std::vector<ChestLidView> chestLidViews;

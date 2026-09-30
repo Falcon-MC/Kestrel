@@ -57,6 +57,37 @@ void readSlice(const std::string& text, NineSlice& slice, float* baseWidth = nul
     }
 }
 
+/**
+ * Reads the frames of a sprite sheet description: each frame's texel box
+ * and its duration in milliseconds.
+ */
+void readFrames(const std::string& text, std::vector<SpriteFrame>& frames)
+{
+    frames.clear();
+    std::unique_ptr<json::Value> root = json::parse(text);
+    const json::Value* list = root ? root->get("frames") : nullptr;
+    if (!list || !list->isArray()) {
+        return;
+    }
+    for (const std::unique_ptr<json::Value>& entry : list->mArray) {
+        const json::Value* box = entry && entry->isObject() ? entry->get("frame") : nullptr;
+        if (!box || !box->isObject()) {
+            continue;
+        }
+        auto field = [&](const json::Value* object, const char* name, double fallback) {
+            const json::Value* value = object->get(name);
+            return value && value->isNumber() ? value->number() : fallback;
+        };
+        SpriteFrame frame;
+        frame.x = static_cast<float>(field(box, "x", 0.0));
+        frame.y = static_cast<float>(field(box, "y", 0.0));
+        frame.width = static_cast<float>(field(box, "w", 0.0));
+        frame.height = static_cast<float>(field(box, "h", 0.0));
+        frame.duration = std::max(0.001, field(entry.get(), "duration", 100.0) / 1000.0);
+        frames.push_back(frame);
+    }
+}
+
 }
 
 void readNineSlice(const std::string& json, NineSlice& slice)
@@ -82,7 +113,7 @@ GameAssets::GameAssets()
 
 GameAssets::~GameAssets() = default;
 
-bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* slice, NineSlice* texels)
+bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* slice, NineSlice* texels, std::vector<SpriteFrame>* frames)
 {
     std::string encoded;
     if (!pack || !pack->readTexture(path, encoded) || !decodeBitmap(encoded, out)) {
@@ -96,6 +127,9 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
         fs::path source(path);
         if (pack->readText(path + ".json", text) || pack->readArchived(source.parent_path().generic_string(), source.filename().string() + ".json", text)) {
             readSlice(text, *slice, &baseWidth, &baseHeight);
+            if (frames) {
+                readFrames(text, *frames);
+            }
         }
         if (texels) {
             // nineslice_size counts base_size pixels, so a 2x texture has twice as many texels per slice.
