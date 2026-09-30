@@ -152,11 +152,15 @@ int Client::run()
             syncSession();
             syncChat();
             syncForms();
+            for (menu::ModAction& action : menu.takeModActions()) {
+                mods->request(std::move(action));
+            }
             mods->update(deltaSeconds);
             if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
                 session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
             }
             menu.setModKeyBinds(mods->listedKeyBinds());
+            menu.setMods(mods->listedMods());
         }
         {
             Profiler::Section section(profiler, "mesh upload");

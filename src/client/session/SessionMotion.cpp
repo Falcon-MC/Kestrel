@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace kestrel {
 
@@ -37,12 +38,13 @@ constexpr int NoAiFlag = 16;
 constexpr int HasGravityFlag = 49;
 constexpr int32_t JumpBoostEffect = 8;
 constexpr int32_t LevitationEffect = 24;
+// Servers read the echoed probe time back in millions of the time they sent.
+constexpr uint64_t LatencyEchoScale = 1000000;
 constexpr int32_t SlowFallingEffect = 27;
 constexpr int32_t WeavingEffect = 33;
 constexpr int16_t DepthStriderEnchantment = 7;
 constexpr int16_t SoulSpeedEnchantment = 36;
 constexpr int16_t SwiftSneakEnchantment = 37;
-constexpr uint16_t BaseAbilityLayer = 1;
 constexpr uint32_t FlyingAbility = 1u << 9;
 constexpr uint32_t MayFlyAbility = 1u << 10;
 constexpr uint32_t NoClipAbility = 1u << 17;
@@ -126,7 +128,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
     if (auto latency = std::dynamic_pointer_cast<NetworkStackLatencyPacket>(packet)) {
         if (latency->mFromServer && connection) {
             NetworkStackLatencyPacket answer;
-            answer.mTimestamp = latency->mTimestamp;
+            answer.mTimestamp = latency->mTimestamp > std::numeric_limits<uint64_t>::max() / LatencyEchoScale ? std::numeric_limits<uint64_t>::max() : latency->mTimestamp * LatencyEchoScale;
             answer.mFromServer = false;
             transmit(answer);
             connection->flush();
@@ -145,6 +147,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             return;
         }
         motionHistory.clear();
+        serverMotions.clear();
         motion.teleport(target);
         teleportHandled = true;
         motionStarted = false;
@@ -160,6 +163,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         }
         MotionVector feet { respawn->mPosition.x, respawn->mPosition.y - EyeHeight, respawn->mPosition.z };
         motionHistory.clear();
+        serverMotions.clear();
         motion.reset(feet);
         motionStarted = false;
         debugLog("respawn at " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
@@ -193,9 +197,18 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         MotionVector delta { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z };
         replayCorrection(correction->mTick, { correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, &delta, correction->mOnGround);
     } else if (auto push = std::dynamic_pointer_cast<SetActorMotionPacket>(packet)) {
-        if (push->mRuntimeActorId == localRuntimeId) {
-            motion.knockback({ push->mMotion.x, push->mMotion.y, push->mMotion.z });
+        if (push->mRuntimeActorId != localRuntimeId || !std::isfinite(push->mMotion.x) || !std::isfinite(push->mMotion.y) || !std::isfinite(push->mMotion.z)) {
+            return;
         }
+        MotionVector impulse { push->mMotion.x, push->mMotion.y, push->mMotion.z };
+        uint64_t at = push->mTick == 0 ? clientTick + 1 : push->mTick;
+        if (push->mTick == 0) {
+            motion.knockback(impulse);
+        }
+        if (serverMotions.size() >= MotionHistoryTicks) {
+            serverMotions.pop_front();
+        }
+        serverMotions.push_back({ at, impulse });
     } else if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
         if (static_cast<uint64_t>(attributes->mRuntimeActorId) != localRuntimeId) {
             return;
@@ -220,12 +233,32 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             }
         }
     } else if (auto abilities = std::dynamic_pointer_cast<UpdateAbilitiesPacket>(packet)) {
-        for (const AbilityLayer& layer : abilities->mAbilities.mAbilityLayers) {
-            if (layer.mLayerType != BaseAbilityLayer) {
-                continue;
-            }
-            motion.setAbilities(layer.mAbilityValues & MayFlyAbility, layer.mAbilityValues & FlyingAbility, layer.mAbilityValues & NoClipAbility, layer.mFlySpeed, layer.mVerticalFlySpeed);
+        if (abilities->mAbilities.mUniqueActorId != localUniqueId) {
+            return;
         }
+        bool mayFly = false;
+        bool flying = false;
+        bool noClip = false;
+        float flySpeed = 0.0f;
+        float verticalFlySpeed = 0.0f;
+        for (const AbilityLayer& layer : abilities->mAbilities.mAbilityLayers) {
+            if (layer.mAbilitiesSet & MayFlyAbility) {
+                mayFly = layer.mAbilityValues & MayFlyAbility;
+            }
+            if (layer.mAbilitiesSet & FlyingAbility) {
+                flying = layer.mAbilityValues & FlyingAbility;
+            }
+            if (layer.mAbilitiesSet & NoClipAbility) {
+                noClip = layer.mAbilityValues & NoClipAbility;
+            }
+            if (std::isfinite(layer.mFlySpeed) && layer.mFlySpeed > 0.0f) {
+                flySpeed = layer.mFlySpeed;
+            }
+            if (std::isfinite(layer.mVerticalFlySpeed) && layer.mVerticalFlySpeed > 0.0f) {
+                verticalFlySpeed = layer.mVerticalFlySpeed;
+            }
+        }
+        motion.setAbilities(mayFly, flying, noClip, flySpeed, verticalFlySpeed);
     } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
         motion.setGameType(mode->mGamemode);
     }
@@ -321,6 +354,11 @@ void Session::runMotionTick(double now)
         PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
             return motionCell(x, y, z);
         };
+        for (const ServerMotion& impulse : serverMotions) {
+            if (impulse.tick == clientTick + 1) {
+                motion.knockback(impulse.velocity);
+            }
+        }
         tick = motion.step(input, lookup);
         playMotionSounds(tick, before);
     } else {
@@ -536,6 +574,7 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     if (corrected == motionHistory.end()) {
         motion.correct(position, velocity ? *velocity : motion.currentVelocity(), onGround);
         motionHistory.clear();
+        serverMotions.clear();
         MotionVector feet = motion.position();
         std::lock_guard<std::mutex> guard(mutex);
         current.player.current = { feet.x, feet.y, feet.z };
@@ -549,8 +588,10 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     };
     for (auto sent = std::next(corrected); sent != motionHistory.end(); ++sent) {
         replay.takeSettings(sent->after);
-        if (sent->knockedBack) {
-            replay.knockback(sent->knockback);
+        for (const ServerMotion& impulse : serverMotions) {
+            if (impulse.tick == sent->tick) {
+                replay.knockback(impulse.velocity);
+            }
         }
         MotionTick result = replay.step(sent->input, lookup);
         float eyeY = result.position.y + EyeHeight;

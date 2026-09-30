@@ -33,6 +33,11 @@ public:
         return id;
     }
 
+    ModConfig& configStore()
+    {
+        return settings;
+    }
+
     /**
      * Runs onEnable; false when it threw, with everything it registered
      * already taken back.

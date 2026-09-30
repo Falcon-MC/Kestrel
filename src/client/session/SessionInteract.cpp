@@ -189,8 +189,9 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
         }
         double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5 + ActorPickMargin;
         double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
-        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half });
-        if (entry && *entry + ActorPickMargin < reach && *entry < distance) {
+        int axis = -1;
+        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, &axis);
+        if (entry && axis >= 0 && *entry + ActorPickMargin < reach && *entry < distance) {
             distance = *entry;
             target = &actor;
         }

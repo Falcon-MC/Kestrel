@@ -1789,6 +1789,8 @@ std::string* Menu::focusedText()
         return dialog == Dialog::Chat ? &chatDraft : nullptr;
     case Field::RealmCode:
         return dialog == Dialog::JoinRealm ? &realmCodeInput : nullptr;
+    case Field::ModConfig:
+        return screen == Screen::Settings ? &editModValue : nullptr;
     case Field::None:
         break;
     }

@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace kestrel::ui {
@@ -87,6 +88,45 @@ struct ModKeyBind {
     Key key = Key::None;
 };
 
+/**
+ * One library in the mods folder as the Mods settings page shows it: what it
+ * says it is, whether the player turned it on, whether it is running, why it
+ * failed when it did, and its saved settings.
+ */
+struct ModEntry {
+    std::string file;
+    std::string id;
+    std::string name;
+    std::string version;
+    std::string author;
+    std::string description;
+    bool enabled = true;
+    bool loaded = false;
+    std::string error;
+    std::vector<std::pair<std::string, std::string>> config;
+};
+
+/**
+ * What the player asked of the mods from the Mods settings page, carried out
+ * by the client between frames.
+ */
+struct ModAction {
+    enum class Kind {
+        Enable,
+        Disable,
+        Reload,
+        Remove,
+        SetConfig,
+        Rescan,
+        OpenFolder,
+    };
+
+    Kind kind = Kind::Rescan;
+    std::string file;
+    std::string key;
+    std::string value;
+};
+
 enum class SettingsPage {
     Accessibility,
     Keyboard,
@@ -97,7 +137,7 @@ enum class SettingsPage {
     Video,
     Audio,
     Account,
-    Subscriptions,
+    Mods,
     GlobalResources,
     Storage,
     Language,
@@ -131,6 +171,7 @@ enum class Field {
     DressingSearch,
     Chat,
     RealmCode,
+    ModConfig,
 };
 
 /**
@@ -643,6 +684,16 @@ public:
         onModKeyBind = std::move(handler);
     }
 
+    void setMods(std::vector<ModEntry> entries)
+    {
+        modEntries = std::move(entries);
+    }
+
+    std::vector<ModAction> takeModActions()
+    {
+        return std::exchange(modActions, {});
+    }
+
     bool worldVisible() const;
     bool capturesMouse() const;
 
@@ -921,6 +972,7 @@ private:
     bool slider(ui::Context& ui, std::string_view id, const ui::Rect& rect, float& fraction);
     float scrollArea(ui::Context& ui, const ui::Rect& area, float& offset, float contentHeight);
     void settingsHeading(ui::Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail);
+    void modsPage(ui::Context& ui, float x, float& y, float width);
     void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight, float controlWidth = 66.0f);
 
     std::vector<ServerRow> featuredRows(ServerGroup group) const;
@@ -1040,6 +1092,13 @@ private:
     KeyBindings bindings;
     std::vector<ModKeyBind> modBinds;
     std::function<void(const std::string&, Key)> onModKeyBind;
+    std::vector<ModEntry> modEntries;
+    std::vector<ModAction> modActions;
+    std::string openedMod;
+    std::string removingMod;
+    std::string editModFile;
+    std::string editModKey;
+    std::string editModValue;
     std::optional<size_t> rebinding;
     std::optional<std::string> rebindingMod;
     float listScroll = 0.0f;
