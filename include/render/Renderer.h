@@ -41,7 +41,7 @@ struct ChunkMeshUpload {
 inline constexpr uint32_t BlockTexturePageLayers = 2048;
 inline constexpr uint32_t BlockTexturePages = 2;
 inline constexpr uint32_t EntityTexturePageLayers = 2048;
-inline constexpr uint32_t EntityTexturePages = 2; // Entity material indices use 12 bits.
+inline constexpr uint32_t EntityTexturePages = 4;
 inline constexpr uint32_t CubeQuadBytes = 20;
 inline constexpr uint32_t ModelQuadBytes = 64;
 

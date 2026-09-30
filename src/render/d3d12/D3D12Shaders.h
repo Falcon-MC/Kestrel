@@ -73,6 +73,8 @@ Texture2DArray blocks : register(t0);
 Texture2DArray blocksHigh : register(t1);
 Texture2DArray entities : register(t2);
 Texture2DArray entitiesHigh : register(t3);
+Texture2DArray entities2 : register(t4);
+Texture2DArray entities3 : register(t5);
 SamplerState blockSampler : register(s0);
 
 struct WorldIn
@@ -233,13 +235,13 @@ float4 sampleLayer(float2 uv, uint layer)
 
 float4 sampleMaterial(uint material, float2 uv)
 {
-    uint layer = material & 0xfff;
-    uint count = ((material >> 14) & 0x7f) + 1;
+    uint layer = material & 0x1fff;
+    uint count = ((material >> 15) & 0x3f) + 1;
     uint ticksPerFrame = ((material >> 21) & 0x7ff) + 1;
     float timeline = origin.w / float(ticksPerFrame);
     uint frame = uint(timeline) % count;
     float4 texel = sampleLayer(uv, layer + frame);
-    if (count > 1 && ((material >> 13) & 1) != 0) {
+    if (count > 1 && ((material >> 14) & 1) != 0) {
         float4 next = sampleLayer(uv, layer + (frame + 1) % count);
         texel = lerp(texel, next, frac(timeline));
     }
@@ -272,10 +274,13 @@ float4 applyTint(float4 texel, uint tint)
 float4 surfaceTexel(WorldOut input)
 {
     if (input.entity != 0) {
-        uint layer = input.material & 0xfff;
-        float4 texel = layer < 2048
-            ? entities.Sample(blockSampler, float3(input.uv, layer))
-            : entitiesHigh.Sample(blockSampler, float3(input.uv, layer - 2048));
+        uint layer = input.material & 0x1fff;
+        uint page = layer >> 11;
+        uint index = layer & 2047u;
+        float4 texel = page == 0 ? entities.Sample(blockSampler, float3(input.uv, index))
+            : page == 1 ? entitiesHigh.Sample(blockSampler, float3(input.uv, index))
+            : page == 2 ? entities2.Sample(blockSampler, float3(input.uv, index))
+            : entities3.Sample(blockSampler, float3(input.uv, index));
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
         return texel;

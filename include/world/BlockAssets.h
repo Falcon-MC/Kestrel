@@ -148,8 +148,8 @@ struct BlockVisual {
 
 /**
  * A texture array reference. Animated materials occupy frameCount consecutive
- * layers starting at layer. The GPU word packs layer (12 bits), UV rotation,
- * frame interpolation, frame count - 1 (7 bits) and ticks per frame - 1 (11 bits).
+ * layers starting at layer. The GPU word packs layer (13 bits), UV rotation,
+ * frame interpolation, frame count - 1 (6 bits) and ticks per frame - 1 (11 bits).
  */
 enum MaterialTint : uint8_t {
     TintKindMask = 0x3,
@@ -178,7 +178,7 @@ struct Material {
 
     uint32_t gpuWord() const
     {
-        return (layer & 0xFFFu) | (rotateUv ? 1u << 12 : 0u) | (interpolate ? 1u << 13 : 0u) | (((frameCount - 1) & 0x7Fu) << 14) | (((ticksPerFrame - 1) & 0x7FFu) << 21);
+        return (layer & 0x1FFFu) | (rotateUv ? 1u << 13 : 0u) | (interpolate ? 1u << 14 : 0u) | (((frameCount - 1) & 0x3Fu) << 15) | (((ticksPerFrame - 1) & 0x7FFu) << 21);
     }
 };
 
