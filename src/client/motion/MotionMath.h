@@ -16,6 +16,8 @@ inline constexpr float StepHeight = 0.5625f;
 inline constexpr float ClimbSpeed = 0.2f;
 inline constexpr float PreventedJumpMultiplier = 0.6f;
 inline constexpr float SneakInput = 0.3f;
+// How much of the movement input is left while an item is held in use, like a drawn bow.
+inline constexpr float ItemUseInput = 0.35f;
 inline constexpr int32_t JumpDelayTicks = 10;
 inline constexpr float CollisionEpsilon = 1.0E-5f;
 inline constexpr float PenetrationEpsilonSquared = 1.0E-11f;

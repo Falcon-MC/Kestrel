@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <unordered_map>
@@ -121,13 +124,109 @@ std::array<float, 3> rotateEulerAround(std::array<float, 3> point, const std::ar
 }
 
 /**
+ * The pixels behind a texture a geometry's texture meshes name, or no pixels
+ * when the entity has no such texture.
+ */
+struct MeshTexture {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    const std::vector<uint8_t>* rgba = nullptr;
+};
+using MeshTextures = std::function<MeshTexture(const std::string& name)>;
+
+/**
+ * Builds a bone's texture meshes as one texel thick solids: the texture's
+ * full front and back, with an edge wherever an opaque texel meets a clear
+ * one, each edge showing its own texel. Points follow the same handedness
+ * flip as cubes, so they turn the way the geometry file says.
+ */
+void appendTextureMeshes(const GeometryBone& bone, uint16_t boneIndex, const MeshTextures& textures, EntityRig& model)
+{
+    constexpr uint8_t Opaque = 26;
+    for (const GeometryTextureMesh& mesh : bone.textureMeshes) {
+        MeshTexture texture = textures ? textures(lowercase(mesh.texture)) : MeshTexture {};
+        if (!texture.rgba || texture.width == 0 || texture.height == 0) {
+            continue;
+        }
+        const uint32_t width = texture.width;
+        const uint32_t height = texture.height;
+        // Meshes are laid out in texels of a 16 texel texture, whatever its real size.
+        const float texel = 16.0f / float(width);
+        auto opaque = [&](int32_t x, int32_t y) {
+            return x >= 0 && y >= 0 && x < int32_t(width) && y < int32_t(height) && (*texture.rgba)[(size_t(y) * width + size_t(x)) * 4 + 3] >= Opaque;
+        };
+        std::array<float, 3> rotation { -mesh.rotation[0], -mesh.rotation[1], mesh.rotation[2] };
+        auto place = [&](float u, float y, float v) {
+            std::array<float, 3> local {
+                -(u * texel - mesh.localPivot[0]) * mesh.scale[0],
+                (y - mesh.localPivot[1]) * mesh.scale[1],
+                (v * texel - mesh.localPivot[2]) * mesh.scale[2],
+            };
+            local = rotateEulerAround(local, { 0.0f, 0.0f, 0.0f }, rotation);
+            std::array<int16_t, 3> out {};
+            out[0] = static_cast<int16_t>(std::lround((local[0] - mesh.position[0]) * 16.0f));
+            out[1] = static_cast<int16_t>(std::lround((local[1] + mesh.position[1]) * 16.0f));
+            out[2] = static_cast<int16_t>(std::lround((local[2] + mesh.position[2]) * 16.0f));
+            return out;
+        };
+        auto uv = [](float value) {
+            return static_cast<uint16_t>(std::clamp(value, 0.0f, 1.0f) * 4096.0f);
+        };
+        auto emit = [&](const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t faceId) {
+            ModelQuad quad;
+            for (size_t corner = 0; corner < 4; ++corner) {
+                quad.positions[corner] = place(corners[corner][0], corners[corner][1], corners[corner][2]);
+                quad.uvs[corner] = { uv(uvs[corner][0]), uv(uvs[corner][1]) };
+            }
+            quad.flags = faceId | QuadTwoSided;
+            model.quads.push_back(quad);
+            model.quadBones.push_back(boneIndex);
+        };
+        const float w = float(width);
+        const float h = float(height);
+        const std::array<std::array<float, 2>, 4> whole { { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } } };
+        emit({ { { 0, 0.5f, 0 }, { w, 0.5f, 0 }, { w, 0.5f, h }, { 0, 0.5f, h } } }, whole, 2);
+        emit({ { { 0, -0.5f, 0 }, { w, -0.5f, 0 }, { w, -0.5f, h }, { 0, -0.5f, h } } }, whole, 1);
+        for (int32_t y = 0; y < int32_t(height); ++y) {
+            for (int32_t x = 0; x < int32_t(width); ++x) {
+                if (!opaque(x, y)) {
+                    continue;
+                }
+                float left = float(x);
+                float right = left + 1.0f;
+                float top = float(y);
+                float bottom = top + 1.0f;
+                // Edges sample the middle of their own texel so filtering never reaches a clear neighbour.
+                float u0 = (left + 0.25f) / w;
+                float u1 = (left + 0.75f) / w;
+                float v0 = (top + 0.25f) / h;
+                float v1 = (top + 0.75f) / h;
+                const std::array<std::array<float, 2>, 4> inset { { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } } };
+                if (!opaque(x - 1, y)) {
+                    emit({ { { left, 0.5f, top }, { left, 0.5f, bottom }, { left, -0.5f, bottom }, { left, -0.5f, top } } }, inset, 4);
+                }
+                if (!opaque(x + 1, y)) {
+                    emit({ { { right, 0.5f, bottom }, { right, 0.5f, top }, { right, -0.5f, top }, { right, -0.5f, bottom } } }, inset, 3);
+                }
+                if (!opaque(x, y - 1)) {
+                    emit({ { { right, 0.5f, top }, { left, 0.5f, top }, { left, -0.5f, top }, { right, -0.5f, top } } }, inset, 5);
+                }
+                if (!opaque(x, y + 1)) {
+                    emit({ { { left, 0.5f, bottom }, { right, 0.5f, bottom }, { right, -0.5f, bottom }, { left, -0.5f, bottom } } }, inset, 6);
+                }
+            }
+        }
+    }
+}
+
+/**
  * Turns a geometry into an animatable model. Geometry files mirror the x axis
  * and the x and y rotations, so pivots, cubes and rotations are flipped back
  * into world handedness; each cube is turned around its own pivot and its
  * quads stay unposed, tagged with their bone, with the box or per-face UV
  * unwrap over the whole texture.
  */
-void buildEntityRig(const Geometry& geometry, EntityRig& model)
+void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextures& textures = {})
 {
     std::map<std::string, int32_t> indexByName;
     for (const GeometryBone& bone : geometry.bones) {
@@ -137,6 +236,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
         rigBone.pivot = { -bone.pivot[0], bone.pivot[1], bone.pivot[2] };
         rigBone.rotation = { -bone.rotation[0], -bone.rotation[1], bone.rotation[2] };
         rigBone.bound = !bone.binding.empty();
+        rigBone.anchoredToHolder = !bone.textureMeshes.empty() && !bone.pivotSet && bone.binding.empty();
         model.bones.push_back(rigBone);
     }
     for (size_t index = 0; index < geometry.bones.size(); ++index) {
@@ -171,6 +271,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model)
         if (bone.neverRender) {
             continue;
         }
+        appendTextureMeshes(bone, static_cast<uint16_t>(boneIndex), textures, model);
         for (const GeometryCube& cube : bone.cubes) {
             float inflate = cube.inflate + bone.inflate;
             std::array<float, 3> min {
@@ -588,6 +689,16 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
+    // The game keeps its own attachables outside the resource pack, next to
+    // resource_packs. Only the bow's is read for now: the others draw items
+    // Kestrel already shows its own way.
+    for (const char* name : { "bow.json" }) {
+        std::ifstream file(pack.root().parent_path().parent_path() / "definitions" / "attachables" / name, std::ios::binary);
+        if (file) {
+            std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+        }
+    }
     for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
         for (const auto& [path, content] : (*layer)->files) {
             if (!endsWith(path, ".json")) {
@@ -659,6 +770,25 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         sizeByLayer.emplace(layer, std::make_pair(width, height));
         return layer;
     };
+    struct DecodedTexture {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        std::vector<uint8_t> rgba;
+    };
+    std::map<std::string, DecodedTexture> meshPixels;
+    auto pixelsOf = [&](const std::string& path) -> MeshTexture {
+        auto found = meshPixels.find(path);
+        if (found == meshPixels.end()) {
+            DecodedTexture decoded;
+            std::string encoded;
+            if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, decoded.width, decoded.height, decoded.rgba)) {
+                decoded = DecodedTexture {};
+            }
+            found = meshPixels.emplace(path, std::move(decoded)).first;
+        }
+        const DecodedTexture& texture = found->second;
+        return texture.rgba.empty() ? MeshTexture {} : MeshTexture { texture.width, texture.height, &texture.rgba };
+    };
     auto modelOf = [&](const std::string& geometryName, const ClientEntity& definition, uint32_t layer) -> std::optional<EntityModel> {
         const Geometry* geometry = library.find(geometryName);
         if (!geometry) {
@@ -666,16 +796,20 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         }
         // Legacy geometry like geometry.humanoid.custom never says how big its
         // texture is; the game maps it onto the texture it gets, the 64x64 Steve.
+        MeshTextures textures = [&](const std::string& name) {
+            auto named = definition.textures.find(name);
+            return named == definition.textures.end() ? MeshTexture {} : pixelsOf(named->second);
+        };
         auto buildRig = [&](const Geometry& source, EntityRig& rig) {
             auto size = sizeByLayer.find(layer);
             if (source.textureSizeSet || size == sizeByLayer.end()) {
-                buildEntityRig(source, rig);
+                buildEntityRig(source, rig, textures);
                 return;
             }
             Geometry sized = source;
             sized.textureWidth = static_cast<float>(size->second.first);
             sized.textureHeight = static_cast<float>(size->second.second);
-            buildEntityRig(sized, rig);
+            buildEntityRig(sized, rig, textures);
         };
         EntityModel model;
         model.rigs.emplace_back();

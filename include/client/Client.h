@@ -156,9 +156,12 @@ private:
     struct HeldAttachable {
         std::string identifier;
         world::EntityAnimator animator;
+        std::vector<world::EntityBone> bones;
     };
-    void appendThirdPersonItem(const HudItem& held, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
-    bool appendAttachable(const HudItem& held, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
+    void appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
+    bool appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out);
+    double localItemUseTicks() const;
+    double actorItemUseTicks(const ActorView& actor, double now);
     void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones = nullptr);
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
@@ -292,6 +295,8 @@ private:
     double paperDollShownAt = 0.0;
     std::unordered_map<uint64_t, float> swimAmounts;
     std::unordered_map<uint64_t, HeldAttachable> actorAttachables;
+    // When each other player's using item flag came on, since servers only send the flag.
+    std::unordered_map<uint64_t, double> actorItemUseSince;
     double lastActorTime = 0.0;
     static constexpr int PerspectiveFirst = 0;
     static constexpr int PerspectiveBack = 1;

@@ -22,6 +22,8 @@ constexpr double MaxNameTagDistance = 64.0;
 constexpr double NameTagLift = 0.5;
 constexpr float NameTagPixelSize = 0.025f;
 constexpr uint64_t SneakingFlag = 1ull << 1;
+constexpr uint64_t UsingItemFlag = 1ull << 4;
+constexpr double TicksPerSecond = 20.0;
 constexpr uint64_t InvisibleFlag = 1ull << 5;
 constexpr uint64_t CanShowNameFlag = 1ull << 14;
 constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
@@ -360,6 +362,10 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (actor.identifier == "minecraft:armor_stand") {
             input.engineVariables = { { "armor_stand.pose_index", double(actor.poseIndex) } };
         }
+        input.itemUseTicks = actorItemUseTicks(actor, now);
+        if (input.itemUseTicks > 0.0) {
+            input.flags[0] |= UsingItemFlag;
+        }
         if (actor.runtimeId == LocalActorId) {
             const HudItem& held = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
             input.mainHandItem = held.empty() ? std::string() : held.identifier;
@@ -553,9 +559,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out);
         }
         if (actor.runtimeId == LocalActorId) {
-            appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], bodyAttachable, rig, matrices, toWorld, out);
+            appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
         } else if (actor.identifier == "minecraft:player" && !actor.held.empty()) {
-            appendThirdPersonItem(actor.held, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
+            appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
         }
         lightQuads(out, firstWorn, light);
     }
@@ -578,6 +584,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             ++it;
         } else {
             it = actorAttachables.erase(it);
+        }
+    }
+    for (auto it = actorItemUseSince.begin(); it != actorItemUseSince.end();) {
+        if (present.count(it->first)) {
+            ++it;
+        } else {
+            it = actorItemUseSince.erase(it);
         }
     }
     lastActorTime = now;
@@ -638,13 +651,40 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
 }
 
 /**
+ * How long the local player has been using the selected item, in ticks with
+ * the fraction of the current one.
+ */
+double Client::localItemUseTicks() const
+{
+    // A use that just started still counts as under way.
+    return hudState.itemUseStarted > 0.0 ? std::max((secondsNow() - hudState.itemUseStarted) * TicksPerSecond, 1.0e-3) : 0.0;
+}
+
+/**
+ * How long an entity has been using its held item. Other players only come
+ * with the using item flag, so their use is timed from when it came on.
+ */
+double Client::actorItemUseTicks(const ActorView& actor, double now)
+{
+    if (actor.runtimeId == LocalActorId) {
+        return localItemUseTicks();
+    }
+    if (!(actor.flags[0] & UsingItemFlag)) {
+        actorItemUseSince.erase(actor.runtimeId);
+        return 0.0;
+    }
+    double since = actorItemUseSince.try_emplace(actor.runtimeId, now).first->second;
+    return std::max((now - since) * TicksPerSecond, 1.0e-3);
+}
+
+/**
  * The held item's attachable from a server pack, drawn on the holder the way
  * the game binds it: the bone with a binding hangs from the holder's right
  * item bone instead of its own parents, and the bones under it follow. An
  * attachable without a binding hangs from that bone as a whole. Returns false
  * when the item has no attachable, so the caller draws it as usual.
  */
-bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
+bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
     if (!model || model->rigs.empty()) {
@@ -663,18 +703,42 @@ bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holde
         state = HeldAttachable {};
         state.identifier = held.identifier;
     }
-    const world::EntityRig& rig = model->rigs.front();
+    state.bones = model->rigs.front().bones;
+    const std::array<float, 3>& holderPivot = holder.bones[size_t(itemBone)].pivot;
+    for (world::EntityBone& bone : state.bones) {
+        if (bone.anchoredToHolder) {
+            bone.pivot = holderPivot;
+        }
+    }
     world::AnimationInput input;
     input.now = secondsNow();
     input.worldTime = currentWorldTime(timeState);
     input.identifier = held.identifier;
     input.mainHandItem = held.identifier;
+    input.itemUseTicks = itemUseTicks;
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", 0.0 } };
-    state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
+    state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
     const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
-    if (matrices.size() != rig.bones.size()) {
+    if (matrices.size() != state.bones.size()) {
         return true;
     }
+    // The render controller picks the frame, like the bow's pull stages, by geometry and texture.
+    const world::EntityRig* chosenRig = &model->rigs.front();
+    uint32_t layer = model->layer;
+    for (const world::EntityRenderController& controller : model->controllers) {
+        if (!controller.condition.empty() && state.animator.evaluate(controller.condition) == 0.0) {
+            continue;
+        }
+        uint32_t rigIndex = pickChoice(state.animator, controller.geometry, controller.geometryChoices);
+        if (rigIndex < model->rigs.size() && model->rigs[rigIndex].bones.size() == state.bones.size()) {
+            chosenRig = &model->rigs[rigIndex];
+        }
+        if (uint32_t chosen = pickChoice(state.animator, controller.texture, controller.textureChoices); chosen != world::NoEntityChoice) {
+            layer = chosen;
+        }
+        break;
+    }
+    const world::EntityRig& rig = *chosenRig;
 
     int32_t bound = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bound < 0; ++bone) {
@@ -700,7 +764,7 @@ bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holde
             }
         }
     }
-    world::EntityTileGrid grid = blockAssets->entityTileGrid(model->layer);
+    world::EntityTileGrid grid = blockAssets->entityTileGrid(layer);
     for (size_t index = 0; index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
         if (bone >= rig.bones.size() || !attached[bone]) {
@@ -708,11 +772,12 @@ bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holde
         }
         world::BoneMatrix m = compose(hand, matrices[bone]);
         const world::ModelQuad& quad = rig.quads[index];
+        std::array<float, 3> anchor = state.bones[bone].anchoredToHolder ? holderPivot : std::array<float, 3> {};
         std::array<QuadCorner, 4> corners;
         for (size_t corner = 0; corner < 4; ++corner) {
-            float x = quad.positions[corner][0] / 16.0f;
-            float y = quad.positions[corner][1] / 16.0f;
-            float z = quad.positions[corner][2] / 16.0f;
+            float x = quad.positions[corner][0] / 16.0f + anchor[0];
+            float y = quad.positions[corner][1] / 16.0f + anchor[1];
+            float z = quad.positions[corner][2] / 16.0f + anchor[2];
             corners[corner].position = toWorld({
                 m[0] * x + m[1] * y + m[2] * z + m[3],
                 m[4] * x + m[5] * y + m[6] * z + m[7],
@@ -720,7 +785,7 @@ bool Client::appendAttachable(const HudItem& held, const world::EntityRig& holde
             });
             corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
         }
-        appendTiled(corners, model->layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag, out);
+        appendTiled(corners, layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag, out);
     }
     return true;
 }

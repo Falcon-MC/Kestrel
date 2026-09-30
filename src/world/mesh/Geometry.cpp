@@ -151,6 +151,7 @@ void mergeBone(GeometryBone& base, const GeometryBone& child)
     if (child.inflateSet) base.inflate = child.inflate;
     if (child.neverRenderSet) base.neverRender = child.neverRender;
     if (child.cubesSet) base.cubes = child.cubes;
+    if (child.textureMeshesSet) base.textureMeshes = child.textureMeshes;
 }
 
 void parseBones(const json::Value* bones, Geometry& geometry)
@@ -194,6 +195,21 @@ void parseBones(const json::Value* bones, Geometry& geometry)
             parsed.cubesSet = true;
             for (const auto& cube : cubes->mArray) {
                 parsed.cubes.push_back(parseCube(*cube));
+            }
+        }
+        if (const json::Value* meshes = bone->get("texture_meshes"); meshes && meshes->isArray()) {
+            parsed.textureMeshesSet = true;
+            for (const auto& mesh : meshes->mArray) {
+                const json::Value* texture = mesh->get("texture");
+                if (!texture || !texture->isString()) {
+                    continue;
+                }
+                GeometryTextureMesh& added = parsed.textureMeshes.emplace_back();
+                added.texture = texture->string();
+                added.position = readVec3(mesh->get("position"));
+                added.localPivot = readVec3(mesh->get("local_pivot"));
+                added.rotation = readVec3(mesh->get("rotation"));
+                added.scale = readVec3(mesh->get("scale"), { 1.0f, 1.0f, 1.0f });
             }
         }
         geometry.bones.push_back(std::move(parsed));

@@ -148,7 +148,7 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
     pitch = input.pitch;
     pressingSneak = input.sneak;
 
-    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && hunger > 6.0f;
+    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !input.usingItem && hunger > 6.0f;
     bool startSprint = wantSprint && !isSprinting;
     bool stopSprint = !wantSprint && isSprinting;
     bool adjustSpeed = false;
@@ -184,8 +184,9 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
     if (isSneaking) {
         maximumInput *= SneakInput;
     }
-    impulseSideways = std::clamp(input.sideways, -maximumInput, maximumInput) * 0.98f;
-    impulseForward = std::clamp(input.forward, -maximumInput, maximumInput) * 0.98f;
+    float itemUse = input.usingItem ? ItemUseInput : 1.0f;
+    impulseSideways = std::clamp(input.sideways, -maximumInput, maximumInput) * itemUse * 0.98f;
+    impulseForward = std::clamp(input.forward, -maximumInput, maximumInput) * itemUse * 0.98f;
 
     jumping = input.jump;
     pressingJump = input.jump;

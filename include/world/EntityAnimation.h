@@ -131,6 +131,8 @@ struct EntityBone {
     std::array<float, 3> pivot {};
     std::array<float, 3> rotation {};
     bool bound = false;
+    // A texture mesh bone without a pivot of its own sits on the holder's bone of the same name.
+    bool anchoredToHolder = false;
 };
 
 /**
@@ -168,6 +170,8 @@ struct AnimationInput {
     std::string name;
     std::string mainHandItem;
     std::string offHandItem;
+    // Ticks the main hand item has been held in use, like a bow being drawn, 0 when it is not.
+    double itemUseTicks = 0.0;
     std::vector<std::pair<std::string, double>> engineVariables;
     std::vector<std::pair<std::string, double>> contextVariables;
 };

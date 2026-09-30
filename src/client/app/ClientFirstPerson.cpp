@@ -252,6 +252,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.hurtTime = hudState.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - hudState.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
     input.mainHandItem = heldName;
     input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
+    input.itemUseTicks = localItemUseTicks();
     input.engineVariables = {
         { "is_first_person", 1.0 },
         { "attack_time", attackTime },
@@ -359,7 +360,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     if (heldName.empty() || itemBone < 0) {
         return;
     }
-    if (appendAttachable(held, rig, matrices, true, handAttachable, posedToWorld, out)) {
+    if (appendAttachable(held, input.itemUseTicks, rig, matrices, true, handAttachable, posedToWorld, out)) {
         return;
     }
 
@@ -455,6 +456,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
     input.hurtTime = self.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - self.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
     input.mainHandItem = held.empty() ? std::string() : held.identifier;
     input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
+    input.itemUseTicks = localItemUseTicks();
     input.engineVariables = {
         { "attack_time", swingProgress() },
         { "is_holding_right", held.empty() ? 0.0 : 1.0 },
@@ -523,7 +525,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         out.push_back(packQuad(corners, quad.uvs, skinLayer, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | hurt));
     }
     appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
-    appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], bodyAttachable, rig, matrices, toWorld, out);
+    appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
 }
 
 /**
@@ -534,7 +536,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const HudItem& held, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
+void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
@@ -547,7 +549,7 @@ void Client::appendThirdPersonItem(const HudItem& held, HeldAttachable& attachab
     }
     const world::BoneMatrix& m = matrices[static_cast<size_t>(armBone)];
     const Vec3& shoulder = rig.bones[static_cast<size_t>(armBone)].pivot;
-    if (appendAttachable(held, rig, matrices, false, attachable, toWorld, out)) {
+    if (appendAttachable(held, itemUseTicks, rig, matrices, false, attachable, toWorld, out)) {
         return;
     }
     auto place = [&](const Vec3& local, bool cube) {

@@ -192,6 +192,12 @@ int Client::run()
                 session.setMotionInput(input);
                 float fovTarget = playerView.flying ? 1.1f : 1.0f;
                 fovTarget *= (playerView.movementSpeed / 0.1f + 1.0f) * 0.5f;
+                // Drawing a bow narrows the view as the pull tightens over its first second.
+                const HudItem& heldItem = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
+                if (double drawn = localItemUseTicks(); drawn > 0.0 && heldItem.identifier == "minecraft:bow") {
+                    float pull = static_cast<float>(std::min(drawn / 20.0, 1.0));
+                    fovTarget *= 1.0f - pull * pull * 0.15f;
+                }
                 fovTarget = std::clamp(fovTarget, 0.1f, 1.5f);
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
