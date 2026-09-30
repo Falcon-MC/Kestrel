@@ -162,7 +162,7 @@ void Menu::profileCard(Context& ui, const Rect& card)
     ui.fill(edit, editState.hovered ? Color { 0x58, 0x59, 0x5a, 230 } : Color { 0x31, 0x32, 0x33, 220 });
     ui.sprite({ edit.x + 4.5f, edit.y + 4.5f, 12.0f, 12.0f }, "hbui/edit-image@0.5x.icon");
     if (editState.clicked) {
-        notify("TODO: Featured screenshot");
+        notify(tr("kestrel.profile.screenshotUnavailable", "Changing the featured screenshot isn't available in Kestrel yet."));
     }
 
     Rect head { card.x + 7.0f, card.y + 120.0f, 25.0f, 25.0f };

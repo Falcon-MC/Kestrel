@@ -143,6 +143,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "account");
             syncAccount();
+            syncSocial();
             syncDressingRoom();
         }
         {
@@ -311,10 +312,17 @@ int Client::run()
             break;
         case menu::AccountRequest::SignOut:
             session.disconnect();
+            social.setAccount(nullptr, {});
             account.signOut();
             break;
         case menu::AccountRequest::None:
             break;
+        }
+        for (const SocialRequest& request : menu.takeSocialRequests()) {
+            social.handle(request);
+        }
+        if (menu.takeRealmsRefreshRequest()) {
+            account.refreshRealms();
         }
 
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
@@ -331,9 +339,10 @@ int Client::run()
         }
         if (menu.language() != savedLanguage) {
             ui::Localization::shared().load(vanillaSounds, menu.language());
+            social.setLanguage(menu.language());
             saveSettings();
         }
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.safeArea() != savedSafeArea || menu.soundVolumes() != savedVolumes) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -377,7 +386,8 @@ int Client::run()
             view.fogStart = sky.fogStart;
             view.fogEnd = sky.fogEnd;
             view.daylight = sky.daylight;
-            view.nightVision = nightVisionStrength();
+            float brightnessLift = menu::brightnessLift(menu.brightness());
+            view.nightVision = 1.0f - (1.0f - nightVisionStrength()) * (1.0f - brightnessLift);
             view.sunDirection = sky.sunDirection;
             view.background = background.data();
             view.backgroundCount = static_cast<uint32_t>(background.size());
@@ -429,7 +439,7 @@ int Client::run()
             environment.rain = timeState.rainLevel;
             environment.thunder = timeState.thunderLevel;
             environment.medium = timeState.cameraMedium;
-            environment.nightVision = view.nightVision;
+            environment.nightVision = nightVisionStrength();
             environment.moonPhase = sky.moonPhase;
             mods->setEnvironment(environment);
             renderer->drawWorld(view);
@@ -703,7 +713,46 @@ void Client::syncAccount()
         entry.expired = realm.expired;
         info.realms.push_back(std::move(entry));
     }
+    std::string socialKey = snapshot.state == AccountState::SignedIn ? (snapshot.xuid.empty() ? std::string("signed-in") : snapshot.xuid) : std::string();
+    if (socialKey != socialAccount) {
+        socialAccount = socialKey;
+        for (const std::string& sprite : socialSprites) {
+            skin.clearDynamic(sprite);
+        }
+        socialSprites.clear();
+        social.setLanguage(menu.language());
+        social.setAccount(account.sharedAuthentication(), socialKey);
+    }
     menu.setAccount(std::move(info));
+}
+
+void Client::syncSocial()
+{
+    if (menu.socialDrawerOpen()) {
+        social.refreshFriendsIfStale(std::chrono::seconds(60));
+    }
+    if (social.revision() == socialRevision) {
+        return;
+    }
+    socialRevision = social.revision();
+    SocialSnapshot snapshot = social.snapshot();
+    if (snapshot.realmsChanged != realmsChangedSeen) {
+        realmsChangedSeen = snapshot.realmsChanged;
+        if (snapshot.realmsChanged != 0) {
+            account.refreshRealms();
+        }
+    }
+    for (SocialAvatar& avatar : social.takeAvatars()) {
+        if (avatar.pixels.size() != size_t(ui::Font::ImageSlotSize) * ui::Font::ImageSlotSize * 4) {
+            continue;
+        }
+        std::string sprite = menu::socialAvatarSprite(avatar.xuid);
+        skin.setDynamic(sprite, { ui::Font::ImageSlotSize, ui::Font::ImageSlotSize, std::move(avatar.pixels) });
+        if (std::find(socialSprites.begin(), socialSprites.end(), sprite) == socialSprites.end()) {
+            socialSprites.push_back(sprite);
+        }
+    }
+    menu.setSocial(std::move(snapshot));
 }
 
 // Keep enough logical space for the interface at every scale and window size.

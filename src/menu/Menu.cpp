@@ -622,6 +622,25 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
             quit = true;
         }
         break;
+    case Dialog::RealmInvites:
+        realmInvitesDialog(ui, width, height);
+        break;
+    case Dialog::JoinRealm:
+        joinRealmDialog(ui, width, height);
+        break;
+    case Dialog::ConfirmRemoveFriend:
+        messageDialog(ui, width, height, tr("hbui.SocialDrawer.PlayerOptionsMenu.removeFriend", "Remove friend"),
+            trf("kestrel.social.removeFriendQuestion", "Remove %1$s from your friends? You will need to send a new friend request to be friends again.", { removingName }),
+            tr("hbui.SocialDrawer.PlayerOptionsMenu.removeFriend", "Remove friend"), tr("gui.cancel", "Cancel"), confirmed, cancelled);
+        if (confirmed && !removingXuid.empty()) {
+            requestSocial(SocialAction::RemoveFriend, removingXuid);
+        }
+        if (confirmed || cancelled) {
+            removingXuid.clear();
+            removingName.clear();
+            socialOpen = true;
+        }
+        break;
     }
 }
 
@@ -1016,7 +1035,7 @@ void Menu::title(Context& ui, float width, float height)
         navigate(Screen::Marketplace);
     }
 
-    if (iconButton(ui, "title:social", tr("options.social", "Social") + " (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "title:social", tr("options.social", "Social") + " (" + std::to_string(onlineCount(social.friends)) + ")", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
         socialParty = false;
     }
@@ -1027,7 +1046,8 @@ void Menu::title(Context& ui, float width, float height)
     float bottom = std::floor(labelY - 1.0f - CornerMargin - CornerButtonHeight);
     titlePromo(ui, cornerLeft, bottom - 4.0f);
     if (iconButton(ui, "title:inbox", "", "ui/mail_icon", { cornerLeft, bottom, 23.0f, CornerButtonHeight }, 15.0f)) {
-        notify("TODO: Inbox");
+        dialog = Dialog::RealmInvites;
+        requestSocial(SocialAction::RefreshInvites);
     }
     const Sprite& avatar = ui.skin().sprite("dynamic/avatar");
     std::string profileLabel = signedIn() ? tr("menu.profile", "Profile") : tr("menu.account.signIn.buttonLabel", "Sign In");
@@ -1078,7 +1098,7 @@ void Menu::pause(Context& ui, float width, float height)
         disconnectRequested = true;
     }
 
-    if (iconButton(ui, "pause:social", tr("options.social", "Social") + " (0)", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
+    if (iconButton(ui, "pause:social", tr("options.social", "Social") + " (" + std::to_string(onlineCount(social.friends)) + ")", "ui/FriendsIcon", { width - 1.0f - 80.0f, 1.0f, 80.0f, CornerButtonHeight }, 9.0f)) {
         socialOpen = true;
     }
     float dressingX = width - 158.0f;
@@ -1664,10 +1684,36 @@ void Menu::handleKeys(Context& ui)
     if (input.enter && screen == Screen::ServerForm && dialog == Dialog::None) {
         saveServerForm(false);
     }
+    if (input.enter && dialog == Dialog::JoinRealm) {
+        if (social.realmCode.state == RealmCodeState::Found) {
+            requestSocial(SocialAction::JoinRealmCode);
+        } else if (social.realmCode.state != RealmCodeState::Checking && social.realmCode.state != RealmCodeState::Joining) {
+            submitRealmCode();
+        }
+    }
+    if (input.enter && socialOpen && field == Field::SocialSearch && dialog == Dialog::None) {
+        socialPage = SocialPage::Search;
+        socialScroll = 0.0f;
+        socialSelected.clear();
+        requestSocial(SocialAction::Search, socialSearch);
+    }
     if (!input.escape) {
         return;
     }
-    if (socialOpen) {
+    if (dialog == Dialog::JoinRealm) {
+        requestSocial(SocialAction::CancelRealmCode);
+        dialog = Dialog::None;
+        field = Field::None;
+    } else if (dialog == Dialog::ConfirmRemoveFriend) {
+        removingXuid.clear();
+        removingName.clear();
+        dialog = Dialog::None;
+        socialOpen = true;
+    } else if (socialOpen && socialPage != SocialPage::Friends) {
+        socialPage = SocialPage::Friends;
+        socialScroll = 0.0f;
+        socialSelected.clear();
+    } else if (socialOpen) {
         socialOpen = false;
     } else if (dialog == Dialog::Chat) {
         closeChat();
@@ -1736,6 +1782,8 @@ std::string* Menu::focusedText()
         return &dressingState.search;
     case Field::Chat:
         return dialog == Dialog::Chat ? &chatDraft : nullptr;
+    case Field::RealmCode:
+        return dialog == Dialog::JoinRealm ? &realmCodeInput : nullptr;
     case Field::None:
         break;
     }
@@ -1807,6 +1855,13 @@ bool Menu::showDialog(Dialog which)
     case Dialog::SafeArea:
     case Dialog::ProfileOptions:
         dialog = which;
+        return true;
+    case Dialog::RealmInvites:
+        dialog = which;
+        requestSocial(SocialAction::RefreshInvites);
+        return true;
+    case Dialog::JoinRealm:
+        openJoinRealm();
         return true;
     default:
         return false;

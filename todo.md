@@ -50,123 +50,73 @@ Sources: [palette decoder](src/world/chunks/PalettedStorage.cpp), [sub-chunk dec
 - [ ] Confirm transfer/reconnect clears stale world and download state.
 - [ ] Retain a reproducible regression case for each confirmed protocol defect, subject to authorization to run tests.
 
-## P1 — Realms invitations
+## P1 — Social and Realms (implemented, not yet built or run)
 
-**Confirmed placeholder.** `Menu::realmsTab` currently calls `notify("TODO: Realm invitations")`.
+Implemented after `d616b09`, uncommitted. **No build, test or live session has been run**; every item below still needs runtime validation.
 
-Sources: [Realms UI](src/menu/MenuScreens.cpp), Falcon-Network `include/Network/Session/RealmsService.h` and its implementation. Inspect existing methods before extending the dependency.
+Endpoints come from established open-source clients (df-mc/go-xsapi, MCXboxBroadcast, PrismarineJS/prismarine-realms), not official documentation.
 
-- [ ] Replace the notification with an actual invitation screen.
-- [ ] Verify the service contract for retrieving pending invitations.
-- [ ] Fetch invitations for the active account asynchronously.
-- [ ] Show stable invitation identity and available Realm/owner information.
-- [ ] Implement acceptance using the real service.
-- [ ] Implement rejection using the real service.
-- [ ] Refresh both invitations and membership after an accepted invitation.
-- [ ] Provide loading, empty, error, and retry states.
-- [ ] Handle invitations that were revoked or processed on another client.
-- [ ] Prevent duplicate submissions while an invitation action is pending.
-- [ ] Cancel or discard responses after account changes or screen closure.
-- [ ] Reuse the existing Realm connection flow after membership is established.
+Sources: [social service](src/client/services/Social.cpp), [social model](include/client/SocialModel.h), [social/Realms screens](src/menu/SocialScreens.cpp), Falcon-Network `RealmsService`, `XboxSocialService`, `ServiceError`.
 
-## P1 — Join a Realm by code or link
+### Realms invitations
 
-**Confirmed placeholder.** The button currently reports `TODO: Joining a Realm by code`. Dependency methods such as `inviteCode`, `requestRealmByCode`, and `acceptInviteCode` have already existed; verify and reuse them.
+- [x] Invitation dialog from the Realms tab and the title-screen inbox button (`GET /invites/pending`).
+- [x] Accept / decline per invitation (`PUT /invites/accept|reject/{id}`), with per-invitation pending state and no double submission.
+- [x] Loading, empty, error, retry, and "no longer valid" states; refresh after revoked/processed invitations.
+- [x] Realms list reloaded after acceptance; responses discarded on account change.
+- [ ] Validate against a real pending invitation.
 
-Source: [Realms UI](src/menu/MenuScreens.cpp).
+### Join a Realm by code or link
 
-- [ ] Add a real input dialog with paste, submit, and cancel actions.
-- [ ] Reuse one parser for supported codes and link formats.
-- [ ] Validate URL structure and host, not a substring match.
-- [ ] Normalize surrounding whitespace without corrupting a valid code.
-- [ ] Resolve the code and display available Realm information.
-- [ ] Accept membership when required, then join through the existing connection path.
-- [ ] Handle already-member, invalid, expired, revoked, denied, and unavailable results.
-- [ ] Preserve input after a recoverable failure.
-- [ ] Ignore stale responses after dismissal or account switching.
-- [ ] Avoid logging complete invitation links or codes.
+- [x] Input dialog with paste, submit, cancel; Enter/Escape.
+- [x] Single parser `RealmsService::parseInvite` / `inviteCode`: host must be `realms.gg`, code `[A-Za-z0-9_-]`, bare code accepted in the dialog only.
+- [x] Lookup shows the Realm, owner, already-member, closed and expired states, then accepts and connects through `realm_id/`.
+- [x] Input kept after a recoverable error; stale responses ignored; codes never logged.
+- [ ] Validate with a real link, an invalid link, and an already-member Realm.
 
-## P1 — Friends and presence
+### Friends and presence
 
-**Confirmed placeholder.** `Menu::socialDrawer` renders `TODO: Friends list`. The search input exists, but the inspected drawer does not display real search results or friends.
+- [x] Friends list (peoplehub `friends`) keyed by XUID, with gamertag, avatar (async, fallback, 48 max), presence, and activity.
+- [x] Joinable / online / offline sections, stable sort, local filter, scrolling.
+- [x] Joinability from Xbox multiplayer session handles, not presence; version mismatch and unsupported connection explained.
+- [x] Join goes through `session_handle/<id>` and `MultiplayerSessionDirectory::join` in `Session`.
+- [x] Refresh at most every 60 s while the drawer is open, plus manual refresh; data cleared on account change.
+- [x] Remove friend with confirmation.
+- [ ] Validate joining a friend's world (RakNet and NetherNet).
+- [ ] Inviting a friend to the current game: **not possible**, Kestrel publishes no multiplayer session of its own.
 
-Source: [social drawer](src/menu/MenuScreens.cpp).
+### Friend requests and search
 
-- [ ] Connect the list to the active account's supported social service.
-- [ ] Verify friendship/following semantics before selecting service operations.
-- [ ] Populate friends using stable account identifiers.
-- [ ] Populate available gamertags, avatars, and presence information.
-- [ ] Implement the existing people-search field's actual result path.
-- [ ] Distinguish a successful empty search from a failed request.
-- [ ] Add stable ordering and appropriate scrolling for large lists.
-- [ ] Handle API pagination when required.
-- [ ] Load avatars asynchronously with a fallback image.
-- [ ] Provide bounded refresh and caching; never request presence every frame.
-- [ ] Show loading, empty, signed-out, privacy-restricted, and failure states.
-- [ ] Clear account-specific cached data when the account changes.
-- [ ] Offer session joining only when valid join information is available.
-- [ ] Route joinable sessions through the supported connection mechanism.
-- [ ] Do not interpret online presence alone as permission to join.
-
-## P1 — Friend requests
-
-**Confirmed placeholder.** The requests button currently reports `TODO: Friend requests`.
-
-Source: [social drawer](src/menu/MenuScreens.cpp).
-
-- [ ] Verify which request operations the accessible service actually supports.
-- [ ] Implement incoming requests and their real acceptance/rejection actions.
-- [ ] Implement sending a request from a resolved player profile if supported.
-- [ ] Show outgoing requests and cancellation only if supported by the service.
-- [ ] Distinguish friend requests from follows and game invitations.
-- [ ] Handle already-friends, already-requested, self-request, and unknown-player results.
-- [ ] Handle privacy restrictions and service rate limits explicitly.
-- [ ] Reconcile friends and requests after each mutation.
-- [ ] Prevent duplicate mutations and discard obsolete responses.
-- [ ] Do not send real requests to third parties during development without authorization.
+- [x] Received requests (accept/decline) and sent requests (cancel).
+- [x] Player search by gamertag (Enter in the drawer); empty result separate from failure.
+- [x] Send request only when `canBeFriended`; already-friends, already-requested, self states handled.
+- [x] Rate limits honour `Retry-After`; mutations are never retried after an uncertain failure; lists reconciled after each mutation.
+- [ ] Validate with a consenting test account only.
 
 ## P2 — Parties and inbox
 
-**Confirmed placeholders.** Party creation reports `TODO: Parties`; the inbox action reports `TODO: Inbox`.
+- [x] Inbox button opens the Realms invitations (the only inbox content Kestrel can retrieve).
+- [x] Party tab states that parties are unavailable; the fake "Create party" button is gone.
+- [ ] Establish a supported party service before implementing parties.
 
-Sources: [party drawer](src/menu/MenuScreens.cpp), [inbox entry](src/menu/Menu.cpp).
+## P2 — Settings pages
 
-- [ ] Establish the supported party service and its permissions before building mutations.
-- [ ] Replace the hard-coded empty party display with real state, if the service is available.
-- [ ] Implement creation, membership display, invitations, and leaving only for supported operations.
-- [ ] Distinguish party membership from server/world membership.
-- [ ] Handle party dissolution, expired invitations, and account changes.
-- [ ] Define which actual service notifications the inbox can retrieve.
-- [ ] Replace the inbox notification stub with a real list or an explicit capability limitation.
-- [ ] Implement read state only if backed by an established service or clearly scoped local state.
-- [ ] Do not manufacture party or inbox data to make the UI appear complete.
-
-## P2 — Settings pages still falling through to TODO
-
-**Confirmed placeholders.** `SettingsEntries` exposes the pages below; `settingsPage` implements Keyboard, Video, Audio, Account, and Language, while the remaining entries fall through to the TODO branch.
-
-Source: [settings entries and dispatcher](src/menu/MenuScreens.cpp).
-
+- [x] Pages without a backing capability (Accessibility, Controller, Touch, Party, General, Subscriptions, Global Resources, Storage, Creator) explain why instead of showing TODO; no inert controls.
 - [ ] Accessibility: define the supported controls and connect them to actual UI/game behavior.
-- [ ] Controller: implement its settings page and verify the underlying input capabilities separately.
-- [ ] Touch: implement supported touch settings or accurately scope platform availability.
-- [ ] Party: connect settings to real supported party behavior.
+- [ ] Controller: needs controller input support first (none in `src/platform`).
+- [ ] Touch: needs touch input support first.
 - [ ] General: replace the empty page with version-appropriate, effective settings.
 - [ ] Subscriptions: provide an authenticated supported service/link flow; do not fabricate entitlement management.
 - [ ] Global Resources: provide a real pack selection/activation path, reusing pack infrastructure.
 - [ ] Storage: provide actual storage inspection and clearly scoped management operations.
 - [ ] Creator: define and implement the settings supported by this client.
-
-The presence of an empty Controller or Touch settings page does not, by itself, prove that all controller or touch input is absent.
+- [ ] Menu keyboard focus between buttons and controller navigation do not exist yet.
 
 ### Brightness
 
-**Confirmed placeholder.** Video settings call `todoRow` for `options.gamma`.
-
-- [ ] Add the brightness control with validated bounds and defaults.
-- [ ] Connect the value to the renderer's effective brightness behavior.
-- [ ] Persist and restore the value through the existing settings mechanism.
-- [ ] Compare behavior in daylight, darkness, and underwater before claiming parity.
+- [x] Slider 0–100 %, default 0 (identical to the previous rendering), saved as `brightness=` with clamping of invalid values, exposed to the agent settings.
+- [x] Applied immediately by lifting dark areas toward full light through the night-vision constant, up to 50 % at 100 % (all three backends, no shader change).
+- [ ] This is Kestrel's own curve; compare with vanilla in daylight, darkness, and underwater before claiming parity.
 
 ### Completion contract for every newly implemented setting
 
@@ -185,10 +135,10 @@ These are acceptance tasks for the missing pages, not claims that existing setti
 
 Sources: [Marketplace routing](src/menu/Menu.cpp), [placeholder screen](src/menu/MenuScreens.cpp), [profile](src/menu/ProfileScreen.cpp).
 
-- [ ] Replace Marketplace's `todoScreen` routing only after defining accessible catalog and entitlement capabilities.
-- [ ] Separate catalog browsing from purchases and owned-content access; do not imply unsupported commercial operations work.
-- [ ] Implement the profile's `TODO: Featured screenshot` action or document the unavailable external capability.
-- [ ] Replace hard-coded placeholder text with translated, meaningful loading/empty/error states when these screens become functional.
+- [x] Marketplace screen and the profile's featured screenshot action now state they are unavailable (translated, no TODO text).
+- [ ] Implement Marketplace only after defining accessible catalog and entitlement capabilities; keep browsing separate from purchases.
+- [ ] Implement the featured screenshot action once its service is identified.
+- [ ] Known limitation: closing the client or signing out can wait up to ~15 s while a friend-session query is in flight (MPSD query is not cancellable).
 
 ## P1 — Specialized inventory and workstation paths
 

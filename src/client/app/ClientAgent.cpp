@@ -49,6 +49,9 @@ constexpr Named<menu::Dialog> DialogNames[] = {
     { "profile_options", menu::Dialog::ProfileOptions },
     { "death", menu::Dialog::Death },
     { "safe_area", menu::Dialog::SafeArea },
+    { "realm_invites", menu::Dialog::RealmInvites },
+    { "join_realm", menu::Dialog::JoinRealm },
+    { "confirm_remove_friend", menu::Dialog::ConfirmRemoveFriend },
 };
 
 constexpr Named<menu::SettingsPage> PageNames[] = {
@@ -336,6 +339,7 @@ std::string Client::agentSettings() const
         .field("language", menu.language())
         .field("paperDollHidden", menu.paperDollHidden())
         .field("safeArea", menu.safeArea())
+        .field("brightness", menu.brightness())
         .field("fullscreen", window->fullscreen());
     writer.key("volumes").beginArray();
     for (int volume : menu.soundVolumes()) {
@@ -373,6 +377,9 @@ bool Client::applyAgentSettings(const Request& request, std::string& error)
     }
     if (const json::Value* value = request.param("safeArea"); value && value->isNumber()) {
         menu.setSafeArea(std::clamp(static_cast<float>(value->mNumber), menu::MinSafeArea, menu::MaxSafeArea));
+    }
+    if (const json::Value* value = request.param("brightness"); value && value->isNumber()) {
+        menu.setBrightness(static_cast<int>(std::lround(value->mNumber)));
     }
     if (const json::Value* value = request.param("fullscreen"); value && value->mType == json::Value::Type::Boolean) {
         if (value->mBoolean != window->fullscreen() && window->visible()) {

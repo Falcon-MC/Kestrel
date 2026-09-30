@@ -4,6 +4,7 @@
 #include "Network/Auth/XboxLiveAuthentication.h"
 #include "Network/Auth/XboxLiveConfig.h"
 #include "Network/Session/RealmsService.h"
+#include "Network/Session/XboxSocialService.h"
 #include "Network/Http/HttpClient.h"
 #include "Core/Json/Json.h"
 #include "client/DebugLog.h"
@@ -117,6 +118,31 @@ MinecraftAuthentication* Account::signedInAuthentication() const
     return current.state == AccountState::SignedIn ? authentication.get() : nullptr;
 }
 
+std::shared_ptr<MinecraftAuthentication> Account::sharedAuthentication() const
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    return current.state == AccountState::SignedIn ? authentication : nullptr;
+}
+
+void Account::refreshRealms()
+{
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (current.state != AccountState::SignedIn || realmsRunning) {
+            return;
+        }
+        current.realmsLoading = true;
+        realmsRunning = true;
+    }
+    if (realmsWorker.joinable()) {
+        realmsWorker.join();
+    }
+    realmsWorker = std::thread([this] {
+        fetchRealms();
+        realmsRunning = false;
+    });
+}
+
 void Account::start(bool interactive)
 {
     stop();
@@ -127,7 +153,7 @@ void Account::start(bool interactive)
         current.state = AccountState::Connecting;
     }
 
-    authentication = std::make_unique<MinecraftAuthentication>(XboxLiveConfig::android(), cacheFile.string(), GameVersion);
+    authentication = std::make_shared<MinecraftAuthentication>(XboxLiveConfig::android(), cacheFile.string(), GameVersion);
     LiveAuthentication& live = authentication->getLiveAuthentication();
     live.setCancelFlag(&cancelled);
     live.setDeviceCodeCallback([this, interactive](const std::string& uri, const std::string& code) {
@@ -155,6 +181,10 @@ void Account::stop()
     if (warmer.joinable()) {
         warmer.join();
     }
+    if (realmsWorker.joinable()) {
+        realmsWorker.join();
+    }
+    realmsRunning = false;
 }
 
 void Account::run(bool interactive)
@@ -464,17 +494,10 @@ void Account::fetchAvatar(const std::string& authorization)
             url = value->string();
         }
     }
+    url = XboxSocialService::sizedPicture(url, 128);
     if (url.empty()) {
         return;
     }
-    if (url.rfind("http://", 0) == 0) {
-        url.replace(0, 7, "https://");
-    }
-    const std::string plainHost = "https://images-eds.xboxlive.com";
-    if (url.rfind(plainHost, 0) == 0) {
-        url.replace(0, plainHost.size(), "https://images-eds-ssl.xboxlive.com");
-    }
-    url += url.find('?') == std::string::npos ? "?w=128&h=128" : "&w=128&h=128";
 
     HttpResponse image;
     if (!HttpClient::get(url, {}, image, error)) {
@@ -507,6 +530,7 @@ void Account::fetchRealms()
     std::vector<RealmDescription> descriptions;
     std::string error;
     RealmsService service(*authentication);
+    service.setCancelFlag(&cancelled);
     bool loaded = service.requestRealms(descriptions, error);
 
     std::vector<Realm> realms;
@@ -524,7 +548,9 @@ void Account::fetchRealms()
     if (cancelled || current.state != AccountState::SignedIn) {
         return;
     }
-    current.realms = std::move(realms);
+    if (loaded) {
+        current.realms = std::move(realms);
+    }
     current.realmsError = loaded ? std::string() : "Realms: " + error;
     current.realmsLoading = false;
 }
