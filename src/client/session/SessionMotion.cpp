@@ -372,6 +372,7 @@ void Session::tickMotion()
     }
     flag(PlayerAuthInputData::BlockBreakingDelayEnabled);
     tickBreaking(packet, tick);
+    tickItemUse(packet);
     tickCracks();
     tickChestLids();
     transmit(packet);

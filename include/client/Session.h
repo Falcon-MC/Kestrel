@@ -234,6 +234,8 @@ struct HudState {
     double lastHealthDrop = 0.0;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
+    // When the selected item started being held in use, like a drawn bow, 0 while it is not.
+    double itemUseStarted = 0.0;
     std::vector<HudEffect> effects;
     // HUD elements the server hid with SetHud, one bit per HudElement.
     uint32_t hiddenElements = 0;
@@ -692,6 +694,9 @@ private:
     bool faceClickPoint(const std::array<int32_t, 3>& cell, int32_t face, std::array<double, 3>& point) const;
     void pickBlock(bool withData);
     void tickHeldUse();
+    bool startItemUse(int32_t slot, const ItemStack& item);
+    void tickItemUse(PlayerAuthInputPacket& packet);
+    void stopItemUse();
     uint32_t blockAt(int32_t x, int32_t y, int32_t z, uint32_t layer = 0);
     std::vector<world::CollisionBox> shapeBoxes(uint32_t value, int32_t x, int32_t y, int32_t z);
     world::CollisionBox selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z);
@@ -787,6 +792,17 @@ private:
     std::optional<std::array<int32_t, 3>> buildLast;
     int32_t buildFace = 0;
     uint32_t useRepeatTicks = 0;
+
+    /**
+     * The item held in use: the hotbar slot it sits in, what it is, and
+     * whether the tick that announces the start has gone out yet.
+     */
+    struct ItemInUse {
+        int32_t slot = 0;
+        std::string identifier;
+        bool announced = false;
+    };
+    std::optional<ItemInUse> itemInUse;
 
     struct LocalBreak {
         bool active = false;
