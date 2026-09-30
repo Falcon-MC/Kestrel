@@ -222,6 +222,7 @@ void Session::tickMotion()
     {
         std::lock_guard<std::mutex> guard(mutex);
         input = motionInput;
+        input.usingItem = itemInUse.has_value();
         int32_t jumpBoost = 0;
         int32_t levitation = 0;
         bool slowFalling = false;

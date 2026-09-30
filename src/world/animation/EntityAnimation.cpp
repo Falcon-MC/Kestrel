@@ -1,4 +1,5 @@
 #include "world/EntityAnimation.h"
+#include "world/ItemInfo.h"
 
 #include "Core/Json/Json.h"
 #include "util/Text.h"
@@ -983,6 +984,19 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return deltaTime;
     }
     double partialTick = tickClock / TickSeconds;
+    if (name == "frame_alpha") {
+        return partialTick;
+    }
+    // The game counts a used item's duration down from its maximum.
+    if (name == "main_hand_item_max_duration") {
+        return itemMaxUseTicks(current.mainHandItem);
+    }
+    if (name == "main_hand_item_use_duration") {
+        return current.itemUseTicks > 0.0 ? itemMaxUseTicks(current.mainHandItem) - std::floor(current.itemUseTicks) : 0.0;
+    }
+    if (name == "get_animation_frame") {
+        return itemUseAnimationFrame(current.mainHandItem, current.itemUseTicks);
+    }
     if (name == "modified_distance_moved") {
         return limbDistance - limbAmount * (1.0 - partialTick);
     }

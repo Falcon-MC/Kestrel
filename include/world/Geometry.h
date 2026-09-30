@@ -34,6 +34,19 @@ struct GeometryCube {
     std::array<GeometryFace, 6> faces {};
 };
 
+/**
+ * A texture turned into a solid one texel thick, the way item geometry like
+ * the bow's is written: the texture lies across x and z around local pivot,
+ * is scaled and turned, and its pivot lands on position.
+ */
+struct GeometryTextureMesh {
+    std::string texture;
+    Vec3f position {};
+    Vec3f localPivot {};
+    Vec3f rotation {};
+    Vec3f scale { 1.0f, 1.0f, 1.0f };
+};
+
 struct GeometryBone {
     std::string name;
     std::string parent;
@@ -45,6 +58,7 @@ struct GeometryBone {
     float inflate = 0.0f;
     bool neverRender = false;
     std::vector<GeometryCube> cubes;
+    std::vector<GeometryTextureMesh> textureMeshes;
     // Which fields the file spelled out, so a legacy child geometry only
     // overrides those and keeps the rest of its parent's bone. reset drops
     // the parent's cubes.
@@ -56,6 +70,7 @@ struct GeometryBone {
     bool neverRenderSet = false;
     bool bindingSet = false;
     bool cubesSet = false;
+    bool textureMeshesSet = false;
     bool reset = false;
 };
 
