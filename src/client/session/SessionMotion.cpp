@@ -168,7 +168,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
             std::lock_guard<std::mutex> guard(mutex);
             dead = current.dead;
         }
-        if (connection && !dead) {
+        if (connection && dead) {
             RespawnPacket ready;
             ready.mPosition = respawn->mPosition;
             ready.mState = RespawnPacket::State::ClientReady;
