@@ -241,6 +241,23 @@ public:
         }
     }
 
+    void updateUiAtlas(const uint8_t* pixels, uint32_t width, uint32_t height, const std::vector<ui::ImageRegion>& regions) override
+    {
+        if (!atlas || atlasWidth != width || atlasHeight != height) {
+            uploadUiAtlas(pixels, width, height);
+            return;
+        }
+        std::vector<TextureData> updates;
+        updates.reserve(regions.size());
+        for (const auto& region : regions) {
+            if (!region.width || !region.height || region.x >= width || region.y >= height
+                || region.width > width - region.x || region.height > height - region.y) continue;
+            updates.push_back({ 0, 0, pixels + (size_t(region.y) * width + region.x) * 4,
+                region.x, region.y, region.width, region.height, size_t(width) * 4 });
+        }
+        device->uploadTextureAsync(*atlas, updates);
+    }
+
     void uploadBlockTextures(const BlockTextureUpload& textures) override
     {
         if (textures.layers == 0) {

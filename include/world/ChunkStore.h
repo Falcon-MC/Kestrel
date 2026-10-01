@@ -50,6 +50,10 @@ using BlockEntityMap = std::map<uint16_t, Tag>;
 
 class ChunkStore {
 public:
+    ChunkStore();
+    ~ChunkStore();
+    ChunkStore(const ChunkStore&) = delete;
+    ChunkStore& operator=(const ChunkStore&) = delete;
     std::shared_ptr<const SubChunk> subChunk(const SubChunkKey& key) const;
     std::shared_ptr<const PalettedStorage> biomes(const SubChunkKey& key) const;
     std::shared_ptr<const BlockEntityMap> blockEntities(const SubChunkKey& key) const;
@@ -62,6 +66,7 @@ public:
     void commit(const SubChunkKey& key, SubChunk subChunk);
     bool updateBlocks(const SubChunkKey& key, const std::vector<BlockUpdate>& updates);
     void evict(const ChunkKey& key);
+    void evict(const std::vector<ChunkKey>& keys);
     void clear();
 
     std::vector<ChunkKey> columns() const;
@@ -97,6 +102,8 @@ private:
     };
 
     void markDirty(const SubChunkKey& key);
+    struct Retirement;
+    std::unique_ptr<Retirement> retirement;
 
     std::map<ChunkKey, Column> columnsByKey;
     std::set<SubChunkKey> dirty;

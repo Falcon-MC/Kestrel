@@ -301,14 +301,15 @@ public:
         id<MTLCommandBuffer> copy = [queue commandBuffer];
         id<MTLBlitCommandEncoder> blit = [copy blitCommandEncoder];
         for (const TextureData& entry : data) {
-            NSUInteger w = std::max<uint32_t>(texture.description.width >> entry.mip, 1);
-            NSUInteger h = std::max<uint32_t>(texture.description.height >> entry.mip, 1);
+            NSUInteger w = entry.width ? entry.width : std::max<uint32_t>(texture.description.width >> entry.mip, 1);
+            NSUInteger h = entry.height ? entry.height : std::max<uint32_t>(texture.description.height >> entry.mip, 1);
+            size_t sourceStride = entry.rowBytes ? entry.rowBytes : w * 4;
             NSUInteger row = (w * 4 + 255) & ~NSUInteger(255);
             id<MTLBuffer> staging = [device newBufferWithLength:row * h options:MTLResourceStorageModeShared];
             for (NSUInteger y = 0; y < h; ++y) {
-                std::memcpy(static_cast<uint8_t*>(staging.contents) + y * row, entry.pixels + y * w * 4, w * 4);
+                std::memcpy(static_cast<uint8_t*>(staging.contents) + y * row, entry.pixels + y * sourceStride, w * 4);
             }
-            [blit copyFromBuffer:staging sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:row * h sourceSize:MTLSizeMake(w, h, 1) toTexture:texture.texture destinationSlice:entry.layer destinationLevel:entry.mip destinationOrigin:MTLOriginMake(0, 0, 0)];
+            [blit copyFromBuffer:staging sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:row * h sourceSize:MTLSizeMake(w, h, 1) toTexture:texture.texture destinationSlice:entry.layer destinationLevel:entry.mip destinationOrigin:MTLOriginMake(entry.x, entry.y, 0)];
         }
         [blit endEncoding];
         [copy commit];

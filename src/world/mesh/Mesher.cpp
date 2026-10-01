@@ -355,11 +355,13 @@ public:
 
     std::shared_ptr<const ChunkLighting> update(std::shared_ptr<const ChunkLighting> previous) const
     {
+        if (input.isCancelled()) return {};
         size_t volume = size_t(Extent) * Extent * Extent;
         filter.assign(volume, 0);
         emission.assign(volume, 0);
         occluder.assign(volume, 0);
         loadBlocks(assets, ids, input);
+        if (input.isCancelled()) return {};
         std::vector<uint8_t> seeds(volume, 0);
         if (input.skyLight) {
             auto blocked = blockedColumns(assets, ids, input);
@@ -377,7 +379,9 @@ public:
         block = previous && previous->block.size() == volume ? previous->block : std::vector<uint8_t>(volume, 0);
         sky = previous && previous->sky.size() == volume ? previous->sky : std::vector<uint8_t>(volume, 0);
         relax(block, emission, previous.get(), false);
+        if (input.isCancelled()) return {};
         relax(sky, seeds, previous.get(), true);
+        if (input.isCancelled()) return {};
         auto result = std::make_shared<ChunkLighting>();
         result->filter = std::move(filter);
         result->emission = std::move(emission);
@@ -619,6 +623,7 @@ private:
         }
         static constexpr int32_t Steps[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
         while (!queue.empty()) {
+            if (input.isCancelled()) return;
             size_t cell = queue.front(); queue.pop_front(); queued[cell] = 0;
             int32_t x, y, z; cellOf(cell, x, y, z);
             uint8_t nextLevel = std::min<uint8_t>(seeds[cell], 15);
@@ -792,17 +797,22 @@ void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField
         while (rows[v] != 0) {
             uint32_t u = static_cast<uint32_t>(std::countr_zero(rows[v]));
             auto origin = blockCoordinate(face, slice, u, v);
+            bool isTranslucent = facts.at(origin[0], origin[1], origin[2]).flags & FlagTranslucent;
             uint32_t material = facts.at(origin[0], origin[1], origin[2]).faces[faceIndex];
             uint32_t tint = tints.tintWord(material, origin[0], origin[1], origin[2]);
             QuadLight lighting = lightOf(origin[0], origin[1], origin[2]);
             auto matches = [&](uint32_t x, uint32_t y, uint32_t z) {
-                return facts.at(x, y, z).faces[faceIndex] == material && (tint == 0 || tints.tintWord(material, x, y, z) == tint) && lightOf(x, y, z) == lighting;
+                const auto& visual = facts.at(x, y, z);
+                return bool(visual.flags & FlagTranslucent) == isTranslucent && visual.faces[faceIndex] == material
+                    && (tint == 0 || tints.tintWord(material, x, y, z) == tint) && lightOf(x, y, z) == lighting;
             };
 
             uint32_t shifted = rows[v] >> u;
             uint32_t binaryWidth = std::min<uint32_t>(static_cast<uint32_t>(std::countr_one(shifted)), Side - u);
             uint32_t width = 1;
-            while (width < binaryWidth) {
+            // Transparent faces are sorted by their centers. Merging them across
+            // blocks breaks their ordering against water and other nearby faces.
+            while (!isTranslucent && width < binaryWidth) {
                 auto [x, y, z] = blockCoordinate(face, slice, u + width, v);
                 if (!matches(x, y, z)) {
                     break;
@@ -812,7 +822,7 @@ void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField
 
             uint32_t span = ((width == 32 ? 0xFFFFFFFFu : ((1u << width) - 1u))) << u;
             uint32_t height = 1;
-            while (v + height < Side && (rows[v + height] & span) == span) {
+            while (!isTranslucent && v + height < Side && (rows[v + height] & span) == span) {
                 bool same = true;
                 for (uint32_t offset = 0; offset < width && same; ++offset) {
                     auto [x, y, z] = blockCoordinate(face, slice, u + offset, v + height);
@@ -827,7 +837,6 @@ void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField
             for (uint32_t row = v; row < v + height; ++row) {
                 rows[row] &= ~span;
             }
-            bool isTranslucent = facts.at(origin[0], origin[1], origin[2]).flags & FlagTranslucent;
             (isTranslucent ? translucent : opaque).push_back(PackedQuad::make(origin[0], origin[1], origin[2], face, width, height, material, tint, lighting));
         }
     }
@@ -1102,6 +1111,7 @@ void meshModels(const BlockAssets& assets, const MeshInput& input, const Palette
     const std::vector<ModelTemplate>& templates = assets.modelTemplates();
     const std::vector<ModelQuad>& quads = assets.modelQuads();
     for (uint32_t x = 0; x < Side; ++x) {
+        if (input.isCancelled()) return;
         for (uint32_t y = 0; y < Side; ++y) {
             for (uint32_t z = 0; z < Side; ++z) {
                 const BlockVisual& visual = facts.at(x, y, z);
@@ -1160,6 +1170,7 @@ public:
             return;
         }
         for (int32_t x = 0; x < int32_t(Side); ++x) {
+            if (input.isCancelled()) return;
             for (int32_t y = 0; y < int32_t(Side); ++y) {
                 for (int32_t z = 0; z < int32_t(Side); ++z) {
                     std::optional<Cell> cell = liquid(x, y, z);
@@ -1454,9 +1465,25 @@ std::shared_ptr<const ChunkLighting> updateChunkLighting(const BlockAssets& asse
     return LightField(assets, ids, input).update(std::move(previous));
 }
 
+size_t meshOutputBound(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, size_t maxTemplateQuads)
+{
+    PaletteFacts facts(assets, ids, input.center.get());
+    if (facts.isAir()) return sizeof(ChunkMesh);
+    size_t modelCells = 0;
+    for (uint32_t x = 0; x < Side; ++x)
+        for (uint32_t y = 0; y < Side; ++y)
+            for (uint32_t z = 0; z < Side; ++z) modelCells += facts.at(x, y, z).hasModel();
+    // Six cube faces, at most two model templates and twelve liquid faces per cell.
+    // Twice the emitted size covers geometric vector growth in the supported libraries.
+    return sizeof(ChunkMesh) + size_t(Side) * Side * Side * (12 * sizeof(PackedQuad) + 24 * sizeof(ModelQuadGpu) + 1)
+        + modelCells * maxTemplateQuads * 4 * sizeof(ModelQuadGpu);
+}
+
 ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
 {
     ChunkMesh mesh;
+    auto cancelled = [&] { return input.cancelled && input.cancelled->load(std::memory_order_relaxed); };
+    if (cancelled()) return mesh;
     PaletteFacts facts(assets, ids, input.center.get());
     if (facts.isAir()) {
         return mesh;
@@ -1478,6 +1505,7 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
     for (Face face : AllFaces) {
         Columns columns = exposedColumns(face, facts, masks, *neighbours[static_cast<size_t>(face)]);
         for (uint32_t slice = 0; slice < Side; ++slice) {
+            if (cancelled()) return {};
             std::array<uint32_t, Side> rows {};
             for (uint32_t v = 0; v < Side; ++v) {
                 for (uint32_t u = 0; u < Side; ++u) {
@@ -1488,7 +1516,9 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
         }
     }
     meshModels(assets, input, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
+    if (cancelled()) return {};
     LiquidMesher(assets, ids, input, tints, field).mesh(mesh.models, mesh.translucentModels);
+    if (cancelled()) return {};
     if (!mesh.empty()) {
         mesh.light.resize(size_t(Side) * Side * Side);
         for (uint32_t x = 0; x < Side; ++x) {

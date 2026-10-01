@@ -86,27 +86,39 @@ bool chunkInView(int32_t radius, int32_t chunkX, int32_t chunkZ, int32_t centerX
     return static_cast<float>(dx * dx + dz * dz) < threshold * threshold;
 }
 
+/**
+ * Reads a column's biome storages the way the game does: a column that ends
+ * early, or a storage it cannot read, stops the reading without losing the
+ * chunk, and the sections left without a storage repeat the last one read,
+ * or take plains when none was.
+ */
 bool decodeBiomes(ByteReader& reader, int32_t count, std::vector<std::shared_ptr<const PalettedStorage>>& out, std::string& error)
 {
+    constexpr uint32_t PlainsBiome = 1;
     out.clear();
-    for (int32_t i = 0; i < count; ++i) {
+    for (int32_t i = 0; i < count && reader.remaining() > 0; ++i) {
         uint8_t header = 0;
         if (!reader.readByte(header, error, "biome palette header")) {
-            return false;
+            break;
         }
         if (header == 0xFF) {
             if (out.empty()) {
-                error = "biome copy marker without a previous storage";
-                return false;
+                break;
             }
             out.push_back(out.back());
             continue;
         }
         PalettedStorage storage;
         if (!PalettedStorage::decodeWithHeader(reader, header, storage, error, {}, true)) {
-            return false;
+            reader.skipToEnd();
+            break;
         }
         out.push_back(std::make_shared<const PalettedStorage>(std::move(storage)));
+    }
+    error.clear();
+    auto fill = out.empty() ? std::make_shared<const PalettedStorage>(PalettedStorage::uniform(PlainsBiome)) : out.back();
+    while (out.size() < size_t(std::max(count, int32_t(0)))) {
+        out.push_back(fill);
     }
     return true;
 }
@@ -136,9 +148,8 @@ bool WorldStream::subChunkPending(const SubChunkKey& key) const
 
 void WorldStream::changeDimension(int32_t newDimension, int32_t chunkX, int32_t chunkZ)
 {
-    for (const ChunkKey& key : chunks.columns()) {
-        evictColumn(key);
-    }
+    counters.evictedColumns += chunks.columnCount();
+    chunks.clear();
     pending.clear();
     dimension = newDimension;
     centerX = chunkX;
@@ -493,9 +504,13 @@ void WorldStream::retain()
             stale.push_back(key);
         }
     }
+    std::sort(stale.begin(), stale.end());
+    stale.erase(std::unique(stale.begin(), stale.end()), stale.end());
     for (const ChunkKey& key : stale) {
-        evictColumn(key);
+        pending.erase(key);
+        if (chunks.isLoaded(key)) ++counters.evictedColumns;
     }
+    chunks.evict(stale);
 }
 
 void WorldStream::evictColumn(const ChunkKey& key)

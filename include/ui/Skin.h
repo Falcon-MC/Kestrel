@@ -62,13 +62,14 @@ public:
         return changed;
     }
 
-    void pack(std::vector<uint8_t>& atlasRgba);
+    std::vector<ImageRegion> pack(std::vector<uint8_t>& atlasRgba);
 
 private:
     struct Entry {
         Bitmap bitmap;
         Sprite sprite;
         bool placed = false;
+        bool pixelsDirty = true;
         uint32_t x = 0;
         uint32_t y = 0;
         uint32_t slotWidth = 0;

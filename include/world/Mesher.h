@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "world/BlockAssets.h"
 #include "world/ChunkStore.h"
 #include "world/SubChunk.h"
@@ -109,6 +111,8 @@ struct ChunkLighting {
 };
 
 struct MeshInput {
+    std::shared_ptr<const std::atomic_bool> cancelled;
+    bool isCancelled() const { return cancelled && cancelled->load(std::memory_order_relaxed); }
     std::shared_ptr<const SubChunk> center;
     std::array<std::shared_ptr<const SubChunk>, 6> neighbours;
     std::array<std::shared_ptr<const PalettedStorage>, 9> biomes;
@@ -131,6 +135,7 @@ struct IdMapping {
 };
 
 ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input);
+size_t meshOutputBound(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, size_t maxTemplateQuads);
 std::shared_ptr<const ChunkLighting> updateChunkLighting(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, std::shared_ptr<const ChunkLighting> previous = {});
 
 }

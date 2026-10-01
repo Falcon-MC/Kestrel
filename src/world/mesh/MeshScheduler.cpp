@@ -6,6 +6,27 @@
 #include <limits>
 
 namespace kestrel::world {
+
+struct MeshBudgetState {
+    std::mutex mutex;
+    std::condition_variable wake;
+    size_t bytes = 0;
+    bool stopping = false;
+};
+
+struct MeshMemoryCredit {
+    std::shared_ptr<MeshBudgetState> state;
+    size_t bytes;
+    MeshMemoryCredit(std::shared_ptr<MeshBudgetState> state, size_t bytes) : state(std::move(state)), bytes(bytes) {}
+    ~MeshMemoryCredit() {
+        { std::lock_guard lock(state->mutex); state->bytes -= bytes; }
+        state->wake.notify_all();
+    }
+    void reconcile(size_t actual) {
+        { std::lock_guard lock(state->mutex); state->bytes = state->bytes - bytes + actual; bytes = actual; }
+        state->wake.notify_all();
+    }
+};
 namespace {
 size_t meshBytes(const ChunkMesh& mesh)
 {
@@ -16,6 +37,7 @@ size_t meshBytes(const ChunkMesh& mesh)
 }
 
 MeshScheduler::MeshScheduler()
+    : memory(std::make_shared<MeshBudgetState>())
 {
     unsigned int cores = std::thread::hardware_concurrency();
     unsigned int count = std::min(8u, std::max(1u, cores > 2 ? cores - 2 : 1u));
@@ -24,9 +46,12 @@ MeshScheduler::MeshScheduler()
 
 MeshScheduler::~MeshScheduler()
 {
+    { std::lock_guard lock(memory->mutex); memory->stopping = true; }
+    memory->wake.notify_all();
     {
         std::lock_guard<std::mutex> guard(mutex);
         stopping = true;
+        for (auto& [key, token] : cancellations) token->store(true);
         queued.clear();
     }
     wake.notify_all();
@@ -41,10 +66,32 @@ bool MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInpu
         if (existing == queued.end() && queued.size() >= QueueCapacity) return false;
         if (existing != queued.end()) urgent |= existing->second.urgent;
         newest[key] = generation;
-        queued.insert_or_assign(key, Job { key, generation, currentEpoch, urgent, std::move(input), std::move(assets), std::move(ids) });
+        if (auto old = cancellations.find(key); old != cancellations.end()) old->second->store(true);
+        auto token = std::make_shared<std::atomic_bool>(false);
+        cancellations[key] = token;
+        input.cancelled = std::move(token);
+        if (boundAssets != assets) {
+            boundAssets = assets;
+            maxTemplateQuads = 0;
+            for (const auto& model : assets->modelTemplates()) maxTemplateQuads = std::max(maxTemplateQuads, size_t(model.quadCount));
+        }
+        queued.insert_or_assign(key, Job { key, generation, currentEpoch, urgent, std::move(input), std::move(assets), std::move(ids), maxTemplateQuads });
     }
     wake.notify_all();
+    memory->wake.notify_all();
     return true;
+}
+
+void MeshScheduler::invalidate(const SubChunkKey& key, uint64_t generation)
+{
+    {
+        std::lock_guard lock(mutex);
+        if (auto old = cancellations.find(key); old != cancellations.end()) old->second->store(true);
+        queued.erase(key);
+        newest[key] = generation;
+    }
+    memory->wake.notify_all();
+    wake.notify_all();
 }
 
 void MeshScheduler::cancel(const SubChunkKey& key)
@@ -52,6 +99,10 @@ void MeshScheduler::cancel(const SubChunkKey& key)
     {
         std::lock_guard<std::mutex> guard(mutex);
         queued.erase(key);
+        if (auto old = cancellations.find(key); old != cancellations.end()) {
+            old->second->store(true);
+            cancellations.erase(old);
+        }
         newest.erase(key);
         lightCache.erase(key);
         for (auto it = results.begin(); it != results.end();) {
@@ -60,6 +111,7 @@ void MeshScheduler::cancel(const SubChunkKey& key)
         }
     }
     wake.notify_all();
+    memory->wake.notify_all();
 }
 
 void MeshScheduler::setView(std::array<double, 3> position)
@@ -81,13 +133,17 @@ bool MeshScheduler::canSubmit(const SubChunkKey& key) const
     return queued.contains(key) || queued.size() < QueueCapacity;
 }
 
-std::vector<MeshResult> MeshScheduler::takeResults()
+std::vector<MeshResult> MeshScheduler::takeResults(size_t maximum)
 {
     std::vector<MeshResult> ready;
     {
         std::lock_guard<std::mutex> guard(mutex);
-        ready.swap(results);
-        resultBytes = 0;
+        ready.reserve(std::min(maximum, results.size()));
+        while (!results.empty() && ready.size() < maximum) {
+            resultBytes -= meshBytes(results.front().mesh);
+            ready.push_back(std::move(results.front()));
+            results.pop_front();
+        }
     }
     wake.notify_all();
     return ready;
@@ -110,6 +166,8 @@ void MeshScheduler::clear()
     {
         std::lock_guard<std::mutex> guard(mutex);
         ++currentEpoch;
+        for (auto& [key, token] : cancellations) token->store(true);
+        cancellations.clear();
         queued.clear();
         newest.clear();
         results.clear();
@@ -119,6 +177,7 @@ void MeshScheduler::clear()
         meshCount = 0;
     }
     wake.notify_all();
+    memory->wake.notify_all();
 }
 
 bool MeshScheduler::hasReadyJob() const
@@ -167,15 +226,32 @@ void MeshScheduler::work()
             }
         }
         auto started = std::chrono::steady_clock::now();
-        job.input.lighting = reusable ? previous : updateChunkLighting(*job.assets, job.ids, job.input, previous);
-        MeshResult result { job.key, job.generation, job.epoch, meshSubChunk(*job.assets, job.ids, job.input) };
+        std::shared_ptr<MeshMemoryCredit> credit;
+        auto cancelled = [&] { return job.input.cancelled->load(std::memory_order_relaxed); };
+        if (!cancelled()) {
+            size_t bound = meshOutputBound(*job.assets, job.ids, job.input, job.maxTemplateQuads);
+            std::unique_lock lock(memory->mutex);
+            memory->wake.wait(lock, [&] { return memory->stopping || cancelled() || memory->bytes == 0
+                || (bound <= ResultByteCapacity && memory->bytes <= ResultByteCapacity - bound); });
+            if (!memory->stopping && !cancelled()) {
+                credit = std::make_shared<MeshMemoryCredit>(memory, bound);
+                memory->bytes += bound;
+            }
+        }
+        ChunkMesh output;
+        if (credit && !cancelled()) {
+            job.input.lighting = reusable ? previous : updateChunkLighting(*job.assets, job.ids, job.input, previous);
+            if (!cancelled()) output = meshSubChunk(*job.assets, job.ids, job.input);
+            credit->reconcile(meshBytes(output));
+        }
+        MeshResult result { job.key, job.generation, job.epoch, std::move(output), std::move(credit) };
         double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         size_t bytes = meshBytes(result.mesh);
         {
             std::unique_lock<std::mutex> lock(mutex);
             auto current = [&] {
                 auto latest = newest.find(job.key);
-                return job.epoch == currentEpoch && latest != newest.end() && latest->second == job.generation;
+                return !cancelled() && result.credit && job.epoch == currentEpoch && latest != newest.end() && latest->second == job.generation;
             };
             wake.wait(lock, [&] { return stopping || !current() || (results.size() < ResultCapacity
                 && (results.empty() || bytes <= ResultByteCapacity - std::min(resultBytes, ResultByteCapacity))); });

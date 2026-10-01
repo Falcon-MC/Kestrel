@@ -3,8 +3,49 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <algorithm>
 
 namespace kestrel::world {
+
+struct ChunkStore::Retirement {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<Column> columns;
+    bool stopping = false;
+    std::thread worker;
+    Retirement() : worker([this] {
+        for (;;) {
+            Column retired;
+            {
+                std::unique_lock lock(mutex);
+                wake.wait(lock, [&] { return stopping || !columns.empty(); });
+                if (columns.empty()) return;
+                retired = std::move(columns.front());
+                columns.pop_front();
+            }
+            wake.notify_all();
+        }
+    }) {}
+    ~Retirement() {
+        { std::lock_guard lock(mutex); stopping = true; }
+        wake.notify_all();
+        worker.join();
+    }
+    void enqueue(Column column) {
+        std::unique_lock lock(mutex);
+        wake.wait(lock, [&] { return columns.size() < 128; });
+        columns.push_back(std::move(column));
+        lock.unlock();
+        wake.notify_all();
+    }
+};
+
+ChunkStore::ChunkStore() = default;
+ChunkStore::~ChunkStore() = default;
 
 namespace {
 
@@ -180,26 +221,45 @@ bool ChunkStore::updateBlocks(const SubChunkKey& key, const std::vector<BlockUpd
 
 void ChunkStore::evict(const ChunkKey& key)
 {
-    auto column = columnsByKey.find(key);
-    if (column == columnsByKey.end()) {
-        return;
+    evict(std::vector<ChunkKey> { key });
+}
+
+void ChunkStore::evict(const std::vector<ChunkKey>& keys)
+{
+    std::set<ChunkKey> removed(keys.begin(), keys.end());
+    std::map<ChunkKey, int32_t> affected;
+    for (const auto& key : removed) {
+        auto found = columnsByKey.find(key);
+        if (found == columnsByKey.end()) continue;
+        for (const auto& [y, sub] : found->second.subChunks) dirty.insert({ key.dimension, key.x, y, key.z });
+        if (found->second.subChunks.empty()) continue;
+        int32_t highest = found->second.subChunks.rbegin()->first;
+        for (int32_t dx = -1; dx <= 1; ++dx) for (int32_t dz = -1; dz <= 1; ++dz) {
+            ChunkKey neighbour { key.dimension, key.x + dx, key.z + dz };
+            if (removed.contains(neighbour)) continue;
+            auto [entry, inserted] = affected.emplace(neighbour, highest);
+            if (!inserted) entry->second = std::max(entry->second, highest);
+        }
     }
-    for (const auto& [y, subChunk] : column->second.subChunks) {
-        markDirty({ key.dimension, key.x, y, key.z });
+    for (const auto& [key, highest] : affected) {
+        auto found = columnsByKey.find(key);
+        if (found == columnsByKey.end()) continue;
+        for (const auto& [y, sub] : found->second.subChunks) {
+            if (int64_t(y) <= int64_t(highest) + 1) dirty.insert({ key.dimension, key.x, y, key.z });
+        }
     }
-    storedSubChunks -= column->second.subChunks.size();
-    columnsByKey.erase(column);
+    for (const auto& key : removed) {
+        auto node = columnsByKey.extract(key);
+        if (node.empty()) continue;
+        storedSubChunks -= node.mapped().subChunks.size();
+        if (!retirement) retirement = std::make_unique<Retirement>();
+        retirement->enqueue(std::move(node.mapped()));
+    }
 }
 
 void ChunkStore::clear()
 {
-    for (const auto& [key, column] : columnsByKey) {
-        for (const auto& [y, subChunk] : column.subChunks) {
-            dirty.insert({ key.dimension, key.x, y, key.z });
-        }
-    }
-    columnsByKey.clear();
-    storedSubChunks = 0;
+    evict(columns());
 }
 
 std::vector<ChunkKey> ChunkStore::columns() const

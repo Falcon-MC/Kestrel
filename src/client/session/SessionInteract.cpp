@@ -258,10 +258,10 @@ void Session::interact(bool use)
         packet.mClickPosition = Vector3f(float(origin[0] + direction[0] * nearest - target->x), float(origin[1] + direction[1] * nearest - target->y), float(origin[2] + direction[2] * nearest - target->z));
         debugLog(std::string(use ? "interact with " : "attack ") + target->identifier + " " + std::to_string(target->runtimeId));
         if (!use) {
-            trySwing("Attack");
+            trySwing("attack");
         }
     } else if (!use) {
-        trySwing(block ? "Mine" : "Attack");
+        trySwing(block ? "mine" : "attack");
         if (!block) {
             missedSwing = true;
         }
@@ -406,7 +406,7 @@ void Session::useOnBlock(const BlockHit& block, bool repeat, BlockUse outcome)
         return;
     }
     if (outcome != BlockUse::Nothing) {
-        trySwing(outcome == BlockUse::Interact ? "Interact" : "Build");
+        trySwing(outcome == BlockUse::Interact ? "interact" : "build");
     }
     InventoryTransactionPacket packet;
     packet.mHotbarSlot = slot;
