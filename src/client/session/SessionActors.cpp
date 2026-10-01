@@ -2,21 +2,29 @@
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"
+#include "util/Text.h"
 #include "world/BlockAssets.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace kestrel {
 
 namespace {
 
+constexpr uint32_t ClassicSkinSide = 64;
+constexpr uint8_t ClassicAlphaCutoff = 26;
+constexpr float ClassicCoverageLimit = 0.6f;
+
 /**
  * A 64-bit FNV-1a fingerprint of what a skin draws with: its image size and
- * pixels, its geometry and its resource patch. Servers resend the player list
- * every few seconds, and a skin that comes back with the same fingerprint is
- * not built again.
+ * pixels, its geometry and resource patch, its animation sheets and its cape.
+ * Servers resend the player list every few seconds, and a skin that comes
+ * back with the same fingerprint is not built again.
  */
 uint64_t skinPrint(const SerializedSkin& skin)
 {
@@ -27,15 +35,154 @@ uint64_t skinPrint(const SerializedSkin& skin)
             hash = (hash ^ bytes[index]) * 1099511628211ull;
         }
     };
-    const SkinImageData& image = skin.mSkinData;
-    int32_t size[2] = { int32_t(image.mWidth), int32_t(image.mHeight) };
-    mix(size, sizeof(size));
-    mix(image.mData.data(), image.mData.size());
+    auto mixImage = [&mix](const SkinImageData& image) {
+        int32_t size[2] = { int32_t(image.mWidth), int32_t(image.mHeight) };
+        mix(size, sizeof(size));
+        uint64_t length = image.mData.size();
+        mix(&length, sizeof(length));
+        mix(image.mData.data(), image.mData.size());
+    };
+    mixImage(skin.mSkinData);
     uint64_t geometryLength = skin.mGeometryData.size();
     mix(&geometryLength, sizeof(geometryLength));
     mix(skin.mGeometryData.data(), skin.mGeometryData.size());
     mix(skin.mSkinResourcePatch.data(), skin.mSkinResourcePatch.size());
+    uint64_t animationCount = skin.mAnimations.size();
+    mix(&animationCount, sizeof(animationCount));
+    for (const SkinAnimationData& animation : skin.mAnimations) {
+        mixImage(animation.mImage);
+        mix(&animation.mTextureType, sizeof(animation.mTextureType));
+        mix(&animation.mFrames, sizeof(animation.mFrames));
+        mix(&animation.mExpressionType, sizeof(animation.mExpressionType));
+    }
+    mixImage(skin.mCapeData);
+    uint8_t persona = skin.mPersona ? 1 : 0;
+    mix(&persona, sizeof(persona));
     return hash;
+}
+
+/**
+ * The game's alpha check of a classic skin, 64 or 128 texels square: each
+ * region of the layout is made fully clear or fully opaque at the 26/255
+ * cutoff, and a base body region more than 60% clear is filled in whole
+ * unless the skin brings its own model. Persona skins keep their alpha.
+ */
+void normalizeClassicAlpha(std::vector<uint8_t>& pixels, uint32_t width, uint32_t height, const SerializedSkin& skin)
+{
+    if (skin.mPersona || width != height || (width != ClassicSkinSide && width != ClassicSkinSide * 2) || pixels.size() < size_t(width) * height * 4) {
+        return;
+    }
+    std::string name = world::skinGeometryName(skin.mSkinResourcePatch);
+    bool customGeometry = !name.empty() && name != "geometry.humanoid.custom" && name != "geometry.humanoid.customSlim";
+    uint32_t scale = width / ClassicSkinSide;
+    struct Region {
+        std::array<uint32_t, 4> bounds;
+        bool protect;
+    };
+    static constexpr Region Regions[] = {
+        { { 0, 8, 32, 16 }, true },
+        { { 8, 0, 24, 8 }, false },
+        { { 0, 20, 56, 32 }, true },
+        { { 4, 16, 12, 20 }, false },
+        { { 20, 16, 36, 20 }, false },
+        { { 44, 16, 52, 20 }, false },
+        { { 16, 52, 48, 64 }, true },
+        { { 20, 48, 28, 64 }, false },
+        { { 36, 48, 44, 64 }, false },
+        { { 32, 0, 64, 32 }, false },
+        { { 0, 32, 16, 48 }, false },
+        { { 16, 32, 40, 48 }, false },
+        { { 40, 32, 56, 48 }, false },
+        { { 0, 48, 16, 64 }, false },
+        { { 48, 48, 64, 64 }, false },
+    };
+    for (const Region& region : Regions) {
+        uint32_t x0 = region.bounds[0] * scale;
+        uint32_t y0 = region.bounds[1] * scale;
+        uint32_t x1 = region.bounds[2] * scale;
+        uint32_t y1 = region.bounds[3] * scale;
+        size_t clear = 0;
+        for (uint32_t y = y0; y < y1; ++y) {
+            for (uint32_t x = x0; x < x1; ++x) {
+                uint8_t& alpha = pixels[(size_t(y) * width + x) * 4 + 3];
+                clear += alpha < ClassicAlphaCutoff ? 1 : 0;
+                alpha = alpha < ClassicAlphaCutoff ? 0 : 255;
+            }
+        }
+        if (!region.protect || customGeometry || float(clear) / float((x1 - x0) * (y1 - y0)) <= ClassicCoverageLimit) {
+            continue;
+        }
+        for (uint32_t y = y0; y < y1; ++y) {
+            for (uint32_t x = x0; x < x1; ++x) {
+                pixels[(size_t(y) * width + x) * 4 + 3] = 255;
+            }
+        }
+    }
+}
+
+/**
+ * A skin image as sent, or an empty one when its size and bytes disagree.
+ */
+SkinImage skinImage(const SkinImageData& image)
+{
+    SkinImage out;
+    if (image.mWidth <= 0 || image.mHeight <= 0 || image.mData.size() != size_t(image.mWidth) * size_t(image.mHeight) * 4) {
+        return out;
+    }
+    out.width = uint32_t(image.mWidth);
+    out.height = uint32_t(image.mHeight);
+    out.pixels.assign(reinterpret_cast<const uint8_t*>(image.mData.data()), reinterpret_cast<const uint8_t*>(image.mData.data()) + image.mData.size());
+    return out;
+}
+
+/**
+ * The animation sheets a skin sends that the player renderer draws, one per
+ * kind with the last one sent winning, each with the model its resource
+ * patch names for that kind. A sheet with a bad size or frame count, or
+ * without its model, is left out.
+ */
+std::vector<SkinAnimationUpload> skinAnimations(const SerializedSkin& skin)
+{
+    std::vector<SkinAnimationUpload> out;
+    for (const SkinAnimationData& animation : skin.mAnimations) {
+        const char* key = nullptr;
+        switch (animation.mTextureType) {
+        case 1:
+            key = "animated_face";
+            break;
+        case 2:
+            key = "animated_32x32";
+            break;
+        case 3:
+            key = "animated_128x128";
+            break;
+        default:
+            break;
+        }
+        if (!key) {
+            continue;
+        }
+        SkinImage image = skinImage(animation.mImage);
+        float frames = animation.mFrames;
+        if (image.empty() || !std::isfinite(frames) || frames < 1.0f || frames > float(image.height) || frames != std::floor(frames)) {
+            continue;
+        }
+        std::shared_ptr<const world::EntityRig> rig = world::buildSkinRig(skin.mGeometryData, skin.mSkinResourcePatch, nullptr, key);
+        if (!rig) {
+            continue;
+        }
+        SkinAnimationKind kind = static_cast<SkinAnimationKind>(animation.mTextureType);
+        std::erase_if(out, [kind](const SkinAnimationUpload& known) {
+            return known.kind == kind;
+        });
+        SkinAnimationUpload& added = out.emplace_back();
+        added.image = std::move(image);
+        added.rig = std::move(rig);
+        added.kind = kind;
+        added.frames = uint32_t(frames);
+        added.blinking = animation.mExpressionType == 1;
+    }
+    return out;
 }
 
 /**
@@ -171,6 +318,28 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
 }
 
 /**
+ * Replaces a remote actor's velocity without moving it. An arrow that has
+ * not turned yet takes its launch yaw and pitch from the motion, shown at
+ * once rather than glided into.
+ */
+void Session::setActorMotion(uint64_t runtimeId, float x, float y, float z)
+{
+    auto actor = actors.find(runtimeId);
+    if (actor == actors.end()) {
+        return;
+    }
+    ActorView& view = actor->second;
+    view.velocity = { x, y, z };
+    if (view.identifier != "minecraft:arrow" || view.yaw != 0.0f || view.pitch != 0.0f) {
+        return;
+    }
+    constexpr float Degrees = 180.0f / 3.14159265f;
+    view.yaw = std::atan2(x, z) * Degrees;
+    view.pitch = std::atan2(y, std::hypot(x, z)) * Degrees;
+    ++view.launchTurns;
+}
+
+/**
  * Remembers a player's skin. Proxies list every player of the network, far
  * more than there are skin slots, so a skin only takes a slot while an entity
  * in the world wears it, or when it is the local player's own.
@@ -197,8 +366,9 @@ bool Session::skinWorn(const std::string& uuid) const
 }
 
 /**
- * Puts a remembered skin in a skin slot, scaled to the entity texture size,
- * and points the entities wearing it at that slot.
+ * Puts a remembered skin in a skin slot at its own size, with its cape,
+ * animation sheets and model, and points the entities wearing it at that
+ * slot. The slim arms come from the model the resource patch names.
  */
 void Session::assignSkin(const std::string& uuid)
 {
@@ -222,37 +392,37 @@ void Session::assignSkin(const std::string& uuid)
     if (slot == NoSkin) {
         return;
     }
-    bool slim = skin.mSkinResourcePatch.find("Slim") != std::string::npos || skin.mSkinResourcePatch.find("slim") != std::string::npos;
+    bool slim = util::lowercase(world::skinGeometryName(skin.mSkinResourcePatch)) == "geometry.humanoid.customslim";
     slotOwners[slot] = uuid;
     skinByUuid[uuid] = { slot, slim };
     uploadedSkinPrints[uuid] = skinPrint(skin);
 
     SkinUpload upload;
     upload.slot = slot;
-    upload.rig = world::buildSkinRig(skin.mGeometryData, skin.mSkinResourcePatch);
-    const uint8_t* pixels = reinterpret_cast<const uint8_t*>(image.mData.data());
+    upload.rig = world::buildSkinRig(skin.mGeometryData, skin.mSkinResourcePatch, assets ? assets->geometryCatalog() : nullptr);
+    upload.cape = skinImage(skin.mCapeData);
+    upload.animations = skinAnimations(skin);
     uint32_t width = uint32_t(image.mWidth);
     uint32_t height = uint32_t(image.mHeight);
-    std::vector<uint8_t> squared;
+    bool squared = false;
     // Legacy 64x32 skins often come with geometry laid out for a square texture, which
     // then reads the missing lower half, so they are squared unless the geometry is flat too.
     bool squareGeometry = !upload.rig || upload.rig->textureAspect > 0.75f;
-    if (squareGeometry && width == height * 2 && width % 64 == 0) {
-        squared = squareLegacySkin(image);
-        pixels = squared.data();
+    if (squareGeometry && !skin.mPersona && width == height * 2 && width % 64 == 0) {
+        upload.image.pixels = squareLegacySkin(image);
         height = width;
+        squared = true;
+    } else {
+        const uint8_t* pixels = reinterpret_cast<const uint8_t*>(image.mData.data());
+        upload.image.pixels.assign(pixels, pixels + size_t(width) * height * 4);
     }
+    upload.image.width = width;
+    upload.image.height = height;
+    normalizeClassicAlpha(upload.image.pixels, width, height, skin);
     debugLog("skin " + uuid + " slot " + std::to_string(slot) + " image " + std::to_string(image.mWidth) + "x" + std::to_string(image.mHeight)
         + " patch " + skin.mSkinResourcePatch + " geometry bytes " + std::to_string(skin.mGeometryData.size())
         + (upload.rig ? " rig quads " + std::to_string(upload.rig->quads.size()) + " aspect " + std::to_string(upload.rig->textureAspect) : std::string(" no rig"))
-        + (squared.empty() ? "" : " squared"));
-    upload.pixels.resize(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4);
-    for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
-        for (uint32_t x = 0; x < world::EntityTextureSize; ++x) {
-            size_t source = (size_t(y * height / world::EntityTextureSize) * width + x * width / world::EntityTextureSize) * 4;
-            std::memcpy(upload.pixels.data() + (size_t(y) * world::EntityTextureSize + x) * 4, pixels + source, 4);
-        }
-    }
+        + (squared ? " squared" : "") + " animations " + std::to_string(upload.animations.size()) + (upload.cape.empty() ? "" : " cape"));
     for (auto& [runtime, actor] : actors) {
         auto owner = uuidByRuntime.find(runtime);
         if (owner != uuidByRuntime.end() && owner->second == uuid) {

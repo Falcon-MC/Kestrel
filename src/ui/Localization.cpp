@@ -85,6 +85,29 @@ void Localization::rebuild()
 {
     ++changes;
     texts.clear();
+    const bool french = current.starts_with("fr_");
+    struct LocalText { const char* key; const char* english; const char* french; };
+    static constexpr LocalText globalResourcesTexts[] = {
+        { "description", "Apply resource packs to menus and every server. Higher packs take priority.", "Applique les packs aux menus et aux serveurs. Les packs en haut sont prioritaires." },
+        { "import", "Import", "Importer" },
+        { "reload", "Reload", "Recharger" },
+        { "folder", "Folder", "Dossier" },
+        { "loading", "Loading resource packs...", "Chargement des packs..." },
+        { "applying", "Applying resource packs...", "Application des packs..." },
+        { "updated", "Global resources updated", "Ressources globales mises à jour" },
+        { "imported", "Imported %s", "%s importé" },
+        { "dependencies", "Deactivated packs with missing dependencies", "Packs désactivés : dépendances manquantes" },
+        { "activate", "Activate", "Activer" },
+        { "deactivate", "Deactivate", "Désactiver" },
+        { "default", "Default", "Par défaut" },
+        { "delete", "Delete", "Supprimer" },
+        { "confirm", "Confirm", "Confirmer" },
+        { "confirmDescription", "Delete %s permanently?", "Supprimer définitivement %s ?" },
+        { "base", "Default resources", "Ressources par défaut" },
+        { "empty", "Import a .mcpack or .zip file to add a resource pack.", "Importez un fichier .mcpack ou .zip pour ajouter un pack de ressources." },
+    };
+    for (const auto& entry : globalResourcesTexts)
+        texts[std::string("kestrel.globalResources.") + entry.key] = french ? entry.french : entry.english;
     splashTexts.clear();
     std::string splashFile;
     if (pack) {

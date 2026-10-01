@@ -1208,8 +1208,8 @@ void Client::syncSession()
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
-        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + HeldItemTextureSlots + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        uint32_t particleBase = assets->entityTextureLayers() + world::SkinSlots + HeldItemTextureSlots + world::DroppedIconSlots;
+        entityPixels.resize(entityPixels.size() + size_t(world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
+        uint32_t particleBase = assets->entityTextureLayers() + world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots;
         uint32_t particleLayers = loadParticles(snapshot.packs, particleBase, entityPixels);
         renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, particleBase + particleLayers);
         heldMeshes.clear();
@@ -1224,8 +1224,8 @@ void Client::syncSession()
         handRestAnimator = world::EntityAnimator();
         paperDollAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
-        for (const auto& [slot, pixels] : skinPixels) {
-            renderer->updateEntityTexture(assets->skinLayerBase() + slot, pixels.data());
+        for (const auto& [layer, pixels] : skinPixels) {
+            renderer->updateEntityTexture(assets->skinLayerBase() + layer, pixels.data());
         }
         if (blockAssets != assets) {
             partMatches.clear();
@@ -1314,13 +1314,25 @@ void Client::syncSession()
     takeSessionParticles(snapshot);
     bool skinsChanged = false;
     for (SkinUpload& skin : session.takeSkinUploads()) {
-        if (blockAssets) {
-            renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());
+        releaseSkinLayers(skin.slot);
+        SkinView view;
+        view.base = placeSkinTexture(skin.slot, skin.image, world::MaxSkinSide / world::EntityTextureSize);
+        view.cape = placeSkinTexture(skin.slot, skin.cape, 1);
+        for (SkinAnimationUpload& animation : skin.animations) {
+            SkinAnimationView placed;
+            placed.texture = placeSkinTexture(skin.slot, animation.image, world::MaxEntityTiles);
+            placed.rig = std::move(animation.rig);
+            placed.kind = animation.kind;
+            placed.frames = std::max<uint32_t>(animation.frames, 1);
+            placed.blinking = animation.blinking;
+            if (placed.texture.present && placed.rig) {
+                view.animations.push_back(std::move(placed));
+            }
         }
-        if (skin.slot == localSkinSlot && !skin.pixels.empty()) {
-            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ world::EntityTextureSize, world::EntityTextureSize, skin.pixels }, 64));
+        skinViews[skin.slot] = std::move(view);
+        if (skin.slot == localSkinSlot && !skin.image.empty()) {
+            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ skin.image.width, skin.image.height, skin.image.pixels }, 64));
         }
-        skinPixels[skin.slot] = std::move(skin.pixels);
         if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
         skinRigs[skin.slot] = std::move(skin.rig);
         skinsChanged = true;

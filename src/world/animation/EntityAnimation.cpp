@@ -500,6 +500,32 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
     return scripts;
 }
 
+bool targetRotationIsAbsolute(const std::string& identifier)
+{
+    return identifier == "minecraft:arrow" || identifier == "minecraft:fireworks_rocket" || identifier == "minecraft:wither_skull"
+        || identifier == "minecraft:wither_skull_dangerous";
+}
+
+bool cameraFacingSprite(const std::string& identifier)
+{
+    static constexpr const char* Sprites[] = {
+        "minecraft:xp_bottle",
+        "minecraft:ender_pearl",
+        "minecraft:xp_orb",
+        "minecraft:dragon_fireball",
+        "minecraft:fireball",
+        "minecraft:snowball",
+        "minecraft:small_fireball",
+        "minecraft:splash_potion",
+        "minecraft:egg",
+        "minecraft:eye_of_ender_signal",
+        "minecraft:lingering_potion",
+    };
+    return std::any_of(std::begin(Sprites), std::end(Sprites), [&](const char* sprite) {
+        return identifier == sprite;
+    });
+}
+
 void EntityAnimator::runScripts(const std::vector<molang::Script>& scripts)
 {
     for (const molang::Script& script : scripts) {
@@ -924,6 +950,9 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
             }
             play(alias, 1.0, 0, nullptr);
         }
+        for (const std::string& alias : input.extraAnimations) {
+            play(alias, 1.0, 0, nullptr);
+        }
         modelScale = 1.0f;
         if (!scripts->scale.empty()) {
             scope.temps.clear();
@@ -1160,6 +1189,9 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     }
     if (name == "target_x_rotation" || name == "head_x_rotation" || name == "eye_target_x_rotation") {
         return current.pitch;
+    }
+    if (name == "target_y_rotation" && targetRotationIsAbsolute(current.identifier)) {
+        return current.yaw;
     }
     if (name == "target_y_rotation" || name == "eye_target_y_rotation") {
         return wrapDegrees(current.headYaw - current.yaw);

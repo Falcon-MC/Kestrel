@@ -167,6 +167,9 @@ struct ActorView {
     uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    // Blocks per tick as the server last set it, and a count of launch turns to show at once.
+    std::array<float, 3> velocity {};
+    uint64_t launchTurns = 0;
     // A dropped item: the stack it shows, and once picked up who took it and when.
     HudItem item;
     uint64_t pickedUpBy = 0;
@@ -174,12 +177,51 @@ struct ActorView {
 };
 
 /**
- * A player skin to place in its entity texture slot, already scaled to the
- * entity texture size.
+ * An RGBA image a skin carries, at the size it was sent.
+ */
+struct SkinImage {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> pixels;
+
+    bool empty() const
+    {
+        return width == 0 || height == 0 || pixels.size() != size_t(width) * height * 4;
+    }
+};
+
+/**
+ * Which part of a persona an animation sheet moves, numbered as the skin
+ * sends it.
+ */
+enum class SkinAnimationKind : uint8_t {
+    Face = 1,
+    Body32 = 2,
+    Body128 = 3,
+};
+
+/**
+ * An animation sheet of a skin: frames stacked top to bottom, drawn on the
+ * geometry its resource patch names for the kind, a face either scrolling
+ * through its frames or blinking.
+ */
+struct SkinAnimationUpload {
+    SkinImage image;
+    std::shared_ptr<const world::EntityRig> rig;
+    SkinAnimationKind kind = SkinAnimationKind::Face;
+    uint32_t frames = 1;
+    bool blinking = false;
+};
+
+/**
+ * A player skin for its skin slot: the skin image at its own size, its cape
+ * and animation sheets, and the model it brings.
  */
 struct SkinUpload {
     uint32_t slot = 0;
-    std::vector<uint8_t> pixels;
+    SkinImage image;
+    SkinImage cape;
+    std::vector<SkinAnimationUpload> animations;
     std::shared_ptr<const world::EntityRig> rig;
 };
 
@@ -726,6 +768,7 @@ private:
     void collectMeshes();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition = false);
+    void setActorMotion(uint64_t runtimeId, float x, float y, float z);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);

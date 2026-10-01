@@ -57,6 +57,7 @@ class Renderer;
 struct ActorMotion {
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    uint64_t launchTurns = 0;
     std::array<double, 3> from {};
     std::array<double, 3> to {};
     std::array<double, 3> shown {};
@@ -153,6 +154,60 @@ private:
     ActorView localActorView(float deltaSeconds);
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
+
+    /**
+     * Where a skin image sits in the skin layers: the first layer of its grid,
+     * counted from the first skin layer, and how it is cut over the grid.
+     */
+    struct SkinTexture {
+        uint32_t layer = 0;
+        world::EntityTileGrid grid;
+        bool present = false;
+    };
+
+    /**
+     * An animation sheet of a skin as drawn: its layers, the model it goes on
+     * and how it steps through its frames.
+     */
+    struct SkinAnimationView {
+        SkinTexture texture;
+        std::shared_ptr<const world::EntityRig> rig;
+        SkinAnimationKind kind = SkinAnimationKind::Face;
+        uint32_t frames = 1;
+        bool blinking = false;
+    };
+
+    /**
+     * The textures of the skin in one skin slot: the skin, its cape and its
+     * animation sheets.
+     */
+    struct SkinView {
+        SkinTexture base;
+        SkinTexture cape;
+        std::vector<SkinAnimationView> animations;
+    };
+
+    /**
+     * Copies an image texel for texel onto a grid of free skin layers, at most
+     * maxTiles layers across and down, owned by the skin slot; an image that
+     * finds no room for its grid is squeezed into a single layer.
+     */
+    SkinTexture placeSkinTexture(uint32_t slot, const SkinImage& image, uint32_t maxTiles);
+    void releaseSkinLayers(uint32_t slot);
+    const SkinView* skinViewOf(uint32_t slot) const;
+
+    /**
+     * How the texture starting at an entity layer is cut over the layers,
+     * whether it is a pack texture or a skin image.
+     */
+    world::EntityTileGrid tileGridOf(uint32_t layer) const;
+
+    /**
+     * Pushes one posed model quad, corners in 1/256 block around the draw
+     * origin and UVs over the whole texture, cut over the layers its texture
+     * is spread on.
+     */
+    void appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out) const;
     const world::EntityModel* localPlayerModel(const world::EntityRig*& rig, uint32_t& skinLayer) const;
     float swingProgress();
     float swingProgressSince(double start, double now) const;
@@ -268,6 +323,9 @@ private:
     std::vector<ActorView> actorViews;
     std::map<uint32_t, std::vector<uint8_t>> skinPixels;
     std::map<uint32_t, std::shared_ptr<const world::EntityRig>> skinRigs;
+    std::map<uint32_t, SkinView> skinViews;
+    std::vector<uint32_t> skinLayerOwners = std::vector<uint32_t>(world::SkinPoolLayers, 0);
+    std::unordered_map<uint32_t, world::EntityTileGrid> skinTileGrids;
     std::unordered_map<uint64_t, world::EntityAnimator> animators;
 
     /**

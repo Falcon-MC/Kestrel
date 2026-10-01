@@ -155,7 +155,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         motionHistory.clear();
         serverMotions.clear();
         motion.teleport(target);
-        teleportHandled = true;
+        teleportHandled = move->mMode == MovePlayerMode::Teleport;
         motionStarted = false;
         std::lock_guard<std::mutex> guard(mutex);
         MotionVector feet = motion.position();
@@ -171,6 +171,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         motionHistory.clear();
         serverMotions.clear();
         motion.reset(feet);
+        teleportHandled = false;
         motionStarted = false;
         debugLog("respawn at " + std::to_string(feet.x) + " " + std::to_string(feet.y) + " " + std::to_string(feet.z));
         bool dead = false;
@@ -203,18 +204,22 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         MotionVector delta { correction->mDelta.x, correction->mDelta.y, correction->mDelta.z };
         replayCorrection(correction->mTick, { correction->mPosition.x, correction->mPosition.y - EyeHeight, correction->mPosition.z }, &delta, correction->mOnGround);
     } else if (auto push = std::dynamic_pointer_cast<SetActorMotionPacket>(packet)) {
-        if (push->mRuntimeActorId != localRuntimeId || !std::isfinite(push->mMotion.x) || !std::isfinite(push->mMotion.y) || !std::isfinite(push->mMotion.z)) {
+        if (!std::isfinite(push->mMotion.x) || !std::isfinite(push->mMotion.y) || !std::isfinite(push->mMotion.z)) {
+            return;
+        }
+        if (push->mRuntimeActorId != localRuntimeId) {
+            setActorMotion(static_cast<uint64_t>(push->mRuntimeActorId), push->mMotion.x, push->mMotion.y, push->mMotion.z);
             return;
         }
         MotionVector impulse { push->mMotion.x, push->mMotion.y, push->mMotion.z };
-        uint64_t at = push->mTick == 0 ? clientTick + 1 : push->mTick;
         if (push->mTick == 0) {
             motion.knockback(impulse);
+            return;
         }
         if (serverMotions.size() >= MotionHistoryTicks) {
             serverMotions.pop_front();
         }
-        serverMotions.push_back({ at, impulse });
+        serverMotions.push_back({ push->mTick, impulse });
     } else if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
         if (static_cast<uint64_t>(attributes->mRuntimeActorId) != localRuntimeId) {
             return;
@@ -407,11 +412,13 @@ void Session::runMotionTick(double now)
     packet.mRotation = Vector3f(pitch, yaw, yaw);
     packet.mMotionX = tick.moveSideways;
     packet.mMotionY = tick.moveForward;
-    packet.mAnalogMoveVectorX = rawSideways;
-    packet.mAnalogMoveVectorY = rawForward;
-    packet.mRawMoveVectorX = rawSideways;
-    packet.mRawMoveVectorY = rawForward;
-    packet.mDelta = Vector3f(tick.movement.x, tick.movement.y, tick.movement.z);
+    packet.mAnalogMoveVectorX = 0.0f;
+    packet.mAnalogMoveVectorY = 0.0f;
+    float rawLength = std::sqrt(rawSideways * rawSideways + rawForward * rawForward);
+    float rawScale = rawLength > 1.0f ? 1.0f / rawLength : 1.0f;
+    packet.mRawMoveVectorX = rawSideways * rawScale;
+    packet.mRawMoveVectorY = rawForward * rawScale;
+    packet.mDelta = Vector3f(tick.velocity.x, tick.velocity.y, tick.velocity.z);
     packet.mTick = static_cast<int64_t>(++clientTick);
     packet.mInputMode = PlayerInputMode::Mouse;
     packet.mPlayMode = PlayerClientPlayMode::Normal;
@@ -462,10 +469,10 @@ void Session::runMotionTick(double now)
     } else if (lastMotionInput.jump) {
         flag(PlayerAuthInputData::JumpReleasedRaw);
     }
-    if (jumpPressed || tick.startedJump) {
+    if (tick.startedJump) {
         flag(PlayerAuthInputData::StartJumping);
     }
-    if (tick.jumping) {
+    if (input.jump) {
         flag(PlayerAuthInputData::Jumping);
     }
     if (input.sneak) {

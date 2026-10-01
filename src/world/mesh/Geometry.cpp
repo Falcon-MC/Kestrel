@@ -3,7 +3,9 @@
 #include "Core/Json/Json.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <optional>
 
 namespace kestrel::world {
 
@@ -21,6 +23,13 @@ enum Side {
 };
 
 constexpr const char* SideNames[6] = { "west", "east", "down", "up", "north", "south" };
+
+bool sameIgnoringCase(const std::string& a, const std::string& b)
+{
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+    });
+}
 
 Vec3f readVec3(const json::Value* value, Vec3f fallback = {})
 {
@@ -143,6 +152,10 @@ GeometryCube parseCube(const json::Value& value)
 void mergeBone(GeometryBone& base, const GeometryBone& child)
 {
     if (child.reset) base.cubes.clear();
+    if (child.polyMeshSet || child.reset) {
+        base.polyMesh = child.polyMesh;
+        base.polyMeshSet = child.polyMeshSet;
+    }
     if (child.parentSet) base.parent = child.parent;
     if (child.bindingSet) base.binding = child.binding;
     if (child.pivotSet) base.pivot = child.pivot;
@@ -152,6 +165,118 @@ void mergeBone(GeometryBone& base, const GeometryBone& child)
     if (child.neverRenderSet) base.neverRender = child.neverRender;
     if (child.cubesSet) base.cubes = child.cubes;
     if (child.textureMeshesSet) base.textureMeshes = child.textureMeshes;
+}
+
+/**
+ * Reads a vector of exactly count numbers, or nothing when it has another
+ * length or holds anything but numbers.
+ */
+template <size_t Count>
+std::optional<std::array<float, Count>> exactVector(const json::Value* value)
+{
+    if (!value || !value->isArray() || value->mArray.size() != Count) {
+        return std::nullopt;
+    }
+    std::array<float, Count> out {};
+    for (size_t index = 0; index < Count; ++index) {
+        if (!value->mArray[index]->isNumber() || !std::isfinite(value->mArray[index]->mNumber)) {
+            return std::nullopt;
+        }
+        out[index] = static_cast<float>(value->mArray[index]->mNumber);
+    }
+    return out;
+}
+
+/**
+ * Appends one polygon of three or four corners as triangles, a quad split on
+ * its first to third corner diagonal so the authored winding stays.
+ */
+void appendPolygon(std::vector<GeometryPolyVertex>& triangles, const std::vector<GeometryPolyVertex>& corners)
+{
+    triangles.insert(triangles.end(), corners.begin(), corners.begin() + 3);
+    if (corners.size() == 4) {
+        triangles.push_back(corners[0]);
+        triangles.push_back(corners[2]);
+        triangles.push_back(corners[3]);
+    }
+}
+
+/**
+ * Reads a bone's poly_mesh: positions, normals and uvs indexed per corner by
+ * explicit polys, or laid out in order by tri_list and quad_list. A malformed
+ * polygon is skipped and its neighbours kept.
+ */
+std::optional<GeometryPolyMesh> parsePolyMesh(const json::Value* mesh)
+{
+    if (!mesh || !mesh->isObject()) {
+        return std::nullopt;
+    }
+    const json::Value* positions = mesh->get("positions");
+    const json::Value* normals = mesh->get("normals");
+    const json::Value* uvs = mesh->get("uvs");
+    const json::Value* polys = mesh->get("polys");
+    if (!positions || !positions->isArray() || !normals || !normals->isArray() || !uvs || !uvs->isArray() || !polys) {
+        return std::nullopt;
+    }
+    auto corner = [&](size_t position, size_t normal, size_t uv) -> std::optional<GeometryPolyVertex> {
+        if (position >= positions->mArray.size() || normal >= normals->mArray.size() || uv >= uvs->mArray.size()) {
+            return std::nullopt;
+        }
+        auto point = exactVector<3>(positions->mArray[position].get());
+        auto facing = exactVector<3>(normals->mArray[normal].get());
+        auto texel = exactVector<2>(uvs->mArray[uv].get());
+        if (!point || !facing || !texel) {
+            return std::nullopt;
+        }
+        return GeometryPolyVertex { *point, *facing, *texel };
+    };
+    GeometryPolyMesh parsed;
+    if (const json::Value* normalized = mesh->get("normalized_uvs"); normalized && normalized->mType == json::Value::Type::Boolean) {
+        parsed.normalizedUvs = normalized->mBoolean;
+    }
+    if (polys->isArray()) {
+        for (const auto& polygon : polys->mArray) {
+            if (!polygon->isArray() || (polygon->mArray.size() != 3 && polygon->mArray.size() != 4)) {
+                continue;
+            }
+            std::vector<GeometryPolyVertex> corners;
+            for (const auto& indices : polygon->mArray) {
+                auto index = exactVector<3>(indices.get());
+                if (!index || (*index)[0] < 0.0f || (*index)[1] < 0.0f || (*index)[2] < 0.0f) {
+                    break;
+                }
+                auto added = corner(size_t((*index)[0]), size_t((*index)[1]), size_t((*index)[2]));
+                if (!added) {
+                    break;
+                }
+                corners.push_back(*added);
+            }
+            if (corners.size() == polygon->mArray.size()) {
+                appendPolygon(parsed.triangles, corners);
+            }
+        }
+        return parsed;
+    }
+    if (!polys->isString()) {
+        return std::nullopt;
+    }
+    size_t count = polys->mString == "tri_list" ? 3 : polys->mString == "quad_list" ? 4 : 0;
+    size_t total = positions->mArray.size();
+    if (count == 0 || total != normals->mArray.size() || total != uvs->mArray.size() || total % count != 0) {
+        return std::nullopt;
+    }
+    for (size_t first = 0; first < total; first += count) {
+        std::vector<GeometryPolyVertex> corners;
+        for (size_t index = first; index < first + count; ++index) {
+            if (auto added = corner(index, index, index)) {
+                corners.push_back(*added);
+            }
+        }
+        if (corners.size() == count) {
+            appendPolygon(parsed.triangles, corners);
+        }
+    }
+    return parsed;
 }
 
 void parseBones(const json::Value* bones, Geometry& geometry)
@@ -196,6 +321,10 @@ void parseBones(const json::Value* bones, Geometry& geometry)
             for (const auto& cube : cubes->mArray) {
                 parsed.cubes.push_back(parseCube(*cube));
             }
+        }
+        if (std::optional<GeometryPolyMesh> mesh = parsePolyMesh(bone->get("poly_mesh"))) {
+            parsed.polyMesh = std::move(*mesh);
+            parsed.polyMeshSet = true;
         }
         if (const json::Value* meshes = bone->get("texture_meshes"); meshes && meshes->isArray()) {
             parsed.textureMeshesSet = true;
@@ -356,7 +485,7 @@ void GeometryLibrary::resolveInheritance()
         std::vector<GeometryBone> merged = base->second.bones;
         for (const GeometryBone& bone : child->second.bones) {
             auto same = std::find_if(merged.begin(), merged.end(), [&](const GeometryBone& existing) {
-                return existing.name == bone.name;
+                return sameIgnoringCase(existing.name, bone.name);
             });
             if (same != merged.end()) {
                 mergeBone(*same, bone);
@@ -380,6 +509,19 @@ const Geometry* GeometryLibrary::find(const std::string& identifier) const
 {
     auto found = byIdentifier.find(identifier);
     return found == byIdentifier.end() ? nullptr : &found->second;
+}
+
+const Geometry* GeometryLibrary::findIgnoringCase(const std::string& identifier) const
+{
+    if (const Geometry* exact = find(identifier)) {
+        return exact;
+    }
+    for (const auto& [name, geometry] : byIdentifier) {
+        if (sameIgnoringCase(name, identifier)) {
+            return &geometry;
+        }
+    }
+    return nullptr;
 }
 
 const Geometry* GeometryLibrary::first() const

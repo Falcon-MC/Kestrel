@@ -269,6 +269,14 @@ inline constexpr uint32_t ItemIconSize = 64;
  */
 inline constexpr uint32_t ItemTint = 0x79C05A;
 inline constexpr uint32_t SkinSlots = 64;
+
+/**
+ * Entity texture layers shared by the skins in their slots: a skin, its cape
+ * and its animation sheets each take a grid of layers holding every texel of
+ * the image, up to a 512 texel side for the skin itself.
+ */
+inline constexpr uint32_t SkinPoolLayers = 1024;
+inline constexpr uint32_t MaxSkinSide = 512;
 inline constexpr uint32_t DroppedIconSlots = 64;
 
 /**
@@ -283,11 +291,21 @@ struct EntityRig {
     float textureAspect = 1.0f;
 };
 
+class GeometryLibrary;
+
 /**
- * The model a player skin carries: the geometry its resource patch names out
- * of the skin's own geometry data, or null when the skin has none.
+ * The geometry name a skin's resource patch gives under key (default,
+ * animated_face, animated_32x32, animated_128x128), empty when it names none.
  */
-std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch);
+std::string skinGeometryName(const std::string& resourcePatch, const std::string& key = "default");
+
+/**
+ * The model a player skin carries: the geometry its resource patch names
+ * under key out of the skin's own geometry data, inheritance resolved within
+ * that data. When the data is empty or lacks that geometry it comes from the
+ * catalog of the game's models; null when neither has it.
+ */
+std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch, const GeometryLibrary* catalog, const std::string& key = "default");
 
 inline constexpr uint32_t NoEntityChoice = 0xFFFFFFFFu;
 
@@ -455,6 +473,24 @@ public:
      */
     ArmorLook armorLook(size_t slot, const std::string& identifier) const;
 
+    /**
+     * Every geometry of the game and server packs, inheritance resolved, for
+     * skins that only name their model.
+     */
+    const GeometryLibrary* geometryCatalog() const
+    {
+        return geometries.get();
+    }
+
+    /**
+     * The player cape model, its bones' rest turns baked into its quads so a
+     * cape follows the wearer's bone of the same name; null without one.
+     */
+    const EntityRig* capeRig() const
+    {
+        return cape.quads.empty() ? nullptr : &cape;
+    }
+
     const AnimationLibrary& animationLibrary() const
     {
         return animations;
@@ -591,6 +627,8 @@ private:
     std::unordered_map<std::string, EntityModel> entityModels;
     std::unordered_map<std::string, EntityModel> attachableModels;
     std::array<EntityRig, 4> armorRigs;
+    std::shared_ptr<const GeometryLibrary> geometries;
+    EntityRig cape;
     std::unordered_map<std::string, uint32_t> armorLayers;
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
