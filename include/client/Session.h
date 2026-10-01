@@ -447,6 +447,7 @@ struct LoadedBlocks {
 struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
+    std::shared_ptr<void> credit;
 };
 
 struct SessionSnapshot {
@@ -547,7 +548,7 @@ public:
 
     SessionSnapshot snapshot() const;
     std::shared_ptr<const SessionSnapshot> sharedSnapshot() const;
-    std::vector<MeshUpdate> takeMeshUpdates();
+    std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32);
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
     std::vector<ChatMessage> takeChatMessages();
@@ -771,7 +772,7 @@ private:
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
     std::map<world::SubChunkKey, std::shared_ptr<const world::ChunkMesh>> meshes;
     size_t meshQuads = 0;
-    std::vector<MeshUpdate> pendingUpdates;
+    std::deque<MeshUpdate> pendingUpdates;
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
     int64_t localUniqueId = 0;

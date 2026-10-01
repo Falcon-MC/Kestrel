@@ -89,8 +89,8 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
                 count = static_cast<int32_t>(value);
             } else if (!source.readVarInt(count, error, "palette length")) return false;
             size_t maxSize = std::min(size_t(1) << bits, BlocksPerSubChunk);
-            if (count <= 0 || size_t(count) > maxSize) { error = "invalid palette length: " + std::to_string(count); return false; }
-            paletteSize = size_t(count);
+            if (persistent && (count <= 0 || size_t(count) > maxSize)) { error = "invalid palette length: " + std::to_string(count); return false; }
+            paletteSize = std::clamp(size_t(std::max(count, int32_t(1))), size_t(1), maxSize);
         }
         storage.values.resize(paletteSize);
         for (size_t i = 0; i < paletteSize; ++i) {
@@ -138,8 +138,12 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
     for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
         size_t paletteIndex = storage.paletteIndex(linear);
         if (paletteIndex >= paletteSize) {
-            error = "palette index out of bounds";
-            return false;
+            if (persistent) {
+                error = "palette index out of bounds";
+                return false;
+            }
+            writeIndex(storage.words, storage.bits, linear, 0);
+            paletteIndex = 0;
         }
         ++storage.uses[paletteIndex];
     }

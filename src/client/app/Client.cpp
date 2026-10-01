@@ -265,7 +265,7 @@ int Client::run()
 
         if (rebaked || skin.dirty()) {
             Profiler::Section section(profiler, "ui atlas");
-            uploadAtlas();
+            uploadAtlas(rebaked);
         }
         skin.beginFrame();
         drawList.reset(scale, font.whiteU(), font.whiteV());
@@ -833,24 +833,37 @@ void Client::syncDressingRoom()
     menu.setDressingRoom(std::move(view));
 }
 
-void Client::uploadAtlas()
+void Client::uploadAtlas(bool fontChanged)
 {
     constexpr uint32_t size = ui::Skin::AtlasSize;
-    atlasPixels.assign(static_cast<size_t>(size) * size * 4, 0);
+    bool initial = atlasPixels.empty();
+    if (initial) atlasPixels.resize(static_cast<size_t>(size) * size * 4, 0);
+    std::vector<ui::ImageRegion> regions;
     const std::vector<uint8_t>& coverage = font.coverage();
-    for (size_t i = 0; i < coverage.size(); ++i) {
-        atlasPixels[i * 4 + 0] = 255;
-        atlasPixels[i * 4 + 1] = 255;
-        atlasPixels[i * 4 + 2] = 255;
-        atlasPixels[i * 4 + 3] = coverage[i];
+    if (initial || fontChanged) {
+        for (size_t i = 0; i < coverage.size(); ++i) {
+            atlasPixels[i * 4 + 0] = 255;
+            atlasPixels[i * 4 + 1] = 255;
+            atlasPixels[i * 4 + 2] = 255;
+            atlasPixels[i * 4 + 3] = coverage[i];
+        }
+        regions.push_back({ 0, 0, size, static_cast<uint32_t>(coverage.size() / size) });
     }
-    skin.pack(atlasPixels);
-    renderer->uploadUiAtlas(atlasPixels.data(), size, size);
+    auto sprites = skin.pack(atlasPixels);
+    regions.insert(regions.end(), sprites.begin(), sprites.end());
+    if (initial) renderer->uploadUiAtlas(atlasPixels.data(), size, size);
+    else if (!regions.empty()) renderer->updateUiAtlas(atlasPixels.data(), size, size, regions);
 }
 
 void Client::applyMeshUpdates()
 {
-    for (const MeshUpdate& update : session.takeMeshUpdates()) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+    size_t uploadedBytes = 0;
+    for (size_t count = 0; count < 32; ++count) {
+        if (count && (std::chrono::steady_clock::now() >= deadline || uploadedBytes >= 4 * 1024 * 1024)) break;
+        auto updates = session.takeMeshUpdates(1);
+        if (updates.empty()) break;
+        const MeshUpdate& update = updates.front();
         const world::SubChunkKey& key = update.key;
         uint64_t id = subChunkId(key);
         if (update.mesh) {
@@ -863,6 +876,8 @@ void Client::applyMeshUpdates()
             upload.translucentCubeCount = static_cast<uint32_t>(update.mesh->translucentCubes.size());
             upload.translucentModels = update.mesh->translucentModels.data();
             upload.translucentModelCount = static_cast<uint32_t>(update.mesh->translucentModels.size());
+            uploadedBytes += (update.mesh->cubes.size() + update.mesh->translucentCubes.size()) * sizeof(world::PackedQuad)
+                + (update.mesh->models.size() + update.mesh->translucentModels.size()) * sizeof(world::ModelQuadGpu);
             renderer->setChunkMesh(id, key.x * 16, key.y * 16, key.z * 16, upload);
             if (update.mesh->cubes.empty() && update.mesh->models.empty()) {
                 opaqueChunks.erase(id);

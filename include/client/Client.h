@@ -187,7 +187,7 @@ private:
     void updateGameTips();
     bool terrainReady(const SessionSnapshot& snapshot);
     float guiScale() const;
-    void uploadAtlas();
+    void uploadAtlas(bool fontChanged);
     void loadSettings();
     void saveSettings();
 

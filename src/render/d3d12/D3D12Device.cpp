@@ -451,11 +451,10 @@ public:
         UINT64 stagingSize = 0;
         std::vector<UINT64> offsets(data.size());
         for (size_t i = 0; i < data.size(); ++i) {
-            UINT index = data[i].mip + data[i].layer * texture.description.mipLevels;
-            UINT rows = 0;
-            UINT64 rowSize = 0;
-            UINT64 totalSize = 0;
-            device->GetCopyableFootprints(&textureDesc, index, 1, 0, &footprints[i], &rows, &rowSize, &totalSize);
+            UINT width = data[i].width ? data[i].width : std::max(texture.description.width >> data[i].mip, 1u);
+            UINT rows = data[i].height ? data[i].height : std::max(texture.description.height >> data[i].mip, 1u);
+            footprints[i].Footprint = { textureDesc.Format, width, rows, 1,
+                (width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) };
             offsets[i] = stagingSize;
             UINT64 bytes = static_cast<UINT64>(footprints[i].Footprint.RowPitch) * rows;
             stagingSize += (bytes + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
@@ -471,10 +470,11 @@ public:
             UINT index = data[i].mip + data[i].layer * texture.description.mipLevels;
             D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = footprints[i];
             footprint.Offset = offsets[i];
-            uint32_t rowWidth = std::max<uint32_t>(texture.description.width >> data[i].mip, 1);
-            uint32_t rowCount = std::max<uint32_t>(texture.description.height >> data[i].mip, 1);
+            uint32_t rowWidth = footprint.Footprint.Width;
+            uint32_t rowCount = footprint.Footprint.Height;
+            size_t sourceStride = data[i].rowBytes ? data[i].rowBytes : size_t(rowWidth) * 4;
             for (uint32_t y = 0; y < rowCount; ++y) {
-                std::memcpy(mapped + footprint.Offset + static_cast<size_t>(y) * footprint.Footprint.RowPitch, data[i].pixels + static_cast<size_t>(y) * rowWidth * 4, static_cast<size_t>(rowWidth) * 4);
+                std::memcpy(mapped + footprint.Offset + static_cast<size_t>(y) * footprint.Footprint.RowPitch, data[i].pixels + static_cast<size_t>(y) * sourceStride, static_cast<size_t>(rowWidth) * 4);
             }
             D3D12_TEXTURE_COPY_LOCATION destination {};
             destination.pResource = texture.resource.Get();
@@ -484,7 +484,7 @@ public:
             source.pResource = transfer.staging.Get();
             source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
             source.PlacedFootprint = footprint;
-            list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+            list->CopyTextureRegion(&destination, data[i].x, data[i].y, 0, &source, nullptr);
         }
         transition(list, texture.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         texture.sampled = true;

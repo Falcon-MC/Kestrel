@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui/Image.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -315,6 +317,7 @@ public:
 
     virtual void resize(uint32_t width, uint32_t height) = 0;
     virtual void uploadUiAtlas(const uint8_t* pixels, uint32_t width, uint32_t height) = 0;
+    virtual void updateUiAtlas(const uint8_t* pixels, uint32_t width, uint32_t height, const std::vector<ui::ImageRegion>& regions) = 0;
     virtual void uploadBlockTextures(const BlockTextureUpload& textures) = 0;
     virtual void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) = 0;
     virtual void removeChunkMesh(uint64_t id) = 0;

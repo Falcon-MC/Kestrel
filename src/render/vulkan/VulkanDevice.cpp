@@ -466,8 +466,8 @@ public:
         auto& texture = static_cast<VulkanTexture&>(target);
         VkDeviceSize total = 0;
         for (const TextureData& entry : data) {
-            uint32_t w = std::max<uint32_t>(texture.description.width >> entry.mip, 1);
-            uint32_t h = std::max<uint32_t>(texture.description.height >> entry.mip, 1);
+            uint32_t w = entry.width ? entry.width : std::max<uint32_t>(texture.description.width >> entry.mip, 1);
+            uint32_t h = entry.height ? entry.height : std::max<uint32_t>(texture.description.height >> entry.mip, 1);
             total += VkDeviceSize(w) * h * 4;
         }
         VkBuffer staging = VK_NULL_HANDLE;
@@ -479,14 +479,19 @@ public:
         regions.reserve(data.size());
         VkDeviceSize offset = 0;
         for (const TextureData& entry : data) {
-            uint32_t w = std::max<uint32_t>(texture.description.width >> entry.mip, 1);
-            uint32_t h = std::max<uint32_t>(texture.description.height >> entry.mip, 1);
+            uint32_t w = entry.width ? entry.width : std::max<uint32_t>(texture.description.width >> entry.mip, 1);
+            uint32_t h = entry.height ? entry.height : std::max<uint32_t>(texture.description.height >> entry.mip, 1);
             size_t bytes = size_t(w) * h * 4;
-            std::memcpy(static_cast<uint8_t*>(mapped) + offset, entry.pixels, bytes);
+            size_t sourceStride = entry.rowBytes ? entry.rowBytes : size_t(w) * 4;
+            for (uint32_t row = 0; row < h; ++row) {
+                std::memcpy(static_cast<uint8_t*>(mapped) + offset + size_t(row) * w * 4,
+                    entry.pixels + size_t(row) * sourceStride, size_t(w) * 4);
+            }
             VkBufferImageCopy region {};
             region.bufferOffset = offset;
             region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, entry.mip, entry.layer, 1 };
             region.imageExtent = { w, h, 1 };
+            region.imageOffset = { static_cast<int32_t>(entry.x), static_cast<int32_t>(entry.y), 0 };
             regions.push_back(region);
             offset += bytes;
         }

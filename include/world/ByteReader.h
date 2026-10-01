@@ -25,6 +25,11 @@ public:
         return size - offset;
     }
 
+    void skipToEnd()
+    {
+        offset = size;
+    }
+
     bool readTag(Tag& out, bool network, std::string& error);
     bool readByte(uint8_t& out, std::string& error, const char* context);
     bool readWords(uint32_t* out, size_t count, std::string& error, const char* context);

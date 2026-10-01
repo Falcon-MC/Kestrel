@@ -488,12 +488,16 @@ void Session::cachePackLocked(const std::string& path, std::shared_ptr<const wor
 }
 
 
-std::vector<MeshUpdate> Session::takeMeshUpdates()
+std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum)
 {
     std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
     if (!guard.owns_lock()) return {};
-    std::vector<MeshUpdate> updates = std::move(pendingUpdates);
-    pendingUpdates.clear();
+    std::vector<MeshUpdate> updates;
+    updates.reserve(std::min(maximum, pendingUpdates.size()));
+    while (!pendingUpdates.empty() && updates.size() < maximum) {
+        updates.push_back(std::move(pendingUpdates.front()));
+        pendingUpdates.pop_front();
+    }
     return updates;
 }
 
@@ -1173,6 +1177,14 @@ void Session::handleWorldPacket(std::string& payload)
             break;
         }
     } else if (auto dimension = std::dynamic_pointer_cast<ChangeDimensionPacket>(packet)) {
+        mesher->clear();
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            for (auto& update : pendingUpdates) {
+                update.mesh.reset();
+                update.credit.reset();
+            }
+        }
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
         motionDimension = dimension->mDimension;
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
@@ -1274,10 +1286,12 @@ void Session::scheduleMeshes()
         return distance(left) < distance(right);
     });
     size_t admitted = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
 
     static constexpr int32_t Offsets[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
     for (const world::SubChunkKey& key : dirty) {
         uint64_t generation = ++meshGenerations[key];
+        mesher->invalidate(key, generation);
         std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
         if (!center) {
             mesher->cancel(key);
@@ -1286,11 +1300,12 @@ void Session::scheduleMeshes()
                 meshQuads -= existing->second->quadCount();
                 meshes.erase(existing);
                 std::lock_guard<std::mutex> guard(mutex);
+                std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == key; });
                 pendingUpdates.push_back({ key, nullptr });
             }
             continue;
         }
-        if (admitted >= world::MeshScheduler::QueueCapacity || !mesher->canSubmit(key)) {
+        if (admitted >= world::MeshScheduler::QueueCapacity || (admitted && std::chrono::steady_clock::now() >= deadline) || !mesher->canSubmit(key)) {
             world.store().deferDirty(key, urgent.contains(key));
             continue;
         }
@@ -1333,7 +1348,12 @@ void Session::scheduleMeshes()
 
 void Session::collectMeshes()
 {
-    for (world::MeshResult& result : mesher->takeResults()) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+    for (size_t count = 0; count < world::MeshScheduler::ResultCapacity; ++count) {
+        if (count && std::chrono::steady_clock::now() >= deadline) break;
+        auto ready = mesher->takeResults(1);
+        if (ready.empty()) break;
+        world::MeshResult& result = ready.front();
         if (!mesher->isCurrent(result)) {
             continue;
         }
@@ -1371,7 +1391,8 @@ void Session::collectMeshes()
         }
         if (mesh || hadMesh) {
             std::lock_guard<std::mutex> guard(mutex);
-            pendingUpdates.push_back({ result.key, std::move(mesh) });
+            std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == result.key; });
+            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit) });
         }
     }
 }

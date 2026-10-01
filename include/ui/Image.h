@@ -8,6 +8,10 @@
 
 namespace kestrel::ui {
 
+struct ImageRegion {
+    uint32_t x = 0, y = 0, width = 0, height = 0;
+};
+
 struct ImageRef {
     float u0 = 0.0f;
     float v0 = 0.0f;

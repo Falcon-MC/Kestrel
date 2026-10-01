@@ -4,6 +4,7 @@
 #include "world/Mesher.h"
 
 #include <condition_variable>
+#include <deque>
 #include <cstdint>
 #include <array>
 #include <set>
@@ -15,11 +16,15 @@
 
 namespace kestrel::world {
 
+struct MeshBudgetState;
+struct MeshMemoryCredit;
+
 struct MeshResult {
     SubChunkKey key;
     uint64_t generation = 0;
     uint64_t epoch = 0;
     ChunkMesh mesh;
+    std::shared_ptr<MeshMemoryCredit> credit;
 };
 
 class MeshScheduler {
@@ -31,7 +36,7 @@ public:
     MeshScheduler& operator=(const MeshScheduler&) = delete;
 
     bool submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent = false);
-    std::vector<MeshResult> takeResults();
+    std::vector<MeshResult> takeResults(size_t maximum = 32);
     size_t pending() const;
     double averageMilliseconds() const;
     size_t workerCount() const
@@ -40,6 +45,7 @@ public:
     }
     void clear();
     void cancel(const SubChunkKey& key);
+    void invalidate(const SubChunkKey& key, uint64_t generation);
     void setView(std::array<double, 3> position);
     bool isCurrent(const MeshResult& result) const;
     bool canSubmit(const SubChunkKey& key) const;
@@ -57,6 +63,7 @@ private:
         MeshInput input;
         std::shared_ptr<const BlockAssets> assets;
         IdMapping ids;
+        size_t maxTemplateQuads = 0;
     };
 
     struct LightCacheEntry {
@@ -76,12 +83,16 @@ private:
     std::map<SubChunkKey, Job> queued;
     std::set<SubChunkKey> active;
     std::map<SubChunkKey, uint64_t> newest;
+    std::map<SubChunkKey, std::shared_ptr<std::atomic_bool>> cancellations;
+    std::shared_ptr<MeshBudgetState> memory;
+    std::shared_ptr<const BlockAssets> boundAssets;
+    size_t maxTemplateQuads = 0;
     std::map<SubChunkKey, LightCacheEntry> lightCache;
     std::array<double, 3> view {};
     uint64_t currentEpoch = 1;
     uint64_t cacheClock = 0;
     size_t resultBytes = 0;
-    std::vector<MeshResult> results;
+    std::deque<MeshResult> results;
     size_t running = 0;
     double meshMilliseconds = 0.0;
     uint64_t meshCount = 0;

@@ -122,12 +122,16 @@ struct TextureDesc {
 };
 
 /**
- * Tightly packed RGBA8 pixels for one mip level of one layer.
+ * RGBA8 pixels for a region of one mip/layer. Zero dimensions select the
+ * whole mip; zero rowBytes selects tightly packed rows.
  */
 struct TextureData {
     uint32_t layer = 0;
     uint32_t mip = 0;
     const uint8_t* pixels = nullptr;
+    uint32_t x = 0, y = 0;
+    uint32_t width = 0, height = 0;
+    size_t rowBytes = 0;
 };
 
 /**

@@ -283,6 +283,7 @@ bool Skin::place(Entry& entry)
     entry.slotWidth = w;
     entry.slotHeight = h;
     entry.placed = true;
+    entry.pixelsDirty = true;
     cursorX = x + w;
     cursorY = y;
     shelfHeight = std::max(nextShelf ? 0u : shelfHeight, h);
@@ -316,6 +317,7 @@ bool Skin::placeInFreeSlot(Entry& entry)
     entry.slotWidth = w;
     entry.slotHeight = h;
     entry.placed = true;
+    entry.pixelsDirty = true;
     if (slot.width - w >= 3) {
         freeSlots.push_back({ slot.x + w, slot.y, slot.width - w, slot.height });
     } else {
@@ -414,8 +416,9 @@ void Skin::repackAll()
     }
 }
 
-void Skin::pack(std::vector<uint8_t>& atlasRgba)
+std::vector<ImageRegion> Skin::pack(std::vector<uint8_t>& atlasRgba)
 {
+    std::vector<ImageRegion> updates;
     changed = false;
     std::vector<Entry*> pending;
     for (auto& [name, entry] : entries) {
@@ -447,6 +450,10 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
         if (!entry->placed || entry->bitmap.rgba.empty()) {
             continue;
         }
+        if (!entry->pixelsDirty) {
+            entry->sprite.valid = true;
+            continue;
+        }
         const Bitmap& source = entry->bitmap;
         uint32_t packedWidth = entry->packedWidth();
         uint32_t packedHeight = entry->packedHeight();
@@ -471,7 +478,10 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
         sprite.image.v1 = (y + Gutter + packedHeight) / extent;
         sprite.image.valid = true;
         sprite.valid = true;
+        entry->pixelsDirty = false;
+        updates.push_back({ x, y, w, h });
     }
+    return updates;
 }
 
 }
