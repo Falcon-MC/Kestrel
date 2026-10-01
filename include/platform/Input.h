@@ -15,7 +15,9 @@ struct InputState {
     bool mouseReleased = false;
     bool rightMouseDown = false;
     bool rightMousePressed = false;
+    bool rightMouseReleased = false;
     bool middleMousePressed = false;
+    bool middleMouseReleased = false;
     float wheel = 0.0f;
     float mouseDeltaX = 0.0f;
     float mouseDeltaY = 0.0f;
@@ -26,6 +28,7 @@ struct InputState {
     bool tab = false;
     std::array<bool, KeyCount> held {};
     Key pressedKey = Key::None;
+    Key releasedKey = Key::None;
 
     bool isHeld(Key key) const
     {
@@ -40,6 +43,9 @@ struct InputState {
         if (down && !held[static_cast<size_t>(key)]) {
             pressedKey = key;
         }
+        if (!down && held[static_cast<size_t>(key)]) {
+            releasedKey = key;
+        }
         held[static_cast<size_t>(key)] = down;
     }
 
@@ -48,6 +54,8 @@ struct InputState {
         mousePressed = false;
         rightMousePressed = false;
         middleMousePressed = false;
+        rightMouseReleased = false;
+        middleMouseReleased = false;
         mouseReleased = false;
         wheel = 0.0f;
         mouseDeltaX = 0.0f;
@@ -58,6 +66,7 @@ struct InputState {
         escape = false;
         tab = false;
         pressedKey = Key::None;
+        releasedKey = Key::None;
     }
 
     void releaseKeys()

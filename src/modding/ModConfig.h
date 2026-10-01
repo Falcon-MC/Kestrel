@@ -19,9 +19,12 @@ public:
 
     void saveIfChanged();
 
-private:
+    /**
+     * Reads the file again, dropping values not saved yet.
+     */
     void load();
 
+private:
     std::filesystem::path file;
     std::map<std::string, std::string, std::less<>> values;
     bool changed = false;

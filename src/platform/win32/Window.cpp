@@ -411,9 +411,13 @@ private:
             return 0;
         case WM_RBUTTONUP:
             state.rightMouseDown = false;
+            state.rightMouseReleased = true;
             return 0;
         case WM_MBUTTONDOWN:
             state.middleMousePressed = true;
+            return 0;
+        case WM_MBUTTONUP:
+            state.middleMouseReleased = true;
             return 0;
         case WM_LBUTTONUP:
             state.mouseX = static_cast<float>(GET_X_LPARAM(lParam));

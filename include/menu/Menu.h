@@ -1,4 +1,5 @@
 #pragma once
+#include "world/GlobalResources.h"
 
 #include "client/SocialModel.h"
 #include "menu/ChatCommands.h"
@@ -156,6 +157,7 @@ struct ModAction {
         SetConfig,
         Rescan,
         OpenFolder,
+        ReloadConfigs,
     };
 
     Kind kind = Kind::Rescan;
@@ -749,6 +751,10 @@ public:
         modEntries = std::move(entries);
     }
 
+    void setGlobalResources(std::vector<world::GlobalPackEntry> entries) { globalPacks = std::move(entries); globalPackScreens.clear(); }
+    void setGlobalResourceStatus(bool busy, std::string status) { globalPacksBusy = busy; globalPacksStatus = std::move(status); }
+    std::vector<world::GlobalPackAction> takeGlobalPackActions() { return std::exchange(globalPackActions, {}); }
+
     std::vector<ModAction> takeModActions()
     {
         return std::exchange(modActions, {});
@@ -1074,6 +1080,7 @@ private:
     float scrollArea(ui::Context& ui, const ui::Rect& area, float& offset, float contentHeight);
     void settingsHeading(ui::Context& ui, float x, float& y, float width, std::string_view heading, std::string_view detail);
     void modsPage(ui::Context& ui, float x, float& y, float width);
+    void globalResourcesPage(ui::Context& ui, float x, float& y, float width);
     void settingsRow(ui::Context& ui, float x, float& y, float width, std::string_view label, std::string_view detail, float controlHeight, float controlWidth = 66.0f);
 
     std::vector<ServerRow> featuredRows(ServerGroup group) const;
@@ -1195,6 +1202,12 @@ private:
     std::function<void(const std::string&, Key)> onModKeyBind;
     std::vector<ModEntry> modEntries;
     std::vector<ModAction> modActions;
+    std::vector<world::GlobalPackEntry> globalPacks;
+    std::map<std::string, std::unique_ptr<ui::JsonUiScreen>> globalPackScreens;
+    std::vector<world::GlobalPackAction> globalPackActions;
+    std::string globalPacksStatus, openedGlobalPack, removingGlobalPack;
+    bool globalPacksBusy = false;
+    bool showActiveGlobalPacks = true;
     std::string openedMod;
     std::string removingMod;
     std::string editModFile;

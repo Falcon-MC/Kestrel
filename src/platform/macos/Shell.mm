@@ -36,4 +36,13 @@ std::string pickPngFile()
     return std::string([panel.URLs.firstObject.path UTF8String]);
 }
 
+std::string pickResourcePackFile()
+{
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.allowedFileTypes = @[ @"mcpack", @"zip" ];
+    panel.allowsMultipleSelection = NO;
+    if ([panel runModal] != NSModalResponseOK || panel.URLs.count == 0) return {};
+    return std::string([panel.URLs.firstObject.path UTF8String]);
+}
+
 }

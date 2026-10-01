@@ -13,5 +13,6 @@ std::string pasteText();
  * they cancel or the platform has no dialog.
  */
 std::string pickPngFile();
+std::string pickResourcePackFile();
 
 }

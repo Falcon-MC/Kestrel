@@ -82,6 +82,72 @@ bool invert(const std::array<float, 16>& matrix, std::array<float, 16>& out)
     return true;
 }
 
+std::string utf8(char32_t codepoint)
+{
+    std::string text;
+    if (codepoint < 0x80) {
+        text += static_cast<char>(codepoint);
+    } else if (codepoint < 0x800) {
+        text += static_cast<char>(0xC0 | (codepoint >> 6));
+        text += static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else if (codepoint < 0x10000) {
+        text += static_cast<char>(0xE0 | (codepoint >> 12));
+        text += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        text += static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else {
+        text += static_cast<char>(0xF0 | (codepoint >> 18));
+        text += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+        text += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        text += static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
+    return text;
+}
+
+mod::ScreenKind dialogKind(menu::Dialog dialog)
+{
+    switch (dialog) {
+    case menu::Dialog::Pause:
+        return mod::ScreenKind::Pause;
+    case menu::Dialog::Chat:
+        return mod::ScreenKind::Chat;
+    case menu::Dialog::Death:
+        return mod::ScreenKind::Death;
+    case menu::Dialog::SignIn:
+        return mod::ScreenKind::SignIn;
+    case menu::Dialog::Connecting:
+        return mod::ScreenKind::Connecting;
+    case menu::Dialog::ConnectionError:
+        return mod::ScreenKind::ConnectionError;
+    default:
+        return mod::ScreenKind::Dialog;
+    }
+}
+
+mod::ScreenKind screenKind(menu::Screen screen)
+{
+    switch (screen) {
+    case menu::Screen::Play:
+        return mod::ScreenKind::Play;
+    case menu::Screen::Settings:
+        return mod::ScreenKind::Settings;
+    case menu::Screen::ServerForm:
+        return mod::ScreenKind::ServerForm;
+    case menu::Screen::Marketplace:
+        return mod::ScreenKind::Marketplace;
+    case menu::Screen::DressingRoom:
+        return mod::ScreenKind::DressingRoom;
+    case menu::Screen::Profile:
+        return mod::ScreenKind::Profile;
+    default:
+        return mod::ScreenKind::Title;
+    }
+}
+
+mod::Vec3 positionOf(const ActorView& actor)
+{
+    return { actor.x, actor.y, actor.z };
+}
+
 std::string lowercase(std::string text)
 {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -237,6 +303,10 @@ void ModManager::applyActions()
         }
         if (action.kind == menu::ModAction::Kind::OpenFolder) {
             platform::openUrl(host->root.string());
+            continue;
+        }
+        if (action.kind == menu::ModAction::Kind::ReloadConfigs) {
+            reloadConfigs(action.file);
             continue;
         }
         Record* entry = record(action.file);
@@ -439,6 +509,13 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
             input.pressedKey = Key::None;
         }
     }
+    if (input.releasedKey != Key::None) {
+        mod::KeyReleaseEvent event;
+        event.key = input.releasedKey;
+        event.inGame = inGame;
+        host->events.dispatch(event);
+    }
+    dispatchText(input);
     auto click = [&](bool& pressed, mod::MouseButton button) {
         if (!pressed) {
             return;
@@ -453,9 +530,36 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
             pressed = false;
         }
     };
+    float mouseX = input.mouseX / host->uiScale;
+    float mouseY = input.mouseY / host->uiScale;
+    if (mouseX != lastMouseX || mouseY != lastMouseY) {
+        mod::MouseMoveEvent event;
+        event.x = mouseX;
+        event.y = mouseY;
+        event.deltaX = lastMouseX < 0.0f ? 0.0f : mouseX - lastMouseX;
+        event.deltaY = lastMouseY < 0.0f ? 0.0f : mouseY - lastMouseY;
+        event.inGame = inGame;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+        host->events.dispatch(event);
+    }
     click(input.mousePressed, mod::MouseButton::Left);
     click(input.rightMousePressed, mod::MouseButton::Right);
     click(input.middleMousePressed, mod::MouseButton::Middle);
+    auto release = [&](bool released, mod::MouseButton button) {
+        if (!released) {
+            return;
+        }
+        mod::MouseReleaseEvent event;
+        event.button = button;
+        event.x = mouseX;
+        event.y = mouseY;
+        event.inGame = inGame;
+        host->events.dispatch(event);
+    };
+    release(input.mouseReleased, mod::MouseButton::Left);
+    release(input.rightMouseReleased, mod::MouseButton::Right);
+    release(input.middleMouseReleased, mod::MouseButton::Middle);
     if (input.wheel != 0.0f) {
         mod::MouseScrollEvent event;
         event.delta = input.wheel;
@@ -472,6 +576,8 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
 void ModManager::observe(const SessionSnapshot& snapshot)
 {
     if (slots.empty()) {
+        seenActors.clear();
+        inventorySeen = false;
         return;
     }
     host->snapshot = snapshot;
@@ -489,9 +595,13 @@ void ModManager::observe(const SessionSnapshot& snapshot)
     }
     if (snapshot.state != SessionState::Joined) {
         lastDead = false;
+        forgetActors();
+        inventorySeen = false;
         return;
     }
     if (snapshot.joinCount != lastJoin) {
+        forgetActors();
+        inventorySeen = false;
         lastJoin = snapshot.joinCount;
         lastDimension = snapshot.dimension;
         mod::JoinEvent event;
@@ -500,6 +610,7 @@ void ModManager::observe(const SessionSnapshot& snapshot)
         host->events.dispatch(event);
     }
     if (snapshot.dimension != lastDimension) {
+        forgetActors();
         mod::DimensionChangeEvent event;
         event.previous = std::exchange(lastDimension, snapshot.dimension);
         event.current = snapshot.dimension;
@@ -518,6 +629,201 @@ void ModManager::observe(const SessionSnapshot& snapshot)
             host->events.dispatch(event);
         }
     }
+    trackActors(snapshot);
+    trackInventory(snapshot);
+}
+
+void ModManager::trackActors(const SessionSnapshot& snapshot)
+{
+    bool spawns = host->events.listening(mod::EntitySpawnEvent::Type);
+    std::map<uint64_t, SeenActor> current;
+    for (const ActorView& actor : snapshot.actors) {
+        SeenActor seen;
+        seen.uniqueId = actor.uniqueId;
+        seen.identifier = actor.identifier;
+        seen.name = actor.name;
+        seen.position = positionOf(actor);
+        if (spawns && !seenActors.contains(actor.runtimeId)) {
+            mod::EntitySpawnEvent event;
+            event.runtimeId = actor.runtimeId;
+            event.uniqueId = seen.uniqueId;
+            event.identifier = seen.identifier;
+            event.name = seen.name;
+            event.position = seen.position;
+            event.isPlayer = seen.identifier == "minecraft:player";
+            host->events.dispatch(event);
+        }
+        current.emplace(actor.runtimeId, std::move(seen));
+    }
+    for (auto& [runtimeId, seen] : seenActors) {
+        if (current.contains(runtimeId)) {
+            continue;
+        }
+        mod::EntityRemoveEvent event;
+        event.runtimeId = runtimeId;
+        event.uniqueId = seen.uniqueId;
+        event.identifier = std::move(seen.identifier);
+        event.name = std::move(seen.name);
+        event.position = seen.position;
+        event.isPlayer = event.identifier == "minecraft:player";
+        host->events.dispatch(event);
+    }
+    seenActors = std::move(current);
+}
+
+void ModManager::forgetActors()
+{
+    std::map<uint64_t, SeenActor> gone = std::exchange(seenActors, {});
+    for (auto& [runtimeId, seen] : gone) {
+        mod::EntityRemoveEvent event;
+        event.runtimeId = runtimeId;
+        event.uniqueId = seen.uniqueId;
+        event.identifier = std::move(seen.identifier);
+        event.name = std::move(seen.name);
+        event.position = seen.position;
+        event.isPlayer = event.identifier == "minecraft:player";
+        host->events.dispatch(event);
+    }
+}
+
+void ModManager::trackInventory(const SessionSnapshot& snapshot)
+{
+    const HudState& hud = snapshot.hud;
+    const HudItem& cursor = hud.container.slots[inventory::Cursor];
+    if (!inventorySeen || !host->events.listening(mod::InventoryChangeEvent::Type)) {
+        seenInventory = hud.inventory;
+        seenArmor = hud.armor;
+        seenOffhand = hud.offhand;
+        seenCursor = cursor;
+        inventorySeen = true;
+        return;
+    }
+    auto compare = [&](HudItem& seen, const HudItem& now, mod::InventoryKind kind, int slot) {
+        if (seen.identifier == now.identifier && seen.count == now.count && seen.aux == now.aux) {
+            seen = now;
+            return;
+        }
+        mod::InventoryChangeEvent event;
+        event.kind = kind;
+        event.slot = slot;
+        event.oldIdentifier = seen.empty() ? std::string() : seen.identifier;
+        event.oldCount = seen.empty() ? 0 : seen.count;
+        event.oldAux = seen.empty() ? 0 : seen.aux;
+        event.newIdentifier = now.empty() ? std::string() : now.identifier;
+        event.newCount = now.empty() ? 0 : now.count;
+        event.newAux = now.empty() ? 0 : now.aux;
+        seen = now;
+        host->events.dispatch(event);
+    };
+    for (size_t i = 0; i < seenInventory.size(); ++i) {
+        compare(seenInventory[i], hud.inventory[i], mod::InventoryKind::Main, static_cast<int>(i));
+    }
+    for (size_t i = 0; i < seenArmor.size(); ++i) {
+        compare(seenArmor[i], hud.armor[i], mod::InventoryKind::Armor, static_cast<int>(i));
+    }
+    compare(seenOffhand, hud.offhand, mod::InventoryKind::Offhand, 0);
+    compare(seenCursor, cursor, mod::InventoryKind::Cursor, 0);
+}
+
+void ModManager::dispatchText(InputState& input)
+{
+    if (input.text.empty() || !host->events.listening(mod::TextInputEvent::Type)) {
+        return;
+    }
+    std::u32string kept;
+    for (char32_t codepoint : input.text) {
+        mod::TextInputEvent event;
+        event.codepoint = codepoint;
+        event.text = utf8(codepoint);
+        event.inGame = host->inGame;
+        host->events.dispatch(event);
+        if (!event.isCancelled()) {
+            kept += codepoint;
+        }
+    }
+    input.text = std::move(kept);
+}
+
+/**
+ * Works out which screen, dialog or overlay is in front and, when that
+ * changed since the last frame, closes the old one for the mods and opens
+ * the new one.
+ */
+void ModManager::trackScreen()
+{
+    menu::Menu& menu = host->menu;
+    mod::ScreenKind current = mod::ScreenKind::None;
+    int containerType = -1;
+    if (menu.formPanel().active()) {
+        current = mod::ScreenKind::Form;
+    } else if (menu.inventoryOpen()) {
+        ContainerType type = menu.inventoryPanel().state.type;
+        current = type == ContainerType::Inventory ? mod::ScreenKind::Inventory : mod::ScreenKind::Container;
+        if (current == mod::ScreenKind::Container) {
+            containerType = static_cast<int>(type);
+        }
+    } else if (menu.currentDialog() != menu::Dialog::None) {
+        current = dialogKind(menu.currentDialog());
+    } else if (menu.socialDrawerOpen()) {
+        current = mod::ScreenKind::Social;
+    } else if (!menu.worldVisible() || menu.currentScreen() != menu::Screen::Title) {
+        current = screenKind(menu.currentScreen());
+    }
+    if (static_cast<int>(current) == lastScreen && containerType == lastContainerType) {
+        return;
+    }
+    if (lastScreen != static_cast<int>(mod::ScreenKind::None)) {
+        mod::ScreenCloseEvent closed;
+        closed.screen = static_cast<mod::ScreenKind>(lastScreen);
+        closed.containerType = lastContainerType;
+        host->events.dispatch(closed);
+    }
+    lastScreen = static_cast<int>(current);
+    lastContainerType = containerType;
+    if (current != mod::ScreenKind::None) {
+        mod::ScreenOpenEvent opened;
+        opened.screen = current;
+        opened.containerType = containerType;
+        host->events.dispatch(opened);
+    }
+}
+
+void ModManager::settingsChanged(uint32_t changed, int fov, float guiScale, int renderDistance, const std::string& language)
+{
+    if (slots.empty() || changed == 0) {
+        return;
+    }
+    mod::SettingsChangedEvent event;
+    event.changed = changed;
+    event.fov = fov;
+    event.guiScale = guiScale;
+    event.renderDistance = renderDistance;
+    event.language = language;
+    host->events.dispatch(event);
+}
+
+void ModManager::reloadConfigs(const std::string& modId)
+{
+    for (const auto& running : slots) {
+        if (modId.empty() || running->info().id == modId) {
+            running->configStore().load();
+        }
+    }
+    if (slots.empty()) {
+        return;
+    }
+    mod::ConfigReloadEvent event;
+    event.modId = modId;
+    host->events.dispatch(event);
+}
+
+void ModManager::shutdown()
+{
+    if (std::exchange(shutDown, true) || slots.empty()) {
+        return;
+    }
+    mod::ShutdownEvent event;
+    host->events.dispatch(event);
 }
 
 void ModManager::update(float deltaSeconds)
@@ -530,6 +836,7 @@ void ModManager::update(float deltaSeconds)
     host->seconds = now;
     host->shaders.clear();
     drainPackets();
+    trackScreen();
 
     mod::FrameEvent frame;
     frame.deltaSeconds = deltaSeconds;
@@ -772,6 +1079,11 @@ void ModManager::registerBuiltins()
             }
             context.reply(line);
         }
+    });
+    host->commands.add(HostOwner, { "reloadconfig", "Asks the mods to read their settings again", "[mod id]", {} }, [this](mod::CommandContext& context) {
+        std::string target = context.args.empty() ? std::string() : context.args.front();
+        host->scheduler.post(HostOwner, [this, target] { reloadConfigs(target); });
+        context.reply(target.empty() ? "§eReloading every mod's config" : "§eReloading the config of " + target);
     });
 }
 

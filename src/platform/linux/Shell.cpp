@@ -50,4 +50,15 @@ std::string pickPngFile()
     return chosen;
 }
 
+std::string pickResourcePackFile()
+{
+    FILE* dialog = popen("zenity --file-selection --file-filter='Minecraft resource packs | *.mcpack *.zip' 2>/dev/null", "r");
+    if (!dialog) return {};
+    char buffer[4096] {};
+    std::string chosen = fgets(buffer, sizeof(buffer), dialog) ? std::string(buffer) : std::string();
+    pclose(dialog);
+    while (!chosen.empty() && (chosen.back() == '\n' || chosen.back() == '\r')) chosen.pop_back();
+    return chosen;
+}
+
 }

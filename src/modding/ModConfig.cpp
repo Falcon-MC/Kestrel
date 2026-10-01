@@ -129,6 +129,8 @@ void ModConfig::saveIfChanged()
 
 void ModConfig::load()
 {
+    values.clear();
+    changed = false;
     std::ifstream in(file, std::ios::binary);
     std::string line;
     while (std::getline(in, line)) {

@@ -113,6 +113,11 @@ GameAssets::GameAssets()
 
 GameAssets::~GameAssets() = default;
 
+void GameAssets::setResourcePacks(std::vector<std::shared_ptr<const world::PackFiles>> packs)
+{
+    if (pack) pack->setOverlays(std::move(packs));
+}
+
 bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* slice, NineSlice* texels, std::vector<SpriteFrame>* frames)
 {
     std::string encoded;
@@ -144,6 +149,11 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
 bool GameAssets::readArchived(const std::string& archive, const std::string& name, std::string& out)
 {
     return pack && pack->readArchived(archive, name, out);
+}
+
+bool GameAssets::readBaseArchived(const std::string& archive, const std::string& name, std::string& out)
+{
+    return pack && pack->readBaseArchived(archive, name, out);
 }
 
 std::vector<unsigned char> GameAssets::readPackFile(const std::string& relative)

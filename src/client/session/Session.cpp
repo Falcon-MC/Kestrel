@@ -429,6 +429,10 @@ void Session::resetSnapshot(std::string name, std::string target)
 void Session::disconnect()
 {
     cancelled = true;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (resourceReloadCancelled) resourceReloadCancelled->store(true, std::memory_order_relaxed);
+    }
     if (worker.joinable()) {
         worker.join();
     }
@@ -491,10 +495,11 @@ void Session::cachePackLocked(const std::string& path, std::shared_ptr<const wor
 }
 
 
-std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum)
+std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum, const world::BlockAssets* expectedAssets)
 {
     std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
     if (!guard.owns_lock()) return {};
+    if (expectedAssets && current.assets.get() != expectedAssets) return {};
     std::vector<MeshUpdate> updates;
     updates.reserve(std::min(maximum, pendingUpdates.size()));
     while (!pendingUpdates.empty() && updates.size() < maximum) {
@@ -557,11 +562,35 @@ void Session::setLookRay(const std::array<double, 3>& origin, const std::array<f
     requestedLookDirection = direction;
 }
 
-/**
- * The liquid the given point sits in: 0 for air, 1 for water, 2 for lava. A
- * liquid fills (8 - level) / 9 of its block, a falling one or one under the
- * same liquid fills it all, the way liquid surfaces are meshed.
- */
+void Session::configurePaletteResolver()
+{
+    world.setBlockPaletteResolver([blockAssets = assets, mapping = ids,
+        resolved = std::unordered_map<uint32_t, std::optional<uint32_t>> {}](const Tag& state) mutable -> std::optional<uint32_t> {
+        const Tag* name = state.get("name");
+        const Tag* properties = state.get("states");
+        if (!blockAssets || !name || name->getType() != Tag::Type::String
+            || !properties || properties->getType() != Tag::Type::Compound) return std::nullopt;
+        std::string blockName = name->asString();
+        if (blockName.find(':') == std::string::npos) {
+            blockName = "minecraft:" + blockName;
+        }
+        uint32_t hash = static_cast<uint32_t>(BlockStateHasher::hash(blockName, *properties));
+        auto found = resolved.find(hash);
+        if (found != resolved.end()) return found->second;
+        auto value = blockAssets->networkValueForState(hash, mapping.hashed, mapping.sequential.get());
+        if (!value) {
+            const Tag* version = state.get("version");
+            int32_t stateVersion = version && version->getType() == Tag::Type::Int ? version->asInt() : 0;
+            BlockStateData upgraded = blockStateUpgrader().upgrade(BlockStateData(blockName, *properties, stateVersion));
+            uint32_t upgradedHash = static_cast<uint32_t>(BlockStateHasher::hash(upgraded.getName(), upgraded.getStates()));
+            value = blockAssets->networkValueForState(upgradedHash, mapping.hashed, mapping.sequential.get());
+        }
+        resolved.emplace(hash, value);
+        return value;
+    });
+}
+
+/** The liquid the given point sits in: 0 for air, 1 for water, 2 for lava. */
 uint8_t Session::mediumAt(const std::array<double, 3>& position)
 {
     if (!assets) {
@@ -1933,6 +1962,28 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         }
         wantedAssets += definitions.getBuffer();
     }
+    sessionServerPacks = packs;
+    sessionCustomBlocks = customBlocks;
+    ++resourceGeneration;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        packs.insert(packs.end(), requestedGlobalPacks.begin(), requestedGlobalPacks.end());
+        appliedGlobalRevision = requestedGlobalRevision;
+        current.globalResourcesRevision = appliedGlobalRevision;
+        current.resourceReloading = false;
+        current.resourceReloadError.clear();
+        current.reloadedMeshes.reset();
+        wantedAssets += "global:" + std::to_string(appliedGlobalRevision);
+    }
+    uint64_t combinedArchiveBytes = 0, combinedExpandedBytes = 0;
+    for (const auto& pack : packs) {
+        combinedArchiveBytes += pack->archiveBytes();
+        combinedExpandedBytes += pack->expandedBytes();
+    }
+    if (combinedArchiveBytes > 512ull * 1024 * 1024 || combinedExpandedBytes > 1024ull * 1024 * 1024) {
+        fail("Combined resource pack stack exceeds memory budget");
+        return std::nullopt;
+    }
     // Transfers inside a network usually land on the same packs, and rebuilding the atlas costs seconds.
     if (!assets || wantedAssets != assetsKey) {
         std::string buildError;
@@ -1952,30 +2003,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         customPermutationCount = assets->customStateCount();
         ids.sequential = assets->sequentialMap();
     }
-    world.setBlockPaletteResolver([blockAssets = assets, mapping = ids,
-        resolved = std::unordered_map<uint32_t, std::optional<uint32_t>> {}](const Tag& state) mutable -> std::optional<uint32_t> {
-        const Tag* name = state.get("name");
-        const Tag* properties = state.get("states");
-        if (!blockAssets || !name || name->getType() != Tag::Type::String
-            || !properties || properties->getType() != Tag::Type::Compound) return std::nullopt;
-        std::string blockName = name->asString();
-        if (blockName.find(':') == std::string::npos) {
-            blockName = "minecraft:" + blockName;
-        }
-        uint32_t hash = static_cast<uint32_t>(BlockStateHasher::hash(blockName, *properties));
-        auto found = resolved.find(hash);
-        if (found != resolved.end()) return found->second;
-        auto value = blockAssets->networkValueForState(hash, mapping.hashed, mapping.sequential.get());
-        if (!value) {
-            const Tag* version = state.get("version");
-            int32_t stateVersion = version && version->getType() == Tag::Type::Int ? version->asInt() : 0;
-            BlockStateData upgraded = blockStateUpgrader().upgrade(BlockStateData(blockName, *properties, stateVersion));
-            uint32_t upgradedHash = static_cast<uint32_t>(BlockStateHasher::hash(upgraded.getName(), upgraded.getStates()));
-            value = blockAssets->networkValueForState(upgradedHash, mapping.hashed, mapping.sequential.get());
-        }
-        resolved.emplace(hash, value);
-        return value;
-    });
+    configurePaletteResolver();
     if (!mesher) {
         mesher = std::make_unique<world::MeshScheduler>();
     }
@@ -2006,6 +2034,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
         collectViewInput();
+        pollGlobalPacks();
         int waitMs = 5;
         if (spawnInitialized && nextMotionTick > 0.0) {
             waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 0, 5);

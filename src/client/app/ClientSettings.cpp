@@ -1,4 +1,6 @@
 #include "client/Client.h"
+#include "mod/Events.h"
+#include "modding/ModManager.h"
 
 #include <algorithm>
 #include <chrono>
@@ -102,6 +104,26 @@ void Client::loadSettings()
 
 void Client::saveSettings()
 {
+    uint32_t changed = 0;
+    auto mark = [&changed](bool differs, mod::SettingsChange setting) {
+        if (differs) {
+            changed |= static_cast<uint32_t>(setting);
+        }
+    };
+    mark(menu.fov() != savedFov, mod::SettingsChange::Fov);
+    mark(menu.interfaceScale() != savedScale, mod::SettingsChange::GuiScale);
+    mark(menu.language() != savedLanguage, mod::SettingsChange::Language);
+    mark(menu.renderDistance() != savedRenderDistance, mod::SettingsChange::RenderDistance);
+    mark(menu.maxFps() != savedMaxFps, mod::SettingsChange::MaxFps);
+    mark(menu.vsync() != savedVsync, mod::SettingsChange::Vsync);
+    mark(menu.gameplayFov() != savedGameplayFov, mod::SettingsChange::GameplayFov);
+    mark(window && window->fullscreen() != savedFullscreen, mod::SettingsChange::Fullscreen);
+    mark(menu.soundVolumes() != savedVolumes, mod::SettingsChange::Volumes);
+    mark(!(menu.keyBindings() == savedBindings), mod::SettingsChange::KeyBindings);
+    mark(!(menu.chatSettings() == savedChat), mod::SettingsChange::Chat);
+    mark(menu.brightness() != savedBrightness, mod::SettingsChange::Brightness);
+    mark(menu.safeArea() != savedSafeArea, mod::SettingsChange::SafeArea);
+    mark(menu.paperDollHidden() != savedPaperDollHidden, mod::SettingsChange::PaperDoll);
     if (window) {
         savedFullscreen = window->fullscreen();
     }
@@ -146,6 +168,9 @@ void Client::saveSettings()
     savedBrightness = menu.brightness();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
+    if (mods) {
+        mods->settingsChanged(changed, menu.fov(), menu.interfaceScale(), menu.renderDistance(), menu.language());
+    }
 }
 
 }

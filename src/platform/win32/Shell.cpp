@@ -94,4 +94,23 @@ std::string pickPngFile()
     return chosen;
 }
 
+std::string pickResourcePackFile()
+{
+    wchar_t path[32768] {};
+    OPENFILENAMEW dialog {};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = GetActiveWindow();
+    dialog.lpstrFilter = L"Minecraft resource packs\0*.mcpack;*.zip\0All files\0*.*\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = 32768;
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) return {};
+    int length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1) return {};
+    std::string chosen(size_t(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, chosen.data(), length, nullptr, nullptr);
+    chosen.pop_back();
+    return chosen;
+}
+
 }

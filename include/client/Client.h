@@ -17,6 +17,7 @@
 #include "client/Session.h"
 #include "client/Social.h"
 #include "world/EntityAnimation.h"
+#include "world/GlobalResources.h"
 #include "render/Renderer.h"
 #include "world/Mesher.h"
 #include "menu/Menu.h"
@@ -253,6 +254,12 @@ private:
     bool worldShown = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
     SessionSnapshot timeState;
+    world::GlobalResources globalResources;
+    uint64_t globalResourcesRevision = 0;
+    std::vector<std::shared_ptr<const world::PackFiles>> selectedGlobalPacks;
+    std::set<std::string> globalPackIcons;
+    void updateGlobalResources();
+    void applyMeshUpdate(const MeshUpdate& update);
     double startSeconds = 0.0;
     std::unordered_map<uint64_t, std::array<int32_t, 3>> opaqueChunks;
     std::unordered_map<uint64_t, std::shared_ptr<const world::ChunkMesh>> litChunks;

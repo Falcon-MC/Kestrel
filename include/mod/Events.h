@@ -149,6 +149,20 @@ struct MouseClickEvent : CancellableEvent {
 };
 
 /**
+ * The cursor moved; x and y are where it is now and deltaX and deltaY how far
+ * it went since the last move, all in interface units. Sent once per frame
+ * at most, only when the cursor position changed.
+ */
+struct MouseMoveEvent : Event {
+    KESTREL_EVENT("kestrel:mouse_move")
+    float x = 0.0f;
+    float y = 0.0f;
+    float deltaX = 0.0f;
+    float deltaY = 0.0f;
+    bool inGame = false;
+};
+
+/**
  * The mouse wheel turned; delta is positive rolling up, in notches. x and y
  * are in interface units. Cancelling keeps the scroll from the rest of the
  * client.
@@ -159,6 +173,190 @@ struct MouseScrollEvent : CancellableEvent {
     float x = 0.0f;
     float y = 0.0f;
     bool inGame = false;
+};
+
+/**
+ * A key went up; the same keys as KeyPressEvent.
+ */
+struct KeyReleaseEvent : Event {
+    KESTREL_EVENT("kestrel:key_release")
+    Key key = Key::None;
+    bool inGame = false;
+};
+
+/**
+ * A mouse button went up; x and y are in interface units.
+ */
+struct MouseReleaseEvent : Event {
+    KESTREL_EVENT("kestrel:mouse_release")
+    MouseButton button = MouseButton::Left;
+    float x = 0.0f;
+    float y = 0.0f;
+    bool inGame = false;
+};
+
+/**
+ * A character typed on the keyboard, as its codepoint and its UTF-8 text.
+ * Cancelling keeps it out of the client's text fields, for a mod's own one.
+ */
+struct TextInputEvent : CancellableEvent {
+    KESTREL_EVENT("kestrel:text_input")
+    char32_t codepoint = 0;
+    std::string text;
+    bool inGame = false;
+};
+
+/**
+ * The client settings that SettingsChangedEvent::changed can name, one bit
+ * each.
+ */
+enum class SettingsChange : uint32_t {
+    Fov = 1u << 0,
+    GuiScale = 1u << 1,
+    Language = 1u << 2,
+    RenderDistance = 1u << 3,
+    MaxFps = 1u << 4,
+    Vsync = 1u << 5,
+    GameplayFov = 1u << 6,
+    Fullscreen = 1u << 7,
+    Volumes = 1u << 8,
+    KeyBindings = 1u << 9,
+    Chat = 1u << 10,
+    Brightness = 1u << 11,
+    SafeArea = 1u << 12,
+    PaperDoll = 1u << 13,
+};
+
+/**
+ * The player changed client settings and they were just saved. changed holds
+ * a SettingsChange bit for each one; the rest are the values now in use.
+ */
+struct SettingsChangedEvent : Event {
+    KESTREL_EVENT("kestrel:settings_changed")
+    uint32_t changed = 0;
+    int fov = 0;
+    float guiScale = 1.0f;
+    int renderDistance = 0;
+    std::string language;
+
+    bool has(SettingsChange setting) const
+    {
+        return (changed & static_cast<uint32_t>(setting)) != 0;
+    }
+};
+
+/**
+ * The player asked mods to read their configuration again. modId names the
+ * one mod asked, or is empty for all of them.
+ */
+struct ConfigReloadEvent : Event {
+    KESTREL_EVENT("kestrel:config_reload")
+    std::string modId;
+
+    bool targets(const std::string& id) const
+    {
+        return modId.empty() || modId == id;
+    }
+};
+
+/**
+ * The client is about to quit; the last chance to save, sent once before mods
+ * are unloaded.
+ */
+struct ShutdownEvent : Event {
+    KESTREL_EVENT("kestrel:shutdown")
+};
+
+enum class ScreenKind {
+    None,
+    Title,
+    Play,
+    Settings,
+    ServerForm,
+    Marketplace,
+    DressingRoom,
+    Profile,
+    Pause,
+    Chat,
+    Death,
+    Inventory,
+    Container,
+    Form,
+    Social,
+    SignIn,
+    Connecting,
+    ConnectionError,
+    Dialog,
+};
+
+/**
+ * A screen, dialog or overlay opened. containerType is the client's
+ * ContainerType value for Container (2 a chest, 3 a workbench, 4 a furnace
+ * and so on), and -1 otherwise. When one replaces another, the close
+ * of the old one comes first.
+ */
+struct ScreenOpenEvent : Event {
+    KESTREL_EVENT("kestrel:screen_open")
+    ScreenKind screen = ScreenKind::None;
+    int containerType = -1;
+};
+
+struct ScreenCloseEvent : Event {
+    KESTREL_EVENT("kestrel:screen_close")
+    ScreenKind screen = ScreenKind::None;
+    int containerType = -1;
+};
+
+/**
+ * An entity appeared around the player. uniqueId is 0 when the server did not
+ * give one.
+ */
+struct EntitySpawnEvent : Event {
+    KESTREL_EVENT("kestrel:entity_spawn")
+    uint64_t runtimeId = 0;
+    int64_t uniqueId = 0;
+    std::string identifier;
+    std::string name;
+    Vec3 position;
+    bool isPlayer = false;
+};
+
+/**
+ * An entity went away, out of range, killed, or because the player left or
+ * changed dimension; position is where it was last seen.
+ */
+struct EntityRemoveEvent : Event {
+    KESTREL_EVENT("kestrel:entity_remove")
+    uint64_t runtimeId = 0;
+    int64_t uniqueId = 0;
+    std::string identifier;
+    std::string name;
+    Vec3 position;
+    bool isPlayer = false;
+};
+
+enum class InventoryKind {
+    Main,
+    Armor,
+    Offhand,
+    Cursor,
+};
+
+/**
+ * A slot of the local player's inventory holds something else. slot counts
+ * within kind: 0 to 35 for Main (0 to 8 the hotbar), 0 to 3 for Armor, and 0
+ * for Offhand and Cursor. An empty slot has an empty identifier and count 0.
+ */
+struct InventoryChangeEvent : Event {
+    KESTREL_EVENT("kestrel:inventory_change")
+    InventoryKind kind = InventoryKind::Main;
+    int slot = 0;
+    std::string oldIdentifier;
+    int32_t oldCount = 0;
+    int32_t oldAux = 0;
+    std::string newIdentifier;
+    int32_t newCount = 0;
+    int32_t newAux = 0;
 };
 
 /**

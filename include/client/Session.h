@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -466,6 +467,11 @@ struct CameraFovRequest {
 };
 
 struct SessionSnapshot {
+    uint64_t globalResourcesRevision = 0;
+    uint64_t resourceReloadSerial = 0;
+    bool resourceReloading = false;
+    std::string resourceReloadError;
+    std::shared_ptr<const std::vector<MeshUpdate>> reloadedMeshes;
     SessionState state = SessionState::Idle;
     CameraFovRequest cameraFov;
     int64_t localUniqueActorId = 0;
@@ -567,7 +573,7 @@ public:
 
     SessionSnapshot snapshot() const;
     std::shared_ptr<const SessionSnapshot> sharedSnapshot() const;
-    std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32);
+    std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32, const world::BlockAssets* expectedAssets = nullptr);
     std::vector<std::shared_ptr<const Packet>> takeCameraEvents();
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
@@ -589,6 +595,7 @@ public:
     void setServerCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
+    void setGlobalPacks(std::vector<std::shared_ptr<const world::PackFiles>> packs, uint64_t revision);
     void selectHotbarSlot(int slot);
     void requestRespawn();
     void setMotionInput(const MotionInput& input);
@@ -789,6 +796,21 @@ private:
     world::WorldStream world;
     std::shared_ptr<const world::BlockAssets> assets;
     std::string assetsKey;
+    void pollGlobalPacks();
+    void configurePaletteResolver();
+    struct ResourceReload {
+        std::shared_ptr<const world::BlockAssets> assets;
+        std::vector<std::shared_ptr<const world::PackFiles>> packs;
+        std::vector<MeshUpdate> meshes;
+        uint64_t revision = 0, generation = 0;
+        int32_t dimension = 0;
+        std::string error;
+    };
+    std::future<ResourceReload> resourceReloadJob;
+    std::shared_ptr<std::atomic_bool> resourceReloadCancelled;
+    std::vector<std::shared_ptr<const world::PackFiles>> requestedGlobalPacks, sessionServerPacks;
+    std::vector<world::CustomBlock> sessionCustomBlocks;
+    uint64_t requestedGlobalRevision = 0, appliedGlobalRevision = 0, resourceGeneration = 0;
     std::map<std::string, std::shared_ptr<const world::PackFiles>> packCache;
     std::optional<std::string> transferTarget;
     bool hashedNetworkIds = false;
