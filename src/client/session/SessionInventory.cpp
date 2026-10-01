@@ -20,7 +20,6 @@
 #include "Protocol/Packets/PlayerToggleCrafterSlotRequestPacket.h"
 #include "Protocol/Packets/TrimDataPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
-#include "Protocol/Packets/LecternUpdatePacket.h"
 
 #include <algorithm>
 #include <limits>
@@ -28,6 +27,32 @@
 namespace kestrel {
 namespace {
 using namespace inventory;
+
+class LecternUpdatePacket final : public Packet {
+public:
+    static constexpr MinecraftPacketIds ID = static_cast<MinecraftPacketIds>(0x7d);
+
+    MinecraftPacketIds getId() const override { return ID; }
+    const char* getName() const override { return "LecternUpdatePacket"; }
+
+    void write(BinaryStream& stream, const PacketCodecContext&) const override
+    {
+        stream.putByte(mPage);
+        stream.putByte(mTotalPages);
+        stream.putBlockPosition(mBlockPosition);
+    }
+
+    void read(ReadOnlyBinaryStream& stream, const PacketCodecContext&) override
+    {
+        mPage = stream.getByte();
+        mTotalPages = stream.getByte();
+        mBlockPosition = stream.getBlockPosition();
+    }
+
+    uint8_t mPage = 0;
+    uint8_t mTotalPages = 0;
+    Vector3i mBlockPosition;
+};
 
 int integerTag(const Tag& compound, const std::string& key, int fallback)
 {
