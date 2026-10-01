@@ -295,7 +295,7 @@ std::string Client::agentState()
         .field("fps", framesPerSecond)
         .field("frames", renderer->submittedFrames())
         .endObject();
-    writer.field("session", agent::SessionControl::stateName(session.snapshot().state));
+    writer.field("session", agent::SessionControl::stateName(session.sharedSnapshot()->state));
     writer.endObject();
     return writer.take();
 }
@@ -466,7 +466,8 @@ std::string Client::agentForms()
 
 std::string Client::agentDebug()
 {
-    SessionSnapshot snapshot = session.snapshot();
+    auto published = session.sharedSnapshot();
+    const SessionSnapshot& snapshot = *published;
     menu::DebugView view = buildDebugView(snapshot);
     memory = platform::memoryUsage();
     JsonWriter writer;

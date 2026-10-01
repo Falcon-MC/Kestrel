@@ -72,6 +72,7 @@ void prepareSineTable();
 float sine(float value);
 float cosine(float value);
 
+bool boundedQuery(const world::CollisionBox& box);
 int32_t floorInt(float value);
 world::CollisionBox offset(const world::CollisionBox& box, const MotionVector& vector);
 world::CollisionBox grow(const world::CollisionBox& box, float x, float y, float z);

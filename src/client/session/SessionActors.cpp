@@ -13,6 +13,32 @@ namespace kestrel {
 namespace {
 
 /**
+ * A 64-bit FNV-1a fingerprint of what a skin draws with: its image size and
+ * pixels, its geometry and its resource patch. Servers resend the player list
+ * every few seconds, and a skin that comes back with the same fingerprint is
+ * not built again.
+ */
+uint64_t skinPrint(const SerializedSkin& skin)
+{
+    uint64_t hash = 14695981039346656037ull;
+    auto mix = [&hash](const void* data, size_t size) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        for (size_t index = 0; index < size; ++index) {
+            hash = (hash ^ bytes[index]) * 1099511628211ull;
+        }
+    };
+    const SkinImageData& image = skin.mSkinData;
+    int32_t size[2] = { int32_t(image.mWidth), int32_t(image.mHeight) };
+    mix(size, sizeof(size));
+    mix(image.mData.data(), image.mData.size());
+    uint64_t geometryLength = skin.mGeometryData.size();
+    mix(&geometryLength, sizeof(geometryLength));
+    mix(skin.mGeometryData.data(), skin.mGeometryData.size());
+    mix(skin.mSkinResourcePatch.data(), skin.mSkinResourcePatch.size());
+    return hash;
+}
+
+/**
  * Old 64x32 skins only paint the right arm and leg. The player model wants a
  * square texture, so the lower half is filled the way Java does it, with the
  * right limbs copied over mirrored into the left limb slots.
@@ -113,7 +139,8 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
 
 std::vector<SkinUpload> Session::takeSkinUploads()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<SkinUpload> uploads = std::move(pendingSkins);
     pendingSkins.clear();
     return uploads;
@@ -152,6 +179,10 @@ void Session::storeSkin(const std::string& uuid, const SerializedSkin& skin)
 {
     const SkinImageData& image = skin.mSkinData;
     if (image.mWidth <= 0 || image.mHeight <= 0 || image.mData.size() < size_t(image.mWidth) * size_t(image.mHeight) * 4) {
+        return;
+    }
+    uint64_t print = skinPrint(skin);
+    if (auto uploaded = uploadedSkinPrints.find(uuid); uploaded != uploadedSkinPrints.end() && uploaded->second == print && skinByUuid.contains(uuid)) {
         return;
     }
     knownSkins[uuid] = skin;
@@ -194,6 +225,7 @@ void Session::assignSkin(const std::string& uuid)
     bool slim = skin.mSkinResourcePatch.find("Slim") != std::string::npos || skin.mSkinResourcePatch.find("slim") != std::string::npos;
     slotOwners[slot] = uuid;
     skinByUuid[uuid] = { slot, slim };
+    uploadedSkinPrints[uuid] = skinPrint(skin);
 
     SkinUpload upload;
     upload.slot = slot;
@@ -249,6 +281,7 @@ void Session::releaseSkin(const std::string& uuid)
     }
     slotOwners[skin->second.first].clear();
     skinByUuid.erase(skin);
+    uploadedSkinPrints.erase(uuid);
 }
 
 }

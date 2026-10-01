@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <map>
 #include <cstdint>
@@ -67,6 +68,49 @@ struct ModelQuad {
     uint32_t material = 0;
     uint32_t flags = 0;
 };
+
+/**
+ * The outward direction of a model quad face id, zero for a quad without one.
+ */
+inline std::array<float, 3> modelFaceNormal(uint32_t faceId)
+{
+    static constexpr std::array<float, 3> Normals[7] = {
+        { 0, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { -1, 0, 0 }, { 1, 0, 0 }, { 0, 0, -1 }, { 0, 0, 1 },
+    };
+    return Normals[faceId < 7 ? faceId : 0];
+}
+
+/**
+ * The face shade index the model shaders read (1 west, 2 east, 3 down, 4 up,
+ * 5 north, 6 south) of the axis lying closest to a direction, 0 for none.
+ */
+inline uint32_t shadeFaceTowards(const std::array<float, 3>& direction)
+{
+    size_t axis = 0;
+    for (size_t candidate = 1; candidate < 3; ++candidate) {
+        if (std::abs(direction[candidate]) > std::abs(direction[axis])) {
+            axis = candidate;
+        }
+    }
+    if (direction[axis] == 0.0f || !std::isfinite(direction[axis])) {
+        return 0;
+    }
+    return static_cast<uint32_t>(axis * 2 + (direction[axis] > 0.0f ? 2 : 1));
+}
+
+/**
+ * The shade index of a face once placed: its outward direction, taken at a
+ * point on it, carried through the same map as its corners, so posed bones,
+ * body yaw and mirroring all turn the shading with the face.
+ */
+template <typename Map>
+uint32_t posedShadeFace(uint32_t faceId, const std::array<float, 3>& point, float step, const Map& map)
+{
+    std::array<float, 3> normal = modelFaceNormal(faceId);
+    std::array<float, 3> from = map(point);
+    std::array<float, 3> to = map(std::array<float, 3> { point[0] + normal[0] * step, point[1] + normal[1] * step, point[2] + normal[2] * step });
+    return shadeFaceTowards({ to[0] - from[0], to[1] - from[1], to[2] - from[2] });
+}
 
 struct ModelTemplate {
     uint32_t quadStart = 0;
@@ -269,7 +313,8 @@ struct EntityPartRule {
  * A render controller bound to one entity: its condition from the entity's
  * list, the geometry and texture selectors, each an expression yielding an
  * index into the rig or texture layer choices (NoEntityChoice when missing),
- * and the part visibility rules in order, later rules winning.
+ * the part visibility rules in order, later rules winning, and the uv_anim
+ * expressions as offset u, offset v, scale u, scale v when uvAnimated.
  */
 enum class EntityBlend : uint8_t {
     Opaque,
@@ -287,6 +332,8 @@ struct EntityRenderController {
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
     bool ignoreLighting = false;
+    std::array<molang::Script, 4> uvAnim;
+    bool uvAnimated = false;
 };
 
 /**

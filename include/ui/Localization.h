@@ -3,6 +3,7 @@
 #include "world/ServerPack.h"
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -44,6 +45,7 @@ public:
     {
         return current;
     }
+    uint64_t revision() const { return changes; }
 
     const std::vector<LanguageInfo>& languages() const
     {
@@ -83,6 +85,7 @@ private:
     std::vector<LanguageInfo> available;
     std::unordered_map<std::string, std::string> texts;
     std::vector<std::string> splashTexts;
+    uint64_t changes = 1;
 };
 
 /**

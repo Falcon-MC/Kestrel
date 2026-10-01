@@ -15,7 +15,8 @@ constexpr size_t MaxPendingForms = 32;
 
 std::vector<FormRequest> Session::takeForms()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<FormRequest> forms = std::move(pendingForms);
     pendingForms.clear();
     return forms;

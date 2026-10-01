@@ -120,7 +120,8 @@ std::shared_ptr<const std::vector<menu::ChatCommand>> chatCommands(const Availab
 
 std::vector<ChatMessage> Session::takeChatMessages()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<ChatMessage> messages = std::move(pendingChat);
     pendingChat.clear();
     return messages;
@@ -128,7 +129,8 @@ std::vector<ChatMessage> Session::takeChatMessages()
 
 std::optional<ActionbarText> Session::takeActionbar()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::optional<ActionbarText> text = std::move(pendingActionbar);
     pendingActionbar.reset();
     return text;
@@ -136,7 +138,8 @@ std::optional<ActionbarText> Session::takeActionbar()
 
 std::vector<TitleRequest> Session::takeTitles()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<TitleRequest> titles = std::move(pendingTitles);
     pendingTitles.clear();
     return titles;
@@ -144,7 +147,8 @@ std::vector<TitleRequest> Session::takeTitles()
 
 std::vector<ToastRequest> Session::takeToasts()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<ToastRequest> toasts = std::move(pendingToasts);
     pendingToasts.clear();
     return toasts;

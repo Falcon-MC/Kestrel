@@ -47,7 +47,21 @@ struct Layout {
 }
 
 void InventoryScreen::send(InventoryAction action, int slot, int value, bool all) { commands.push_back({ action, slot, value, all, {} }); }
-void InventoryScreen::open() { active = true; dragging = false; searchFocused = false; hoveredSlot = -1; }
+/**
+ * Shows the inventory. A screen that was hidden starts its vanilla screen
+ * over, entrance animation included; the server confirming a screen already
+ * shown keeps it as it is.
+ */
+void InventoryScreen::open()
+{
+    if (!active) {
+        jsonScreen.reset();
+    }
+    active = true;
+    dragging = false;
+    searchFocused = false;
+    hoveredSlot = -1;
+}
 void InventoryScreen::close() { if (active) send(InventoryAction::Close); active = false; dragging = false; searchFocused = false; }
 void InventoryScreen::reset() { active = false; dragging = false; searchFocused = false; commands.clear(); state = {}; }
 std::vector<InventoryCommand> InventoryScreen::takeCommands() { std::vector<InventoryCommand> result; result.swap(commands); return result; }

@@ -153,6 +153,15 @@ struct Node {
     bool propagate = false;
     bool vertical = true;
     std::string text;
+    struct LabelLayout {
+        std::string source;
+        const Font* font = nullptr;
+        uint64_t revision = 0;
+        TextStyle style = TextStyle::Pixel;
+        float width = 0.0f;
+        Font::TextLayout layout;
+    };
+    std::array<LabelLayout, 2> labelLayouts;
     std::string texture;
     Node* scroller = nullptr;
     std::optional<std::array<float, 2>> offsetOverride;
@@ -203,6 +212,7 @@ struct JsonUiRuntime {
     uint64_t nextId = 1;
     size_t madeThisFrame = 0;
     bool virtualGrids = false;
+    bool virtualGridsSettled = false;
     std::vector<UiEvent> events;
     std::vector<std::pair<std::string, uint64_t>> destroyedItems;
     std::vector<Node*> order;
@@ -224,6 +234,14 @@ struct JsonUiRuntime {
     bool laidOut = false;
     Rect laidArea {};
     UiData laidData;
+    const UiData* laidDataSource = nullptr;
+    std::optional<uint64_t> laidDataGeneration;
+    const Font* laidFont = nullptr;
+    uint64_t laidFontRevision = 0;
+    uint64_t laidLanguageRevision = 0;
+    float laidPixelScale = 0.0f;
+    Rect viewport {};
+    Node::LabelLayout hoverLayout;
     float laidMouseX = 0.0f;
     float laidMouseY = 0.0f;
     bool laidBlocked = false;
@@ -274,8 +292,21 @@ struct JsonUiRuntime {
     float natural(Node& node, int axis);
     TextStyle labelStyle(const Node& node) const;
     float labelScale(const Node& node) const;
+    const Font::TextLayout& labelLayout(Node& node, float width);
     std::array<int, 2> gridCells(Node& node);
     float intrinsic(Node& node, int axis);
+
+    /**
+     * Set once a sizing pass has given every node its height, so a width
+     * read from its own height ("100%y") measures against it.
+     */
+    bool heightsKnown = false;
+
+    /**
+     * Set when a sizing pass met a width read from its own height, which
+     * then needs the heights of a first pass.
+     */
+    bool widthReadsHeight = false;
     void size(Node& node, int axis, float parent, std::optional<float> forced = std::nullopt);
     float term(const Node& node, const json::Value* value, float parent) const;
     std::optional<float> animated(const Node& node, const std::string& target, int axis, float parent) const;

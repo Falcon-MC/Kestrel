@@ -546,6 +546,7 @@ public:
     static int protocolVersion();
 
     SessionSnapshot snapshot() const;
+    std::shared_ptr<const SessionSnapshot> sharedSnapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates();
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
@@ -682,6 +683,9 @@ private:
     std::optional<std::string> join(const std::string& target, MinecraftAuthentication* authentication, const std::string& offlineName);
     void resetSnapshot(std::string name, std::string target);
     std::shared_ptr<const world::PackFiles> cachedPack(const std::string& path);
+    void publishSnapshotLocked(std::shared_ptr<const SessionSnapshot> snapshot = {});
+    void collectViewInput();
+    void cachePackLocked(const std::string& path, std::shared_ptr<const world::PackFiles> pack);
     void fail(const std::string& error);
     void handleWorldPacket(std::string& payload);
     void handleViolation(const PacketViolationWarningPacket& violation);
@@ -752,6 +756,9 @@ private:
     std::atomic<bool> cancelled { false };
     mutable std::mutex mutex;
     SessionSnapshot current;
+    std::shared_ptr<const SessionSnapshot> publishedSnapshot;
+    std::vector<std::shared_ptr<const SessionSnapshot>> retiredSnapshots;
+    std::thread::id snapshotProducerThread;
     std::unique_ptr<BedrockConnection> connection;
     world::WorldStream world;
     std::shared_ptr<const world::BlockAssets> assets;
@@ -769,6 +776,11 @@ private:
     uint64_t localRuntimeId = 0;
     int64_t localUniqueId = 0;
     std::string localUuid;
+    std::mutex viewInputMutex;
+    std::array<double, 3> requestedLookOrigin {};
+    std::array<float, 3> requestedLookDirection { 0.0f, 0.0f, -1.0f };
+    std::array<double, 3> requestedBoomOrigin {};
+    std::array<double, 3> requestedBoomDelta {};
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
     std::array<double, 3> boomOrigin {};
@@ -783,6 +795,7 @@ private:
     std::map<uint64_t, std::string> uuidByRuntime;
     std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
     std::map<std::string, SerializedSkin> knownSkins;
+    std::map<std::string, uint64_t> uploadedSkinPrints;
     std::map<std::string, std::string> playerNames;
     std::map<int64_t, std::string> playerNamesByActor;
 
@@ -912,6 +925,7 @@ private:
     };
     std::deque<ServerMotion> serverMotions;
     bool enderChestOpen = false;
+    std::mutex motionInputMutex;
     MotionInput motionInput;
     MotionInput lastMotionInput;
     bool motionStarted = false;

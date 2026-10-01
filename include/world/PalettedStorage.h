@@ -23,6 +23,7 @@ using BlockPaletteResolver = std::function<std::optional<uint32_t>(const Tag&)>;
 
 class PalettedStorage {
 public:
+    bool operator==(const PalettedStorage&) const = default;
     static PalettedStorage uniform(uint32_t runtimeId);
     static bool decode(ByteReader& reader, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver = {});
     static bool decodeWithHeader(ByteReader& reader, uint8_t header, PalettedStorage& out, std::string& error, const BlockPaletteResolver& resolver = {}, bool integerPalette = false);
@@ -50,13 +51,14 @@ public:
     }
 
     bool containsOnly(uint32_t runtimeId) const;
-    void apply(const std::vector<std::pair<size_t, uint32_t>>& updates);
+    bool apply(const std::vector<std::pair<size_t, uint32_t>>& updates);
     size_t paletteIndex(size_t linear) const;
 
 private:
     uint8_t bits = 0;
     std::vector<uint32_t> words;
     std::vector<uint32_t> values;
+    std::vector<uint16_t> uses;
 };
 
 }

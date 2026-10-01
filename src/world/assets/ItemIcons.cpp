@@ -296,11 +296,13 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
     // Legacy items from server packs keep their icon in the resource pack
     // definition; the item registry sends no components for them.
     for (const std::shared_ptr<const PackFiles>& layer : packs) {
-        for (const auto& [path, content] : layer->files) {
+        for (const auto& path : layer->paths()) {
             if (path.rfind("items/", 0) != 0 || !path.ends_with(".json")) {
                 continue;
             }
-            std::unique_ptr<json::Value> parsed = json::parse(util::stripJsonComments(content));
+            auto content = layer->find(path);
+            if (!content) continue;
+            std::unique_ptr<json::Value> parsed = json::parse(util::stripJsonComments(*content));
             const json::Value* item = parsed ? parsed->get("minecraft:item") : nullptr;
             const json::Value* description = item ? item->get("description") : nullptr;
             const json::Value* identifier = description ? description->get("identifier") : nullptr;

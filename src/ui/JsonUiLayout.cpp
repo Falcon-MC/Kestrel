@@ -329,41 +329,34 @@ std::array<int, 2> JsonUiRuntime::gridCells(Node& node)
     return { 1, std::max(1, items) };
 }
 
+const Font::TextLayout& JsonUiRuntime::labelLayout(Node& node, float width)
+{
+    if (!(width > 0.0f)) {
+        width = std::numeric_limits<float>::infinity();
+    }
+    Node::LabelLayout& cached = node.labelLayouts[std::isfinite(width) ? 1 : 0];
+    const Font& font = ui->textFont();
+    TextStyle style = labelStyle(node);
+    if (cached.font != &font || cached.revision != font.revision() || cached.source != node.text || cached.style != style || cached.width != width) {
+        cached.layout = font.layout(node.text, style, width);
+        cached.source = node.text;
+        cached.font = &font;
+        cached.revision = font.revision();
+        cached.style = style;
+        cached.width = width;
+    }
+    return cached.layout;
+}
+
 float JsonUiRuntime::natural(Node& node, int axis)
 {
     if (node.type == "label") {
         float scale = labelScale(node);
         float padding = static_cast<float>(number(node, "line_padding", 0.0));
-        TextStyle style = labelStyle(node);
         if (axis == 0) {
-            float widest = 0.0f;
-            size_t start = 0;
-            while (true) {
-                size_t end = node.text.find('\n', start);
-                widest = std::max(widest, ui->measure(std::string_view(node.text).substr(start, end == std::string::npos ? std::string::npos : end - start), style));
-                if (end == std::string::npos) {
-                    break;
-                }
-                start = end + 1;
-            }
-            return std::ceil(widest * scale);
+            return std::ceil(labelLayout(node, std::numeric_limits<float>::infinity()).width * scale);
         }
-        size_t lines = 0;
-        size_t start = 0;
-        std::vector<std::string_view> wrapped;
-        while (true) {
-            size_t end = node.text.find('\n', start);
-            std::string_view line = std::string_view(node.text).substr(start, end == std::string::npos ? std::string::npos : end - start);
-            wrapped.clear();
-            lines += std::max<size_t>(1, node.w > 0.0f ? ui->wrap(line, style, node.w / scale + 0.01f, wrapped) : 1);
-            if (end == std::string::npos) {
-                break;
-            }
-            start = end + 1;
-        }
-        if (node.text.empty()) {
-            lines = 1;
-        }
+        size_t lines = labelLayout(node, node.w > 0.0f ? node.w / scale + 0.01f : std::numeric_limits<float>::infinity()).lines.size();
         return static_cast<float>(lines) * (LabelLineHeight + padding) * scale - padding * scale;
     }
     if (node.type == "image" && !node.texture.empty()) {
@@ -418,7 +411,13 @@ float JsonUiRuntime::intrinsic(Node& node, int axis)
     node.measured[axis] = true;
     node.intrinsic[axis] = Unknown;
     const Extent& extent = axis == 0 ? node.width : node.height;
-    if (uses(extent, TermKind::Parent) || uses(extent, TermKind::Fill) || (axis == 0 && uses(extent, TermKind::OwnY))) {
+    if (axis == 0 && uses(extent, TermKind::OwnY)) {
+        widthReadsHeight = true;
+        if (!heightsKnown) {
+            return Unknown;
+        }
+    }
+    if (uses(extent, TermKind::Parent) || uses(extent, TermKind::Fill)) {
         return Unknown;
     }
     float total = 0.0f;
@@ -433,6 +432,9 @@ float JsonUiRuntime::intrinsic(Node& node, int axis)
             break;
         case TermKind::OwnX:
             total += part.amount * node.w;
+            break;
+        case TermKind::OwnY:
+            total += part.amount * node.h;
             break;
         case TermKind::Children:
         case TermKind::ChildrenMax: {
@@ -533,6 +535,9 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
                 value += part.amount * node.w;
                 break;
             case TermKind::OwnY: {
+                if (axis == 0) {
+                    widthReadsHeight = true;
+                }
                 float height = intrinsic(node, 1);
                 value += part.amount * (std::isnan(height) ? node.h : height);
                 break;

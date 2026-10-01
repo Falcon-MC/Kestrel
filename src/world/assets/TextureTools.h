@@ -53,6 +53,6 @@ std::vector<uint8_t> diagnosticTexture();
  * Fills the texture array with the layers and their mip chain; overlay
  * layers average their color without weighting it by alpha.
  */
-void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers, const std::vector<bool>& overlayLayers);
+void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers, const std::vector<bool>& overlayLayers, const std::vector<bool>& cutoutLayers = {});
 
 }

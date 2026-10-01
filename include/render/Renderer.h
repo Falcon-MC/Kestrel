@@ -67,6 +67,42 @@ struct SkyVertex {
 
 static_assert(sizeof(SkyVertex) == 32);
 
+inline constexpr uint32_t HeldItemTextureSlots = 256;
+
+// A cached rig range, transformed and interpolated by the vertex shader.
+struct ActorDraw {
+    uint64_t geometryKey = 0;
+    const void* quads = nullptr;
+    uint32_t total = 0;
+    uint32_t first = 0;
+    uint32_t count = 0;
+    std::array<float, 36> constants {};
+};
+
+inline void packEntityPositions(const std::array<std::array<float, 3>, 4>& corners, std::array<uint32_t, 16>& words)
+{
+    std::array<int32_t, 3> offset {};
+    for (size_t axis = 0; axis < 3; ++axis) {
+        double center = 0;
+        for (const auto& corner : corners) center += corner[axis] * 0.25;
+        offset[axis] = static_cast<int32_t>(std::isfinite(center) ? std::clamp(std::round(center / 16384.0), -512.0, 511.0) : 0.0);
+    }
+    words[13] = 0;
+    if (offset[0] || offset[1] || offset[2]) {
+        words[13] = 0x80000000u;
+        for (size_t axis = 0; axis < 3; ++axis) words[13] |= (uint32_t(offset[axis]) & 1023u) << (axis * 10);
+    }
+    for (size_t component = 0; component < 12; ++component) {
+        size_t axis = component % 3;
+        float local = corners[component / 3][axis] - float(offset[axis]) * 16384.0f;
+        if (!std::isfinite(local)) local = 0.0f;
+        int16_t value = static_cast<int16_t>(std::clamp(std::round(local), -32768.0f, 32767.0f));
+        size_t word = component / 2;
+        if (!(component & 1)) words[word] = uint16_t(value);
+        else words[word] |= uint32_t(uint16_t(value)) << 16;
+    }
+}
+
 struct WorldView {
     std::array<float, 16> viewProjection {};
     double cameraX = 0.0;
@@ -90,6 +126,8 @@ struct WorldView {
      * multiply the color under them: entity quads shade it like 40% black, the rest
      * double what their texture covers, like the game's Cracks material.
      */
+    const ActorDraw* actorDraws = nullptr;
+    uint32_t actorDrawCount = 0;
     const void* entityQuads = nullptr;
     uint32_t entityQuadCount = 0;
     uint32_t entityBlendCount = 0;
@@ -174,6 +212,24 @@ struct ChunkFrustum {
         float cz = static_cast<float>(z + 8 - view.cameraZ);
         for (const std::array<float, 4>& plane : planes) {
             float radius = 8.0f * (std::abs(plane[0]) + std::abs(plane[1]) + std::abs(plane[2]));
+            if (plane[0] * cx + plane[1] * cy + plane[2] * cz + plane[3] < -radius) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether any of the box centered on a world point with the given half
+     * extents may be on screen.
+     */
+    bool containsBox(const WorldView& view, double x, double y, double z, float halfX, float halfY, float halfZ) const
+    {
+        float cx = static_cast<float>(x - view.cameraX);
+        float cy = static_cast<float>(y - view.cameraY);
+        float cz = static_cast<float>(z - view.cameraZ);
+        for (const std::array<float, 4>& plane : planes) {
+            float radius = halfX * std::abs(plane[0]) + halfY * std::abs(plane[1]) + halfZ * std::abs(plane[2]);
             if (plane[0] * cx + plane[1] * cy + plane[2] * cz + plane[3] < -radius) {
                 return false;
             }

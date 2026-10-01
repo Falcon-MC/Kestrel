@@ -1,6 +1,8 @@
 #include "TextureTools.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace kestrel::world {
 
@@ -125,9 +127,54 @@ std::vector<uint8_t> diagnosticTexture()
     return out;
 }
 
-void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers, const std::vector<bool>& overlayLayers)
+namespace {
+float linearChannel(uint8_t value)
+{
+    static const std::array<float, 256> table = [] {
+        std::array<float, 256> values {};
+        for (size_t i = 0; i < values.size(); ++i) {
+            float x = float(i) / 255;
+            values[i] = x <= 0.04045f ? x / 12.92f : std::pow((x + 0.055f) / 1.055f, 2.4f);
+        }
+        return values;
+    }();
+    return table[value];
+}
+uint8_t encodedChannel(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    float encoded = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+    return static_cast<uint8_t>(std::clamp(std::lround(encoded * 255), 0l, 255l));
+}
+void preserveCoverage(uint8_t* rgba, size_t pixels, size_t target)
+{
+    auto survivors = [&](float scale) {
+        size_t count = 0;
+        for (size_t i = 0; i < pixels; ++i) count += std::lround(rgba[i * 4 + 3] * scale) >= 128;
+        return count;
+    };
+    if (survivors(1.0f) == target) return;
+    float low = 0, high = 128;
+    for (int i = 0; i < 20; ++i) {
+        float mid = (low + high) * 0.5f;
+        if (survivors(mid) < target) low = mid;
+        else high = mid;
+    }
+    auto error = [&](float scale) { size_t n = survivors(scale); return n > target ? n - target : target - n; };
+    float scale = error(low) <= error(high) ? low : high;
+    for (size_t i = 0; i < pixels; ++i) {
+        rgba[i * 4 + 3] = static_cast<uint8_t>(std::clamp(std::lround(rgba[i * 4 + 3] * scale), 0l, 255l));
+    }
+}
+}
+
+void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& layers, const std::vector<bool>& overlayLayers, const std::vector<bool>& cutoutLayers)
 {
     array.layers = static_cast<uint32_t>(layers.size());
+    std::vector<size_t> coverage(layers.size(), 0);
+    for (size_t layer = 0; layer < layers.size(); ++layer) {
+        for (size_t i = 3; i < layers[layer].size(); i += 4) coverage[layer] += layers[layer][i] >= 128;
+    }
     uint32_t size = TextureSize;
     for (uint32_t level = 0; level < TextureMipLevels; ++level) {
         std::vector<uint8_t>& target = array.mips[level];
@@ -144,23 +191,24 @@ void buildMips(TextureArray& array, const std::vector<std::vector<uint8_t>>& lay
             for (uint32_t y = 0; y < size; ++y) {
                 for (uint32_t x = 0; x < size; ++x) {
                     uint32_t alphaSum = 0;
-                    uint32_t colour[3] = {};
+                    float colour[3] {};
                     for (uint32_t dy = 0; dy < 2; ++dy) {
                         for (uint32_t dx = 0; dx < 2; ++dx) {
                             const uint8_t* texel = source + ((size_t(y) * 2 + dy) * parent + x * 2 + dx) * 4;
                             alphaSum += texel[3];
-                            for (int c = 0; c < 3; ++c) {
-                                colour[c] += uint32_t(texel[c]) * (overlay ? 255u : texel[3]);
-                            }
+                            for (int c = 0; c < 3; ++c) colour[c] += linearChannel(texel[c]) * (overlay ? 255.0f : texel[3]);
                         }
                     }
                     uint8_t* out = destination + (size_t(y) * size + x) * 4;
-                    uint32_t weight = overlay ? 4u * 255u : alphaSum;
-                    for (int c = 0; c < 3; ++c) {
-                        out[c] = weight ? static_cast<uint8_t>(colour[c] / weight) : 0;
-                    }
+                    float weight = overlay ? 4.0f * 255.0f : float(alphaSum);
+                    for (int c = 0; c < 3; ++c) out[c] = weight > 0 ? encodedChannel(colour[c] / weight) : 0;
                     out[3] = static_cast<uint8_t>(alphaSum / 4);
                 }
+            }
+            if (!overlay && layer < cutoutLayers.size() && cutoutLayers[layer]) {
+                size_t pixels = size_t(size) * size;
+                size_t basePixels = size_t(TextureSize) * TextureSize;
+                preserveCoverage(destination, pixels, (coverage[layer] * pixels + basePixels / 2) / basePixels);
             }
         }
         size /= 2;

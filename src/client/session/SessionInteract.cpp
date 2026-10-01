@@ -358,7 +358,8 @@ bool Session::trySwing(std::string_view source)
 
 std::vector<uint64_t> Session::takeAttacks()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<uint64_t> attacks = std::move(pendingAttacks);
     pendingAttacks.clear();
     return attacks;

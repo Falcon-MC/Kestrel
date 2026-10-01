@@ -22,7 +22,14 @@ world::CollisionBox PlayerMotion::boundingBox() const
 
 MotionCell PlayerMotion::cell(int32_t x, int32_t y, int32_t z) const
 {
-    return lookup ? (*lookup)(x, y, z) : MotionCell {};
+    if (!lookup) return {};
+    std::array<int32_t, 3> key { x, y, z };
+    auto& entry = scratch->cells[CellHash {}(key) % scratch->cells.size()];
+    if (entry.valid && entry.key == key) return entry.value;
+    entry.key = key;
+    entry.value = (*lookup)(x, y, z);
+    entry.valid = true;
+    return entry.value;
 }
 
 const world::CollisionState* PlayerMotion::cellState(int32_t x, int32_t y, int32_t z) const
@@ -38,7 +45,22 @@ bool PlayerMotion::named(const world::CollisionState* state, std::string_view na
 std::vector<world::CollisionBox> PlayerMotion::collisionBoxes(const world::CollisionBox& area) const
 {
     std::vector<world::CollisionBox> found;
-    std::vector<world::CollisionBox> boxes;
+    scanCollisions(area, &found);
+    return found;
+}
+
+bool PlayerMotion::anyCollision(const world::CollisionBox& area) const
+{
+    return scanCollisions(area, nullptr);
+}
+
+bool PlayerMotion::scanCollisions(const world::CollisionBox& area, std::vector<world::CollisionBox>* found) const
+{
+    if (!boundedQuery(area)) {
+        if (found) found->push_back(area);
+        return true;
+    }
+    auto& boxes = scratch->shapes;
     world::BlockCollisions::Lookup neighbours = [this](int32_t x, int32_t y, int32_t z) {
         return cellState(x, y, z);
     };
@@ -59,13 +81,14 @@ std::vector<world::CollisionBox> PlayerMotion::collisionBoxes(const world::Colli
                 table->boxes(*state, x, y, z, neighbours, boxes);
                 for (const world::CollisionBox& box : boxes) {
                     if (box.intersects(area)) {
-                        found.push_back(box);
+                        if (!found) return true;
+                        found->push_back(box);
                     }
                 }
             }
         }
     }
-    return found;
+    return found && !found->empty();
 }
 
 const world::CollisionState* PlayerMotion::blockView(int32_t x, int32_t y, int32_t z) const
@@ -224,7 +247,7 @@ bool PlayerMotion::canClimbOut(float boxBottom) const
     lift = lift - box.minY;
     lift = lift + boxBottom;
     world::CollisionBox probe = offset(box, { velocity.x, lift, velocity.z });
-    if (!collisionBoxes(probe).empty()) {
+    if (anyCollision(probe)) {
         return false;
     }
     Fluid probed = fluidState(probe);

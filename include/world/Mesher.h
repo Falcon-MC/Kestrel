@@ -64,7 +64,9 @@ static_assert(sizeof(PackedQuad) == 20);
 /**
  * A model quad placed in its sub-chunk: six words of signed 16-bit positions in
  * 1/256 block, four words of 16-bit UVs in 1/4096 texture, the material word,
- * the face shade index with the tint, then the corner light and occlusion.
+ * the face shade index with the tint, then the corner light and occlusion and,
+ * for entity quads, the texture offset and scale as two pairs of half floats
+ * (both zero when the texture is not animated).
  */
 struct ModelQuadGpu {
     std::array<uint32_t, 16> words {};
@@ -102,6 +104,10 @@ struct ChunkMesh {
  * neighbour, the loaded sub-chunks higher than that neighbourhood, which
  * decide where the sky reaches its top.
  */
+struct ChunkLighting {
+    std::vector<uint8_t> filter, emission, occluder, block, sky, skySeeds;
+};
+
 struct MeshInput {
     std::shared_ptr<const SubChunk> center;
     std::array<std::shared_ptr<const SubChunk>, 6> neighbours;
@@ -111,6 +117,7 @@ struct MeshInput {
     std::shared_ptr<const BlockEntityMap> blockEntities;
     std::array<int32_t, 3> origin {};
     bool skyLight = true;
+    std::shared_ptr<const ChunkLighting> lighting;
 };
 
 /**
@@ -124,5 +131,6 @@ struct IdMapping {
 };
 
 ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input);
+std::shared_ptr<const ChunkLighting> updateChunkLighting(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, std::shared_ptr<const ChunkLighting> previous = {});
 
 }

@@ -559,7 +559,7 @@ bool SessionControl::handle(const Request& request, AgentServer& server)
         options.actorRadius = numberParam(request, "actorRadius", options.actorRadius);
         options.actorLimit = static_cast<size_t>(std::clamp(numberParam(request, "actorLimit", 128.0), 0.0, 4096.0));
         options.commands = boolParam(request, "commands", false);
-        writeSnapshot(writer, session.snapshot(), options);
+        writeSnapshot(writer, *session.sharedSnapshot(), options);
     } else if (method == "chat.send") {
         std::string text = stringParam(request, "text");
         if (text.empty()) {

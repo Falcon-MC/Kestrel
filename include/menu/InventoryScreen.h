@@ -5,6 +5,7 @@
 #include "ui/JsonUi.h"
 
 #include <functional>
+#include <optional>
 #include <set>
 
 namespace kestrel::menu {
@@ -27,6 +28,31 @@ public:
     void setDefinitions(std::shared_ptr<const ui::JsonUi> definitions);
 
 private:
+    struct JsonDataKey {
+        uint64_t revision = 0;
+        uint64_t openRevision = 0;
+        int tab = 0;
+        int page = 0;
+        int primary = 0;
+        int secondary = 0;
+        bool creative = false;
+        bool recipes = false;
+        bool wide = false;
+        bool craftable = false;
+        bool signing = false;
+        std::string search;
+        std::string title;
+        std::set<int> groups;
+        uint64_t language = 0;
+        bool operator==(const JsonDataKey&) const = default;
+    };
+    std::optional<JsonDataKey> jsonDataKey;
+    ui::UiData jsonData;
+    uint64_t jsonDataGeneration = 0;
+    std::vector<HudItem> jsonItems;
+    std::set<int> jsonGhostSlots;
+    std::vector<int> jsonCatalogEntries;
+    std::vector<int> jsonCatalogGroups;
     bool drawJson(ui::Context& ui, float width, float height, const std::function<void(float, float, float)>& player);
     std::shared_ptr<const ui::JsonUi> definitions;
     std::unique_ptr<ui::JsonUiScreen> jsonScreen;

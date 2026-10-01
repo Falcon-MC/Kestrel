@@ -12,6 +12,7 @@ $stages = @(
     @{ File = "world.frag"; Name = "WorldFragment" },
     @{ File = "world.frag"; Name = "BlendFragment"; Define = "BLEND" },
     @{ File = "model.vert"; Name = "ModelVertex" },
+    @{ File = "actor.vert"; Name = "ActorVertex" },
     @{ File = "sky.vert"; Name = "SkyVertex" },
     @{ File = "sky.frag"; Name = "SkyFragment" },
     @{ File = "model.vert"; Name = "OverlayVertex"; Define = "OVERLAY" },

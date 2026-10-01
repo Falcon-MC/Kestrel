@@ -70,7 +70,7 @@ bool PlayerMotion::liquidAt(int32_t x, int32_t y, int32_t z, bool& lava, int32_t
  * The liquid blocks of one kind whose surface the player's box reaches, the
  * box shrunk the way the liquid test shrinks it.
  */
-std::vector<std::array<int32_t, 3>> PlayerMotion::touchingLiquid(bool lava) const
+bool PlayerMotion::scanLiquids(bool lava, bool firstOnly, std::vector<std::array<int32_t, 3>>* found) const
 {
     world::CollisionBox box = boundingBox();
     float insetX = lava ? 0.1f : FluidHorizontalInset;
@@ -90,7 +90,8 @@ std::vector<std::array<int32_t, 3>> PlayerMotion::touchingLiquid(bool lava) cons
     if (minZ > maxZ) {
         minZ = maxZ = (box.minZ + box.maxZ) * 0.5f;
     }
-    std::vector<std::array<int32_t, 3>> found;
+    if (!boundedQuery(box)) return false;
+    bool touched = false;
     for (int32_t x = floorInt(minX); x < floorInt(maxX + 1.0f); ++x) {
         for (int32_t y = floorInt(minY); y < floorInt(maxY + 1.0f); ++y) {
             for (int32_t z = floorInt(minZ); z < floorInt(maxZ + 1.0f); ++z) {
@@ -101,12 +102,73 @@ std::vector<std::array<int32_t, 3>> PlayerMotion::touchingLiquid(bool lava) cons
                 }
                 float surface = static_cast<float>(y) + surfaceHeight(depth);
                 if (maxY > static_cast<float>(y) && minY < surface) {
-                    found.push_back({ x, y, z });
+                    if (firstOnly) return true;
+                    touched = true;
+                    if (found) found->push_back({ x, y, z });
                 }
             }
         }
     }
-    return found;
+    return touched;
+}
+
+bool PlayerMotion::touchesLiquid(bool lava) const
+{
+    world::CollisionBox box = boundingBox();
+    const auto& old = scratch->liquidBox;
+    bool same = box.minX == old.minX && box.minY == old.minY && box.minZ == old.minZ && box.maxX == old.maxX && box.maxY == old.maxY && box.maxZ == old.maxZ;
+    if (!same) {
+        scratch->liquidBox = box;
+        scratch->liquidsValid = false;
+        scratch->liquidKnown = {};
+    }
+    size_t kind = lava ? 1 : 0;
+    if (scratch->liquidsValid) return !scratch->liquids[kind].empty();
+    if (!scratch->liquidKnown[kind]) {
+        scratch->liquidPresent[kind] = scanLiquids(lava, true, nullptr);
+        scratch->liquidKnown[kind] = true;
+    }
+    return scratch->liquidPresent[kind];
+}
+
+const std::vector<std::array<int32_t, 3>>& PlayerMotion::touchingLiquid(bool lava) const
+{
+    world::CollisionBox box = boundingBox();
+    const auto& old = scratch->liquidBox;
+    bool same = box.minX == old.minX && box.minY == old.minY && box.minZ == old.minZ && box.maxX == old.maxX && box.maxY == old.maxY && box.maxZ == old.maxZ;
+    if (!scratch->liquidsValid || !same) {
+        for (auto& liquid : scratch->liquids) liquid.clear();
+        if (boundedQuery(box)) {
+            auto bounds = [&](bool molten) {
+                float horizontal = molten ? 0.1f : FluidHorizontalInset;
+                float vertical = molten ? 0.4f : FluidVerticalInset;
+                world::CollisionBox result { box.minX + horizontal, box.minY + vertical, box.minZ + horizontal, box.maxX - horizontal, box.maxY - vertical, box.maxZ - horizontal };
+                if (result.minX > result.maxX) result.minX = result.maxX = (box.minX + box.maxX) * 0.5f;
+                if (result.minY > result.maxY) result.minY = result.maxY = (box.minY + box.maxY) * 0.5f;
+                if (result.minZ > result.maxZ) result.minZ = result.maxZ = (box.minZ + box.maxZ) * 0.5f;
+                return result;
+            };
+            auto water = bounds(false);
+            auto lavaBox = bounds(true);
+            for (int32_t x = floorInt(std::min(water.minX, lavaBox.minX)); x < floorInt(std::max(water.maxX, lavaBox.maxX) + 1.0f); ++x) {
+                for (int32_t y = floorInt(std::min(water.minY, lavaBox.minY)); y < floorInt(std::max(water.maxY, lavaBox.maxY) + 1.0f); ++y) {
+                    for (int32_t z = floorInt(std::min(water.minZ, lavaBox.minZ)); z < floorInt(std::max(water.maxZ, lavaBox.maxZ) + 1.0f); ++z) {
+                        bool molten = false;
+                        int32_t depth = 0;
+                        if (!liquidAt(x, y, z, molten, depth)) continue;
+                        const auto& probe = molten ? lavaBox : water;
+                        if (x < floorInt(probe.minX) || x >= floorInt(probe.maxX + 1.0f) || y < floorInt(probe.minY) || y >= floorInt(probe.maxY + 1.0f) || z < floorInt(probe.minZ) || z >= floorInt(probe.maxZ + 1.0f)) continue;
+                        if (probe.maxY > float(y) && probe.minY < float(y) + surfaceHeight(depth)) scratch->liquids[molten ? 1 : 0].push_back({ x, y, z });
+                    }
+                }
+            }
+        }
+        scratch->liquidBox = box;
+        scratch->liquidsValid = true;
+        scratch->liquidKnown = { true, true };
+        scratch->liquidPresent = { !scratch->liquids[0].empty(), !scratch->liquids[1].empty() };
+    }
+    return scratch->liquids[lava ? 1 : 0];
 }
 
 bool PlayerMotion::closesFlow(int32_t x, int32_t y, int32_t z) const

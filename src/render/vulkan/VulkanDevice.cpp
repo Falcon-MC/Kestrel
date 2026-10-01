@@ -55,6 +55,9 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "vs_world") {
             return spirv(shaders::WorldVertex);
         }
+        if (entry == "vs_actor") {
+            return spirv(shaders::ActorVertex);
+        }
         if (entry == "vs_model") {
             return spirv(shaders::ModelVertex);
         }
@@ -156,7 +159,7 @@ public:
 
     ~VulkanBuffer() override
     {
-        vkUnmapMemory(device, memory);
+        if (memoryMapped) vkUnmapMemory(device, memory);
         vkDestroyBuffer(device, buffer, nullptr);
         vkFreeMemory(device, memory, nullptr);
     }
@@ -213,11 +216,12 @@ public:
 
 class VulkanPipeline final : public Pipeline {
 public:
-    VulkanPipeline(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout, VkShaderStageFlags constantStages)
+    VulkanPipeline(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout, VkShaderStageFlags constantStages, bool actorConstants)
         : device(device)
         , pipeline(pipeline)
         , layout(layout)
         , constantStages(constantStages)
+        , actorConstants(actorConstants)
     {
     }
 
@@ -230,6 +234,7 @@ public:
     VkPipeline pipeline;
     VkPipelineLayout layout;
     VkShaderStageFlags constantStages;
+    bool actorConstants;
 };
 
 class VulkanTextureSet final : public TextureSet {
@@ -274,6 +279,7 @@ public:
     ~VulkanDevice() override
     {
         vkDeviceWaitIdle(device);
+        collectTransfers();
         retired.clear();
         sceneSet.reset();
         blankImage.reset();
@@ -284,6 +290,9 @@ public:
         for (auto& [count, layout] : setLayouts) {
             vkDestroyDescriptorSetLayout(device, layout, nullptr);
         }
+        for (auto& pages : actorPages) pages.clear();
+        vkDestroyDescriptorPool(device, actorDescriptorPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, actorLayout, nullptr);
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         vkDestroySampler(device, pixelSampler, nullptr);
         vkDestroySampler(device, terrainSampler, nullptr);
@@ -359,6 +368,7 @@ public:
     void waitIdle() override
     {
         vkDeviceWaitIdle(device);
+        collectTransfers();
     }
 
     std::unique_ptr<Buffer> createBuffer(size_t size) override
@@ -368,6 +378,44 @@ public:
         void* mapped = nullptr;
         allocateBuffer(static_cast<VkDeviceSize>(size), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, buffer, memory, mapped);
         return std::make_unique<VulkanBuffer>(device, buffer, memory, size, mapped);
+    }
+
+    std::unique_ptr<Buffer> createPersistentBuffer(size_t size) override
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkBufferCreateInfo info { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        info.size = std::max<size_t>(size, 1);
+        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        check(vkCreateBuffer(device, &info, nullptr, &buffer), "vkCreateBuffer");
+        VkMemoryRequirements requirements;
+        vkGetBufferMemoryRequirements(device, buffer, &requirements);
+        VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        check(vkAllocateMemory(device, &allocation, nullptr, &memory), "vkAllocateMemory");
+        check(vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory");
+        return std::make_unique<VulkanBuffer>(device, buffer, memory, size, nullptr);
+    }
+
+    void uploadBuffer(Buffer& target, const void* data, size_t bytes) override
+    {
+        if (!bytes) return;
+        auto staging = createBuffer(bytes);
+        std::memcpy(staging->mapped(), data, bytes);
+        VkCommandBuffer copy = beginOneTime();
+        VkBufferCopy region { 0, 0, static_cast<VkDeviceSize>(bytes) };
+        vkCmdCopyBuffer(copy, static_cast<VulkanBuffer&>(*staging).buffer, static_cast<VulkanBuffer&>(target).buffer, 1, &region);
+        VkBufferMemoryBarrier barrier { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer = static_cast<VulkanBuffer&>(target).buffer;
+        barrier.size = VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(copy, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+        queueTransfer(copy, std::move(staging));
     }
 
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override
@@ -404,6 +452,13 @@ public:
     }
 
     void uploadTexture(Texture& target, const std::vector<TextureData>& data) override
+    {
+        uploadTextureAsync(target, data);
+        waitIdle();
+        collectTransfers();
+    }
+
+    void uploadTextureAsync(Texture& target, const std::vector<TextureData>& data) override
     {
         if (data.empty()) {
             return;
@@ -453,18 +508,14 @@ public:
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-        endOneTime(command);
+        queueTransfer(command, std::make_unique<VulkanBuffer>(device, staging, stagingMemory, static_cast<size_t>(total), mapped));
         texture.sampled = true;
-
-        vkUnmapMemory(device, stagingMemory);
-        vkDestroyBuffer(device, staging, nullptr);
-        vkFreeMemory(device, stagingMemory, nullptr);
     }
 
     std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) override
     {
         VkShaderStageFlags constantStages = desc.bindings.constantsVertexOnly ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        VkPipelineLayout layout = pipelineLayout(desc.bindings.textureCount, desc.bindings.constantCount, constantStages);
+        VkPipelineLayout layout = pipelineLayout(desc.bindings.textureCount, desc.bindings.constantCount, constantStages, desc.bindings.actorConstants);
 
         SpirV vertexCode = desc.source ? sourceCode(desc.source->spirvVertex) : shaderCode(desc.library, desc.vertexEntry);
         SpirV fragmentCode = desc.source ? sourceCode(desc.source->spirvPixel) : shaderCode(desc.library, desc.pixelEntry);
@@ -541,7 +592,7 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline), "vkCreateGraphicsPipelines");
         vkDestroyShaderModule(device, vertexModule, nullptr);
         vkDestroyShaderModule(device, fragmentModule, nullptr);
-        return std::make_unique<VulkanPipeline>(device, pipeline, layout, constantStages);
+        return std::make_unique<VulkanPipeline>(device, pipeline, layout, constantStages, desc.bindings.actorConstants);
     }
 
     std::unique_ptr<TextureSet> createTextureSet(uint32_t count, bool arrays, SamplerMode mode) override
@@ -567,6 +618,7 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        collectTransfers();
         active = false;
         if (requestedWidth == 0 || requestedHeight == 0) {
             return submissions + 1;
@@ -591,6 +643,7 @@ public:
                 check(acquired, "vkAcquireNextImageKHR");
             }
         }
+        actorCursor = 0;
         vkResetFences(device, 1, &inFlight[frame]);
 
         command = commandBuffers[frame];
@@ -651,6 +704,41 @@ public:
             return;
         }
         vkCmdPushConstants(command, bound->layout, bound->constantStages, 0, count * sizeof(uint32_t), values);
+    }
+
+    void setActorConstants(const void* values, uint32_t count) override
+    {
+        if (!active || !bound || !bound->actorConstants || !values || count != 36) return;
+        size_t pageBytes = actorStride * 4096;
+        size_t page = actorCursor / pageBytes;
+        size_t offset = actorCursor % pageBytes;
+        auto& pages = actorPages[frame];
+        if (page == pages.size()) {
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            void* mapped = nullptr;
+            allocateBuffer(pageBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory, mapped);
+            ActorPage created;
+            created.buffer = std::make_unique<VulkanBuffer>(device, buffer, memory, pageBytes, mapped);
+            VkDescriptorSetAllocateInfo allocation { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            allocation.descriptorPool = actorDescriptorPool;
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &actorLayout;
+            check(vkAllocateDescriptorSets(device, &allocation, &created.set), "vkAllocateDescriptorSets: actor constants");
+            VkDescriptorBufferInfo info { buffer, 0, 36 * sizeof(uint32_t) };
+            VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            write.dstSet = created.set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+            write.pBufferInfo = &info;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            pages.push_back(std::move(created));
+        }
+        std::memcpy(static_cast<uint8_t*>(pages[page].buffer->mapped()) + offset, values, count * sizeof(uint32_t));
+        uint32_t dynamicOffset = static_cast<uint32_t>(offset);
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout, 1, 1, &pages[page].set, 1, &dynamicOffset);
+        actorCursor += actorStride;
     }
 
     void setTextures(const TextureSet& textures) override
@@ -1033,18 +1121,43 @@ private:
         return layout;
     }
 
-    VkPipelineLayout pipelineLayout(uint32_t textureCount, uint32_t constantCount, VkShaderStageFlags stages)
+    VkDescriptorSetLayout actorSetLayout()
     {
-        auto key = std::make_pair(textureCount, (static_cast<uint64_t>(constantCount) << 32) | stages);
+        if (actorLayout) return actorLayout;
+        VkPhysicalDeviceProperties properties {};
+        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        actorStride = std::max<size_t>(256, properties.limits.minUniformBufferOffsetAlignment);
+        VkDescriptorSetLayoutBinding binding {};
+        binding.binding = 0;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutCreateInfo info { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+        info.bindingCount = 1;
+        info.pBindings = &binding;
+        check(vkCreateDescriptorSetLayout(device, &info, nullptr, &actorLayout), "vkCreateDescriptorSetLayout: actors");
+        VkDescriptorPoolSize size { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4096 };
+        VkDescriptorPoolCreateInfo pool { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+        pool.maxSets = 4096;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &size;
+        check(vkCreateDescriptorPool(device, &pool, nullptr, &actorDescriptorPool), "vkCreateDescriptorPool: actors");
+        return actorLayout;
+    }
+
+    VkPipelineLayout pipelineLayout(uint32_t textureCount, uint32_t constantCount, VkShaderStageFlags stages, bool actorConstants)
+    {
+        auto key = std::make_pair(textureCount, (static_cast<uint64_t>(constantCount) << 32) | stages | (actorConstants ? (uint64_t(1) << 31) : 0));
         auto found = pipelineLayouts.find(key);
         if (found != pipelineLayouts.end()) {
             return found->second.second;
         }
         VkDescriptorSetLayout set = setLayout(textureCount);
+        VkDescriptorSetLayout sets[] = { set, actorConstants ? actorSetLayout() : VK_NULL_HANDLE };
         VkPushConstantRange pushConstant { stages, 0, static_cast<uint32_t>(sizeof(uint32_t) * constantCount) };
         VkPipelineLayoutCreateInfo layoutInfo { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-        layoutInfo.setLayoutCount = 1;
-        layoutInfo.pSetLayouts = &set;
+        layoutInfo.setLayoutCount = actorConstants ? 2 : 1;
+        layoutInfo.pSetLayouts = sets;
         layoutInfo.pushConstantRangeCount = constantCount ? 1 : 0;
         layoutInfo.pPushConstantRanges = &pushConstant;
         VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -1092,6 +1205,37 @@ private:
         terrain.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         terrain.maxLod = VK_LOD_CLAMP_NONE;
         check(vkCreateSampler(device, &terrain, nullptr, &terrainSampler), "vkCreateSampler");
+    }
+
+    struct Transfer {
+        VkCommandBuffer command;
+        VkFence fence;
+        std::unique_ptr<Buffer> staging;
+    };
+    std::vector<Transfer> transfers;
+
+    void collectTransfers()
+    {
+        std::erase_if(transfers, [this](Transfer& transfer) {
+            if (vkGetFenceStatus(device, transfer.fence) != VK_SUCCESS) return false;
+            vkFreeCommandBuffers(device, commandPool, 1, &transfer.command);
+            vkDestroyFence(device, transfer.fence, nullptr);
+            return true;
+        });
+    }
+
+    void queueTransfer(VkCommandBuffer command, std::unique_ptr<Buffer> staging)
+    {
+        collectTransfers();
+        check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
+        VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        VkFence fence;
+        check(vkCreateFence(device, &info, nullptr, &fence), "vkCreateFence");
+        VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command;
+        check(vkQueueSubmit(queue, 1, &submit, fence), "vkQueueSubmit");
+        transfers.push_back({ command, fence, std::move(staging) });
     }
 
     VkCommandBuffer beginOneTime()
@@ -1540,6 +1684,12 @@ private:
     VkSampler pixelSampler = VK_NULL_HANDLE;
     VkSampler terrainSampler = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    struct ActorPage { std::unique_ptr<Buffer> buffer; VkDescriptorSet set = VK_NULL_HANDLE; };
+    std::array<std::vector<ActorPage>, FramesInFlight> actorPages;
+    VkDescriptorSetLayout actorLayout = VK_NULL_HANDLE;
+    VkDescriptorPool actorDescriptorPool = VK_NULL_HANDLE;
+    size_t actorStride = 256;
+    size_t actorCursor = 0;
     std::map<uint32_t, VkDescriptorSetLayout> setLayouts;
     std::map<std::pair<uint32_t, uint64_t>, std::pair<VkDescriptorSetLayout, VkPipelineLayout>> pipelineLayouts;
     std::unique_ptr<VulkanTexture> blankImage;

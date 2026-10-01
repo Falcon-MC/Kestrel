@@ -42,15 +42,7 @@ float scatter(uint64_t seed, uint32_t stream)
 world::ModelQuadGpu packQuad(const std::array<Vec3, 4>& corners, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord)
 {
     world::ModelQuadGpu gpu;
-    std::array<int16_t, 12> positions {};
-    for (size_t corner = 0; corner < 4; ++corner) {
-        for (size_t axis = 0; axis < 3; ++axis) {
-            positions[corner * 3 + axis] = static_cast<int16_t>(std::clamp(std::lround(corners[corner][axis]), -32768L, 32767L));
-        }
-    }
-    for (size_t word = 0; word < 6; ++word) {
-        gpu.words[word] = uint32_t(uint16_t(positions[word * 2])) | (uint32_t(uint16_t(positions[word * 2 + 1])) << 16);
-    }
+    packEntityPositions(corners, gpu.words);
     for (size_t corner = 0; corner < 4; ++corner) {
         gpu.words[6 + corner] = uint32_t(uvs[corner][0]) | (uint32_t(uvs[corner][1]) << 16);
     }
@@ -83,7 +75,7 @@ const Client::DroppedItemMesh* Client::droppedItemMesh(const HudItem& item)
     }
     DroppedItemMesh mesh;
     mesh.iconSlot = slot;
-    mesh.faces = buildItemMesh(item, heldItemLayer() + 1 + slot, mesh.block);
+    mesh.faces = buildItemMesh(item, heldItemLayer() + HeldItemTextureSlots + slot, mesh.block);
     if (mesh.block) {
         nextDroppedIcon = slot;
         droppedIconKeys[slot].clear();

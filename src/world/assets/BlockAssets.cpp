@@ -1345,7 +1345,29 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     loadItemUseDurations(behaviors);
 
     overlayLayers.resize(layers.size(), false);
-    buildMips(textureArray, layers, overlayLayers);
+    std::vector<bool> cutoutLayers(layers.size(), false);
+    std::vector<bool> blendedLayers(layers.size(), false);
+    auto classifyMaterial = [&](uint32_t id, bool translucent) {
+        if (id >= materialTable.size()) return;
+        const Material& material = materialTable[id];
+        for (uint32_t frame = 0; frame < material.frameCount; ++frame) {
+            size_t layer = size_t(material.layer) + frame;
+            if (layer < layers.size()) {
+                if (translucent) blendedLayers[layer] = true;
+                else cutoutLayers[layer] = true;
+            }
+        }
+    };
+    for (const BlockVisual& visual : visuals) {
+        bool translucent = (visual.flags & FlagTranslucent) != 0;
+        for (uint32_t material : visual.faces) classifyMaterial(material, translucent);
+        if (visual.modelTemplate != NoModelTemplate && visual.modelTemplate < templates.size()) {
+            const ModelTemplate& model = templates[visual.modelTemplate];
+            for (uint32_t i = 0; i < model.quadCount; ++i) classifyMaterial(quads[model.quadStart + i].material, translucent);
+        }
+    }
+    for (size_t layer = 0; layer < layers.size(); ++layer) cutoutLayers[layer] = cutoutLayers[layer] && !blendedLayers[layer];
+    buildMips(textureArray, layers, overlayLayers, cutoutLayers);
     entities.join();
     return true;
 }

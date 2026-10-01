@@ -247,6 +247,7 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     entry.placed = false;
+    entry.downsample = 0;
     entry.lastUse = useClock;
     changed = true;
 }
@@ -263,29 +264,28 @@ void Skin::clearDynamic(const std::string& name)
 
 bool Skin::place(Entry& entry)
 {
-    uint32_t w = entry.bitmap.width + 2;
-    uint32_t h = entry.bitmap.height + 2;
-    if (w > AtlasSize) {
+    uint32_t w = entry.packedWidth() + 2;
+    uint32_t h = entry.packedHeight() + 2;
+    if (w > AtlasSize || h > AtlasSize - ImageTop) {
         return false;
     }
     if (placeInFreeSlot(entry)) {
         return true;
     }
-    if (cursorX + w > AtlasSize) {
-        cursorX = 0;
-        cursorY += shelfHeight;
-        shelfHeight = 0;
-    }
-    if (cursorY + h > AtlasSize) {
+    bool nextShelf = cursorX + w > AtlasSize;
+    uint32_t x = nextShelf ? 0 : cursorX;
+    uint32_t y = nextShelf ? cursorY + shelfHeight : cursorY;
+    if (y + h > AtlasSize) {
         return false;
     }
-    entry.x = cursorX;
-    entry.y = cursorY;
+    entry.x = x;
+    entry.y = y;
     entry.slotWidth = w;
     entry.slotHeight = h;
     entry.placed = true;
-    cursorX += w;
-    shelfHeight = std::max(shelfHeight, h);
+    cursorX = x + w;
+    cursorY = y;
+    shelfHeight = std::max(nextShelf ? 0u : shelfHeight, h);
     return true;
 }
 
@@ -295,8 +295,8 @@ bool Skin::place(Entry& entry)
  */
 bool Skin::placeInFreeSlot(Entry& entry)
 {
-    uint32_t w = entry.bitmap.width + 2;
-    uint32_t h = entry.bitmap.height + 2;
+    uint32_t w = entry.packedWidth() + 2;
+    uint32_t h = entry.packedHeight() + 2;
     auto best = freeSlots.end();
     for (auto slot = freeSlots.begin(); slot != freeSlots.end(); ++slot) {
         if (slot->width < w || slot->height < h) {
@@ -314,12 +314,17 @@ bool Skin::placeInFreeSlot(Entry& entry)
     entry.x = slot.x;
     entry.y = slot.y;
     entry.slotWidth = w;
-    entry.slotHeight = slot.height;
+    entry.slotHeight = h;
     entry.placed = true;
     if (slot.width - w >= 3) {
         freeSlots.push_back({ slot.x + w, slot.y, slot.width - w, slot.height });
     } else {
         entry.slotWidth = slot.width;
+    }
+    if (slot.height - h >= 3) {
+        freeSlots.push_back({ slot.x, slot.y + h, entry.slotWidth, slot.height - h });
+    } else {
+        entry.slotHeight = slot.height;
     }
     return true;
 }
@@ -338,8 +343,7 @@ void Skin::release(Entry& entry)
 }
 
 /**
- * Frees the pictures unused for the longest, never one asked for since the
- * last pack, until the given one fits.
+ * Frees the oldest pictures, keeping every picture used in the latest UI frame.
  */
 bool Skin::evictFor(Entry& entry)
 {
@@ -367,35 +371,45 @@ bool Skin::evictFor(Entry& entry)
  */
 void Skin::repackAll()
 {
-    freeSlots.clear();
-    cursorX = 0;
-    cursorY = ImageTop;
-    shelfHeight = 0;
-    std::vector<Entry*> byUse;
+    std::vector<Entry*> active;
+    std::vector<Entry*> idle;
     for (auto& [name, entry] : entries) {
-        entry.placed = false;
         if (!entry.bitmap.rgba.empty()) {
-            byUse.push_back(&entry);
+            (entry.lastUse == useClock ? active : idle).push_back(&entry);
         }
     }
-    std::sort(byUse.begin(), byUse.end(), [](const Entry* a, const Entry* b) {
+    // Keep the complete visible working set; reduce atlas resolution only under pressure.
+    for (uint32_t shift = 0; shift <= 12; ++shift) {
+        freeSlots.clear();
+        cursorX = 0;
+        cursorY = ImageTop;
+        shelfHeight = 0;
+        for (auto& [name, entry] : entries) {
+            entry.placed = false;
+            entry.sprite.valid = false;
+            entry.sprite.image.valid = false;
+        }
+        bool fits = true;
+        uint32_t limit = std::max(1u, (AtlasSize - 2) >> shift);
+        for (Entry* entry : active) {
+            entry->downsample = 0;
+            while (entry->downsample < 31 && (entry->packedWidth() > limit || entry->packedHeight() > limit)) {
+                ++entry->downsample;
+            }
+        }
+        std::sort(active.begin(), active.end(), [](const Entry* a, const Entry* b) {
+            if (a->packedHeight() != b->packedHeight()) return a->packedHeight() > b->packedHeight();
+            return a->packedWidth() > b->packedWidth();
+        });
+        for (Entry* entry : active) {
+            if (!place(*entry)) { fits = false; break; }
+        }
+        if (fits) break;
+    }
+    std::sort(idle.begin(), idle.end(), [](const Entry* a, const Entry* b) {
         return a->lastUse > b->lastUse;
     });
-    const uint64_t capacity = uint64_t(AtlasSize) * (AtlasSize - ImageTop) * 9 / 10;
-    uint64_t used = 0;
-    std::vector<Entry*> kept;
-    for (Entry* entry : byUse) {
-        uint64_t area = uint64_t(entry->bitmap.width + 2) * (entry->bitmap.height + 2);
-        if (used + area > capacity) {
-            continue;
-        }
-        used += area;
-        kept.push_back(entry);
-    }
-    std::sort(kept.begin(), kept.end(), [](const Entry* a, const Entry* b) {
-        return a->bitmap.height > b->bitmap.height;
-    });
-    for (Entry* entry : kept) {
+    for (Entry* entry : idle) {
         place(*entry);
     }
 }
@@ -414,7 +428,7 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
     });
     bool full = false;
     for (Entry* entry : pending) {
-        if (entry->bitmap.width + 2 > AtlasSize || place(*entry) || evictFor(*entry)) {
+        if (place(*entry) || evictFor(*entry)) {
             continue;
         }
         full = true;
@@ -423,7 +437,6 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
     if (full) {
         repackAll();
     }
-    ++useClock;
 
     // A one texel gutter copied from the edge keeps nearest sampling from bleeding into neighbours.
     constexpr uint32_t Gutter = 1;
@@ -435,14 +448,18 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
             continue;
         }
         const Bitmap& source = entry->bitmap;
-        uint32_t w = source.width + Gutter * 2;
-        uint32_t h = source.height + Gutter * 2;
+        uint32_t packedWidth = entry->packedWidth();
+        uint32_t packedHeight = entry->packedHeight();
+        uint32_t w = packedWidth + Gutter * 2;
+        uint32_t h = packedHeight + Gutter * 2;
         uint32_t x = entry->x;
         uint32_t y = entry->y;
         for (uint32_t row = 0; row < h; ++row) {
-            uint32_t sourceRow = std::min(row > Gutter ? row - Gutter : 0, source.height - 1);
+            uint32_t packedRow = std::min(row > Gutter ? row - Gutter : 0, packedHeight - 1);
+            uint32_t sourceRow = uint64_t(packedRow) * source.height / packedHeight;
             for (uint32_t column = 0; column < w; ++column) {
-                uint32_t sourceColumn = std::min(column > Gutter ? column - Gutter : 0, source.width - 1);
+                uint32_t packedColumn = std::min(column > Gutter ? column - Gutter : 0, packedWidth - 1);
+                uint32_t sourceColumn = uint64_t(packedColumn) * source.width / packedWidth;
                 std::memcpy(atlasRgba.data() + ((static_cast<size_t>(y) + row) * AtlasSize + x + column) * 4,
                     source.rgba.data() + (static_cast<size_t>(sourceRow) * source.width + sourceColumn) * 4, 4);
             }
@@ -450,8 +467,8 @@ void Skin::pack(std::vector<uint8_t>& atlasRgba)
         Sprite& sprite = entry->sprite;
         sprite.image.u0 = (x + Gutter) / extent;
         sprite.image.v0 = (y + Gutter) / extent;
-        sprite.image.u1 = (x + Gutter + source.width) / extent;
-        sprite.image.v1 = (y + Gutter + source.height) / extent;
+        sprite.image.u1 = (x + Gutter + packedWidth) / extent;
+        sprite.image.v1 = (y + Gutter + packedHeight) / extent;
         sprite.image.valid = true;
         sprite.valid = true;
     }

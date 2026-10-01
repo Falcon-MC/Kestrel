@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <limits>
 #include <string>
 
 namespace kestrel::ui {
@@ -292,6 +293,7 @@ uint32_t obfuscationTick()
 
 bool Font::load(GameAssets& assets, Skin& target)
 {
+    changed();
     skin = &target;
     sources[Seven] = assets.readHbuiFont("Minecraft-Seven-v4");
     sources[Ten] = assets.readPackFile("font/minecraft-ten.ttf");
@@ -326,6 +328,7 @@ std::string Font::pixelPageName(size_t index)
 
 void Font::reloadPixelPages()
 {
+    changed();
     runes = BitmapPage {};
     for (BitmapPage& page : pages) {
         page = BitmapPage {};
@@ -336,14 +339,20 @@ void Font::reloadPixelPages()
 void Font::setPixelPageGlyphs(size_t index, uint32_t cell, const std::array<GlyphBox, 256>& boxes)
 {
     if (index < splitPages.size() && cell > 0) {
+        changed();
         splitPages[index] = SplitPage { cell, boxes };
+        pages[index] = BitmapPage {};
     }
 }
 
 void Font::clearPixelPageGlyphs()
 {
+    changed();
     for (std::optional<SplitPage>& page : splitPages) {
         page.reset();
+    }
+    for (BitmapPage& page : pages) {
+        page = BitmapPage {};
     }
 }
 
@@ -422,6 +431,7 @@ void Font::readPixelPage(size_t index) const
 
 void Font::bake(float newScale)
 {
+    changed();
     scale = newScale;
     for (uint32_t height : { 1024u, FontRows }) {
         if (pack(height, newScale)) {
@@ -605,17 +615,51 @@ float Font::boldStep(TextStyle style) const
     return style == TextStyle::Pixel ? 1.0f : std::max(1.0f, std::round(scale)) / scale;
 }
 
+void Font::changed()
+{
+    ++changes;
+    for (ScramblePool& pool : scramblePools) {
+        pool.ready = false;
+        pool.widths.clear();
+    }
+}
+
+bool nextLayoutGlyph(std::string_view text, size_t& i, Formatting& state, Color base, char32_t& out, const Font::TextLine* prepared)
+{
+    if (!prepared) {
+        return nextVisible(text, i, state, base, out);
+    }
+    if (i == prepared->glyphs.size()) {
+        return false;
+    }
+    const Font::TextGlyph& glyph = prepared->glyphs[i++];
+    state.color = base;
+    if (auto rgb = formatColor(glyph.colorCode)) {
+        state.color = { static_cast<uint8_t>(*rgb >> 16), static_cast<uint8_t>(*rgb >> 8), static_cast<uint8_t>(*rgb), base.a };
+    }
+    state.colorCode = glyph.colorCode;
+    state.bold = glyph.bold;
+    state.italic = glyph.italic;
+    state.obfuscated = glyph.obfuscated;
+    out = glyph.codepoint;
+    return true;
+}
+
 char32_t Font::scrambled(TextStyle style, char32_t cp, uint32_t seed) const
 {
     if (cp == U' ') {
         return cp;
     }
-    float target = advance(style, cp);
-    for (uint32_t attempt = 0; attempt < 94; ++attempt) {
-        char32_t candidate = static_cast<char32_t>(33 + (seed + attempt) % 94);
-        if (std::abs(advance(style, candidate) - target) < 0.01f) {
-            return candidate;
+    ScramblePool& pool = scramblePools[static_cast<size_t>(style)];
+    if (!pool.ready) {
+        for (char32_t candidate = 33; candidate < 127; ++candidate) {
+            pool.widths[static_cast<int32_t>(std::lround(advance(style, candidate) * 1024.0f))].push_back(candidate);
         }
+        pool.ready = true;
+    }
+    int32_t width = static_cast<int32_t>(std::lround(advance(style, cp) * 1024.0f));
+    if (auto found = pool.widths.find(width); found != pool.widths.end()) {
+        return found->second[seed % found->second.size()];
     }
     return cp;
 }
@@ -643,7 +687,7 @@ float Font::lineHeight(TextStyle style) const
     return faces[static_cast<size_t>(style)].lineHeight / scale;
 }
 
-void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const
+void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify, const TextLine* prepared) const
 {
     float unit = scale * magnify;
     float pen = std::round(x * scale);
@@ -654,7 +698,11 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
     size_t i = 0;
     uint32_t index = 0;
     char32_t visible = 0;
-    while (nextVisible(text, i, state, color, visible)) {
+    while (nextLayoutGlyph(text, i, state, color, visible, prepared)) {
+        if (prepared) {
+            const TextGlyph& positioned = prepared->glyphs[i - 1];
+            pen = std::round(x * scale) + (positioned.pen + static_cast<float>(positioned.boldBefore)) * unit;
+        }
         char32_t cp = state.obfuscated ? scrambled(TextStyle::Pixel, visible, tick * 2654435761u ^ index * 40503u) : visible;
         ++index;
         // Pack icons in the private use area keep their own colors whatever the text color.
@@ -664,7 +712,7 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
         size_t pageIndex = 0;
         const BitmapPage* page = pixelPage(cp, &pageIndex);
         float bold = state.bold ? unit : 0.0f;
-        float step = pixelAdvance(cp) * unit + bold;
+        float step = prepared ? 0.0f : pixelAdvance(cp) * unit + bold;
         const Sprite* sheet = page && !page->split ? &skin->sprite(page->sprite) : nullptr;
         if (const Glyph* fallback = cp != U' ' ? pixelFallback(cp) : nullptr) {
             if (fallback->x1 > fallback->x0) {
@@ -749,7 +797,7 @@ const Font::BitmapPage& Font::runePage() const
     return runes;
 }
 
-void Font::emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const
+void Font::emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify, const TextLine* prepared) const
 {
     const BitmapPage& page = runePage();
     if (!page.loaded) {
@@ -768,25 +816,30 @@ void Font::emitRunes(DrawList& list, std::string_view text, float x, float y, Co
     state.color = color;
     size_t offset = 0;
     char32_t code = 0;
-    while (nextVisible(text, offset, state, color, code)) {
+    while (nextLayoutGlyph(text, offset, state, color, code, prepared)) {
+        if (prepared) {
+            pen = std::round(x * scale) + prepared->glyphs[offset - 1].pen * unit;
+        }
         if (code != U' ') {
             float u = sheet.image.u0 + float(code % 16) * du;
             float v = sheet.image.v0 + float((code & 255) / 16) * dv;
             uint32_t tint = (shadow ? shaded(state.color) : state.color).packed();
             list.quad(pen, top, pen + 8.0f * unit, top + 8.0f * unit, u, v, u + du, v + dv, tint);
         }
-        pen += advance(TextStyle::Rune, code) * unit;
+        if (!prepared) {
+            pen += advance(TextStyle::Rune, code) * unit;
+        }
     }
 }
 
-void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow, float magnify) const
+void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow, float magnify, const TextLine* prepared) const
 {
     if (style == TextStyle::Rune) {
-        emitRunes(list, text, x, y, color, shadow, magnify);
+        emitRunes(list, text, x, y, color, shadow, magnify, prepared);
         return;
     }
     if (style == TextStyle::Pixel) {
-        emitPixel(list, text, x, y, color, shadow, magnify);
+        emitPixel(list, text, x, y, color, shadow, magnify, prepared);
         return;
     }
     const Face& source = faces[static_cast<size_t>(style)];
@@ -798,7 +851,12 @@ void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x,
     size_t i = 0;
     uint32_t index = 0;
     char32_t visible = 0;
-    while (nextVisible(text, i, state, color, visible)) {
+    while (nextLayoutGlyph(text, i, state, color, visible, prepared)) {
+        if (prepared) {
+            const TextGlyph& positioned = prepared->glyphs[i - 1];
+            pen = std::round(x * scale) + positioned.pen * scale * magnify
+                + static_cast<float>(positioned.boldBefore) * std::max(1.0f, std::round(scale * magnify));
+        }
         char32_t cp = state.obfuscated ? scrambled(style, visible, tick * 2654435761u ^ index * 40503u) : visible;
         ++index;
         const Glyph* g = glyph(source, cp);
@@ -819,7 +877,9 @@ void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x,
                 list.quad(x0 + bold, y0, x1 + bold, y1, g->u0, g->v0, g->u1, g->v1, packed, topShift, bottomShift);
             }
         }
-        pen += g->advance * magnify + bold;
+        if (!prepared) {
+            pen += g->advance * magnify + bold;
+        }
     }
 }
 
@@ -860,30 +920,133 @@ void Font::draw(DrawList& list, std::string_view text, TextStyle style, float x,
 size_t Font::wrap(std::string_view text, TextStyle style, float width, std::vector<std::string_view>& lines) const
 {
     lines.clear();
-    size_t lineStart = 0;
-    size_t lineEnd = 0;
-    size_t position = 0;
-    while (position <= text.size()) {
-        size_t end = text.find_first_of(" \n", position);
-        if (end == std::string_view::npos) {
-            end = text.size();
-        }
-        if (lineEnd > lineStart && measure(text.substr(lineStart, end - lineStart), style) > width) {
-            lines.push_back(text.substr(lineStart, lineEnd - lineStart));
-            lineStart = position;
-        }
-        lineEnd = end;
-        if (end < text.size() && text[end] == '\n') {
-            lines.push_back(text.substr(lineStart, end - lineStart));
-            lineStart = end + 1;
-            lineEnd = lineStart;
-        }
-        position = end + 1;
+    if (text.empty()) {
+        return 0;
     }
-    if (lineEnd > lineStart) {
-        lines.push_back(text.substr(lineStart, lineEnd - lineStart));
+    struct Token {
+        size_t begin;
+        size_t glyphBegin;
+        size_t end;
+        char32_t codepoint;
+        double before;
+        double after;
+    };
+    std::vector<Token> tokens;
+    Formatting state;
+    double total = 0.0;
+    size_t position = 0;
+    size_t pending = 0;
+    while (position < text.size()) {
+        size_t glyphBegin = position;
+        char32_t cp = nextCodepoint(text, position);
+        if (cp == FormatSign) {
+            if (position < text.size()) {
+                applyFormat(state, nextCodepoint(text, position), Color {});
+            }
+            continue;
+        }
+        cp = plainForm(cp);
+        double step = cp == U'\n' ? 0.0 : advance(style, cp) + (state.bold ? boldStep(style) : 0.0f);
+        tokens.push_back({ pending, glyphBegin, position, cp, total, total + step });
+        total += step;
+        pending = position;
+    }
+    size_t byteStart = 0;
+    size_t first = 0;
+    size_t space = std::string_view::npos;
+    const double trailing = style == TextStyle::Pixel || style == TextStyle::Rune ? 1.0 : 0.0;
+    const bool bounded = std::isfinite(width) && width > 0.0f;
+    for (size_t i = 0; i < tokens.size();) {
+        const Token& token = tokens[i];
+        if (token.codepoint == U'\n') {
+            lines.push_back(text.substr(byteStart, token.glyphBegin - byteStart));
+            byteStart = token.end;
+            first = ++i;
+            space = std::string_view::npos;
+            continue;
+        }
+        if (token.codepoint == U' ' && i > first) {
+            space = i;
+        }
+        double extent = token.after - tokens[first].before - trailing;
+        if (bounded && i > first && extent > width) {
+            if (space != std::string_view::npos) {
+                const Token& gap = tokens[space];
+                lines.push_back(text.substr(byteStart, gap.glyphBegin - byteStart));
+                byteStart = gap.end;
+                first = space + 1;
+                i = std::max(i, first);
+            } else {
+                lines.push_back(text.substr(byteStart, token.begin - byteStart));
+                byteStart = token.begin;
+                first = i;
+            }
+            space = std::string_view::npos;
+            continue;
+        }
+        ++i;
+    }
+    if (byteStart < text.size() || text.back() == '\n') {
+        lines.push_back(text.substr(byteStart));
     }
     return lines.size();
+}
+
+Font::TextLayout Font::layout(std::string_view text, TextStyle style, float width) const
+{
+    TextLayout result;
+    std::vector<std::string_view> lines;
+    wrap(text, style, width, lines);
+    if (lines.empty()) {
+        lines.push_back(text);
+    }
+    result.lines.reserve(lines.size());
+    std::string carried;
+    DrawList bounds;
+    for (std::string_view part : lines) {
+        TextLine line;
+        line.text = carried + std::string(part);
+        line.width = measure(line.text, style);
+        Formatting state;
+        size_t offset = 0;
+        char32_t cp = 0;
+        float pen = 0.0f;
+        uint32_t boldBefore = 0;
+        while (nextVisible(line.text, offset, state, Color {}, cp)) {
+            line.glyphs.push_back({ cp, state.colorCode, state.bold, state.italic, state.obfuscated, pen, boldBefore });
+            pen += advance(style, cp);
+            if (state.bold && (style == TextStyle::Pixel || (style != TextStyle::Rune && glyph(faces[static_cast<size_t>(style)], cp)))) {
+                ++boldBefore;
+            }
+            line.obfuscated = line.obfuscated || state.obfuscated;
+        }
+        if (!line.obfuscated && scale > 0.0f) {
+            bounds.reset(scale, white[0], white[1]);
+            drawLine(bounds, line, style, 0.0f, 0.0f, 1.0f, { 255, 255, 255, 255 });
+            if (!bounds.vertices().empty()) {
+                float left = std::numeric_limits<float>::infinity();
+                float top = left;
+                float right = -left;
+                float bottom = right;
+                for (const UiVertex& vertex : bounds.vertices()) {
+                    left = std::min(left, vertex.x / scale);
+                    top = std::min(top, vertex.y / scale);
+                    right = std::max(right, vertex.x / scale);
+                    bottom = std::max(bottom, vertex.y / scale);
+                }
+                line.ink = { left, top, right - left, bottom - top };
+            }
+        }
+        carried = activeFormatting(line.text);
+        result.width = std::max(result.width, line.width);
+        result.lines.push_back(std::move(line));
+    }
+    return result;
+}
+
+void Font::drawLine(DrawList& list, const TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow) const
+{
+    emit(list, line.text, style, x, y, color, shadow, magnify, &line);
 }
 
 std::string Font::formattingAt(std::string_view text)

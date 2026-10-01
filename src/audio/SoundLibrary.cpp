@@ -115,16 +115,16 @@ SoundLibrary::SoundLibrary(std::shared_ptr<world::PackSource> vanillaPack, std::
         loadLayers(musicPack->readTextLayers("sounds/sound_definitions.json"), definitionsFrom);
     }
     for (auto pack = overlays.rbegin(); pack != overlays.rend(); ++pack) {
-        if (const std::string* text = (*pack)->find("sounds/sound_definitions.json")) {
+        if (auto text = (*pack)->find("sounds/sound_definitions.json")) {
             loadDefinitions(*text);
         }
-        if (const std::string* text = (*pack)->find("sounds/music_definitions.json")) {
+        if (auto text = (*pack)->find("sounds/music_definitions.json")) {
             loadMusic(*text);
         }
-        if (const std::string* text = (*pack)->find("sounds.json")) {
+        if (auto text = (*pack)->find("sounds.json")) {
             loadEvents(*text);
         }
-        if (const std::string* text = (*pack)->find("blocks.json")) {
+        if (auto text = (*pack)->find("blocks.json")) {
             loadBlocks(*text);
         }
     }
@@ -379,9 +379,9 @@ std::shared_ptr<const std::string> SoundLibrary::encoded(const std::string& path
     static constexpr const char* Extensions[] = { ".ogg", ".fsb", ".wav" };
     for (const std::shared_ptr<const world::PackFiles>& pack : overlays) {
         for (const char* candidate : Extensions) {
-            if (const std::string* data = pack->find(path + candidate)) {
+            if (auto data = pack->find(path + candidate)) {
                 extension = candidate;
-                return std::make_shared<const std::string>(*data);
+                return data;
             }
         }
     }

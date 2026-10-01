@@ -58,6 +58,7 @@ public:
     {
         return scale;
     }
+    const Font& textFont() const { return font; }
 
     /**
      * Moves what is drawn and where the mouse reads from afterwards, so a
@@ -138,6 +139,7 @@ public:
     float paragraph(std::string_view value, TextStyle style, float x, float y, float width, Color color);
     void pixelTextScaled(std::string_view value, float x, float y, float magnify, Color color, bool shadow = false);
     void textScaled(std::string_view value, TextStyle style, float x, float y, float magnify, Color color, bool shadow = false);
+    void textLayoutLine(const Font::TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow = false);
     void rotatedPixelText(std::string_view value, float centerX, float centerY, float magnify, float radians, Color color);
     void nameTag(std::string_view value, float x, float y, float magnify, float depth, bool sneaking);
     float paragraphShadowed(std::string_view value, TextStyle style, float x, float y, float width, Color color);

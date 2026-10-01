@@ -197,6 +197,12 @@ WorldOut placeModel(ModelIn input, float positionScale)
         int value = (component & 1) != 0 ? (int(word) >> 16) : (int(word << 16) >> 16);
         local[i] = float(value) / positionScale;
     }
+    if ((input.d.y & 0x80000000u) != 0) {
+        for (uint axis = 0; axis < 3; ++axis) {
+            int offset = int(((input.d.y >> (axis * 10)) & 1023u) << 22) >> 22;
+            local[axis] += float(offset) * (16384.0 / positionScale);
+        }
+    }
     uint uvWord = words[6 + corner];
 
     WorldOut output;
@@ -211,8 +217,63 @@ WorldOut placeModel(ModelIn input, float positionScale)
     output.relative = position;
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
-    output.light = cornerLight(input.d.x, input.d.y, corner);
+    output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 15 : 0;
+    if (output.entity != 0 && input.d.w != 0) {
+        float2 uvOffset = float2(f16tof32(input.d.z), f16tof32(input.d.z >> 16));
+        float2 uvScale = float2(f16tof32(input.d.w), f16tof32(input.d.w >> 16));
+        output.uv = uvOffset + output.uv * uvScale;
+        output.entity |= 16;
+    }
+    return output;
+}
+
+cbuffer ActorData : register(b1)
+{
+    float4 actorPrevious[3];
+    float4 actorCurrent[3];
+    float4 actorParams;
+    float4 actorUv;
+    float4 actorColor;
+};
+
+float3 actorPose(float3 position)
+{
+    float4 p = float4(position, 1);
+    return lerp(float3(dot(actorPrevious[0],p),dot(actorPrevious[1],p),dot(actorPrevious[2],p)),
+                float3(dot(actorCurrent[0],p),dot(actorCurrent[1],p),dot(actorCurrent[2],p)), actorParams.x);
+}
+
+WorldOut vs_actor(ModelIn input)
+{
+    static const uint corners[6] = {0,1,2,0,2,3};
+    static const float shades[7] = {0.9,0.6,0.6,0.5,1.0,0.8,0.8};
+    static const float3 normals[7] = {float3(0,0,0),float3(0,-1,0),float3(0,1,0),float3(-1,0,0),float3(1,0,0),float3(0,0,-1),float3(0,0,1)};
+    uint words[12] = {input.a.x,input.a.y,input.a.z,input.a.w,input.b.x,input.b.y,input.b.z,input.b.w,input.c.x,input.c.y,input.c.z,input.c.w};
+    uint corner = corners[input.vertexId];
+    float3 local;
+    for (uint axis=0;axis<3;++axis) {
+        uint component=corner*3+axis;
+        uint word=words[component/2];
+        int value=(component & 1) != 0 ? int(word)>>16 : int(word<<16)>>16;
+        local[axis]=float(value)/16.0;
+    }
+    float3 position=origin.xyz+actorPose(local);
+    float3 direction=actorPose(normals[(words[11]&15u) < 7u ? words[11]&15u : 0u])-actorPose(float3(0,0,0));
+    uint major=0;
+    for (uint i=1;i<3;++i) if (abs(direction[i])>abs(direction[major])) major=i;
+    uint shade=direction[major]==0 ? 0 : major*2+(direction[major]>0 ? 2 : 1);
+    uint uvWord=words[6+corner];
+    WorldOut output;
+    output.position=mul(viewProjection,float4(position,1));
+    output.uv=actorUv.xy+float2(uvWord&65535u,uvWord>>16)/4096.0*actorUv.zw;
+    output.material=asuint(actorParams.y);
+    output.shade=shades[shade];
+    output.relative=position;
+    output.tint=0;
+    output.light=cornerLight(asuint(actorParams.w),0,corner);
+    output.entity=(asuint(actorParams.z)>>5)&15;
+    if (any(actorUv != float4(0,0,1,1))) output.entity|=16;
     return output;
 }
 
@@ -277,10 +338,11 @@ float4 surfaceTexel(WorldOut input)
         uint layer = input.material & 0x1fff;
         uint page = layer >> 11;
         uint index = layer & 2047u;
-        float4 texel = page == 0 ? entities.Sample(blockSampler, float3(input.uv, index))
-            : page == 1 ? entitiesHigh.Sample(blockSampler, float3(input.uv, index))
-            : page == 2 ? entities2.Sample(blockSampler, float3(input.uv, index))
-            : entities3.Sample(blockSampler, float3(input.uv, index));
+        float2 uv = (input.entity & 16) != 0 ? frac(input.uv) : input.uv;
+        float4 texel = page == 0 ? entities.Sample(blockSampler, float3(uv, index))
+            : page == 1 ? entitiesHigh.Sample(blockSampler, float3(uv, index))
+            : page == 2 ? entities2.Sample(blockSampler, float3(uv, index))
+            : entities3.Sample(blockSampler, float3(uv, index));
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
         return texel;

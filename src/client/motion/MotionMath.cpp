@@ -176,6 +176,18 @@ float cosine(float value)
     return sineTable()[static_cast<size_t>(static_cast<int32_t>(value * 10430.378f + 16384.0f) & 65535)];
 }
 
+bool boundedQuery(const world::CollisionBox& box)
+{
+    const float minimum[] = { box.minX, box.minY, box.minZ };
+    const float maximum[] = { box.maxX, box.maxY, box.maxZ };
+    double cells = 1.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!std::isfinite(minimum[axis]) || !std::isfinite(maximum[axis]) || minimum[axis] < -1.0e9f || maximum[axis] > 1.0e9f || maximum[axis] < minimum[axis] || maximum[axis] - minimum[axis] > 128.0f) return false;
+        cells *= std::floor(double(maximum[axis])) - std::floor(double(minimum[axis])) + 3.0;
+    }
+    return cells <= 65536.0;
+}
+
 int32_t floorInt(float value)
 {
     return static_cast<int32_t>(std::floor(value));

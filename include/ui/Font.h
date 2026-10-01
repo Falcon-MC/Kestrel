@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace kestrel::ui {
@@ -46,6 +47,30 @@ enum class TextStyle {
 
 class Font {
 public:
+    struct TextGlyph {
+        char32_t codepoint = 0;
+        char32_t colorCode = 0;
+        bool bold = false;
+        bool italic = false;
+        bool obfuscated = false;
+        float pen = 0.0f;
+        uint32_t boldBefore = 0;
+    };
+    struct TextLine {
+        std::string text;
+        std::vector<TextGlyph> glyphs;
+        float width = 0.0f;
+        Rect ink {};
+        bool obfuscated = false;
+    };
+    struct TextLayout {
+        std::vector<TextLine> lines;
+        float width = 0.0f;
+    };
+    TextLayout layout(std::string_view text, TextStyle style, float width) const;
+    uint64_t revision() const { return changes; }
+    float rasterScale() const { return scale; }
+    void drawLine(DrawList& list, const TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow = false) const;
     static constexpr uint32_t ImageSlotSize = 128;
     static constexpr uint32_t TitleWidth = 512;
     static constexpr uint32_t TitleHeight = 128;
@@ -189,14 +214,14 @@ private:
     float advance(TextStyle style, char32_t cp) const;
     float boldStep(TextStyle style) const;
     char32_t scrambled(TextStyle style, char32_t cp, uint32_t seed) const;
-    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow = false, float magnify = 1.0f) const;
-    void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify = 1.0f) const;
+    void emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow = false, float magnify = 1.0f, const TextLine* prepared = nullptr) const;
+    void emitPixel(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify = 1.0f, const TextLine* prepared = nullptr) const;
     float pixelAdvance(char32_t cp) const;
     const Glyph* pixelFallback(char32_t cp) const;
     const BitmapPage* pixelPage(char32_t cp, size_t* index = nullptr) const;
     void readPixelPage(size_t index) const;
     const BitmapPage& runePage() const;
-    void emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const;
+    void emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify, const TextLine* prepared = nullptr) const;
     static void placePage(size_t index, BitmapPage& page);
     bool pack(uint32_t height, float scale);
 
@@ -208,6 +233,13 @@ private:
     std::array<std::optional<SplitPage>, PixelPageCount> splitPages;
     std::vector<uint8_t> pixels;
     float scale = 1.0f;
+    uint64_t changes = 1;
+    struct ScramblePool {
+        bool ready = false;
+        std::unordered_map<int32_t, std::vector<char32_t>> widths;
+    };
+    mutable std::array<ScramblePool, static_cast<size_t>(TextStyle::Count)> scramblePools;
+    void changed();
     std::array<float, 2> white {};
 };
 

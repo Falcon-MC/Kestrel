@@ -65,11 +65,15 @@ uint32_t SubChunk::runtimeId(size_t layer, uint32_t x, uint32_t y, uint32_t z) c
     return layers[layer].runtimeId(x, y, z);
 }
 
-void SubChunk::apply(const std::vector<BlockUpdate>& updates)
+bool SubChunk::apply(const std::vector<BlockUpdate>& updates)
 {
+    bool changed = false;
     std::array<std::vector<std::pair<size_t, uint32_t>>, MaxStorageCount> byLayer;
     for (const BlockUpdate& update : updates) {
-        if (update.layer >= MaxStorageCount) {
+        if (update.layer >= MaxStorageCount || update.x >= 16 || update.y >= 16 || update.z >= 16) {
+            continue;
+        }
+        if (update.layer >= layers.size() && update.runtimeId == ImplicitAir) {
             continue;
         }
         while (layers.size() <= update.layer) {
@@ -79,12 +83,13 @@ void SubChunk::apply(const std::vector<BlockUpdate>& updates)
     }
     for (size_t layer = 0; layer < byLayer.size(); ++layer) {
         if (!byLayer[layer].empty()) {
-            layers[layer].apply(byLayer[layer]);
+            changed |= layers[layer].apply(byLayer[layer]);
         }
     }
     while (!layers.empty() && layers.back().containsOnly(ImplicitAir)) {
         layers.pop_back();
     }
+    return changed;
 }
 
 }
