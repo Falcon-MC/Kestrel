@@ -38,6 +38,9 @@ enum class TextStyle {
     PixelFallback,
     // Minecraft Ten at the size of the pixel font, for JSON UI labels with font_type MinecraftTen.
     TenLabel,
+    // Noto Sans at the size of the pixel font, for JSON UI labels with font_type smooth.
+    SmoothLabel,
+    Rune,
     Count,
 };
 
@@ -192,6 +195,8 @@ private:
     const Glyph* pixelFallback(char32_t cp) const;
     const BitmapPage* pixelPage(char32_t cp, size_t* index = nullptr) const;
     void readPixelPage(size_t index) const;
+    const BitmapPage& runePage() const;
+    void emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const;
     static void placePage(size_t index, BitmapPage& page);
     bool pack(uint32_t height, float scale);
 
@@ -199,6 +204,7 @@ private:
     std::array<std::vector<unsigned char>, 5> sources;
     std::array<Face, static_cast<size_t>(TextStyle::Count)> faces;
     mutable std::array<BitmapPage, PixelPageCount> pages;
+    mutable BitmapPage runes;
     std::array<std::optional<SplitPage>, PixelPageCount> splitPages;
     std::vector<uint8_t> pixels;
     float scale = 1.0f;

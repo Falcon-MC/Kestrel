@@ -76,6 +76,60 @@ std::unique_ptr<json::Value> toJson(const UiValue& value)
     return json::Value::ofNull();
 }
 
+std::unique_ptr<json::Value> inheritValue(const json::Value& base, const json::Value& overlay, bool controls = false)
+{
+    if (base.isObject() && overlay.isObject()) {
+        auto result = base.clone();
+        for (const auto& key : overlay.mKeys) {
+            const auto* previous = result->get(key);
+            const auto* next = overlay.get(key);
+            result->set(key, previous ? inheritValue(*previous, *next, key == "controls") : next->clone());
+        }
+        return result;
+    }
+    if (controls && base.isArray() && overlay.isArray() && !overlay.mArray.empty()) {
+        auto result = base.clone();
+        for (const auto& entry : overlay.mArray) {
+            bool replaced = false;
+            if (entry->isObject() && entry->mKeys.size() == 1) {
+                const auto& key = entry->mKeys.front();
+                for (auto& child : result->mArray) {
+                    if (!child->isObject() || child->mKeys.size() != 1) {
+                        continue;
+                    }
+                    const auto& existing = child->mKeys.front();
+                    if (controlName(existing) != controlName(key)) {
+                        continue;
+                    }
+                    auto merged = inheritValue(*child->get(existing), *entry->get(key));
+                    auto replacement = json::Value::ofObject();
+                    replacement->set(controlBase(key).empty() ? existing : key, std::move(merged));
+                    child = std::move(replacement);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                result->push(entry->clone());
+            }
+        }
+        return result;
+    }
+    return overlay.clone();
+}
+
+void inheritProp(PropMap& properties, const std::string& key, const json::Value* value, const std::string* space)
+{
+    auto previous = properties.find(key);
+    if (previous != properties.end() && previous->second.value && previous->second.space == space
+        && ((key == "controls" && value->isArray()) || (value->isObject() && previous->second.value->isObject()))) {
+        std::shared_ptr<const json::Value> merged = inheritValue(*previous->second.value, *value, key == "controls");
+        properties[key] = { merged.get(), space, false, std::move(merged) };
+    } else {
+        properties[key] = { value, space };
+    }
+}
+
 }
 
 void JsonUiRuntime::collect(std::string_view reference, const std::string* space, PropMap& out, int depth) const
@@ -97,7 +151,7 @@ void JsonUiRuntime::collect(std::string_view reference, const std::string* space
         collect(base, control.space, out, depth + 1);
     }
     for (const std::string& key : control.value->mKeys) {
-        out[key] = { control.value->get(key), control.space };
+        inheritProp(out, key, control.value->get(key), control.space);
     }
 }
 
@@ -236,7 +290,9 @@ bool JsonUiRuntime::condition(const Node& node, const json::Value* value) const
 /**
  * Sets the variables a control sees: those of its parent, then the ones it
  * defines itself, then those of every "variables" entry whose "requires"
- * holds, and last the ones the factory that made it passes. A "|default"
+ * holds, and last the ones the screen or factory that made it passes, which
+ * those "requires" already see, the way the game's screen controllers set
+ * variables like $ignore_edu_pause before the definitions are read. A "|default"
  * value only gives way to one set plainly further out; against another
  * default the closer one wins, which is how settings_common moves the label
  * of a one line option past its toggle.
@@ -297,6 +353,16 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
         }
     }
     node.vars = scope;
+    std::vector<std::pair<std::string, Prop>> passed;
+    if (variables) {
+        for (const auto& [name, value] : *variables) {
+            node.owned.push_back(toJson(value));
+            passed.emplace_back(name.front() == '$' ? name : "$" + name, Prop { node.owned.back().get(), nullptr });
+        }
+    }
+    for (const auto& [name, prop] : passed) {
+        scope->own[name] = prop;
+    }
     if (entries && entries->isArray()) {
         for (const std::unique_ptr<json::Value>& entry : entries->mArray) {
             if (!entry->isObject() || !condition(node, entry->get("requires"))) {
@@ -321,11 +387,8 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
             }
         }
     }
-    if (variables) {
-        for (const auto& [name, value] : *variables) {
-            node.owned.push_back(toJson(value));
-            scope->own[name.front() == '$' ? name : "$" + name] = { node.owned.back().get(), nullptr };
-        }
+    for (const auto& [name, prop] : passed) {
+        scope->own[name] = prop;
     }
 }
 
@@ -378,7 +441,7 @@ std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, co
     }
     if (instance && instance->isObject()) {
         for (const std::string& property : instance->mKeys) {
-            node->props[property] = { instance->get(property), space };
+            inheritProp(node->props, property, instance->get(property), space);
         }
     }
     applyVariables(*node, variables);
@@ -398,8 +461,8 @@ std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, co
     }
     // A control can name its row itself, in the collection of the closest control above it
     // that has one.
-    if (const json::Value* index = property(*node, "collection_index"); index && index->isNumber()) {
-        node->index = static_cast<int>(index->mNumber);
+    if (UiValue index = valueOf(*node, "collection_index"); index.kind == UiValue::Kind::Number) {
+        node->index = static_cast<int>(index.toNumber());
         for (Node* at = parent; at; at = at->parent) {
             if (std::string name = text(*at, "collection_name"); !name.empty()) {
                 node->collection = std::move(name);
@@ -431,7 +494,7 @@ void JsonUiRuntime::addChildren(Node& node, int depth)
     if (!controls.value || !controls.value->isArray()) {
         return;
     }
-    bool collection = node.type == "collection_panel";
+    bool collection = node.type == "collection_panel" || node.type == "grid";
     std::string collectionName = collection ? text(node, "collection_name") : std::string();
     for (const std::unique_ptr<json::Value>& entry : controls.value->mArray) {
         if (!entry->isObject() || entry->mKeys.empty()) {
@@ -441,7 +504,16 @@ void JsonUiRuntime::addChildren(Node& node, int depth)
         if (std::unique_ptr<Node> child = make(&node, key, entry->get(key), controls.space, node.vars, nullptr, depth + 1)) {
             if (collection) {
                 child->collection = collectionName;
-                child->index = static_cast<int>(node.children.size());
+                if (child->index < 0) {
+                    child->index = static_cast<int>(node.children.size());
+                }
+                const auto* position = property(*child, "grid_position");
+                const auto* dimensions = property(node, "grid_dimensions");
+                if (node.type == "grid" && position && position->isArray() && position->mArray.size() == 2
+                    && dimensions && dimensions->isArray() && dimensions->mArray.size() == 2) {
+                    int columns = std::max(1, int(dimensions->mArray[0]->number()));
+                    child->index = int(position->mArray[1]->number()) * columns + int(position->mArray[0]->number());
+                }
             }
             node.children.push_back(std::move(child));
         }
@@ -616,7 +688,25 @@ std::vector<std::unique_ptr<Node>> JsonUiRuntime::takeGenerated(Node& node)
 
 void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth, const std::vector<std::string>& roles)
 {
-    count = std::min(count, MaxFactoryItems);
+    size_t first = 0;
+    size_t end = std::min(count, MaxFactoryItems);
+    if (node.type == "grid") {
+        node.gridItemCount = std::min<size_t>(count, 65536);
+        count = node.gridItemCount;
+        if (count > MaxFactoryItems && !templateControl.empty()) {
+            virtualGrids = true;
+            auto cells = gridCells(node);
+            const Node* cell = node.children.empty() ? nullptr : node.children.front().get();
+            if (cell && cell->h > 0.0f && node.clipped) {
+                size_t columns = size_t(std::max(1, cells[0]));
+                size_t row = size_t(std::max(0.0f, std::floor((node.clip.y - node.y) / cell->h) - 2.0f));
+                first = std::min(row * columns, count - 1);
+                first -= first % columns;
+                size_t visible = size_t(std::max(1.0f, std::ceil(node.clip.h / cell->h) + 4.0f)) * columns;
+                end = std::min(count, first + std::min(visible, MaxFactoryItems));
+            }
+        }
+    }
     const std::vector<UiRow>* rows = nullptr;
     if (data) {
         std::string name = collection;
@@ -638,7 +728,7 @@ void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, si
     const json::Value* named = factory ? resolve(node, factory->get("control_name")) : nullptr;
     const std::string* space = node.props.count("factory") ? node.props.at("factory").space : node.props.count("grid_item_template") ? node.props.at("grid_item_template").space : nullptr;
     std::vector<std::unique_ptr<Node>> previous = takeGenerated(node);
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = first; i < end; ++i) {
         std::string id = i < roles.size() ? roles[i] : std::string();
         if (id.empty() && rows && i < rows->size()) {
             if (auto found = (*rows)[i].find(UiFactoryControl); found != (*rows)[i].end()) {
@@ -651,8 +741,11 @@ void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, si
         } else {
             key = factoryKey(node, ids, id, named);
         }
-        if (i < previous.size() && previous[i] && previous[i]->made == key) {
-            node.children.push_back(std::move(previous[i]));
+        auto reusable = std::find_if(previous.begin(), previous.end(), [&](const auto& child) {
+            return child && child->index == int(i) && child->made == key;
+        });
+        if (reusable != previous.end()) {
+            node.children.push_back(std::move(*reusable));
             continue;
         }
         if (key.empty()) {
@@ -765,8 +858,8 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
 
 /**
  * Reads the bindings of a control into its bound properties. A binding that
- * finds nothing leaves the property as it was, so property_bag defaults and
- * the state a control keeps itself stay in place.
+ * finds nothing leaves the property as it was, unless the controller asks
+ * for missing visibility bindings to hide their controls.
  */
 void JsonUiRuntime::bind(Node& node)
 {
@@ -803,7 +896,12 @@ void JsonUiRuntime::bind(Node& node)
                 if (source->mString.front() == '$' && value.kind == UiValue::Kind::String && !value.text.empty() && value.text.front() == '(') {
                     value = jsonui::evaluate(value.text, find);
                 }
+                if (value.kind == UiValue::Kind::None && target->mString == "#visible" && data && data->hideUnboundVisibility) {
+                    value = UiValue::of(false);
+                }
                 node.bound[target->mString] = std::move(value);
+            } else if (target->mString == "#visible" && data && data->hideUnboundVisibility) {
+                node.bound[target->mString] = UiValue::of(false);
             }
             continue;
         }
@@ -826,6 +924,25 @@ void JsonUiRuntime::bind(Node& node)
             if (type == "collection") {
                 if (const UiRow* values = row(node, collection)) {
                     if (auto found = values->find(key); found != values->end()) {
+                        return found->second;
+                    }
+                }
+                if (data) {
+                    bool indexed = false;
+                    for (const Node* parent = &node; parent; parent = parent->parent) {
+                        if (parent->index >= 0 && (collection.empty() || parent->collection == collection)) {
+                            indexed = true;
+                            break;
+                        }
+                    }
+                    auto rows = data->collections.find(collection);
+                    if (!indexed && rows != data->collections.end() && !rows->second.empty()) {
+                        auto found = rows->second.front().find(key);
+                        if (found != rows->second.front().end()) {
+                            return found->second;
+                        }
+                    }
+                    if (auto found = data->globals.find(key); found != data->globals.end()) {
                         return found->second;
                     }
                 }
@@ -857,6 +974,9 @@ void JsonUiRuntime::bind(Node& node)
             }
         } else if (name.front() == '#') {
             value = read(name);
+        }
+        if (value.kind == UiValue::Kind::None && target == "#visible" && data && data->hideUnboundVisibility) {
+            value = UiValue::of(false);
         }
         if (value.kind != UiValue::Kind::None) {
             node.dataToggle = node.dataToggle || target == "#toggle_state";

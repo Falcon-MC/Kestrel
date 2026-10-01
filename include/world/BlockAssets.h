@@ -376,6 +376,16 @@ public:
         return biomes;
     }
 
+    /**
+     * How many ticks the behavior pack lets an item be used, or 0 for an item
+     * that is not used over time.
+     */
+    int32_t itemUseTicks(const std::string& identifier) const
+    {
+        auto found = itemUseDurations.find(identifier);
+        return found == itemUseDurations.end() ? 0 : found->second;
+    }
+
     const EntityModel* entityModel(const std::string& identifier) const
     {
         auto found = entityModels.find(identifier);
@@ -509,6 +519,7 @@ private:
     bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
     void buildEntityModels(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs);
     void buildInterfaceAssets(PackSource& pack, const std::vector<std::shared_ptr<const PackFiles>>& packs);
+    void loadItemUseDurations(PackSource& behaviors);
     void buildBlockEntityTemplates(PackSource& pack, std::vector<std::vector<uint8_t>>& layers, std::vector<bool>& overlayLayers, std::map<std::string, uint32_t>& materialByKey,
         const std::function<uint32_t(const std::vector<ModelQuad>&, uint32_t)>& pushTemplate);
     const std::string& nameAt(size_t index) const;
@@ -539,6 +550,7 @@ private:
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
+    std::unordered_map<std::string, int32_t> itemUseDurations;
     std::unordered_map<std::string, std::vector<std::vector<uint8_t>>> itemTextures;
     std::unordered_map<std::string, uint32_t> blockByName;
     std::unordered_map<std::string, BlockVisual> carriedVisuals;

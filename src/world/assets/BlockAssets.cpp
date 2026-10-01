@@ -1342,6 +1342,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
     PackSource behaviors(behaviorRoot);
     biomes.load(pack, behaviors);
+    loadItemUseDurations(behaviors);
 
     overlayLayers.resize(layers.size(), false);
     buildMips(textureArray, layers, overlayLayers);

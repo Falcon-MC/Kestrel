@@ -130,7 +130,8 @@ Transition transitionOf(Dialog dialog)
 {
     switch (dialog) {
     case Dialog::Pause:
-        return Transition::Fade;
+    case Dialog::SafeArea:
+        return Transition::Own;
     case Dialog::Connecting:
     case Dialog::SignIn:
     case Dialog::ConnectionError:
@@ -139,8 +140,6 @@ Transition transitionOf(Dialog dialog)
     case Dialog::ProfileOptions:
     case Dialog::ConfirmDelete:
         return Transition::None;
-    case Dialog::SafeArea:
-        return Transition::Own;
     default:
         return Transition::Wipe;
     }
@@ -548,11 +547,15 @@ void Menu::safeFrame(Context& ui, float width, float height)
     }
 
     ui.setBlocked(false);
-    if (socialOpen && !loading) {
+    auto drawSocial = [&] {
         float shown = outCubic(progressSince(now, socialChanged, ScreenTransitionSeconds));
         ui.setLayer((1.0f - shown) * 190.0f, 0.0f, shown);
         socialDrawer(ui, width, height);
         ui.clearLayer();
+    };
+    bool socialOverPause = dialog == Dialog::Pause;
+    if (socialOpen && !loading && !socialOverPause) {
+        drawSocial();
     }
 
     Transition leavingKind = transitionOf(leavingDialog);
@@ -575,6 +578,9 @@ void Menu::safeFrame(Context& ui, float width, float height)
     ui.clearLayer();
     if (confirmed || cancelled) {
         dialog = Dialog::None;
+    }
+    if (socialOpen && !loading && socialOverPause) {
+        drawSocial();
     }
 
     inventoryLayer(ui, width, height, now);
@@ -1084,7 +1090,10 @@ void Menu::title(Context& ui, float width, float height)
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
 }
 
-void Menu::pause(Context& ui, float width, float height)
+/**
+ * The pause menu drawn by hand, for when the game's UI files are missing.
+ */
+void Menu::classicPause(Context& ui, float width, float height)
 {
     ui.fill(screenBounds, { 0, 0, 0, 90 });
     constexpr float ButtonWidth = 276.0f;
@@ -1496,7 +1505,10 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
     hudScreen.reset();
     safeZoneScreen.reset();
     chatUi.reset();
+    chatSettingsUi.reset();
+    pauseUi.reset();
     forms.setDefinitions(jsonUi);
+    inventory.setDefinitions(jsonUi);
 }
 
 /**
@@ -1520,6 +1532,7 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
         hudScreen->fire("anim_subtitle_text_alpha_in_play_event");
     }
     hud.chat = hudChat();
+    hud.chatStyle = chatStyle();
     hud.players = players;
     // Tab is button.scoreboard, the player list key, while nothing covers the HUD.
     hudScreen->holdButton("button.scoreboard", capturesMouse() && ui.input().isHeld(Key::Tab));
@@ -1787,7 +1800,7 @@ std::string* Menu::focusedText()
     case Field::DressingSearch:
         return &dressingState.search;
     case Field::Chat:
-        return dialog == Dialog::Chat ? &chatDraft : nullptr;
+        return dialog == Dialog::Chat && !chatSettingsOpen ? &chatDraft : nullptr;
     case Field::RealmCode:
         return dialog == Dialog::JoinRealm ? &realmCodeInput : nullptr;
     case Field::ModConfig:
@@ -1900,7 +1913,7 @@ void Menu::goBack()
 {
     if (screen == Screen::ServerForm) {
         navigate(Screen::Play);
-    } else if (screen == Screen::Settings || screen == Screen::DressingRoom) {
+    } else if (screen == Screen::Settings || screen == Screen::DressingRoom || screen == Screen::Marketplace || screen == Screen::Profile) {
         navigate(returnScreen);
         if (inGame()) {
             dialog = Dialog::Pause;

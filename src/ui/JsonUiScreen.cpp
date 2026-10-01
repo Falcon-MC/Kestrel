@@ -52,6 +52,7 @@ bool animating(const Node& node)
 }
 
 constexpr float MinScrollBox = 8.0f;
+constexpr float CaretHeight = 7.0f;
 constexpr float WheelStep = 1.6f;
 constexpr size_t DefaultMaxLength = 256;
 constexpr const char* ToggleStates[] = {
@@ -180,7 +181,7 @@ bool JsonUiRuntime::heldDown(const Node& node) const
 void JsonUiRuntime::chooseStates(Node& node)
 {
     node.states.clear();
-    bool hovered = hot == node.id;
+    bool hovered = hot == node.id || keyFocus == node.id || std::find(passedHover.begin(), passedHover.end(), node.id) != passedHover.end();
     bool pressed = (active == node.id && hovered && ui && ui->input().mouseDown) || heldDown(node);
     auto show = [&](const char* property, bool visible) {
         std::string name = text(node, property);
@@ -267,9 +268,12 @@ void JsonUiRuntime::chooseStates(Node& node)
  */
 void JsonUiRuntime::overrideState(Node& control, Node& node)
 {
-    if (control.type == "edit_box" && focused == control.id && node.name == text(control, "text_control")) {
-        bool caret = static_cast<long long>(now * 2.0) % 2 == 0;
-        node.bound["#item_name"] = UiValue::of(control.edit + (caret ? "_" : ""));
+    if (control.type == "edit_box" && node.name == text(control, "text_control")) {
+        bool typing = focused == control.id;
+        node.caret = typing || (listeningCaret && flag(control, "always_listening", false));
+        if (typing) {
+            node.bound["#item_name"] = UiValue::of(control.edit);
+        }
         return;
     }
     if (control.type == "slider") {
@@ -316,7 +320,18 @@ static void prepareTree(JsonUiRuntime& runtime, Node& node, bool shown)
         node.texture = stripExtension(std::move(node.texture));
     }
     if (std::optional<float> alpha = runtime.animated(node, "alpha", 0, 0.0f)) {
-        node.alpha = *alpha;
+        bool scaled = std::any_of(node.anims.begin(), node.anims.end(), [&](const AnimTrack& track) {
+            if (track.target != "alpha") {
+                return false;
+            }
+            Node probe;
+            probe.vars = node.vars;
+            probe.props = track.props;
+            return runtime.flag(probe, "scale_from_starting_alpha", false);
+        });
+        const json::Value* starting = runtime.property(node, "alpha");
+        float base = starting && starting->isNumber() ? static_cast<float>(starting->number(1.0)) : 1.0f;
+        node.alpha = scaled ? *alpha * base : *alpha;
     } else if (auto bound = node.bound.find("#alpha"); bound != node.bound.end()) {
         node.alpha = static_cast<float>(bound->second.toNumber());
     } else if (const json::Value* alpha = runtime.property(node, "alpha"); alpha && alpha->isString() && !alpha->mString.empty() && alpha->mString.front() == '@') {
@@ -335,7 +350,8 @@ static void prepareTree(JsonUiRuntime& runtime, Node& node, bool shown)
     // its orientation, and everything else fills its parent.
     const json::Value* size = runtime.property(node, "size");
     auto extent = [&](size_t axis) {
-        TermKind fallback = node.type == "label" || node.type == "grid" ? TermKind::Default : TermKind::Parent;
+        bool naturalImage = node.type == "image" && runtime.flag(node, "default_size_scales_to_ratio", false);
+        TermKind fallback = node.type == "label" || node.type == "grid" || naturalImage ? TermKind::Default : TermKind::Parent;
         if (node.type == "stack_panel" && (axis == 1) == node.vertical) {
             fallback = TermKind::Children;
         }
@@ -346,7 +362,7 @@ static void prepareTree(JsonUiRuntime& runtime, Node& node, bool shown)
         Extent parsed = parseExtent(value, fallback);
         // "default" is what a label, image or grid holds and what a stack panel stacks along
         // its orientation; any other control takes its parent's size.
-        bool fits = node.type == "label" || node.type == "image" || node.type == "grid" || (node.type == "stack_panel" && (axis == 1) == node.vertical);
+        bool fits = node.type == "label" || naturalImage || node.type == "grid" || (node.type == "stack_panel" && (axis == 1) == node.vertical);
         for (Term& part : parsed) {
             if (part.kind == TermKind::Default && !fits) {
                 part.kind = TermKind::Parent;
@@ -423,8 +439,15 @@ void JsonUiRuntime::emit(UiEvent::Kind kind, const Node& node, std::string name)
     UiEvent event;
     event.kind = kind;
     event.name = std::move(name);
+    bool namedCollection = false;
     for (const Node* at = &node; at; at = at->parent) {
-        if (at->index < 0) {
+        if (at->index >= 0 && !at->collection.empty()) {
+            namedCollection = true;
+            break;
+        }
+    }
+    for (const Node* at = &node; at; at = at->parent) {
+        if (at->index < 0 || (namedCollection && at->collection.empty())) {
             continue;
         }
         if (event.index < 0) {
@@ -438,6 +461,133 @@ void JsonUiRuntime::emit(UiEvent::Kind kind, const Node& node, std::string name)
     events.push_back(std::move(event));
 }
 
+/**
+ * Whether a button maps a click to a button id of its own, which a button
+ * with an empty button_mappings, like a tooltip trigger, does not.
+ */
+bool JsonUiRuntime::pressMapped(const Node& node) const
+{
+    const json::Value* mappings = property(node, "button_mappings");
+    if (!mappings || !mappings->isArray()) {
+        return false;
+    }
+    for (const std::unique_ptr<json::Value>& mapping : mappings->mArray) {
+        const json::Value* from = mapping->isObject() ? resolve(node, mapping->get("from_button_id")) : nullptr;
+        const json::Value* type = mapping->isObject() ? resolve(node, mapping->get("mapping_type")) : nullptr;
+        const json::Value* to = mapping->isObject() ? resolve(node, mapping->get("to_button_id")) : nullptr;
+        if (from && from->string() == "button.menu_select" && type && type->string() == "pressed" && to && to->isString() && !to->mString.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Moves the keyboard focus: the first arrow key or Tab focuses the button
+ * with the highest default_focus_precedence, then the arrows go to the
+ * nearest focusable control that way and Tab through them in order. Enter
+ * presses the focused control, and moving the mouse hands focus back to it.
+ */
+void JsonUiRuntime::navigateFocus(const InputState& in, float mouseX, float mouseY)
+{
+    if (laidOut && (mouseX != laidMouseX || mouseY != laidMouseY)) {
+        keyFocus = 0;
+    }
+    std::vector<Node*> candidates;
+    for (Node* node : order) {
+        bool focusable = (node->type == "button" || node->type == "toggle") && node->enabled && node->w > 0.0f && node->h > 0.0f;
+        if (focusable && (!node->clipped || (node->clip.w > 0.0f && node->clip.h > 0.0f)) && flag(*node, "focus_enabled", true)) {
+            candidates.push_back(node);
+        }
+    }
+    auto current = std::find_if(candidates.begin(), candidates.end(), [&](const Node* node) { return node->id == keyFocus; });
+    if (current == candidates.end()) {
+        keyFocus = 0;
+    }
+    if (in.enter && keyFocus) {
+        click(**current);
+        return;
+    }
+    Key key = in.pressedKey;
+    bool arrow = key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right;
+    if ((!arrow && !in.tab) || candidates.empty()) {
+        return;
+    }
+    if (!keyFocus) {
+        Node* first = candidates.front();
+        for (Node* node : candidates) {
+            if (number(*node, "default_focus_precedence", 0.0) > number(*first, "default_focus_precedence", 0.0)) {
+                first = node;
+            }
+        }
+        keyFocus = first->id;
+        return;
+    }
+    if (in.tab) {
+        size_t index = static_cast<size_t>(current - candidates.begin());
+        size_t count = candidates.size();
+        index = in.isHeld(Key::Shift) ? (index + count - 1) % count : (index + 1) % count;
+        keyFocus = candidates[index]->id;
+        return;
+    }
+    float dx = key == Key::Left ? -1.0f : key == Key::Right ? 1.0f : 0.0f;
+    float dy = key == Key::Up ? -1.0f : key == Key::Down ? 1.0f : 0.0f;
+    const Node& from = **current;
+    float fromX = from.x + from.w * 0.5f;
+    float fromY = from.y + from.h * 0.5f;
+    Node* best = nullptr;
+    float bestScore = std::numeric_limits<float>::infinity();
+    for (Node* node : candidates) {
+        if (node == &from) {
+            continue;
+        }
+        float vx = node->x + node->w * 0.5f - fromX;
+        float vy = node->y + node->h * 0.5f - fromY;
+        float along = vx * dx + vy * dy;
+        if (along <= 0.5f) {
+            continue;
+        }
+        float across = std::abs(vx * dy - vy * dx);
+        float score = along + across * 2.0f;
+        if (score < bestScore) {
+            bestScore = score;
+            best = node;
+        }
+    }
+    if (best) {
+        keyFocus = best->id;
+    }
+}
+
+bool JsonUiRuntime::mapButton(Node& node, const std::string& from, const std::string& mode, int depth)
+{
+    if (!node.enabled || depth > 8) {
+        return false;
+    }
+    const json::Value* mappings = property(node, "button_mappings");
+    if (!mappings || !mappings->isArray()) {
+        return false;
+    }
+    for (const auto& mapping : mappings->mArray) {
+        if (!mapping->isObject() || (mapping->get("ignored") && condition(node, mapping->get("ignored")))) {
+            continue;
+        }
+        const auto* source = resolve(node, mapping->get("from_button_id"));
+        const auto* type = resolve(node, mapping->get("mapping_type"));
+        const auto* destination = resolve(node, mapping->get("to_button_id"));
+        if (!source || source->string() != from || !type || type->string() != mode
+            || !destination || !destination->isString() || destination->mString.empty()) {
+            continue;
+        }
+        if (destination->mString != from && mapButton(node, destination->mString, "pressed", depth + 1)) {
+            return true;
+        }
+        emit(UiEvent::Kind::Button, node, destination->mString);
+        return true;
+    }
+    return false;
+}
+
 void JsonUiRuntime::click(Node& node)
 {
     if (!node.enabled) {
@@ -447,22 +597,19 @@ void JsonUiRuntime::click(Node& node)
         ui->countClick();
     }
     if (node.type == "button") {
-        const json::Value* mappings = property(node, "button_mappings");
-        if (!mappings || !mappings->isArray()) {
+        bool repeated = lastClickTarget == node.id && now - lastClickTime < 0.3;
+        lastClickTarget = node.id;
+        lastClickTime = now;
+        if (repeated && mapButton(node, "button.menu_select", "double_pressed")) {
             return;
         }
-        for (const std::unique_ptr<json::Value>& mapping : mappings->mArray) {
-            if (!mapping->isObject() || (mapping->get("ignored") && condition(node, mapping->get("ignored")))) {
-                continue;
-            }
-            const json::Value* from = resolve(node, mapping->get("from_button_id"));
-            const json::Value* type = resolve(node, mapping->get("mapping_type"));
-            const json::Value* to = resolve(node, mapping->get("to_button_id"));
-            if (from && from->string() == "button.menu_select" && type && type->string() == "pressed" && to && to->isString() && !to->mString.empty()) {
-                emit(UiEvent::Kind::Button, node, to->mString);
-                return;
-            }
+        if (ui->input().enter && mapButton(node, "button.menu_ok", "focused")) {
+            return;
         }
+        if (ui->input().isHeld(Key::Shift) && mapButton(node, "button.menu_auto_place", "pressed")) {
+            return;
+        }
+        mapButton(node, "button.menu_select", "pressed");
         return;
     }
     if (node.type == "toggle" || node.type == "dropdown") {
@@ -470,8 +617,13 @@ void JsonUiRuntime::click(Node& node)
         bool next = flag(node, "radio_toggle_group", false) ? true : !checked;
         node.toggled = next;
         node.bound["#toggle_state"] = UiValue::of(next);
-        emit(UiEvent::Kind::Toggle, node, text(node, "toggle_name"));
+        std::string name = text(node, "toggle_name");
+        if (!name.empty() && name.front() == '(') {
+            name = evaluate(node, name).toText();
+        }
+        emit(UiEvent::Kind::Toggle, node, std::move(name));
         events.back().state = next;
+        events.back().value = number(node, "toggle_group_forced_index", 0.0);
     }
 }
 
@@ -513,6 +665,8 @@ void JsonUiRuntime::input()
     std::vector<Node*> sorted(order);
     std::stable_sort(sorted.begin(), sorted.end(), [](const Node* a, const Node* b) { return a->z < b->z; });
     Node* target = nullptr;
+    Node* passedPress = nullptr;
+    passedHover.clear();
     for (auto it = sorted.rbegin(); it != sorted.rend(); ++it) {
         Node& node = **it;
         if (node.type == "tooltip_trigger" && under(node)) {
@@ -541,12 +695,28 @@ void JsonUiRuntime::input()
         }
         if ((isControl(node) && node.type != "slider_box") || node.type == "scrollbar_box" || node.type == "scroll_track") {
             if (node.enabled && under(node)) {
+                if (node.type == "button" && !flag(node, "consume_hover_events", true)) {
+                    passedHover.push_back(node.id);
+                    if (!passedPress && pressMapped(node)) {
+                        passedPress = &node;
+                    }
+                    continue;
+                }
                 target = &node;
                 break;
             }
         }
     }
+    if (passedPress) {
+        target = passedPress;
+    }
     hot = target ? target->id : 0;
+    if (target && in.rightMousePressed) {
+        mapButton(*target, "button.menu_secondary_select", "pressed");
+    }
+    if (navigation && !focused && !blocked) {
+        navigateFocus(in, mx, my);
+    }
 
     if (in.mousePressed) {
         active = hot;
@@ -640,6 +810,10 @@ void JsonUiRuntime::input()
     }
     if (editing) {
         std::u32string typed = in.text;
+        bool multiline = flag(*editing, "enabled_newline", false);
+        if (multiline && in.enter && std::find(typed.begin(), typed.end(), U'\n') == typed.end()) {
+            typed.push_back(U'\n');
+        }
         if (in.isHeld(Key::Control) && in.pressedKey == Key::V) {
             std::string pasted = platform::pasteText();
             size_t i = 0;
@@ -657,7 +831,7 @@ void JsonUiRuntime::input()
             nextCodepoint(editing->edit, i);
         }
         for (char32_t cp : typed) {
-            if (cp < 32 || cp == 127 || length >= limit) {
+            if ((cp < 32 && !(multiline && cp == U'\n')) || cp == 127 || length >= limit) {
                 continue;
             }
             appendUtf8(editing->edit, cp);
@@ -667,7 +841,7 @@ void JsonUiRuntime::input()
             emit(UiEvent::Kind::Text, *editing, text(*editing, "text_box_name"));
             events.back().text = editing->edit;
         }
-        if (in.enter || in.escape) {
+        if ((!multiline && in.enter) || in.escape) {
             emit(UiEvent::Kind::TextDone, *editing, text(*editing, "text_box_name"));
             events.back().text = editing->edit;
             focused = 0;
@@ -724,8 +898,8 @@ void JsonUiRuntime::paint(Node& node)
                 const json::Value* channel = resolve(node, color->mArray[i].get());
                 rgba[i] = channel ? static_cast<float>(channel->number(1.0)) : 1.0f;
             }
-        } else if (color && color->isString() && !color->mString.empty() && color->mString.front() == '#') {
-            if (auto bound = node.bound.find(color->mString); bound != node.bound.end() && bound->second.kind == UiValue::Kind::String) {
+        } else if (std::string key = color && color->isString() ? color->mString : std::string("#color"); !key.empty() && key.front() == '#') {
+            if (auto bound = node.bound.find(key); bound != node.bound.end() && bound->second.kind == UiValue::Kind::String) {
                 const std::string& channels = bound->second.text;
                 size_t start = 0;
                 for (size_t i = 0; i < 4 && start <= channels.size(); ++i) {
@@ -750,6 +924,9 @@ void JsonUiRuntime::paint(Node& node)
     if (node.type == "image") {
         if (node.texture.empty() || node.texture == "loading") {
             return;
+        }
+        if (node.texture == "textures/ui/title") {
+            node.texture = ui->skin().sprite("dynamic/title").valid ? "dynamic/title" : "kestrel/title";
         }
         const Sprite& sprite = ui->skin().sprite(node.texture);
         Color color = tint();
@@ -827,7 +1004,8 @@ void JsonUiRuntime::paint(Node& node)
             }
             const json::Value* initial = property(probe, "initial_uv");
             int frames = std::max(1, static_cast<int>(number(probe, "frame_count", 1.0)));
-            float stepSize = static_cast<float>(number(probe, "frame_step", 0.0));
+            float frameWidth = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[0].get(), 0.0f) : 0.0f;
+            float stepSize = static_cast<float>(number(probe, "frame_step", frameWidth));
             double fps = std::max(0.001, number(probe, "fps", 1.0));
             int frame = static_cast<int>((now - track.start) * fps);
             if (flag(probe, "reversible", false) && frames > 1) {
@@ -853,15 +1031,27 @@ void JsonUiRuntime::paint(Node& node)
             ui->spriteRegion({ rect.x, rect.y, frameSize[0] * scale, rect.h }, node.texture, { origin[0], origin[1], frameSize[0], frameSize[1] }, color);
             return;
         }
-        if (region || (uvSize && uvSize->isArray())) {
-            float uw = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[0].get(), 0.0f) : sprite.width;
-            float uh = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[1].get(), 0.0f) : sprite.height;
-            ui->spriteRegion(rect, node.texture, { origin[0], origin[1], uw, uh }, color);
-            return;
-        }
         const json::Value* tiled = property(node, "tiled");
         bool tileX = tiled && (tiled->boolean(false) || tiled->string() == "x");
         bool tileY = tiled && (tiled->boolean(false) || tiled->string() == "y");
+        if (region || (uvSize && uvSize->isArray())) {
+            float uw = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[0].get(), 0.0f) : sprite.width;
+            float uh = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[1].get(), 0.0f) : sprite.height;
+            Rect source { origin[0], origin[1], uw, uh };
+            if ((tileX || tileY) && uw > 0.0f && uh > 0.0f) {
+                float tw = tileX ? uw : rect.w;
+                float th = tileY ? uh : rect.h;
+                ui->setClip(node.clipped ? intersect(node.clip, rect) : rect);
+                for (float ty = rect.y; ty < rect.bottom(); ty += th) {
+                    for (float tx = rect.x; tx < rect.right(); tx += tw) {
+                        ui->spriteRegion({ tx, ty, tw, th }, node.texture, source, color);
+                    }
+                }
+                return;
+            }
+            ui->spriteRegion(rect, node.texture, source, color);
+            return;
+        }
         if ((tileX || tileY) && sprite.width > 0.0f && sprite.height > 0.0f) {
             float tw = tileX ? sprite.width : rect.w;
             float th = tileY ? sprite.height : rect.h;
@@ -892,10 +1082,14 @@ void JsonUiRuntime::paint(Node& node)
     }
 
     if (node.type == "label") {
+        float scale = labelScale(node);
+        bool caret = node.caret && static_cast<long long>(now * 2.0) % 2 == 0;
         if (node.text.empty()) {
+            if (caret) {
+                paintCaret(rect.x, rect.y, scale, alpha);
+            }
             return;
         }
-        float scale = labelScale(node);
         float padding = static_cast<float>(number(node, "line_padding", 0.0));
         Color color = tint();
         bool shadow = flag(node, "shadow", false);
@@ -903,6 +1097,8 @@ void JsonUiRuntime::paint(Node& node)
         std::string alignment = text(node, "text_alignment");
         float bottom = property(node, "max_size") ? rect.bottom() + 0.5f : std::numeric_limits<float>::infinity();
         float lineY = rect.y;
+        float caretX = rect.x;
+        float caretY = rect.y;
         size_t start = 0;
         std::string carried;
         std::vector<std::string_view> wrapped;
@@ -925,12 +1121,17 @@ void JsonUiRuntime::paint(Node& node)
                     ui->textScaled(line, style, lineX + scale, lineY + scale, scale, color, true);
                 }
                 ui->textScaled(line, style, lineX, lineY, scale, color);
+                caretX = lineX + std::max(0.0f, width - scale);
+                caretY = lineY;
                 lineY += (LabelLineHeight + padding) * scale;
             }
             if (end == std::string::npos) {
                 break;
             }
             start = end + 1;
+        }
+        if (caret) {
+            paintCaret(caretX, caretY, scale, alpha);
         }
         return;
     }
@@ -943,11 +1144,40 @@ void JsonUiRuntime::paint(Node& node)
         paintGradient(node, rect, alpha);
         return;
     }
+    if (node.type == "custom" && text(node, "renderer") == "progress_bar_renderer") {
+        bool visible = lookup(node, "#progress_bar_visible").truthy() || lookup(node, "#touch_progress_bar_visible").truthy();
+        double total = lookup(node, "#progress_bar_total_amount").toNumber();
+        if (!visible || total <= 0.0) {
+            return;
+        }
+        float fraction = float(std::clamp(lookup(node, "#progress_bar_current_amount").toNumber() / total, 0.0, 1.0));
+        float width = std::round(rect.w * fraction);
+        uint8_t opacity = uint8_t(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+        if (lookup(node, "drop_shadow").truthy()) {
+            ui->fill({ rect.x, rect.y, rect.w + 1.0f, rect.h + 1.0f }, { 0, 0, 0, opacity });
+        }
+        Color color { 102, 102, 255, opacity };
+        if (lookup(node, "is_durability").truthy()) {
+            color = { uint8_t(255.0f * std::min(1.0f, 2.0f * (1.0f - fraction))), uint8_t(255.0f * std::min(1.0f, 2.0f * fraction)), 0, opacity };
+        }
+        ui->fill({ rect.x, rect.y, width, rect.h }, color);
+        return;
+    }
     if (node.type == "custom" && renderer) {
         std::string name = text(node, "renderer");
         UiLookup find = [&](const std::string& key) { return lookup(node, key); };
         renderer(*ui, name, rect, alpha, find);
     }
+}
+
+/**
+ * The text caret of an edit box, drawn by the game rather than the pack: a
+ * green bar one pixel wide and as tall as a glyph, in the spacing column
+ * right after the last character.
+ */
+void JsonUiRuntime::paintCaret(float x, float y, float scale, float alpha)
+{
+    ui->fill({ x, y, scale, CaretHeight * scale }, Color { 0, 255, 0, static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f) });
 }
 
 /**
@@ -1038,7 +1268,7 @@ void JsonUiRuntime::paintHoverText(const Node& node, float alpha)
     }
 }
 
-JsonUiScreen::JsonUiScreen(std::shared_ptr<const JsonUi> definitions, std::string root)
+JsonUiScreen::JsonUiScreen(std::shared_ptr<const JsonUi> definitions, std::string root, const UiRow& variables)
     : runtime(std::make_unique<JsonUiRuntime>())
 {
     runtime->defs = std::move(definitions);
@@ -1047,11 +1277,66 @@ JsonUiScreen::JsonUiScreen(std::shared_ptr<const JsonUi> definitions, std::strin
     if (!runtime->defs) {
         return;
     }
-    runtime->root = runtime->make(nullptr, "root@" + runtime->rootReference, nullptr, nullptr, nullptr, nullptr, 0);
+    runtime->root = runtime->make(nullptr, "root@" + runtime->rootReference, nullptr, nullptr, nullptr, &variables, 0);
     fire("screen.entrance_push");
 }
 
 JsonUiScreen::~JsonUiScreen() = default;
+
+UiEvent JsonUiScreen::pointerTarget() const
+{
+    UiEvent event;
+    auto found = runtime->byId.find(runtime->hot);
+    if (found == runtime->byId.end()) {
+        return event;
+    }
+    const Node& target = *found->second;
+    const auto* mappings = runtime->property(target, "button_mappings");
+    std::string pressed = runtime->ui && runtime->ui->input().isHeld(Key::Shift) ? "button.menu_auto_place"
+        : runtime->ui && runtime->ui->input().rightMousePressed ? "button.menu_secondary_select" : "button.menu_select";
+    if (mappings && mappings->isArray()) {
+        for (const auto& mapping : mappings->mArray) {
+            if (!mapping->isObject() || (mapping->get("ignored") && runtime->condition(target, mapping->get("ignored")))) {
+                continue;
+            }
+            const auto* from = runtime->resolve(target, mapping->get("from_button_id"));
+            const auto* mode = runtime->resolve(target, mapping->get("mapping_type"));
+            const auto* to = runtime->resolve(target, mapping->get("to_button_id"));
+            if (from && from->string() == pressed && mode && mode->string() == "pressed" && to && to->isString()) {
+                event.name = to->mString;
+                break;
+            }
+        }
+    }
+    for (const Node* node = found->second; node; node = node->parent) {
+        if (node->index >= 0 && !node->collection.empty()) {
+            event.index = node->index;
+            event.collection = node->collection;
+            break;
+        }
+    }
+    return event;
+}
+
+bool JsonUiScreen::pointerInsideContent(float x, float y) const
+{
+    if (!runtime->root) {
+        return false;
+    }
+    for (const Node* node : runtime->order) {
+        if (!node->shown || node->type != "image" || node->w <= 0.0f || node->h <= 0.0f) {
+            continue;
+        }
+        if (node->w >= runtime->root->w && node->h >= runtime->root->h) {
+            continue;
+        }
+        if (Rect { node->x, node->y, node->w, node->h }.contains(x, y)
+            && (!node->clipped || node->clip.contains(x, y))) {
+            return true;
+        }
+    }
+    return false;
+}
 
 const std::shared_ptr<const JsonUi>& JsonUiScreen::definitions() const
 {
@@ -1066,6 +1351,14 @@ bool JsonUiScreen::valid() const
 void JsonUiScreen::setRenderer(UiRenderer renderer)
 {
     runtime->renderer = std::move(renderer);
+}
+
+void JsonUiScreen::setKeyboardNavigation(bool enabled)
+{
+    runtime->navigation = enabled;
+    if (!enabled) {
+        runtime->keyFocus = 0;
+    }
 }
 
 void JsonUiScreen::fire(const std::string& event)
@@ -1097,7 +1390,7 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     r.now = secondsNow();
     Node& root = *r.root;
 
-    if (r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
+    if (r.laidOut && !r.virtualGrids && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
         && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
         && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidHeld == r.held && r.laidData == data) {
         for (Node* node : r.painted) {
@@ -1210,6 +1503,14 @@ std::vector<UiEvent> JsonUiScreen::takeEvents()
 void JsonUiScreen::blur()
 {
     runtime->focused = 0;
+}
+
+void JsonUiScreen::showListeningCaret(bool shown)
+{
+    if (runtime->listeningCaret != shown) {
+        runtime->listeningCaret = shown;
+        runtime->laidOut = false;
+    }
 }
 
 bool JsonUiScreen::editing() const

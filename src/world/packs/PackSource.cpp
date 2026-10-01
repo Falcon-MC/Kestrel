@@ -181,9 +181,8 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
             continue;
         }
         for (const char* extension : { ".png", ".tga" }) {
-            auto found = source->entries.find(name + extension);
-            if (found != source->entries.end()) {
-                out.assign(source->data, source->dataStart + found->second.first, found->second.second);
+            if (const std::pair<size_t, size_t>* found = source->find(name + extension)) {
+                out.assign(source->data, source->dataStart + found->first, found->second);
                 return true;
             }
         }
@@ -237,13 +236,26 @@ bool PackSource::readBaseArchived(const std::string& archiveName, const std::str
         if (!source) {
             continue;
         }
-        auto found = source->entries.find(name);
-        if (found != source->entries.end()) {
-            out.assign(source->data, source->dataStart + found->second.first, found->second.second);
+        if (const std::pair<size_t, size_t>* found = source->find(name)) {
+            out.assign(source->data, source->dataStart + found->first, found->second);
             return true;
         }
     }
     return false;
+}
+
+const std::pair<size_t, size_t>* PackSource::Archive::find(const std::string& name) const
+{
+    auto exact = entries.find(name);
+    if (exact != entries.end()) {
+        return &exact->second;
+    }
+    auto folding = folded.find(util::lowercase(name));
+    if (folding == folded.end()) {
+        return nullptr;
+    }
+    auto original = entries.find(folding->second);
+    return original != entries.end() ? &original->second : nullptr;
 }
 
 std::vector<std::string> PackSource::readArchivedLayers(const std::string& archiveName, const std::string& name)
@@ -259,9 +271,8 @@ std::vector<std::string> PackSource::readArchivedLayers(const std::string& archi
         if (!source) {
             continue;
         }
-        auto found = source->entries.find(name);
-        if (found != source->entries.end()) {
-            result.emplace_back(source->data, source->dataStart + found->second.first, found->second.second);
+        if (const std::pair<size_t, size_t>* found = source->find(name)) {
+            result.emplace_back(source->data, source->dataStart + found->first, found->second);
         }
     }
     return result;
@@ -349,6 +360,7 @@ const PackSource::Archive* PackSource::archive(size_t layer, const std::string& 
                 valid = false;
                 break;
             }
+            loaded->folded.emplace(util::lowercase(name), name);
             loaded->entries.emplace(std::move(name), std::make_pair(offset, size));
         }
     }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/Input.h"
 #include "ui/Font.h"
 #include "ui/JsonUi.h"
 
@@ -44,6 +45,7 @@ struct Prop {
     const json::Value* value = nullptr;
     const std::string* space = nullptr;
     bool fallback = false;
+    std::shared_ptr<const json::Value> owner;
 };
 
 // Looked up with string views, so reading a property by a literal name allocates nothing.
@@ -135,6 +137,7 @@ struct Node {
     bool generated = false;
     std::string collection;
     int index = -1;
+    size_t gridItemCount = 0;
 
     UiRow bound;
     std::vector<AnimTrack> anims;
@@ -176,6 +179,7 @@ struct Node {
     float scrolledContent = -1.0f;
     float value = 0.0f;
     std::string edit;
+    bool caret = false;
     std::unordered_map<const Node*, bool> states;
 };
 
@@ -198,6 +202,7 @@ struct JsonUiRuntime {
     double now = 0.0;
     uint64_t nextId = 1;
     size_t madeThisFrame = 0;
+    bool virtualGrids = false;
     std::vector<UiEvent> events;
     std::vector<std::pair<std::string, uint64_t>> destroyedItems;
     std::vector<Node*> order;
@@ -205,6 +210,14 @@ struct JsonUiRuntime {
     uint64_t hot = 0;
     uint64_t active = 0;
     uint64_t focused = 0;
+    uint64_t lastClickTarget = 0;
+    double lastClickTime = -1.0;
+    // Controls under the mouse whose consume_hover_events is false: they show their hover
+    // state and leave the mouse to what lies below them.
+    std::vector<uint64_t> passedHover;
+    bool navigation = false;
+    uint64_t keyFocus = 0;
+    bool listeningCaret = false;
     float grab = 0.0f;
 
     // The last laid out frame, drawn again as is while nothing it depends on changes.
@@ -266,6 +279,7 @@ struct JsonUiRuntime {
     void size(Node& node, int axis, float parent, std::optional<float> forced = std::nullopt);
     float term(const Node& node, const json::Value* value, float parent) const;
     std::optional<float> animated(const Node& node, const std::string& target, int axis, float parent) const;
+    float stackedOffset(Node& child, int axis, float parent);
     void place(Node& node, float x, float y, float z, const Rect& clip, bool clipped, float alpha);
 
     // JsonUiScreen.cpp
@@ -273,10 +287,14 @@ struct JsonUiRuntime {
     Node* find(Node& from, const std::string& name) const;
     Node* ancestor(Node& node, const std::string& type) const;
     void input();
+    bool pressMapped(const Node& node) const;
+    void navigateFocus(const InputState& in, float mouseX, float mouseY);
     void click(Node& node);
+    bool mapButton(Node& node, const std::string& from, const std::string& mode, int depth = 0);
     void paint(Node& node);
     void paintHoverText(const Node& node, float alpha);
     void paintGradient(const Node& node, const Rect& rect, float alpha);
+    void paintCaret(float x, float y, float scale, float alpha);
     void emit(UiEvent::Kind kind, const Node& node, std::string name);
     void fire(Node& node, const std::string& event);
 };

@@ -741,6 +741,9 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::ContainerOpen:
     case MinecraftPacketIds::ContainerClose:
     case MinecraftPacketIds::ContainerSetData:
+    case MinecraftPacketIds::PlayerEnchantOptions:
+    case MinecraftPacketIds::TrimData:
+    case MinecraftPacketIds::NpcDialogue:
     case MinecraftPacketIds::ItemStackResponse:
     case MinecraftPacketIds::CreativeContent:
     case MinecraftPacketIds::CraftingData:

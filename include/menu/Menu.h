@@ -47,6 +47,43 @@ inline constexpr int MinBrightness = 0;
 inline constexpr int MaxBrightness = 100;
 inline constexpr int DefaultBrightness = 0;
 inline constexpr float MaxBrightnessLift = 0.5f;
+inline constexpr int MinChatFontSize = 6;
+inline constexpr int MaxChatFontSize = 12;
+inline constexpr int DefaultChatFontSize = 8;
+inline constexpr float MinChatLineSpacing = 1.0f;
+inline constexpr float MaxChatLineSpacing = 2.0f;
+inline constexpr float ChatLineSpacingStep = 0.1f;
+inline constexpr int ChatColorCount = 7;
+inline constexpr int DefaultChatColor = 0;
+inline constexpr int DefaultMentionsColor = 2;
+
+/**
+ * Where a chat line came from, so the chat settings can mute it: the server
+ * or a command, a player talking, or a player's emote.
+ */
+enum class ChatSource {
+    System,
+    Player,
+    Emote,
+};
+
+/**
+ * What the chat settings screen sets: muting, text to speech, the chat font
+ * (Noto Sans when smooth) with its size and line spacing, and the colors of
+ * chat lines and of lines that mention the player, as indexes into the
+ * screen's color list.
+ */
+struct ChatSettings {
+    bool muteAll = false;
+    bool muteEmotes = false;
+    bool textToSpeech = false;
+    bool smoothFont = false;
+    int fontSize = DefaultChatFontSize;
+    float lineSpacing = MinChatLineSpacing;
+    int chatColor = DefaultChatColor;
+    int mentionsColor = DefaultMentionsColor;
+    bool operator==(const ChatSettings&) const = default;
+};
 
 /**
  * How far the brightness setting lifts dark places toward full light, the way
@@ -852,8 +889,18 @@ public:
      * A received line for the chat log; the HUD shows it for a while and the
      * chat screen keeps the last hundred.
      */
-    void addChatLine(std::string text);
+    void addChatLine(std::string text, ChatSource source = ChatSource::System);
     void clearChat();
+
+    const ChatSettings& chatSettings() const
+    {
+        return chatOptions;
+    }
+
+    /**
+     * Replaces the chat settings, clamped to what the settings screen offers.
+     */
+    void setChatSettings(const ChatSettings& value);
 
     void setCommands(std::shared_ptr<const std::vector<ChatCommand>> list)
     {
@@ -863,6 +910,15 @@ public:
     void setPlayers(std::vector<std::string> names)
     {
         players = std::move(names);
+    }
+
+    /**
+     * Whether the server lets the player run operator commands, which puts the
+     * slash button on the chat screen.
+     */
+    void setOperatorCommands(bool allowed)
+    {
+        operatorCommands = allowed;
     }
 
     /**
@@ -904,6 +960,7 @@ private:
         std::string text;
         std::chrono::steady_clock::time_point arrived;
         uint64_t serial = 0;
+        ChatSource source = ChatSource::System;
     };
 
     /**
@@ -921,6 +978,11 @@ private:
     void title(ui::Context& ui, float width, float height);
     void titlePromo(ui::Context& ui, float left, float bottom);
     void pause(ui::Context& ui, float width, float height);
+    bool pauseScreen(ui::Context& ui, float width, float height);
+    ui::UiData pauseData() const;
+    void pauseRenderer(ui::Context& ui, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup);
+    void pauseButton(const std::string& id);
+    void classicPause(ui::Context& ui, float width, float height);
     void progressDialog(ui::Context& ui, float width, float height);
     void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
@@ -985,6 +1047,13 @@ private:
     std::vector<HudChatLine> hudChat() const;
     void drawHudScreen(ui::Context& ui, float width, float height);
     void chatScreen(ui::Context& ui, float width, float height);
+    void chatSettingsScreen(ui::Context& ui, float width, float height);
+    void openChatSettings();
+    void closeChatSettings();
+    bool chatLineShown(const ChatLine& line) const;
+    std::string chatLineColor(const ChatLine& line) const;
+    ChatStyle chatStyle() const;
+    uint64_t chatItemSerial(const ChatLine& line) const;
 
     bool textField(ui::Context& ui, std::string_view id, std::string_view placeholder, const std::string& value, const ui::Rect& rect, bool focused);
     bool toggle(ui::Context& ui, std::string_view id, const ui::Rect& rect, bool on);
@@ -1138,7 +1207,20 @@ private:
     std::vector<std::string> chatOutgoing;
     bool chatToBottom = false;
     std::unique_ptr<ui::JsonUiScreen> chatUi;
+    std::unique_ptr<ui::JsonUiScreen> chatSettingsUi;
+    std::unique_ptr<ui::JsonUiScreen> pauseUi;
+    // Whether the pause screen was open when last drawn, so opening it starts its entrance and
+    // closing it plays its exit.
+    bool pauseOpen = false;
+    // Buttons pressed with Enter, carried out next frame so the key does not also open chat.
+    std::vector<std::string> pausePressed;
+    bool chatSettingsOpen = false;
+    // The settings closed this frame, so the key that closed them is used up.
+    bool chatSettingsClosed = false;
+    ChatSettings chatOptions;
+    uint64_t chatStyleRevision = 0;
     std::shared_ptr<const std::vector<ChatCommand>> commands;
+    bool operatorCommands = false;
     std::vector<std::string> players;
     std::vector<CommandSuggestion> chatCycle;
     size_t chatCycleIndex = 0;

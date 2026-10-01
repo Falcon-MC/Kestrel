@@ -36,6 +36,11 @@ UiValue UiValue::of(std::string value)
     return result;
 }
 
+UiValue UiValue::of(const char* value)
+{
+    return of(std::string(value ? value : ""));
+}
+
 bool UiValue::truthy() const
 {
     switch (kind) {

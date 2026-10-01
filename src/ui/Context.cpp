@@ -282,11 +282,11 @@ void Context::nameTag(std::string_view value, float x, float y, float magnify, f
             drawList.freeQuad(points, uvs, vertices[i].color, z);
         }
     };
-    if (!sneaking) {
-        // The faint pass sees through terrain, but stays behind the first-person hand.
-        pass(HandDepthRange, 32, true);
+    if (sneaking) {
+        pass(depth, 32, true);
+    } else {
+        pass(HandDepthRange, 255, true);
     }
-    pass(depth, sneaking ? 128 : 255, sneaking);
 }
 
 void Context::rotatedPixelText(std::string_view value, float centerX, float centerY, float magnify, float radians, Color color)

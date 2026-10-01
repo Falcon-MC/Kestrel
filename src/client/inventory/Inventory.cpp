@@ -1,4 +1,5 @@
 #include "client/Inventory.h"
+#include "client/ContainerLayout.h"
 #include "world/ItemInfo.h"
 
 #include <algorithm>
@@ -78,8 +79,51 @@ bool InventoryModel::accepts(int slot, const ItemStack& item) const
             || name == "minecraft:firework_rocket" || name == "minecraft:map" || name == "minecraft:filled_map"
             || name == "minecraft:nautilus_shell";
     }
-    if (slot >= Craft && slot < Cursor) return slot < Craft + gridSize() * gridSize();
-    if (slot >= Container) return slot < Container + containerSize && !(furnace(type) && slot == Container + 2);
+    if (slot >= Craft && slot < Cursor) {
+        return (type == ContainerType::Inventory || type == ContainerType::Workbench) && slot < Craft + gridSize() * gridSize();
+    }
+    if (slot >= Ui) {
+        InventoryState view;
+        view.type = type;
+        for (const auto& collection : containerLayout(view).collections) {
+            if (std::find(collection.slots.begin(), collection.slots.end(), slot) != collection.slots.end()) {
+                const auto& name = item.mDefinition->getIdentifier();
+                switch (slot - Ui) {
+                case 9: return name == "minecraft:banner" || name.ends_with("_banner");
+                case 10: return name == "minecraft:dye" || name.ends_with("_dye");
+                case 11: return name.ends_with("_banner_pattern");
+                case 15: return name == "minecraft:lapis_lazuli" || (name == "minecraft:dye" && item.mDamage == 4);
+                case 27: return name == "minecraft:iron_ingot" || name == "minecraft:gold_ingot" || name == "minecraft:emerald" || name == "minecraft:diamond" || name == "minecraft:netherite_ingot";
+                case 53: return name.ends_with("_smithing_template");
+                default: return personalSlotType(slot - Ui, type) != ContainerSlotType::Unknown;
+                }
+            }
+        }
+        return false;
+    }
+    if (slot >= Container) {
+        const std::string& name = item.mDefinition->getIdentifier();
+        int index = slot - Container;
+        if (type == ContainerType::BrewingStand) {
+            if (index == 4) {
+                return name == "minecraft:blaze_powder";
+            }
+            if (index >= 1 && index <= 3) {
+                return name == "minecraft:potion" || name == "minecraft:splash_potion" || name == "minecraft:lingering_potion" || name == "minecraft:glass_bottle";
+            }
+        }
+        if (type == ContainerType::Horse && index < 2) {
+            auto equipment = mountSlots(mountIdentifier);
+            if (index == 0) {
+                return equipment.saddle && name == "minecraft:saddle";
+            }
+            return (equipment.body == MountSlots::Body::HorseArmor && name.ends_with("_horse_armor"))
+                || (equipment.body == MountSlots::Body::Carpet && (name == "minecraft:carpet" || name.ends_with("_carpet")))
+                || (equipment.body == MountSlots::Body::NautilusArmor && name.ends_with("_nautilus_armor"));
+        }
+        return slot < Container + containerSize && !(furnace(type) && slot == Container + 2)
+            && !(type == ContainerType::Crafter && (slot - Container >= 9 || (disabledSlots & (1 << (slot - Container))) != 0));
+    }
     return true;
 }
 
@@ -90,10 +134,7 @@ int InventoryModel::packetSlot(int container, int slot) const
     if (container == 120 && slot < 4) return Armor + slot;
     if (container == 119 && slot == 0) return Offhand;
     if (container == 124) {
-        if (slot == 0) return Cursor;
-        int start = gridSize() == 3 ? 32 : 28;
-        if (slot >= start && slot < start + gridSize() * gridSize()) return Craft + slot - start;
-        if (slot == 50) return Output;
+        return personalUiSlot(slot, type);
     }
     if (windowId != 0 && container == windowId && slot < 54) return Container + slot;
     return -1;
@@ -101,7 +142,23 @@ int InventoryModel::packetSlot(int container, int slot) const
 
 int InventoryModel::responseSlot(ContainerSlotType container, int slot) const
 {
+    for (int index = 1; index < 54; ++index) {
+        if (container != ContainerSlotType::Unknown && personalSlotType(index, type) == container) {
+            return personalUiSlot(index, type);
+        }
+    }
     switch (container) {
+    case ContainerSlotType::AnvilResult:
+    case ContainerSlotType::SmithingTableResult:
+    case ContainerSlotType::GrindstoneResult:
+    case ContainerSlotType::LoomResult:
+    case ContainerSlotType::StonecutterResult:
+    case ContainerSlotType::CartographyResult: return Output;
+    case ContainerSlotType::BrewingInput: return Container;
+    case ContainerSlotType::BrewingResult: return slot >= 1 && slot <= 3 ? Container + slot : -1;
+    case ContainerSlotType::BrewingFuel: return Container + 4;
+    case ContainerSlotType::HorseEquip: return slot >= 0 && slot < 2 ? Container + slot : -1;
+    case ContainerSlotType::CrafterBlockContainer: return slot >= 0 && slot < 9 ? Container + slot : -1;
     case ContainerSlotType::HotbarAndInventory:
     case ContainerSlotType::Hotbar:
     case ContainerSlotType::Inventory: return slot >= 0 && slot < 36 ? slot : -1;
@@ -133,9 +190,20 @@ ItemStackRequestSlotData InventoryModel::networkSlot(int slot) const
     else if (slot >= Craft && slot < Cursor) { data.mContainer = ContainerSlotType::CraftingInput; data.mSlot = slot - Craft + (gridSize() == 3 ? 32 : 28); }
     else if (slot == Cursor) { data.mContainer = ContainerSlotType::Cursor; data.mSlot = 0; }
     else if (slot == Output) { data.mContainer = ContainerSlotType::CreatedOutput; data.mSlot = 50; }
+    else if (slot >= Ui) {
+        data.mContainer = personalSlotType(slot - Ui, type);
+        data.mSlot = slot - Ui;
+    }
     else if (slot >= Container) {
         data.mContainer = ContainerSlotType::LevelEntity;
         data.mSlot -= Container;
+        if (type == ContainerType::BrewingStand) {
+            data.mContainer = data.mSlot == 0 ? ContainerSlotType::BrewingInput : data.mSlot == 4 ? ContainerSlotType::BrewingFuel : ContainerSlotType::BrewingResult;
+        } else if (type == ContainerType::Horse && data.mSlot < 2) {
+            data.mContainer = ContainerSlotType::HorseEquip;
+        } else if (type == ContainerType::Crafter) {
+            data.mContainer = ContainerSlotType::CrafterBlockContainer;
+        }
         if (furnace(type)) {
             data.mContainer = data.mSlot == 1 ? ContainerSlotType::FurnaceFuel : data.mSlot == 2 ? ContainerSlotType::FurnaceResult
                 : type == ContainerType::BlastFurnace ? ContainerSlotType::BlastFurnaceIngredient
@@ -154,6 +222,10 @@ int InventoryModel::move(ItemStackRequest& request, int from, int to, int count)
     ItemStack& dest = slots[to];
     if (empty(source) || (!empty(dest) && !same(source, dest))) return 0;
     int limit = to >= Armor && to <= Offhand ? 1 : maxStack(source);
+    if ((type == ContainerType::Horse && to >= Container && to < Container + 2)
+        || (type == ContainerType::BrewingStand && to >= Container + 1 && to <= Container + 3)) {
+        limit = 1;
+    }
     count = std::min({ count, source.mCount, limit - (empty(dest) ? 0 : dest.mCount) });
     if (count <= 0) return 0;
     ItemStackRequestAction action;
@@ -177,6 +249,13 @@ void InventoryModel::swap(ItemStackRequest& request, int from, int to)
         || !accepts(from, slots[to]) || !accepts(to, slots[from])) return;
     if (empty(slots[from]) && empty(slots[to])) return;
     if ((from >= Armor && from <= Offhand && slots[to].mCount > 1) || (to >= Armor && to <= Offhand && slots[from].mCount > 1)) return;
+    auto single = [&](int slot) {
+        return (type == ContainerType::Horse && slot >= Container && slot < Container + 2)
+            || (type == ContainerType::BrewingStand && slot >= Container + 1 && slot <= Container + 3);
+    };
+    if ((single(from) && slots[to].mCount > 1) || (single(to) && slots[from].mCount > 1)) {
+        return;
+    }
     ItemStackRequestAction action;
     action.mType = ItemStackRequestActionType::Swap;
     action.mSource = networkSlot(from);
@@ -208,6 +287,17 @@ void InventoryModel::quickMove(ItemStackRequest& request, int from)
     if (from < 36 && containerSize > 0) {
         for (int i = 0; i < containerSize; ++i) destinations.push_back(Container + i);
     } else if (from < 36) {
+        if (type != ContainerType::Inventory && type != ContainerType::Workbench) {
+            InventoryState view;
+            view.type = type;
+            for (const auto& collection : containerLayout(view).collections) {
+                for (int target : collection.slots) {
+                    if (target >= Ui && accepts(target, slots[from])) {
+                        destinations.push_back(target);
+                    }
+                }
+            }
+        }
         int armor = armorSlot(slots[from]);
         if (armor >= 0 && empty(slots[armor])) destinations.push_back(armor);
         if (slots[from].mDefinition->getIdentifier() == "minecraft:shield" && empty(slots[Offhand])) destinations.push_back(Offhand);
@@ -230,6 +320,18 @@ void InventoryModel::returnItems(ItemStackRequest& request)
     for (int from = Craft; from <= Cursor; ++from) {
         quickMove(request, from);
         if (!empty(slots[from])) remove(request, from, slots[from].mCount, ItemStackRequestActionType::Drop);
+    }
+    InventoryState view;
+    view.type = type;
+    for (const auto& collection : containerLayout(view).collections) {
+        for (int slot : collection.slots) {
+            if (slot >= Ui) {
+                quickMove(request, slot);
+                if (!empty(slots[slot])) {
+                    remove(request, slot, slots[slot].mCount, ItemStackRequestActionType::Drop);
+                }
+            }
+        }
     }
 }
 
@@ -254,6 +356,9 @@ const InventoryRecipe* InventoryModel::matchingRecipe(std::vector<std::pair<int,
     int size = gridSize();
     for (const auto& entry : recipes) {
         const auto& recipe = entry.recipe;
+        if (recipe.mBlockName != "crafting_table" && recipe.mBlockName != "minecraft:crafting_table") {
+            continue;
+        }
         std::vector<std::pair<int, int>> used;
         if (entry.shaped) {
             if (recipe.mWidth < 1 || recipe.mHeight < 1 || recipe.mWidth > size || recipe.mHeight > size
@@ -296,6 +401,9 @@ const InventoryRecipe* InventoryModel::matchingRecipe(std::vector<std::pair<int,
 
 bool InventoryModel::fitsGrid(const InventoryRecipe& entry) const
 {
+    if (entry.recipe.mBlockName != "crafting_table" && entry.recipe.mBlockName != "minecraft:crafting_table") {
+        return false;
+    }
     if (entry.shaped) return entry.recipe.mWidth <= gridSize() && entry.recipe.mHeight <= gridSize();
     int ingredients = int(std::count_if(entry.recipe.mInputs.begin(), entry.recipe.mInputs.end(), [](const auto& input) { return input.mHasItem; }));
     return ingredients <= gridSize() * gridSize();
@@ -334,6 +442,9 @@ bool InventoryModel::recipeGhost(int recipeNetId, std::array<HudItem, 9>& cells,
 
 bool InventoryModel::canCraft(const InventoryRecipe& entry) const
 {
+    if (!fitsGrid(entry)) {
+        return false;
+    }
     if (entry.shaped && (entry.recipe.mWidth > gridSize() || entry.recipe.mHeight > gridSize())) return false;
     std::array<int, 36> remaining {};
     for (int i = 0; i < 36; ++i) remaining[i] = empty(slots[i]) ? 0 : slots[i].mCount;
@@ -453,7 +564,55 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     ItemStackRequest request;
     request.mRequestId = requestId;
     int slot = command.slot;
+    if (command.action == InventoryAction::StationRecipe) {
+        if (type == ContainerType::Loom) {
+            auto patterns = availableLoomPatterns();
+            if (command.value >= 0 && command.value < int(patterns.size())) {
+                loomPattern = patterns[command.value];
+            }
+        } else {
+            stationRecipe = command.value;
+        }
+        return request;
+    }
+    if (command.action == InventoryAction::Rename && type == ContainerType::Anvil) {
+        stationName = command.text;
+        stationNameEdited = true;
+        return request;
+    }
+    if (command.action == InventoryAction::Enchant && type == ContainerType::Enchantment) {
+        ItemStackRequestAction enchant;
+        enchant.mType = ItemStackRequestActionType::CraftRecipe;
+        enchant.mRecipeNetworkId = command.value;
+        enchant.mNumberOfRequestedCrafts = 1;
+        request.mActions.push_back(enchant);
+        ItemStackRequestAction results;
+        results.mType = ItemStackRequestActionType::CraftResultsDeprecated;
+        results.mTimesCrafted = 1;
+        request.mActions.push_back(results);
+        return request;
+    }
+    if (command.action == InventoryAction::Beacon && type == ContainerType::Beacon) {
+        const int powers[] = { 1, 3, 11, 8, 5 };
+        if (std::find(std::begin(powers), std::end(powers), command.slot) == std::end(powers)
+            || (command.value != 0 && command.value != 10 && command.value != command.slot) || empty(slots[Ui + 27])) {
+            return request;
+        }
+        ItemStackRequestAction payment;
+        payment.mType = ItemStackRequestActionType::BeaconPayment;
+        payment.mPrimaryEffect = command.slot;
+        payment.mSecondaryEffect = command.value;
+        request.mActions.push_back(payment);
+        remove(request, Ui + 27, 1, ItemStackRequestActionType::Destroy);
+        return request;
+    }
     if (command.action == InventoryAction::Close) { returnItems(request); return request; }
+    if (command.action == InventoryAction::Destroy) {
+        if (creativeMode && slot >= 0 && slot <= Cursor && !empty(slots[slot])) {
+            remove(request, slot, slots[slot].mCount, ItemStackRequestActionType::Destroy);
+        }
+        return request;
+    }
     if (command.action == InventoryAction::Creative) {
         auto found = creative.find(command.value);
         if (!creativeMode || found == creative.end()) return request;
@@ -493,7 +652,18 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     }
     if (slot == Output || command.action == InventoryAction::Craft) {
         std::vector<std::pair<int, int>> consumption;
-        if (auto recipe = matchingRecipe(&consumption)) craft(request, *recipe, consumption, command.all || command.action == InventoryAction::QuickMove);
+        const auto* recipe = type == ContainerType::Inventory || type == ContainerType::Workbench ? matchingRecipe(&consumption) : matchingStationRecipe(&consumption);
+        if (recipe) {
+            InventoryRecipe selected = *recipe;
+            if (type != ContainerType::Inventory && type != ContainerType::Workbench) {
+                selected.output = stationRecipeResult(selected);
+            }
+            if (!empty(selected.output)) {
+                craft(request, selected, consumption, command.all || command.action == InventoryAction::QuickMove);
+            }
+        } else if (type == ContainerType::Anvil || type == ContainerType::Grindstone || type == ContainerType::Loom) {
+            takeStationOutput(request, command.action == InventoryAction::QuickMove);
+        }
         return request;
     }
     if (command.action == InventoryAction::Distribute) {
@@ -521,7 +691,7 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
         if (!empty(slots[Cursor])) for (int i = 0; i < SlotCount; ++i) {
             int room = maxStack(slots[Cursor]) - slots[Cursor].mCount;
             if (room <= 0) break;
-            if (i != Cursor && i != Output && same(slots[i], slots[Cursor])) move(request, i, Cursor, std::min(room, slots[i].mCount));
+            if (i != Cursor && i != Output && accepts(i, slots[i]) && same(slots[i], slots[Cursor])) move(request, i, Cursor, std::min(room, slots[i].mCount));
         }
         break;
     default: break;

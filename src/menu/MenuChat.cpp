@@ -6,8 +6,11 @@
 #include "ui/Utf8.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 
 namespace kestrel::menu {
@@ -24,18 +27,116 @@ constexpr size_t MaxChatHistory = 100;
 constexpr float FeedLifetimeSeconds = 10.0f;
 constexpr float FeedFadeSeconds = 1.0f;
 constexpr const char* ChatRoot = "chat.chat_screen";
-// commands_panel is the screen less 50px, and each auto_complete row is 10px tall.
+// commands_panel is the screen less 50px, and each auto_complete row is 10px tall; the
+// game keeps the last row of that panel empty above the text box.
 constexpr float ChatChromeHeight = 50.0f;
 constexpr float AutoCompleteRowHeight = 10.0f;
 constexpr const char* HelpAlias = "?";
 constexpr const char* HelpDescription = "commands.help.description";
 constexpr const char* Ellipsis = "\xE2\x80\xA6";
 constexpr const char* Italic = "\xC2\xA7o";
-constexpr const char* GreenSlash = "\xC2\xA7" "a/\xC2\xA7r";
+constexpr const char* ChatSettingsRoot = "chat_settings.chat_settings_popup";
+constexpr const char* ChatColorPrefix = "chat_";
+constexpr const char* MentionsColorPrefix = "mentions_";
+// One line of the chat font at its normal size, which line spacing adds to.
+constexpr double ChatLineHeight = 10.0;
+// Factory items remade after a settings change so their variables take effect.
+constexpr unsigned StyleSerialShift = 40;
+
+/**
+ * A color of the chat settings' font_colors list, the game's formatting
+ * colors of the same names.
+ */
+struct ChatColor {
+    const char* key;
+    const char* name;
+    float red;
+    float green;
+    float blue;
+};
+
+constexpr std::array<ChatColor, ChatColorCount> ChatColors { {
+    { "color.white", "White", 1.0f, 1.0f, 1.0f },
+    { "color.gray", "Gray", 0.667f, 0.667f, 0.667f },
+    { "color.yellow", "Yellow", 1.0f, 1.0f, 0.333f },
+    { "color.gold", "Gold", 1.0f, 0.667f, 0.0f },
+    { "color.aqua", "Aqua", 0.333f, 1.0f, 1.0f },
+    { "color.green", "Green", 0.333f, 1.0f, 0.333f },
+    { "color.light_purple", "Light Purple", 1.0f, 0.333f, 1.0f },
+} };
 
 bool blank(std::string_view text)
 {
     return std::all_of(text.begin(), text.end(), [](char c) { return c == ' ' || c == '\t'; });
+}
+
+std::string lowered(std::string_view text)
+{
+    std::string folded(text);
+    std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return folded;
+}
+
+const ChatColor& chatColor(int index)
+{
+    return ChatColors[static_cast<size_t>(std::clamp(index, 0, ChatColorCount - 1))];
+}
+
+/**
+ * A color as a bound #color reads it: its channels separated by commas.
+ */
+std::string colorChannels(const ChatColor& color)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.3f,%.3f,%.3f,1.0", color.red, color.green, color.blue);
+    return buffer;
+}
+
+/**
+ * A color as a control's color property holds it: a JSON array.
+ */
+std::string colorArray(const ChatColor& color)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "[%.3f, %.3f, %.3f]", color.red, color.green, color.blue);
+    return buffer;
+}
+
+std::string oneDecimal(float value)
+{
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+    return buffer;
+}
+
+int lineSpacingSteps()
+{
+    return static_cast<int>(std::round((MaxChatLineSpacing - MinChatLineSpacing) / ChatLineSpacingStep));
+}
+
+float snapLineSpacing(float spacing)
+{
+    int step = std::clamp(static_cast<int>(std::round((spacing - MinChatLineSpacing) / ChatLineSpacingStep)), 0, lineSpacingSteps());
+    return MinChatLineSpacing + static_cast<float>(step) * ChatLineSpacingStep;
+}
+
+/**
+ * The color index a chat settings radio names, like "#mentions_3", when it
+ * belongs to the list with that prefix.
+ */
+std::optional<int> colorPick(std::string_view name, std::string_view prefix)
+{
+    if (!name.empty() && name.front() == '#') {
+        name.remove_prefix(1);
+    }
+    if (!name.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    std::string_view digits = name.substr(prefix.size());
+    if (digits.empty() || !std::all_of(digits.begin(), digits.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; })) {
+        return std::nullopt;
+    }
+    return std::clamp(std::atoi(std::string(digits).c_str()), 0, ChatColorCount - 1);
 }
 
 /**
@@ -71,13 +172,10 @@ CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand
     if (tokenStart >= draft.size() || draft[tokenStart] != '@') {
         return hints;
     }
-    std::string query(draft.substr(tokenStart + 1));
-    std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string query = lowered(draft.substr(tokenStart + 1));
     hints.replaceFrom = tokenStart;
     for (const std::string& name : players) {
-        std::string folded = name;
-        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (folded.starts_with(query)) {
+        if (lowered(name).starts_with(query)) {
             hints.suggestions.push_back({ "@" + name + " ", {} });
         }
     }
@@ -86,9 +184,9 @@ CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand
 
 }
 
-void Menu::addChatLine(std::string text)
+void Menu::addChatLine(std::string text, ChatSource source)
 {
-    chatLines.push_back({ std::move(text), std::chrono::steady_clock::now(), ++chatSerial });
+    chatLines.push_back({ std::move(text), std::chrono::steady_clock::now(), ++chatSerial, source });
     while (chatLines.size() > MaxChatLines) {
         chatLines.pop_front();
     }
@@ -110,8 +208,77 @@ void Menu::openChat(std::string draft)
     chatToBottom = true;
 }
 
+void Menu::setChatSettings(const ChatSettings& value)
+{
+    ChatSettings clamped = value;
+    clamped.fontSize = std::clamp(value.fontSize, MinChatFontSize, MaxChatFontSize);
+    clamped.lineSpacing = snapLineSpacing(std::clamp(value.lineSpacing, MinChatLineSpacing, MaxChatLineSpacing));
+    clamped.chatColor = std::clamp(value.chatColor, 0, ChatColorCount - 1);
+    clamped.mentionsColor = std::clamp(value.mentionsColor, 0, ChatColorCount - 1);
+    if (clamped == chatOptions) {
+        return;
+    }
+    chatOptions = clamped;
+    ++chatStyleRevision;
+}
+
+/**
+ * Whether the chat settings let a line show: muting all chat hides what
+ * players say and do, muting emotes hides their emotes, and what the server
+ * or a command prints always shows.
+ */
+bool Menu::chatLineShown(const ChatLine& line) const
+{
+    if (chatOptions.muteAll && line.source != ChatSource::System) {
+        return false;
+    }
+    return !(chatOptions.muteEmotes && line.source == ChatSource::Emote);
+}
+
+/**
+ * The $chat_text_color of a line: the mentions color when a player's line
+ * names the player with an @, the chat color otherwise.
+ */
+std::string Menu::chatLineColor(const ChatLine& line) const
+{
+    bool mentioned = line.source != ChatSource::System && !displayName.empty() && lowered(line.text).find("@" + lowered(displayName)) != std::string::npos;
+    return colorArray(chatColor(mentioned ? chatOptions.mentionsColor : chatOptions.chatColor));
+}
+
+/**
+ * The font variables chat lines are made with. Mojangles keeps its one size;
+ * Noto Sans scales with the size setting, and line spacing pads each line by
+ * the share of a line above one.
+ */
+ChatStyle Menu::chatStyle() const
+{
+    ChatStyle style;
+    style.fontType = chatOptions.smoothFont ? "smooth" : "default";
+    style.fontScale = chatOptions.smoothFont ? static_cast<double>(chatOptions.fontSize) / static_cast<double>(DefaultChatFontSize) : 1.0;
+    style.linePadding = (static_cast<double>(chatOptions.lineSpacing) - 1.0) * ChatLineHeight * style.fontScale;
+    return style;
+}
+
+uint64_t Menu::chatItemSerial(const ChatLine& line) const
+{
+    return line.serial + (chatStyleRevision << StyleSerialShift);
+}
+
+void Menu::openChatSettings()
+{
+    chatSettingsOpen = true;
+    chatSettingsUi.reset();
+}
+
+void Menu::closeChatSettings()
+{
+    chatSettingsOpen = false;
+    chatSettingsClosed = true;
+}
+
 void Menu::closeChat()
 {
+    chatSettingsOpen = false;
     dialog = Dialog::None;
     field = Field::None;
     selectedField = Field::None;
@@ -213,6 +380,10 @@ bool Menu::handleChatKeys(const InputState& input)
     if (dialog != Dialog::Chat) {
         return false;
     }
+    if (chatSettingsOpen || chatSettingsClosed) {
+        chatSettingsClosed = false;
+        return input.escape || input.enter || input.tab || input.pressedKey == Key::Up || input.pressedKey == Key::Down;
+    }
     if (input.enter) {
         submitChat();
         return true;
@@ -236,6 +407,7 @@ bool Menu::handleChatKeys(const InputState& input)
 /**
  * The lines the HUD chat still shows, oldest first: hud_screen.json keeps a
  * line for its lifetime, fades it over a second and holds at most fifty.
+ * Lines the chat settings mute are left out.
  */
 std::vector<HudChatLine> Menu::hudChat() const
 {
@@ -245,7 +417,9 @@ std::vector<HudChatLine> Menu::hudChat() const
         if (std::chrono::duration<float>(now - it->arrived).count() >= FeedLifetimeSeconds + FeedFadeSeconds) {
             break;
         }
-        lines.push_back({ it->text, it->serial });
+        if (chatLineShown(*it)) {
+            lines.push_back({ it->text, chatItemSerial(*it), chatLineColor(*it) });
+        }
     }
     std::reverse(lines.begin(), lines.end());
     return lines;
@@ -318,10 +492,12 @@ void Menu::chatScreen(Context& ui, float width, float height)
     }
     if (open) {
         field = Field::Chat;
+        chatSettingsClosed = false;
     }
+    bool interactive = open && !chatSettingsOpen;
 
     using ui::UiValue;
-    size_t capacity = static_cast<size_t>(std::max(0.0f, std::floor((height - ChatChromeHeight) / AutoCompleteRowHeight)));
+    size_t capacity = static_cast<size_t>(std::max(0.0f, std::floor((height - ChatChromeHeight) / AutoCompleteRowHeight) - 1.0f));
     std::vector<ChatRow> rows = chatRows(capacity);
 
     ui::UiData data;
@@ -333,7 +509,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
     globals["#chat_visible"] = UiValue::of(rows.empty());
     globals["#scroll_chat_to_bottom"] = UiValue::of(chatToBottom);
     globals["#has_new_messages"] = UiValue::of(false);
-    globals["#keyboard_button_visible"] = UiValue::of(true);
+    globals["#keyboard_button_visible"] = UiValue::of(false);
     globals["#keyboard_being_used"] = UiValue::of(false);
     globals["#gamepad_helper_visible"] = UiValue::of(false);
     globals["#text_box_enabled"] = UiValue::of(true);
@@ -342,27 +518,28 @@ void Menu::chatScreen(Context& ui, float width, float height)
     globals["#chat_coordinate_dropdown_visible"] = UiValue::of(false);
     globals["#copy_button_enabled"] = UiValue::of(false);
     globals["#coordinates_text"] = UiValue::of(std::string());
-    globals["#cheats_on"] = UiValue::of(false);
+    globals["#cheats_on"] = UiValue::of(operatorCommands);
     for (const char* panel : { "#host_main_visible", "#host_teleport_main_visible", "#host_teleport_players_visible", "#host_time_visible", "#host_weather_visible" }) {
         globals[panel] = UiValue::of(false);
     }
 
-    std::string shown = chatDraft.starts_with('/') ? GreenSlash + chatDraft.substr(1) : chatDraft;
-    bool caretOn = std::fmod(std::chrono::duration<float>(std::chrono::steady_clock::now() - startedAt).count(), 1.0f) < 0.5f;
-    if (open && caretOn) {
-        shown += "_";
-    }
-    globals["#message_text_box_content"] = UiValue::of(std::move(shown));
+    globals["#message_text_box_content"] = UiValue::of(chatDraft);
+    chatUi->showListeningCaret(interactive);
 
     std::vector<ui::UiRow>& messages = data.collections["messages_factory"];
     std::vector<ui::UiFactoryItem>& made = data.factories["messages_factory"];
+    ChatStyle style = chatStyle();
     for (const ChatLine& line : chatLines) {
+        if (!chatLineShown(line)) {
+            continue;
+        }
         messages.push_back({ { "#text", UiValue::of(line.text) } });
         made.push_back({ "chat_screen_messages", {
-            { "$chat_font_scale_factor", UiValue::of(1.0) },
-            { "$chat_line_spacing", UiValue::of(0.0) },
-            { "$chat_font_type", UiValue::of(std::string("default")) },
-        }, line.serial });
+            { "$chat_font_scale_factor", UiValue::of(style.fontScale) },
+            { "$chat_line_spacing", UiValue::of(style.linePadding) },
+            { "$chat_font_type", UiValue::of(style.fontType) },
+            { "$chat_text_color", UiValue::of(chatLineColor(line)) },
+        }, chatItemSerial(line) });
     }
 
     std::vector<ui::UiRow>& completions = data.collections["auto_complete"];
@@ -375,7 +552,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
     }
 
     bool blocked = ui.isBlocked();
-    if (!open) {
+    if (!interactive) {
         ui.setBlocked(true);
     }
     chatUi->draw(ui, { 0.0f, 0.0f, width, height }, data);
@@ -386,6 +563,10 @@ void Menu::chatScreen(Context& ui, float width, float height)
         return;
     }
     chatToBottom = false;
+    if (chatSettingsOpen) {
+        chatSettingsScreen(ui, width, height);
+        return;
+    }
 
     for (const ui::UiEvent& event : events) {
         if (event.kind != ui::UiEvent::Kind::Button) {
@@ -404,7 +585,10 @@ void Menu::chatScreen(Context& ui, float width, float height)
                 chatRecall.reset();
                 selectedField = Field::None;
             }
-        } else if (event.name == "button.keyboard_toggle") {
+        } else if (event.name == "button.open_chat_settings") {
+            openChatSettings();
+            break;
+        } else if (event.name == "button.keyboard_toggle" || event.name == "button.host_toggle") {
             chatDraft = chatDraft == "/" ? std::string() : chatDraft.starts_with('/') ? chatDraft : "/" + chatDraft;
             chatCycle.clear();
             chatRecall.reset();
@@ -413,6 +597,119 @@ void Menu::chatScreen(Context& ui, float width, float height)
         if (dialog != Dialog::Chat) {
             break;
         }
+    }
+}
+
+/**
+ * chat_settings_menu_screen.json's popup over the chat screen, fed the way
+ * the game's chat settings controller feeds it: the mute and text to speech
+ * toggles, the font dropdown with the size and line spacing sliders, the
+ * font_colors list both color dropdowns share and the reset button. What the
+ * player changes goes straight into the chat settings.
+ */
+void Menu::chatSettingsScreen(Context& ui, float width, float height)
+{
+    if (!chatSettingsUi) {
+        chatSettingsUi = std::make_unique<ui::JsonUiScreen>(jsonUi, ChatSettingsRoot);
+    }
+    if (!chatSettingsUi->valid()) {
+        closeChatSettings();
+        return;
+    }
+
+    using ui::UiValue;
+    const ChatSettings& options = chatOptions;
+    std::string size = std::to_string(options.fontSize);
+    std::string spacing = oneDecimal(options.lineSpacing);
+    std::string noto = tr("typeface.notoSans", "Noto Sans");
+
+    ui::UiData data;
+    ui::UiRow& globals = data.globals;
+    globals["#close_button_visible"] = UiValue::of(true);
+    globals["#hide_chat"] = UiValue::of(options.muteAll);
+    globals["#toggle_emote_chat"] = UiValue::of(options.muteEmotes);
+    globals["#toggle_tts"] = UiValue::of(options.textToSpeech);
+
+    globals["#chat_typeface_visible"] = UiValue::of(true);
+    globals["#chat_typeface_dropdown_enabled"] = UiValue::of(true);
+    globals["#chat_typeface_dropdown_label"] = UiValue::of(options.smoothFont ? noto : tr("typeface.mojangles", "Mojangles"));
+    globals["#chat_font_type"] = UiValue::of(std::string(options.smoothFont ? "smooth" : "default"));
+    globals["#typeface_radio_mojangles"] = UiValue::of(!options.smoothFont);
+    globals["#typeface_radio_notoSans"] = UiValue::of(options.smoothFont);
+
+    double sizeRange = static_cast<double>(MaxChatFontSize - MinChatFontSize);
+    globals["#chat_font_size"] = UiValue::of(static_cast<double>(options.fontSize - MinChatFontSize) / sizeRange);
+    globals["#chat_font_size_enabled"] = UiValue::of(options.smoothFont);
+    globals["#chat_font_size_steps"] = UiValue::of(sizeRange + 1.0);
+    globals["#chat_font_size_custom_label"] = UiValue::of(options.smoothFont ? trf("chat.settings.fontSize", "Size: %s", { size }) : trf("chat.settings.fontSize.disabled", "Size: Available with %s", { noto }));
+    globals["#chat_font_size_text_value"] = UiValue::of(size);
+
+    double spacingRange = static_cast<double>(MaxChatLineSpacing - MinChatLineSpacing);
+    globals["#chat_line_spacing"] = UiValue::of(static_cast<double>(options.lineSpacing - MinChatLineSpacing) / spacingRange);
+    globals["#chat_line_spacing_enabled"] = UiValue::of(true);
+    globals["#chat_line_spacing_slider_label"] = UiValue::of(tr("chat.settings.lineSpacing", "Line Spacing") + ": " + trf("chat.settings.lineSpacingNumber", "x%s", { spacing }));
+    globals["#chat_line_spacing_text_value"] = UiValue::of(spacing);
+
+    std::vector<ui::UiRow>& colors = data.collections["font_colors"];
+    for (const ChatColor& color : ChatColors) {
+        colors.push_back({
+            { "#font_color", UiValue::of(colorChannels(color)) },
+            { "#font_color_label", UiValue::of(tr(color.key, color.name)) },
+        });
+    }
+    for (auto [prefix, picked] : { std::pair { ChatColorPrefix, options.chatColor }, std::pair { MentionsColorPrefix, options.mentionsColor } }) {
+        std::string list = std::string(prefix);
+        const ChatColor& color = chatColor(picked);
+        globals["#" + list + "color_dropdown_enabled"] = UiValue::of(true);
+        globals["#" + list + "color_dropdown_label"] = UiValue::of(tr(color.key, color.name));
+        globals["#" + list + "toggle_color"] = UiValue::of(colorChannels(color));
+        for (int index = 0; index < ChatColorCount; ++index) {
+            globals["#" + list + std::to_string(index)] = UiValue::of(index == picked);
+        }
+    }
+
+    chatSettingsUi->draw(ui, { 0.0f, 0.0f, width, height }, data);
+
+    ChatSettings changed = chatOptions;
+    bool close = false;
+    for (const ui::UiEvent& event : chatSettingsUi->takeEvents()) {
+        std::string_view name = event.name;
+        if (!name.empty() && name.front() == '#') {
+            name.remove_prefix(1);
+        }
+        if (event.kind == ui::UiEvent::Kind::Button) {
+            if (name == "button.close_chat_settings" || name == "button.menu_exit") {
+                close = true;
+            } else if (name == "button.reset_chat_settings") {
+                changed = ChatSettings {};
+            }
+        } else if (event.kind == ui::UiEvent::Kind::Toggle) {
+            if (name == "hide_chat") {
+                changed.muteAll = event.state;
+            } else if (name == "toggle_emote_chat") {
+                changed.muteEmotes = event.state;
+            } else if (name == "toggle_tts") {
+                changed.textToSpeech = event.state;
+            } else if (name == "typeface_radio_mojangles" && event.state) {
+                changed.smoothFont = false;
+            } else if (name == "typeface_radio_notoSans" && event.state) {
+                changed.smoothFont = true;
+            } else if (std::optional<int> pick = colorPick(name, ChatColorPrefix); pick && event.state) {
+                changed.chatColor = *pick;
+            } else if (std::optional<int> pick = colorPick(name, MentionsColorPrefix); pick && event.state) {
+                changed.mentionsColor = *pick;
+            }
+        } else if (event.kind == ui::UiEvent::Kind::Slider) {
+            if (name == "chat_font_size") {
+                changed.fontSize = MinChatFontSize + static_cast<int>(std::round(event.value * sizeRange));
+            } else if (name == "chat_line_spacing") {
+                changed.lineSpacing = snapLineSpacing(MinChatLineSpacing + static_cast<float>(event.value * spacingRange));
+            }
+        }
+    }
+    setChatSettings(changed);
+    if (close) {
+        closeChatSettings();
     }
 }
 

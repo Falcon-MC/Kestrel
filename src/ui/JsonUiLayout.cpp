@@ -273,13 +273,23 @@ float JsonUiRuntime::labelScale(const Node& node) const
 }
 
 /**
- * The face a label draws with: the classic bitmap font, or Minecraft Ten for
- * font_type MinecraftTen.
+ * The face a label draws with: the classic bitmap font, Minecraft Ten for
+ * font_type MinecraftTen or Noto Sans for font_type smooth. The type can be a
+ * binding, like the chat font the settings pick.
  */
 TextStyle JsonUiRuntime::labelStyle(const Node& node) const
 {
     std::string type = text(node, "font_type");
-    return type.rfind("MinecraftTen", 0) == 0 ? TextStyle::TenLabel : TextStyle::Pixel;
+    if (!type.empty() && (type.front() == '#' || type.front() == '(')) {
+        type = valueOf(node, "font_type").toText();
+    }
+    if (type.rfind("MinecraftTen", 0) == 0) {
+        return TextStyle::TenLabel;
+    }
+    if (type == "rune") {
+        return TextStyle::Rune;
+    }
+    return type == "smooth" ? TextStyle::SmoothLabel : TextStyle::Pixel;
 }
 
 /**
@@ -298,6 +308,7 @@ std::array<int, 2> JsonUiRuntime::gridCells(Node& node)
         }
     }
     std::string rescaling = text(node, "grid_rescaling_type");
+    items = std::max(items, int(node.gridItemCount));
     if (cell && (rescaling == "horizontal" || rescaling == "vertical")) {
         bool across = rescaling == "horizontal";
         float room = across ? node.w : node.h;
@@ -603,6 +614,9 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
             size(*child, axis, value);
             used += axis == 0 ? child->w : child->h;
         }
+        if (along && node.type == "stack_panel") {
+            used += stackedOffset(*child, axis, value);
+        }
     }
     for (Node* child : siblingSized) {
         size(*child, axis, value);
@@ -614,6 +628,20 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
             size(*child, axis, value, share);
         }
     }
+}
+
+/**
+ * How far a stack panel's child is moved along the stack by its offset. The
+ * game counts it in the room the panel's "fill" children share, so a last
+ * child pulled back by its offset still leaves the row ending flush.
+ */
+float JsonUiRuntime::stackedOffset(Node& child, int axis, float parent)
+{
+    const json::Value* offset = property(child, "offset");
+    if (!offset || !offset->isArray() || offset->mArray.size() != 2) {
+        return 0.0f;
+    }
+    return term(child, offset->mArray[static_cast<size_t>(axis)].get(), parent);
 }
 
 void JsonUiRuntime::place(Node& node, float x, float y, float z, const Rect& clip, bool clipped, float alpha)
@@ -682,18 +710,29 @@ void JsonUiRuntime::place(Node& node, float x, float y, float z, const Rect& cli
             cy -= child.scroller->scroll;
         }
         if (grid) {
+            if (child.index >= 0) {
+                cell = child.index;
+            }
             int column = fillRows ? cell % cells[0] : cell / cells[1];
             int row = fillRows ? cell / cells[0] : cell % cells[1];
             cx = x + ox + static_cast<float>(column) * child.w;
             cy = y + oy + static_cast<float>(row) * child.h;
             ++cell;
         } else if (stack) {
+            std::array<float, 2> from = anchorPoint(text(child, "anchor_from"));
+            std::array<float, 2> to = anchorPoint(text(child, "anchor_to"));
             if (vertical) {
                 cy = y + cursor + oy;
                 cursor += child.h;
+                if (!anchored) {
+                    cx += from[0] * node.w - to[0] * child.w;
+                }
             } else {
                 cx = x + cursor + ox;
                 cursor += child.w;
+                if (!anchored) {
+                    cy += from[1] * node.h - to[1] * child.h;
+                }
             }
         }
         place(child, cx, cy, z + static_cast<float>(number(child, "layer", 0.0)), childClip, childClipped, passed);

@@ -148,6 +148,8 @@ struct ActorView {
     float height = 0.0f;
     float width = 0.0f;
     bool alwaysShowName = false;
+    std::string scoreTag;
+    float nameplateDistance = 64.0f;
     std::array<uint64_t, 3> flags{};
     int variant = 0;
     int markVariant = 0;
@@ -256,6 +258,7 @@ struct PlayerView {
     bool swimming = false;
     bool flying = false;
     bool mayFly = false;
+    bool operatorCommands = false;
     float movementSpeed = 0.1f;
 
     double eyeHeight() const
@@ -584,6 +587,14 @@ public:
     void setUseHeld(bool held);
 
     /**
+     * Whether the use button is held down in game.
+     */
+    bool useIsHeld() const
+    {
+        return useHeld.load();
+    }
+
+    /**
      * Queues a pick of the block under the crosshair: the server selects it
      * in the hotbar, or gives it in creative. With data, the block entity's
      * contents come along.
@@ -688,6 +699,7 @@ private:
     std::optional<BlockHit> traceBlock(const std::array<double, 3>& origin, const std::array<float, 3>& direction, double reach);
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
+    bool openBook(int slot);
     bool holdsBlock(const ItemStack& item) const;
     static std::array<int32_t, 3> placedCell(const BlockHit& hit);
     bool replaceableAt(const std::array<int32_t, 3>& cell);

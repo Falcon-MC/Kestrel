@@ -152,7 +152,7 @@ private:
     float swingProgress();
     float swingProgressSince(double start, double now) const;
     void startSwing(double now);
-    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out);
+    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite = false);
     struct HeldAttachable {
         std::string identifier;
         world::EntityAnimator animator;
@@ -173,6 +173,7 @@ private:
     void refreshParticleBlocks(double now);
     void appendParticles(double deltaSeconds, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& opaque, std::vector<world::ModelQuadGpu>& blended);
     menu::HudSlot inventoryIcon(const HudItem& item);
+    void drawInventoryEntity(ui::Context& ui, const std::string& identifier, const ui::Rect& rect, float alpha);
     menu::HudView buildHudView();
     std::vector<menu::NameTag> buildNameTags() const;
     void countFrame(std::chrono::steady_clock::time_point now);
@@ -214,6 +215,7 @@ private:
     bool savedVsync = false;
     float savedSafeArea = menu::MaxSafeArea;
     int savedBrightness = menu::DefaultBrightness;
+    menu::ChatSettings savedChat;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";
     std::vector<uint8_t> atlasPixels;
@@ -255,6 +257,7 @@ private:
     std::unordered_map<uint64_t, ActorMotion> motions;
     HudState hudState;
     std::map<std::string, bool> itemIcons;
+    std::map<std::string, int> itemIconFrames;
     std::vector<std::shared_ptr<const world::PackFiles>> artPacks;
     std::vector<std::string> packSprites;
     bool jsonUiLoaded = false;
@@ -313,6 +316,7 @@ private:
     uint64_t actorFrame = 0;
     world::EntityAnimator handAnimator;
     world::EntityAnimator handRestAnimator;
+    world::EntityAnimator handMotionAnimator;
     world::EntityAnimator paperDollAnimator;
     HeldAttachable handAttachable;
     HeldAttachable bodyAttachable;
@@ -338,6 +342,8 @@ private:
     std::string lastHeldIdentity;
     double handUpdatedAt = 0.0;
     float handEquip = 0.0f;
+    double consumeStarted = 0.0;
+    std::string consumeIdentity;
     HudItem handItem;
     std::string heldItemKey;
     struct HeldItemFace {

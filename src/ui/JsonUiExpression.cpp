@@ -32,6 +32,16 @@ UiValue toValue(const json::Value* value)
         return UiValue::of(value->mNumber);
     case json::Value::Type::String:
         return UiValue::of(value->mString);
+    case json::Value::Type::Array: {
+        std::string result;
+        for (const auto& entry : value->mArray) {
+            if (!result.empty()) {
+                result += ',';
+            }
+            result += toValue(entry.get()).toText();
+        }
+        return UiValue::of(std::move(result));
+    }
     default:
         return {};
     }

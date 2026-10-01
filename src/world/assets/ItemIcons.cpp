@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
+#include <unordered_map>
 
 namespace kestrel::world {
 
@@ -713,6 +715,58 @@ std::vector<ModelQuad> BlockAssets::templateQuads(uint32_t modelTemplate) const
     size_t end = std::min<size_t>(quads.size(), size_t(model.quadStart) + model.quadCount);
     if (model.quadStart >= end) return {};
     return { quads.begin() + model.quadStart, quads.begin() + end };
+}
+
+/**
+ * Reads how long each item can be used from the behavior pack's items: the
+ * use_modifiers use_duration in seconds, or the older use_duration in ticks.
+ * Files that still carry a legacy identifier are stored under the item's
+ * current name.
+ */
+void BlockAssets::loadItemUseDurations(PackSource& behaviors)
+{
+    static const std::unordered_map<std::string, std::string> legacyNames {
+        { "minecraft:appleEnchanted", "minecraft:enchanted_golden_apple" },
+        { "minecraft:muttonCooked", "minecraft:cooked_mutton" },
+        { "minecraft:muttonRaw", "minecraft:mutton" },
+        { "minecraft:clownfish", "minecraft:tropical_fish" },
+        { "minecraft:fish", "minecraft:cod" },
+        { "minecraft:cooked_fish", "minecraft:cooked_cod" },
+    };
+    itemUseDurations.clear();
+    for (const std::string& entry : behaviors.archiveEntries("items")) {
+        if (entry.size() <= 5 || entry.compare(entry.size() - 5, 5, ".json") != 0) {
+            continue;
+        }
+        std::string text;
+        if (!behaviors.readArchived("items", entry, text)) {
+            continue;
+        }
+        std::unique_ptr<json::Value> document = json::parse(text);
+        const json::Value* item = document ? document->get("minecraft:item") : nullptr;
+        const json::Value* description = item ? item->get("description") : nullptr;
+        const json::Value* identifier = description ? description->get("identifier") : nullptr;
+        const json::Value* components = item ? item->get("components") : nullptr;
+        if (!identifier || !identifier->isString() || !components) {
+            continue;
+        }
+        double ticks = 0.0;
+        const json::Value* modifiers = components->get("minecraft:use_modifiers");
+        const json::Value* seconds = modifiers ? modifiers->get("use_duration") : nullptr;
+        if (seconds && seconds->isNumber()) {
+            ticks = seconds->mNumber * 20.0;
+        } else if (const json::Value* legacy = components->get("minecraft:use_duration"); legacy && legacy->isNumber()) {
+            ticks = legacy->mNumber;
+        }
+        if (!std::isfinite(ticks) || ticks < 1.0) {
+            continue;
+        }
+        std::string name = identifier->string();
+        if (auto renamed = legacyNames.find(name); renamed != legacyNames.end()) {
+            name = renamed->second;
+        }
+        itemUseDurations[name] = static_cast<int32_t>(std::lround(ticks));
+    }
 }
 
 }
