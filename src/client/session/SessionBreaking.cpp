@@ -402,7 +402,8 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
     conditions.aquaAffinity = enchantmentLevel(inventoryModel.slots[inventory::Armor], AquaAffinityEnchantment) > 0;
     conditions.onGround = tick.onGround;
     conditions.flying = tick.flying;
-    conditions.underwater = mediumAt({ tick.position.x, tick.position.y + EyeHeight, tick.position.z }) == WaterMedium;
+    double eyeHeight = tick.swimming ? 0.4 : tick.sneaking ? 1.54 : EyeHeight;
+    conditions.underwater = mediumAt({ tick.position.x, tick.position.y + eyeHeight, tick.position.z }) == WaterMedium;
 
     auto action = [&](PlayerActionType type, const std::array<int32_t, 3>& cell, int32_t face) {
         PlayerBlockActionData data;

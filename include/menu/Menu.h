@@ -568,6 +568,19 @@ public:
     }
 
     /**
+     * Whether sprinting, speed and the like may widen or narrow the view.
+     */
+    bool gameplayFov() const
+    {
+        return fovAlteredByGameplay;
+    }
+
+    void setGameplayFov(bool enabled)
+    {
+        fovAlteredByGameplay = enabled;
+    }
+
+    /**
      * The share of the screen the HUD keeps to, between MinSafeArea and
      * MaxSafeArea, the way the game stores gfx_safe_zone_all.
      */
@@ -1232,6 +1245,7 @@ private:
     int fieldOfView = DefaultFov;
     bool hidePaperDoll = false;
     bool verticalSync = false;
+    bool fovAlteredByGameplay = true;
     float safeZone = MaxSafeArea;
     int brightnessPercent = DefaultBrightness;
     std::string languageCode = "en_US";

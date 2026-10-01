@@ -7,6 +7,7 @@
 #include "client/Account.h"
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
+#include "client/ServerCamera.h"
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/LaunchOptions.h"
@@ -106,6 +107,7 @@ private:
 
     void startMods();
     void startAgent();
+    float serverFovDegrees(float settingDegrees, float deltaSeconds);
     void serveAgent();
     bool handleAgentRequest(agent::Request& request);
     void finishAgentCaptures();
@@ -215,6 +217,7 @@ private:
     int savedFov = menu::DefaultFov;
     bool savedPaperDollHidden = false;
     bool savedVsync = false;
+    bool savedGameplayFov = true;
     float savedSafeArea = menu::MaxSafeArea;
     int savedBrightness = menu::DefaultBrightness;
     menu::ChatSettings savedChat;
@@ -244,6 +247,8 @@ private:
     double nextMusicAt = 0.0;
     bool musicWasPlaying = false;
     double nextRainSoundAt = 0.0;
+    bool underwaterAudio = false;
+    float submergedSeconds = 0.0f;
     std::array<int, menu::VolumeChannelCount> savedVolumes {};
     bool worldShown = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
@@ -338,6 +343,7 @@ private:
     HeldAttachable bodyAttachable;
     double paperDollShownAt = 0.0;
     std::unordered_map<uint64_t, float> swimAmounts;
+    float localSwimAmount = 0.0f;
     std::unordered_map<uint64_t, HeldAttachable> actorAttachables;
     // When each other player's using item flag came on, since servers only send the flag.
     std::unordered_map<uint64_t, double> actorItemUseSince;
@@ -349,10 +355,27 @@ private:
     static constexpr uint64_t LocalActorId = ~0ull;
     int perspective = PerspectiveFirst;
     bool cameraDetached = false;
+    ServerCamera serverCamera;
+    double serverBoomFraction = 0.0;
+    int64_t cameraLocalUnique = 0;
+    uint64_t cameraSessionJoin = 0;
+    int32_t cameraDimension = 0;
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
     float localBodyYaw = 0.0f;
     uint32_t localSkinSlot = NoSkin;
+    struct ServerFovBlend {
+        bool active = false;
+        float from = 0.0f;
+        float to = 0.0f;
+        bool returning = false;
+        float elapsed = 0.0f;
+        float duration = 0.0f;
+        int easeType = 0;
+    };
+    CameraFovRequest cameraFovRequest;
+    uint64_t serverFovSerial = 0;
+    ServerFovBlend serverFov;
     bool localSlim = false;
     double swingStart = -1.0;
     std::string lastHeldIdentity;

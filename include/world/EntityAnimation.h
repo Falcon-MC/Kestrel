@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -161,6 +162,8 @@ struct AnimationInput {
     float maxHealth = 20.0f;
     float hurtTime = 0.0f;
     bool onGround = true;
+    float swimAmount = 0.0f;
+    std::optional<bool> inWater;
     double cameraX = 0.0;
     double cameraY = 0.0;
     double cameraZ = 0.0;

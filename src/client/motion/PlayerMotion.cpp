@@ -453,7 +453,7 @@ void PlayerMotion::simulate()
     if (!water.empty() || (isSwimming && lava.empty() && fluid.water)) {
         applyKnockback();
         applyLiquidFlow(water, false);
-        runWater(fluid, !water.empty());
+        runWater(fluid);
         return;
     }
     if (!lava.empty()) {
@@ -693,36 +693,52 @@ void PlayerMotion::runGroundAndAir()
     applyHoneyWallSlide();
 }
 
-void PlayerMotion::runWater(const Fluid& fluid, bool touchingWater)
+void PlayerMotion::runWater(const Fluid& fluid)
 {
-    if (pressingSneak) {
-        velocity.y -= WaterAscent;
-    }
-    updateSwimTravel();
-    if (jumping) {
-        if ((swimAmount > 0.0f && swimAmount < 1.0f) || (isSwimming && !touchingWater)) {
-            velocity.y = 0.0f;
-        } else {
-            velocity.y += WaterAscent;
+    if (isSwimming) {
+        float strider = std::clamp(float(depthStriderLevel), 0.0f, float(DepthStriderMaxLevel))
+            / float(DepthStriderMaxLevel) * (onGround ? 1.0f : 0.5f);
+        moveRelative(WaterAcceleration + (baseMovementSpeed - WaterAcceleration) * strider);
+        updateSwimTravel();
+        move();
+        if (collideX) velocity.x = 0.0f;
+        if (collideY) velocity.y = 0.0f;
+        if (collideZ) velocity.z = 0.0f;
+        float horizontalDrag = isSprinting ? WaterFastDrag : WaterDrag;
+        velocity = { velocity.x * horizontalDrag, velocity.y * WaterDrag, velocity.z * horizontalDrag };
+        if (levitationLevel > 0) {
+            float target = float(levitationLevel) * LevitationMultiplier;
+            velocity.y += (target - velocity.y) * 0.2f;
         }
+        return;
     }
-    float drag = isSprinting || stoppedSwimmingThisTick ? WaterFastDrag : WaterDrag;
+    if (jumping) {
+        velocity.y += WaterAscent;
+    }
+    float drag = WaterDrag;
     float acceleration = WaterAcceleration;
-    float strider = static_cast<float>(depthStriderLevel);
+    float strider = std::clamp(float(depthStriderLevel), 0.0f, float(DepthStriderMaxLevel));
     if (!onGround) {
         strider *= 0.5f;
     }
     if (strider > 0.0f) {
         float blend = strider / static_cast<float>(DepthStriderMaxLevel);
         drag += (DepthStriderDrag - drag) * blend;
-        acceleration += (movementSpeed - acceleration) * blend;
+        acceleration += (baseMovementSpeed - acceleration) * blend;
+    }
+    if (onGround) {
+        float groundFriction = AirFriction * friction(blockUnder(0.5f));
+        acceleration = movementSpeed * (0.16277136f / (groundFriction * groundFriction * groundFriction));
     }
     moveRelative(acceleration);
 
     float boxBottom = boundingBox().minY;
     move();
 
-    velocity = { velocity.x * drag, velocity.y * WaterDrag, velocity.z * drag };
+    if (collideX) velocity.x = 0.0f;
+    if (collideY) velocity.y = 0.0f;
+    if (collideZ) velocity.z = 0.0f;
+    velocity = velocity.scaled(drag);
     if (levitationLevel > 0) {
         float target = static_cast<float>(levitationLevel) * LevitationMultiplier;
         velocity.y = velocity.y + (target - velocity.y) * 0.2f;

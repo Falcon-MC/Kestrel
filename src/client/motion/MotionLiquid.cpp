@@ -249,11 +249,10 @@ void PlayerMotion::applyLiquidFlow(const std::vector<std::array<int32_t, 3>>& bl
 /**
  * Starts swimming while sprinting with the head under water and stops once
  * the player stops sprinting or leaves the water; the swim pose is as tall
- * as it is wide, and the swim amount eases toward the pose a tenth per tick.
+ * as it is wide, and the swim amount approaches the pose by 0.2 per tick.
  */
 void PlayerMotion::updateSwimming(bool inWater, MotionTick& tick)
 {
-    bool was = isSwimming;
     stoppedSwimmingThisTick = false;
     bool headLava = false;
     int32_t headDepth = 0;
@@ -261,43 +260,31 @@ void PlayerMotion::updateSwimming(bool inWater, MotionTick& tick)
     int32_t eyeBlock = floorInt(eyeY);
     bool headInWater = liquidAt(floorInt(feet.x), eyeBlock, floorInt(feet.z), headLava, headDepth) && !headLava
         && eyeY < static_cast<float>(eyeBlock) + surfaceHeight(headDepth);
-    if (isSwimming && (!isSprinting || !inWater || isFlying)) {
+    bool movingForward = impulseForward > 0.0f;
+    if (isSwimming && (!isSprinting || !movingForward || !inWater || isFlying || isGliding)) {
         isSwimming = false;
         stoppedSwimmingThisTick = true;
         tick.stopSwimming = true;
-    } else if (!isSwimming && isSprinting && inWater && headInWater && !isFlying) {
+    } else if (!isSwimming && isSprinting && movingForward && inWater && headInWater && !isFlying && !isGliding) {
         isSwimming = true;
         tick.startSwimming = true;
     }
-    swimAmount = std::clamp(swimAmount + (was ? 0.1f : -0.1f), 0.0f, 1.0f);
+    swimAmount = std::clamp(swimAmount + (isSwimming ? 0.2f : -0.2f), 0.0f, 1.0f);
     if (isSwimming) {
         height = SwimPoseHeight;
     }
 }
 
 /**
- * While swimming, steers the vertical speed toward where the player looks,
- * and holds it level at the surface when looking up with air below.
+ * While swimming, steers vertical speed toward the player's look direction.
  */
 void PlayerMotion::updateSwimTravel()
 {
-    if (!isSwimming || jumping) {
+    if (!isSwimming) {
         return;
     }
     float targetY = -sine(pitch * Pi / 180.0f);
     float rate = targetY < -0.2f ? 0.085f : 0.06f;
-    if (targetY > 0.0f && !pressingSneak) {
-        int32_t x = floorInt(feet.x);
-        int32_t z = floorInt(feet.z);
-        bool lava = false;
-        int32_t depth = 0;
-        int32_t below = floorInt(feet.y + SwimEyeProbe - 1.1f);
-        bool airBelow = !liquidAt(x, below, z, lava, depth) && !cellState(x, below, z);
-        if (airBelow && !liquidAt(x, floorInt(feet.y + SwimEyeProbe - 1.2f), z, lava, depth)) {
-            velocity.y = 0.0f;
-            return;
-        }
-    }
     velocity.y += (targetY - velocity.y) * rate;
 }
 

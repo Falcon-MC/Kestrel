@@ -376,6 +376,9 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.itemUseTicks = localItemUseTicks();
     input.engineVariables = {
         { "is_first_person", 1.0 },
+        { "swim_amount", localSwimAmount },
+        { "left_arm_swim_amount", localSwimAmount },
+        { "right_arm_swim_amount", localSwimAmount },
         { "attack_time", attackTime },
         { "player_arm_height", handEquip },
         { "is_holding_right", heldName.empty() ? 0.0 : 1.0 },
@@ -390,6 +393,10 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         { "is_horizontal_splitscreen", 0.0 },
         { "is_vertical_splitscreen", 0.0 },
     };
+    input.swimAmount = localSwimAmount;
+    if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot,
+        { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.1, eyePosition[2] }, false).first == 1;
+    input.flags[0] |= playerView.sprinting && input.inWater.value_or(false) ? uint64_t(1) << 57 : 0;
     handAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
     const std::vector<world::BoneMatrix>& matrices = handAnimator.matrices();
     if (matrices.size() != rig.bones.size()) {
@@ -617,8 +624,12 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         { "attack_time", swingProgress() },
         { "is_holding_right", held.empty() ? 0.0 : 1.0 },
         { "is_first_person", 0.0 },
-        { "swim_amount", playerView.swimming ? 1.0 : 0.0 },
+        { "swim_amount", localSwimAmount },
+        { "left_arm_swim_amount", localSwimAmount },
+        { "right_arm_swim_amount", localSwimAmount },
     };
+    input.swimAmount = localSwimAmount;
+    if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot, { self.x, self.y + 0.1, self.z }, false).first == 1;
     paperDollAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
     const std::vector<world::BoneMatrix>& matrices = paperDollAnimator.matrices();
     if (matrices.size() != rig.bones.size()) {

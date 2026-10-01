@@ -166,4 +166,28 @@ void Session::publishNearby()
     current.nearby = std::move(area);
 }
 
+void Session::publishCameraBlocks()
+{
+    auto area = std::make_shared<NearbyBlocks>();
+    area->dimension = motionDimension;
+    area->base = { (floorCell(renderedCamera[0]) >> 4) - NearbyBlocks::Radius,
+        (floorCell(renderedCamera[1]) >> 4) - NearbyBlocks::Radius,
+        (floorCell(renderedCamera[2]) >> 4) - NearbyBlocks::Radius };
+    area->assets = assets;
+    area->ids = ids;
+    size_t count = size_t(NearbyBlocks::Span) * NearbyBlocks::Span * NearbyBlocks::Span;
+    area->subChunks.resize(count);
+    area->biomes.resize(count);
+    for (int32_t sx = 0; sx < NearbyBlocks::Span; ++sx)
+        for (int32_t sy = 0; sy < NearbyBlocks::Span; ++sy)
+            for (int32_t sz = 0; sz < NearbyBlocks::Span; ++sz) {
+                world::SubChunkKey key { motionDimension, area->base[0] + sx, area->base[1] + sy, area->base[2] + sz };
+                size_t index = size_t((sx * NearbyBlocks::Span + sy) * NearbyBlocks::Span + sz);
+                area->subChunks[index] = world.store().subChunk(key);
+                area->biomes[index] = world.store().biomes(key);
+            }
+    std::lock_guard<std::mutex> guard(mutex);
+    current.cameraBlocks = std::move(area);
+}
+
 }

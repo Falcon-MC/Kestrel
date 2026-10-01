@@ -64,7 +64,19 @@ vec3 shadeWorld(vec3 rgb)
     channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
     float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
     vec3 color = rgb * inShade * pow(light, 1.0 / 2.2);
-    float amount = smoothstep(draw.fog.w, draw.params.x, length(inRelative));
+    float amount = draw.params.w == 1.0 ? clamp((length(inRelative) - draw.fog.w) / max(draw.params.x - draw.fog.w, 0.0001), 0.0, 1.0)
+        : smoothstep(draw.fog.w, draw.params.x, length(inRelative));
+    if (draw.params.w == 1.0) {
+        vec3 tint = draw.fog.rgb;
+        for (int i = 0; i < 3; ++i) {
+            float c = max(color[i], 0.0), f = max(tint[i], 0.0);
+            c = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+            f = f <= 0.04045 ? f / 12.92 : pow((f + 0.055) / 1.055, 2.4);
+            c = mix(c, f, amount);
+            color[i] = c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+        }
+        return color;
+    }
     return mix(color, draw.fog.rgb, amount);
 }
 

@@ -6,6 +6,17 @@ namespace kestrel {
 
 using namespace motion;
 
+namespace {
+
+/**
+ * How far below a scaffolding top the feet may sit and still stand on it.
+ * Scaffolding is solid only under the feet of a player standing on it who is
+ * not sneaking down; from the sides and below it lets the player through.
+ */
+constexpr float ScaffoldingTopTolerance = 1.0e-3f;
+
+}
+
 world::CollisionBox PlayerMotion::boundingBox() const
 {
     float halfWidth = width * 0.5f * scale;
@@ -79,7 +90,11 @@ bool PlayerMotion::scanCollisions(const world::CollisionBox& area, std::vector<w
                 }
                 boxes.clear();
                 table->boxes(*state, x, y, z, neighbours, boxes);
+                bool scaffolding = named(state, "scaffolding");
                 for (const world::CollisionBox& box : boxes) {
+                    if (scaffolding && (pressingSneak || feet.y < box.maxY - ScaffoldingTopTolerance)) {
+                        continue;
+                    }
                     if (box.intersects(area)) {
                         if (!found) return true;
                         found->push_back(box);

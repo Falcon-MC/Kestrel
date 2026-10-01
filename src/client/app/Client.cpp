@@ -41,7 +41,56 @@ uint64_t subChunkId(const world::SubChunkKey& key)
     return (uint64_t(uint32_t(key.x) & 0x3FFFFFu) << 42) | (uint64_t(uint32_t(key.z) & 0x3FFFFFu) << 20) | (uint64_t(uint32_t(key.y) & 0xFFFu) << 8) | uint64_t(uint32_t(key.dimension) & 0xFFu);
 }
 constexpr const char* FeaturedSpritePrefix = "dynamic/featured/";
+constexpr float SpyglassFovScale = 0.1f;
+constexpr float MaxCameraEaseSeconds = 60.0f;
+}
 
+/**
+ * The field of view in degrees once a server's camera instruction is
+ * applied: a new instruction eases from where the view stands toward its
+ * degrees, and a release eases back to the player's own setting before the
+ * setting takes over again.
+ */
+float Client::serverFovDegrees(float settingDegrees, float deltaSeconds)
+{
+    if (cameraFovRequest.serial == 0) {
+        serverFov = {};
+        serverFovSerial = 0;
+        return settingDegrees;
+    }
+    auto current = [&]() {
+        if (!serverFov.active) {
+            return settingDegrees;
+        }
+        float progress = serverFov.duration > 0.0f ? cameraEase(serverFov.easeType, serverFov.elapsed / serverFov.duration) : 1.0f;
+        float target = serverFov.returning ? settingDegrees : serverFov.to;
+        return serverFov.from + (target - serverFov.from) * progress;
+    };
+    if (cameraFovRequest.serial != serverFovSerial) {
+        serverFovSerial = cameraFovRequest.serial;
+        float from = current();
+        float duration = std::isfinite(cameraFovRequest.easeSeconds) ? std::clamp(cameraFovRequest.easeSeconds, 0.0f, MaxCameraEaseSeconds) : 0.0f;
+        bool returning = cameraFovRequest.clear || !std::isfinite(cameraFovRequest.degrees) || cameraFovRequest.degrees <= 0.0f;
+        if (returning && duration <= 0.0f) {
+            serverFov = {};
+        } else {
+            serverFov.active = true;
+            serverFov.from = from;
+            serverFov.to = returning ? settingDegrees : cameraFovRequest.degrees;
+            serverFov.returning = returning;
+            serverFov.elapsed = 0.0f;
+            serverFov.duration = duration;
+            serverFov.easeType = cameraFovRequest.easeType;
+        }
+    }
+    float degrees = current();
+    if (serverFov.active && std::isfinite(deltaSeconds) && deltaSeconds > 0.0f) {
+        serverFov.elapsed += deltaSeconds;
+        if (serverFov.returning && serverFov.elapsed >= serverFov.duration) {
+            serverFov = {};
+        }
+    }
+    return degrees;
 }
 
 Client::Client(LaunchOptions options)
@@ -136,7 +185,8 @@ int Client::run()
             std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
         }
         auto now = std::chrono::steady_clock::now();
-        float deltaSeconds = std::min(std::chrono::duration<float>(now - lastFrame).count(), 0.1f);
+        float environmentDeltaSeconds = std::clamp(std::chrono::duration<float>(now - lastFrame).count(), 0.0f, 1.0f);
+        float deltaSeconds = std::min(environmentDeltaSeconds, 0.1f);
         lastFrame = now;
         countFrame(now);
 
@@ -173,7 +223,7 @@ int Client::run()
             menu.prepareInventoryInput(window->input());
             bool captured = menu.capturesMouse() && !mods->wantsCursor();
             window->setMouseCaptured(captured);
-            camera.setBaseFov(static_cast<float>(menu.fov()) * mods->fovScale());
+            camera.setBaseFov(serverFovDegrees(static_cast<float>(menu.fov()), deltaSeconds) * mods->fovScale());
             if (playerView.active) {
                 const InputState& keys = window->input();
                 const KeyBindings& bindings = menu.keyBindings();
@@ -196,20 +246,27 @@ int Client::run()
                 session.setMotionInput(input);
                 float fovTarget = playerView.flying ? 1.1f : 1.0f;
                 fovTarget *= (playerView.movementSpeed / 0.1f + 1.0f) * 0.5f;
+                if (!menu.gameplayFov()) {
+                    fovTarget = 1.0f;
+                }
                 // Drawing a bow narrows the view as the pull tightens over its first second.
                 const HudItem& heldItem = hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))];
-                if (double drawn = localItemUseTicks(); drawn > 0.0 && heldItem.identifier == "minecraft:bow") {
+                double drawn = localItemUseTicks();
+                if (drawn > 0.0 && heldItem.identifier == "minecraft:bow") {
                     float pull = static_cast<float>(std::min(drawn / 20.0, 1.0));
                     fovTarget *= 1.0f - pull * pull * 0.15f;
                 }
                 fovTarget = std::clamp(fovTarget, 0.1f, 1.5f);
+                if (drawn > 0.0 && heldItem.identifier == "minecraft:spyglass") {
+                    fovTarget = SpyglassFovScale;
+                }
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
                 double eye = playerView.eyeHeight();
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
-                if (captured && keys.pressedKey == bindings.perspective()) {
+                if (captured && !serverCamera.controlsPerspective() && keys.pressedKey == bindings.perspective()) {
                     perspective = (perspective + 1) % 3;
                 }
                 std::array<float, 3> look = camera.forward();
@@ -229,11 +286,41 @@ int Client::run()
             camera.setHurtProgress(playerView.active && hudState.lastHurt > 0.0
                 ? static_cast<float>(std::clamp(1.0 - (secondsNow() - hudState.lastHurt) / 0.5, 0.0, 1.0)) : 0.0f);
         }
+        std::array<double, 3> playerCameraPosition { camera.x(), camera.y(), camera.z() };
+        float playerCameraYaw = camera.minecraftYaw();
+        float playerCameraPitch = camera.minecraftPitch();
+        bool playerCameraFacing = camera.isFacingSubject();
+        int playerPerspective = perspective;
+        std::optional<ActorView> renderSelf;
+        interpolateActors(secondsNow());
+        if (worldShown) {
+            if (playerView.active) renderSelf = localActorView(deltaSeconds);
+            ServerCameraContext cameraContext;
+            cameraContext.player = { eyePosition, playerCameraYaw, playerCameraPitch };
+            cameraContext.player.center = { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.9, eyePosition[2] };
+            cameraContext.base = { playerCameraPosition, playerCameraYaw + (playerCameraFacing ? 180.0f : 0.0f), playerCameraFacing ? -playerCameraPitch : playerCameraPitch };
+            cameraContext.actor = [&](int64_t id) -> std::optional<CameraSubject> {
+                if (id == cameraLocalUnique) return cameraContext.player;
+                auto actor = std::find_if(actorViews.begin(), actorViews.end(), [&](const ActorView& a) { return a.uniqueId == id; });
+                if (actor == actorViews.end()) return {};
+                double height = actor->height > 0.0f ? actor->height : 1.8 * actor->scale;
+                return CameraSubject { { actor->x, actor->y + height * 0.9, actor->z }, actor->yaw, actor->pitch,
+                    { actor->x, actor->y + height * 0.5, actor->z } };
+            };
+            cameraContext.obstruction = [&](const std::array<double, 3>& origin, const std::array<double, 3>& delta) {
+                session.setServerCameraBoom(origin, delta);
+                return serverBoomFraction;
+            };
+            serverCamera.update(camera, cameraContext, session.takeCameraEvents(), deltaSeconds);
+            if (!serverCamera.orbital()) session.setServerCameraBoom({}, {});
+            if (!serverCamera.playerEffects()) camera.setHurtProgress(0.0f);
+            cameraDetached = serverCamera.detached();
+            perspective = serverCamera.renderPerspective(playerPerspective);
+        }
         {
             Profiler::Section section(profiler, "hud");
             handleHotbarInput();
             updateGameTips();
-            interpolateActors(secondsNow());
             menu.setHud(buildHudView());
             if (!worldShown) {
                 for (const menu::SavedServer& server : store.servers()) {
@@ -355,7 +442,7 @@ int Client::run()
             saveSettings();
         }
         renderer->setVsync(menu.vsync());
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync ||menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -364,21 +451,31 @@ int Client::run()
 
         if (menu.worldVisible() || (worldShown && !terrainReleased)) {
             std::optional<modding::CameraRequest> detachedView = mods->cameraView();
-            cameraDetached = detachedView.has_value();
+            cameraDetached = detachedView.has_value() || serverCamera.detached();
             std::array<double, 3> heldPosition { camera.x(), camera.y(), camera.z() };
             float heldYaw = camera.minecraftYaw();
             float heldPitch = camera.minecraftPitch();
+            bool heldFacing = camera.isFacingSubject();
             if (detachedView) {
+                camera.setFacingSubject(false);
                 camera.setPosition(detachedView->position.x, detachedView->position.y, detachedView->position.z);
                 camera.setRotation(detachedView->rotation.yaw, detachedView->rotation.pitch);
             }
             mods->setView({ camera.x(), camera.y(), camera.z() }, { camera.minecraftYaw(), camera.minecraftPitch() });
             float renderDistance = static_cast<float>(std::max(timeState.chunkRadius, 4) * 16);
+            session.setRenderedCamera({ camera.x(), camera.y(), camera.z() });
+            auto environmentSample = seenSessionSnapshot ? session.cameraEnvironment(*seenSessionSnapshot,
+                { camera.x(), camera.y(), camera.z() }) : std::pair<uint8_t, uint32_t> { 0, 1 };
+            timeState.cameraMedium = environmentSample.first;
+            submergedSeconds = timeState.cameraMedium == 1 ? submergedSeconds + environmentDeltaSeconds : 0.0f;
+            world::BiomeColors biomeColors = blockAssets ? blockAssets->biomeTints().colors(environmentSample.second) : world::BiomeColors {};
+            float fogScale = biomeColors.waterFogRelative ? renderDistance : 1.0f;
             SkyFrame sky;
             std::vector<SkyVertex> background;
             {
                 Profiler::Section section(profiler, "sky");
-                sky = submergedIn(atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel), timeState.cameraMedium);
+                sky = submergedIn(atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel), timeState.cameraMedium,
+                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale);
                 if (blockAssets && timeState.cameraMedium == 0) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
@@ -397,10 +494,11 @@ int Client::run()
             view.animationTicks = static_cast<float>(std::fmod((secondsNow() - startSeconds) * 20.0, 1048576.0));
             view.fogColor = sky.fogColor;
             view.fogStart = sky.fogStart;
+            view.cameraMedium = timeState.cameraMedium;
             view.fogEnd = sky.fogEnd;
             view.daylight = sky.daylight;
             float brightnessLift = menu::brightnessLift(menu.brightness());
-            view.nightVision = 1.0f - (1.0f - nightVisionStrength()) * (1.0f - brightnessLift);
+            view.nightVision = 1.0f - (1.0f - (serverCamera.playerEffects() ? nightVisionStrength() : 0.0f)) * (1.0f - brightnessLift);
             view.sunDirection = sky.sunDirection;
             view.background = background.data();
             view.backgroundCount = static_cast<uint32_t>(background.size());
@@ -408,9 +506,8 @@ int Client::run()
             std::vector<world::ModelQuadGpu> entityQuads;
             {
                 Profiler::Section section(profiler, "entities");
-                std::optional<ActorView> self;
-                if (playerView.active) {
-                    self = localActorView(deltaSeconds);
+                const auto& self = renderSelf;
+                if (self) {
                     if (perspective != PerspectiveFirst || cameraDetached) {
                         actorViews.push_back(*self);
                     }
@@ -454,16 +551,18 @@ int Client::run()
             environment.rain = timeState.rainLevel;
             environment.thunder = timeState.thunderLevel;
             environment.medium = timeState.cameraMedium;
-            environment.nightVision = nightVisionStrength();
+            environment.nightVision = serverCamera.playerEffects() ? nightVisionStrength() : 0.0f;
             environment.moonPhase = sky.moonPhase;
             mods->setEnvironment(environment);
             renderer->drawWorld(view);
             mods->drawWorld(view.viewProjection, environment.camera);
             mods->drawPost(view.viewProjection);
-            if (detachedView) {
-                camera.setPosition(heldPosition[0], heldPosition[1], heldPosition[2]);
-                camera.setRotation(heldYaw, heldPitch);
-            }
+            if (soundEngine && soundEngine->ready() && !serverCamera.playerListener())
+                soundEngine->setListener({ camera.x(), camera.y(), camera.z() }, camera.forward());
+            camera.setPosition(heldPosition[0], heldPosition[1], heldPosition[2]);
+            camera.setRotation(heldYaw, heldPitch);
+            camera.setFacingSubject(heldFacing);
+            camera.setServerRoll(0.0f);
         } else {
             Profiler::Section section(profiler, "begin frame");
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
@@ -471,6 +570,13 @@ int Client::run()
         {
             Profiler::Section section(profiler, "draw ui");
             mods->drawScreen(CustomLayer::BelowUi);
+            ui::Color fade = serverCamera.fadeColor();
+            if (worldShown && fade.a) {
+                drawList.clearClip();
+                drawList.clearLayer();
+                drawList.setOrigin(0.0f, 0.0f);
+                drawList.fill({ 0, 0, float(window->width()) / scale, float(window->height()) / scale }, fade);
+            }
             renderer->drawUi(drawList);
             mods->drawScreen(CustomLayer::AboveUi);
         }
@@ -478,6 +584,11 @@ int Client::run()
             Profiler::Section section(profiler, "present gpu");
             renderer->endFrame();
         }
+        camera.setPosition(playerCameraPosition[0], playerCameraPosition[1], playerCameraPosition[2]);
+        camera.setRotation(playerCameraYaw, playerCameraPitch);
+        camera.setFacingSubject(playerCameraFacing);
+        camera.setServerRoll(0.0f);
+        perspective = playerPerspective;
         if (!agentCaptures.empty()) {
             finishAgentCaptures();
         }
@@ -1021,6 +1132,17 @@ void Client::syncSession()
 {
     auto published = session.sharedSnapshot();
     const SessionSnapshot& snapshot = *published;
+    if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
+        serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        submergedSeconds = 0.0f;
+        localSwimAmount = 0.0f;
+        serverFov = {};
+        serverFovSerial = 0;
+        serverBoomFraction = 0.0;
+        cameraSessionJoin = snapshot.joinCount;
+        cameraDimension = snapshot.dimension;
+    }
+    cameraLocalUnique = snapshot.localUniqueActorId;
     bool changed = published != seenSessionSnapshot;
     seenSessionSnapshot = std::move(published);
     if (agentSession) {
@@ -1115,6 +1237,9 @@ void Client::syncSession()
         litChunks.clear();
     }
     if (snapshot.state != SessionState::Joined) {
+        submergedSeconds = 0.0f;
+        localSwimAmount = 0.0f;
+        swimAmounts.clear();
         blockParticles.clear();
         clearParticles();
         menu.inventoryPanel().reset();
@@ -1146,7 +1271,9 @@ void Client::syncSession()
     }
     localRuntime = snapshot.localRuntimeId;
     localSkinSlot = snapshot.localSkinSlot;
+    cameraFovRequest = snapshot.state == SessionState::Joined ? snapshot.cameraFov : CameraFovRequest {};
     boomFraction = snapshot.boomFraction;
+    serverBoomFraction = snapshot.serverBoomFraction;
     localSlim = snapshot.localSlim;
     if (changed) {
         menu.setCommands(snapshot.commands);
