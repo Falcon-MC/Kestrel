@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -116,6 +117,23 @@ public:
     std::optional<BlockFilter> takeHiddenBlocks();
     void observe(const SessionSnapshot& snapshot);
     void update(float deltaSeconds);
+
+    /**
+     * Tells the mods the player changed settings; changed holds a
+     * mod::SettingsChange bit for each.
+     */
+    void settingsChanged(uint32_t changed, int fov, float guiScale, int renderDistance, const std::string& language);
+
+    /**
+     * Asks the mod with this id, or every mod when it is empty, to read its
+     * configuration again.
+     */
+    void reloadConfigs(const std::string& modId);
+
+    /**
+     * Lets the mods save before the client quits; only the first call counts.
+     */
+    void shutdown();
     void adjustMovement(MotionInput& input);
 
     // False means a mod hid it or, for sendChat, used it up as a command.
@@ -175,6 +193,16 @@ private:
         std::string error;
     };
 
+    /**
+     * What was last seen of an entity, to report it when it goes away.
+     */
+    struct SeenActor {
+        int64_t uniqueId = 0;
+        std::string identifier;
+        std::string name;
+        mod::Vec3 position;
+    };
+
     void scan();
     void loadRecord(Record& record);
     void unloadRecord(Record& record);
@@ -186,6 +214,11 @@ private:
     void reportError(size_t owner, std::string_view what);
     void registerBuiltins();
     void drainPackets();
+    void trackScreen();
+    void trackActors(const SessionSnapshot& snapshot);
+    void forgetActors();
+    void trackInventory(const SessionSnapshot& snapshot);
+    void dispatchText(InputState& input);
     std::string modName(size_t owner) const;
 
     std::unique_ptr<HostState> host;
@@ -202,9 +235,20 @@ private:
     float hudWidth = 0.0f;
     float hudHeight = 0.0f;
     SessionState lastState = SessionState::Idle;
+    float lastMouseX = -1.0f;
+    float lastMouseY = -1.0f;
     uint64_t lastJoin = 0;
     bool lastDead = false;
     int lastDimension = 0;
+    int lastScreen = 0;
+    int lastContainerType = -1;
+    bool shutDown = false;
+    std::map<uint64_t, SeenActor> seenActors;
+    std::array<HudItem, 36> seenInventory {};
+    std::array<HudItem, 4> seenArmor {};
+    HudItem seenOffhand;
+    HudItem seenCursor;
+    bool inventorySeen = false;
 };
 
 }

@@ -55,6 +55,7 @@ public:
     const BorderImage& border(std::string_view component, std::string_view state);
     void setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice = {});
     void clearDynamic(const std::string& name);
+    void reloadPackImages();
     void beginFrame() { ++useClock; }
 
     bool dirty() const

@@ -990,6 +990,9 @@ void Menu::settingsPage(Context& ui, const Rect& area)
     case SettingsPage::Mods:
         modsPage(ui, x, y, w);
         break;
+    case SettingsPage::GlobalResources:
+        globalResourcesPage(ui, x, y, w);
+        break;
     default: {
         settingsHeading(ui, x, y, w, entry ? tr(entry->key, entry->label) : tr("menu.settings", "Settings"), {});
         const char* key = "kestrel.settings.unavailable";
@@ -1006,10 +1009,6 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         case SettingsPage::Party:
             key = "kestrel.settings.unavailable.party";
             fallback = "Kestrel can't create or join parties yet, so there are no party settings.";
-            break;
-        case SettingsPage::GlobalResources:
-            key = "kestrel.settings.unavailable.globalResources";
-            fallback = "Kestrel uses the vanilla resources and the packs servers send; global resource packs aren't supported yet.";
             break;
         default:
             break;
@@ -1035,15 +1034,19 @@ void Menu::modsPage(Context& ui, float x, float& y, float w)
     };
     constexpr float ButtonWidth = 68.0f;
     constexpr float ButtonHeight = 20.0f;
+    constexpr float WideButtonWidth = 92.0f;
 
     settingsHeading(ui, x, y, w, tr("kestrel.settings.mods", "Mods"), tr("kestrel.settings.mods.description", "Turn mods on and off, reload them after an update, change their settings or remove them. Changes apply right away, even in game."));
     float rowY = y;
-    settingsRow(ui, x, y, w, tr("kestrel.settings.mods.folder", "Mods folder"), tr("kestrel.settings.mods.folder.description", "Drop mod libraries here, then rescan to load them"), 31.33f, ButtonWidth * 2.0f + 6.0f);
+    settingsRow(ui, x, y, w, tr("kestrel.settings.mods.folder", "Mods folder"), tr("kestrel.settings.mods.folder.description", "Drop mod libraries here, then rescan to load them"), 31.33f, ButtonWidth * 2.0f + WideButtonWidth + 12.0f);
     if (ui.pressableButton("mods:rescan", "pressableElevatedSecondary", tr("kestrel.settings.mods.rescan", "Rescan"), { x + w - 12.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
         act(ModAction::Kind::Rescan, {});
     }
     if (ui.pressableButton("mods:folder", "pressableElevatedSecondary", tr("kestrel.settings.mods.open", "Open"), { x + w - 12.0f - ButtonWidth * 2.0f - 6.0f, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
         act(ModAction::Kind::OpenFolder, {});
+    }
+    if (ui.pressableButton("mods:reload-configs", "pressableElevatedSecondary", tr("kestrel.settings.mods.reload_configs", "Reload configs"), { x + w - 12.0f - ButtonWidth * 2.0f - WideButtonWidth - 12.0f, rowY + 5.0f, WideButtonWidth, ButtonHeight })) {
+        act(ModAction::Kind::ReloadConfigs, {});
     }
 
     if (modEntries.empty()) {

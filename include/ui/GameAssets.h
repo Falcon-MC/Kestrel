@@ -9,6 +9,7 @@
 
 namespace kestrel::world {
 class PackSource;
+class PackFiles;
 }
 
 namespace kestrel::ui {
@@ -54,7 +55,9 @@ public:
     }
 
     bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr, NineSlice* texels = nullptr, std::vector<SpriteFrame>* frames = nullptr);
+    void setResourcePacks(std::vector<std::shared_ptr<const world::PackFiles>> packs);
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
+    bool readBaseArchived(const std::string& archive, const std::string& name, std::string& out);
     bool readHbuiImage(std::string_view name, Bitmap& out);
     std::vector<unsigned char> readHbuiFont(std::string_view name);
     std::string readHbuiText(std::string_view name);

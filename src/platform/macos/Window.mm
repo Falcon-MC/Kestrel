@@ -123,10 +123,16 @@ public:
                     break;
                 case NSEventTypeRightMouseUp:
                     state.rightMouseDown = false;
+                    state.rightMouseReleased = true;
                     break;
                 case NSEventTypeOtherMouseDown:
                     if (event.buttonNumber == 2) {
                         state.middleMousePressed = true;
+                    }
+                    break;
+                case NSEventTypeOtherMouseUp:
+                    if (event.buttonNumber == 2) {
+                        state.middleMouseReleased = true;
                     }
                     break;
                 case NSEventTypeMouseMoved:

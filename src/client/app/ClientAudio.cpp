@@ -17,8 +17,7 @@ namespace kestrel {
  */
 void Client::updateAudio(const SessionSnapshot& snapshot)
 {
-    static const std::vector<std::shared_ptr<const world::PackFiles>> noPacks;
-    const auto& packs = snapshot.state == SessionState::Joined ? snapshot.packs : noPacks;
+    const auto& packs = snapshot.state == SessionState::Joined ? snapshot.packs : globalResources.packs();
     ui::Localization::shared().setServerPacks(packs);
     if (!soundEngine || !soundEngine->ready()) {
         return;

@@ -59,10 +59,12 @@ public:
             if (button == GLFW_MOUSE_BUTTON_RIGHT) {
                 input.rightMouseDown = action != GLFW_RELEASE;
                 input.rightMousePressed |= action == GLFW_PRESS;
+                input.rightMouseReleased |= action == GLFW_RELEASE;
                 return;
             }
             if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
                 input.middleMousePressed |= action == GLFW_PRESS;
+                input.middleMouseReleased |= action == GLFW_RELEASE;
                 return;
             }
             if (button != GLFW_MOUSE_BUTTON_LEFT) {

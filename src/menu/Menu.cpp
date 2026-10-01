@@ -1507,6 +1507,7 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
     chatUi.reset();
     chatSettingsUi.reset();
     pauseUi.reset();
+    globalPackScreens.clear();
     forms.setDefinitions(jsonUi);
     inventory.setDefinitions(jsonUi);
 }

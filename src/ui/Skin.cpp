@@ -262,6 +262,18 @@ void Skin::clearDynamic(const std::string& name)
     }
 }
 
+void Skin::reloadPackImages()
+{
+    for (auto it = entries.begin(); it != entries.end();) {
+        const auto& name = it->first;
+        if (name.starts_with("ui/") || name.starts_with("textures/") || name.starts_with("font/")) {
+            release(it->second);
+            it = entries.erase(it);
+            changed = true;
+        } else ++it;
+    }
+}
+
 bool Skin::place(Entry& entry)
 {
     uint32_t w = entry.packedWidth() + 2;

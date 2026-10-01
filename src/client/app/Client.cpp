@@ -98,6 +98,7 @@ Client::Client(LaunchOptions options)
     , menu(store)
     , account(platform::dataDirectory() / "microsoft-token.json")
     , settingsFile(platform::dataDirectory() / "settings.txt")
+    , globalResources(platform::dataDirectory() / "resource_packs")
 {
     store.load();
     loadSettings();
@@ -141,6 +142,9 @@ Client::Client(LaunchOptions options)
 Client::~Client()
 {
     // Mods hold shaders on the renderer, so they go first.
+    if (mods) {
+        mods->shutdown();
+    }
     mods.reset();
     renderer.reset();
     window.reset();
@@ -185,6 +189,7 @@ int Client::run()
             std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
         }
         auto now = std::chrono::steady_clock::now();
+        updateGlobalResources();
         float environmentDeltaSeconds = std::clamp(std::chrono::duration<float>(now - lastFrame).count(), 0.0f, 1.0f);
         float deltaSeconds = std::min(environmentDeltaSeconds, 0.1f);
         lastFrame = now;
@@ -966,41 +971,46 @@ void Client::uploadAtlas(bool fontChanged)
     else if (!regions.empty()) renderer->updateUiAtlas(atlasPixels.data(), size, size, regions);
 }
 
+void Client::applyMeshUpdate(const MeshUpdate& update)
+{
+    const world::SubChunkKey& key = update.key;
+    uint64_t id = subChunkId(key);
+    if (update.mesh) {
+        ChunkMeshUpload upload;
+        upload.cubes = update.mesh->cubes.data();
+        upload.cubeCount = static_cast<uint32_t>(update.mesh->cubes.size());
+        upload.models = update.mesh->models.data();
+        upload.modelCount = static_cast<uint32_t>(update.mesh->models.size());
+        upload.translucentCubes = update.mesh->translucentCubes.data();
+        upload.translucentCubeCount = static_cast<uint32_t>(update.mesh->translucentCubes.size());
+        upload.translucentModels = update.mesh->translucentModels.data();
+        upload.translucentModelCount = static_cast<uint32_t>(update.mesh->translucentModels.size());
+        renderer->setChunkMesh(id, key.x * 16, key.y * 16, key.z * 16, upload);
+        if (update.mesh->cubes.empty() && update.mesh->models.empty()) {
+            opaqueChunks.erase(id);
+        } else {
+            opaqueChunks[id] = { key.x * 16, key.y * 16, key.z * 16 };
+        }
+        litChunks[id] = update.mesh;
+    } else {
+        renderer->removeChunkMesh(id);
+        opaqueChunks.erase(id);
+        litChunks.erase(id);
+    }
+}
+
 void Client::applyMeshUpdates()
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
     size_t uploadedBytes = 0;
     for (size_t count = 0; count < 32; ++count) {
         if (count && (std::chrono::steady_clock::now() >= deadline || uploadedBytes >= 4 * 1024 * 1024)) break;
-        auto updates = session.takeMeshUpdates(1);
+        auto updates = session.takeMeshUpdates(1, blockAssets.get());
         if (updates.empty()) break;
         const MeshUpdate& update = updates.front();
-        const world::SubChunkKey& key = update.key;
-        uint64_t id = subChunkId(key);
-        if (update.mesh) {
-            ChunkMeshUpload upload;
-            upload.cubes = update.mesh->cubes.data();
-            upload.cubeCount = static_cast<uint32_t>(update.mesh->cubes.size());
-            upload.models = update.mesh->models.data();
-            upload.modelCount = static_cast<uint32_t>(update.mesh->models.size());
-            upload.translucentCubes = update.mesh->translucentCubes.data();
-            upload.translucentCubeCount = static_cast<uint32_t>(update.mesh->translucentCubes.size());
-            upload.translucentModels = update.mesh->translucentModels.data();
-            upload.translucentModelCount = static_cast<uint32_t>(update.mesh->translucentModels.size());
-            uploadedBytes += (update.mesh->cubes.size() + update.mesh->translucentCubes.size()) * sizeof(world::PackedQuad)
-                + (update.mesh->models.size() + update.mesh->translucentModels.size()) * sizeof(world::ModelQuadGpu);
-            renderer->setChunkMesh(id, key.x * 16, key.y * 16, key.z * 16, upload);
-            if (update.mesh->cubes.empty() && update.mesh->models.empty()) {
-                opaqueChunks.erase(id);
-            } else {
-                opaqueChunks[id] = { key.x * 16, key.y * 16, key.z * 16 };
-            }
-            litChunks[id] = update.mesh;
-        } else {
-            renderer->removeChunkMesh(id);
-            opaqueChunks.erase(id);
-            litChunks.erase(id);
-        }
+        if (update.mesh) uploadedBytes += (update.mesh->cubes.size() + update.mesh->translucentCubes.size()) * sizeof(world::PackedQuad)
+            + (update.mesh->models.size() + update.mesh->translucentModels.size()) * sizeof(world::ModelQuadGpu);
+        applyMeshUpdate(update);
     }
 }
 
@@ -1155,7 +1165,7 @@ void Client::syncSession()
     }
     updateAudio(snapshot);
     static const std::vector<std::shared_ptr<const world::PackFiles>> noPacks;
-    applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : noPacks);
+    applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : globalResources.packs());
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
         shownTitle = snapshot.titleImage;
@@ -1182,6 +1192,9 @@ void Client::syncSession()
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
     if (snapshot.state == SessionState::Joined && snapshot.assets && snapshot.assets != blockAssets) {
+        renderer->clearChunkMeshes();
+        opaqueChunks.clear();
+        litChunks.clear();
         std::shared_ptr<const world::BlockAssets> assets = snapshot.assets;
         const world::TextureArray& textures = assets->textures();
         std::array<const uint8_t*, world::TextureMipLevels> mips {};
@@ -1226,6 +1239,9 @@ void Client::syncSession()
             debugLog("item textures " + std::to_string(assets->itemTextureCount()));
         }
         blockAssets = assets;
+        if (snapshot.reloadedMeshes) {
+            for (const auto& update : *snapshot.reloadedMeshes) applyMeshUpdate(update);
+        }
     }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {
         seenTeleport = snapshot.teleportCount;

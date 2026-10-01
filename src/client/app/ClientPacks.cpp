@@ -36,6 +36,8 @@ void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::Pac
         return;
     }
     artPacks = packs;
+    assets.setResourcePacks(packs);
+    skin.reloadPackImages();
     jsonUiLoaded = true;
     for (const std::string& name : packSprites) {
         skin.clearDynamic(name);
@@ -142,7 +144,7 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
     auto definitions = std::make_shared<ui::JsonUi>();
     auto readVanilla = [&](const std::string& path, std::string& text) {
         size_t slash = path.rfind('/');
-        if (slash != std::string::npos && assets.readArchived(path.substr(0, slash), path.substr(slash + 1), text)) {
+        if (slash != std::string::npos && assets.readBaseArchived(path.substr(0, slash), path.substr(slash + 1), text)) {
             return true;
         }
         std::vector<unsigned char> loose = assets.readPackFile(path);
