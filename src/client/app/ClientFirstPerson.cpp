@@ -50,10 +50,7 @@ constexpr float PlayerHeight = 1.8f;
 // The doll stays up this long after the player stops moving that way.
 constexpr double PaperDollLingerSeconds = 3.0;
 
-int16_t roundToShort(float value)
-{
-    return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
-}
+
 
 std::string lowercase(std::string text)
 {
@@ -280,15 +277,7 @@ Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float 
 world::ModelQuadGpu packQuad(const std::array<Vec3, 4>& corners, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord)
 {
     world::ModelQuadGpu gpu;
-    std::array<int16_t, 12> positions {};
-    for (size_t corner = 0; corner < 4; ++corner) {
-        for (size_t axis = 0; axis < 3; ++axis) {
-            positions[corner * 3 + axis] = roundToShort(corners[corner][axis]);
-        }
-    }
-    for (size_t word = 0; word < 6; ++word) {
-        gpu.words[word] = uint32_t(uint16_t(positions[word * 2])) | (uint32_t(uint16_t(positions[word * 2 + 1])) << 16);
-    }
+    packEntityPositions(corners, gpu.words);
     for (size_t corner = 0; corner < 4; ++corner) {
         gpu.words[6 + corner] = uint32_t(uvs[corner][0]) | (uint32_t(uvs[corner][1]) << 16);
     }
@@ -479,10 +468,16 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         }
         const world::ModelQuad& quad = rig.quads[index];
         std::array<Vec3, 4> corners;
+        Vec3 center {};
         for (size_t corner = 0; corner < 4; ++corner) {
-            corners[corner] = modelToWorld(matrices[bone], { float(quad.positions[corner][0]), float(quad.positions[corner][1]), float(quad.positions[corner][2]) });
+            Vec3 pixels { float(quad.positions[corner][0]), float(quad.positions[corner][1]), float(quad.positions[corner][2]) };
+            center = add(center, scaled(pixels, 0.25f));
+            corners[corner] = modelToWorld(matrices[bone], pixels);
         }
-        out.push_back(packQuad(corners, quad.uvs, skinLayer,(quad.flags & world::QuadFaceMask) | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
+        uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 16.0f, [&](const Vec3& pixels) {
+            return modelToWorld(matrices[bone], pixels);
+        });
+        out.push_back(packQuad(corners, quad.uvs, skinLayer, posedFace | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
     }
     std::array<std::string, 4> armor;
     for (size_t piece = 0; piece < armor.size(); ++piece) {
@@ -670,9 +665,8 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
     for (size_t index = 0; index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
         const world::ModelQuad& quad = rig.quads[index];
-        std::array<Vec3, 4> corners;
-        for (size_t corner = 0; corner < 4; ++corner) {
-            Vec3 p { quad.positions[corner][0] / 16.0f, quad.positions[corner][1] / 16.0f, quad.positions[corner][2] / 16.0f };
+        auto place = [&](const Vec3& point) {
+            Vec3 p = point;
             if (bone < matrices.size()) {
                 const world::BoneMatrix& m = matrices[bone];
                 p = {
@@ -681,9 +675,17 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
                     m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
                 };
             }
-            corners[corner] = toWorld(p);
+            return toWorld(p);
+        };
+        std::array<Vec3, 4> corners;
+        Vec3 center {};
+        for (size_t corner = 0; corner < 4; ++corner) {
+            Vec3 p { quad.positions[corner][0] / 16.0f, quad.positions[corner][1] / 16.0f, quad.positions[corner][2] / 16.0f };
+            center = add(center, scaled(p, 0.25f));
+            corners[corner] = place(p);
         }
-        out.push_back(packQuad(corners, quad.uvs, skinLayer, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | hurt));
+        uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f / 16.0f, place);
+        out.push_back(packQuad(corners, quad.uvs, skinLayer, posedFace | EntityQuadFlag | hurt));
     }
     appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
     appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
@@ -770,21 +772,44 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
         return;
     }
     std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
-    if (meshKey != heldItemKey) {
-        heldItemMesh = buildItemMesh(held, heldItemLayer(), heldItemBlock);
-        heldItemKey = meshKey;
+    auto found = heldMeshes.find(meshKey);
+    if (found == heldMeshes.end()) {
+        uint32_t slot = static_cast<uint32_t>(heldMeshes.size());
+        if (slot >= HeldItemTextureSlots) {
+            auto oldest = heldMeshes.end();
+            for (auto it = heldMeshes.begin(); it != heldMeshes.end(); ++it) {
+                if (it->second.used == heldItemFrame) continue;
+                if (oldest == heldMeshes.end() || it->second.used < oldest->second.used) oldest = it;
+            }
+            if (oldest == heldMeshes.end()) return;
+            slot = oldest->second.slot;
+            heldMeshes.erase(oldest);
+        }
+        HeldItemMesh cached;
+        cached.slot = slot;
+        cached.faces = buildItemMesh(held, heldItemLayer() + slot, cached.block);
+        found = heldMeshes.emplace(std::move(meshKey), std::move(cached)).first;
     }
-    for (const HeldItemFace& face : heldItemMesh) {
+    HeldItemMesh& mesh = found->second;
+    mesh.used = heldItemFrame;
+    for (const HeldItemFace& face : mesh.faces) {
         std::array<Vec3, 4> corners;
         for (size_t i = 0; i < 4; ++i) {
-            size_t corner = mirroredSprite && !heldItemBlock ? 3 - i : i;
-            corners[i] = place(face.corners[corner], heldItemBlock);
+            size_t corner = mirroredSprite && !mesh.block ? 3 - i : i;
+            corners[i] = place(face.corners[corner], mesh.block);
         }
         std::array<std::array<uint16_t, 2>, 4> uvs = face.uvs;
-        if (mirroredSprite && !heldItemBlock) {
+        if (mirroredSprite && !mesh.block) {
             std::reverse(uvs.begin(), uvs.end());
         }
-        out.push_back(packQuad(corners, uvs, face.material, face.shade));
+        Vec3 center {};
+        for (const Vec3& corner : face.corners) {
+            center = add(center, scaled(corner, 0.25f));
+        }
+        uint32_t posedFace = world::posedShadeFace(face.shade & world::QuadFaceMask, center, 1.0f / 16.0f, [&](const Vec3& point) {
+            return place(point, mesh.block);
+        });
+        out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace));
     }
 }
 
@@ -837,13 +862,14 @@ std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uin
                 { world::Face::NegativeX, { { { -h, h, -h }, { -h, h, h }, { -h, -h, h }, { -h, -h, -h } } } },
             };
             const std::vector<world::Material>& materials = blockAssets->materials();
+            static constexpr uint32_t SideFaceIds[6] = { 3, 4, 1, 2, 5, 6 };
             for (const Side& side : sides) {
                 uint32_t material = cube->faces[static_cast<size_t>(side.face)];
                 if (material >= materials.size()) {
                     continue;
                 }
                 uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
-                emit(side.corners, fullUv, materials[material].gpuWord(), (uint32_t(side.face) + 1) | (tint << 8));
+                emit(side.corners, fullUv, materials[material].gpuWord(), SideFaceIds[size_t(side.face)] | (tint << 8));
             }
             return mesh;
         }

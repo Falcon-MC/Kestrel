@@ -53,7 +53,7 @@ constexpr uint32_t NoClipAbility = 1u << 17;
 
 void Session::setMotionInput(const MotionInput& input)
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::lock_guard<std::mutex> guard(motionInputMutex);
     motionInput = input;
 }
 
@@ -96,6 +96,9 @@ MotionCell Session::motionCell(int32_t x, int32_t y, int32_t z)
  */
 bool Session::motionAreaLoaded(const MotionVector& feet)
 {
+    for (float coordinate : { feet.x, feet.y, feet.z }) {
+        if (!std::isfinite(coordinate) || coordinate < -1.0e9f || coordinate > 1.0e9f) return false;
+    }
     int32_t minX = static_cast<int32_t>(std::floor(feet.x - 1.0f)) >> 4;
     int32_t maxX = static_cast<int32_t>(std::floor(feet.x + 1.0f)) >> 4;
     int32_t minY = static_cast<int32_t>(std::floor(feet.y - 2.0f)) >> 4;
@@ -308,8 +311,11 @@ void Session::runMotionTick(double now)
 {
     MotionInput input;
     {
-        std::lock_guard<std::mutex> guard(mutex);
+        std::lock_guard<std::mutex> guard(motionInputMutex);
         input = motionInput;
+    }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
         input.usingItem = itemInUse.has_value();
         input.raining = current.rainLevel > 0.0f;
         int32_t jumpBoost = 0;
@@ -357,8 +363,25 @@ void Session::runMotionTick(double now)
     MotionTick tick;
     bool frozen = waitingForWorld || !motionAreaLoaded(before);
     if (!frozen) {
-        PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
-            return motionCell(x, y, z);
+        std::vector<std::pair<std::array<int32_t, 3>, std::shared_ptr<const world::SubChunk>>> subChunks;
+        PlayerMotion::CellLookup lookup = [this, &subChunks](int32_t x, int32_t y, int32_t z) {
+            std::array<int32_t, 3> key { x >> 4, y >> 4, z >> 4 };
+            auto found = std::find_if(subChunks.begin(), subChunks.end(), [&](const auto& entry) { return entry.first == key; });
+            std::shared_ptr<const world::SubChunk> sub;
+            if (found != subChunks.end()) sub = found->second;
+            else {
+                sub = world.store().subChunk({ motionDimension, key[0], key[1], key[2] });
+                if (subChunks.size() < 64) subChunks.emplace_back(key, sub);
+            }
+            if (!sub || !assets) return MotionCell {};
+            const auto& table = world::BlockCollisions::shared();
+            auto resolve = [&](uint32_t layer) -> const world::CollisionState* {
+                uint32_t value = sub->runtimeId(layer, uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15));
+                if (value == world::ImplicitAir) return nullptr;
+                if (auto state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()))) return state;
+                return assets->visual(value, ids.hashed, ids.sequential.get()).flags & world::FlagAir ? nullptr : table.fullBlock();
+            };
+            return MotionCell { resolve(0), resolve(1) };
         };
         for (const ServerMotion& impulse : serverMotions) {
             if (impulse.tick == clientTick + 1) {
@@ -598,8 +621,25 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     MotionVector kept = velocity ? *velocity : corrected->after.currentVelocity();
     corrected->after.correct(position, kept, onGround);
     PlayerMotion replay = corrected->after;
-    PlayerMotion::CellLookup lookup = [this](int32_t x, int32_t y, int32_t z) {
-        return motionCell(x, y, z);
+    std::vector<std::pair<std::array<int32_t, 3>, std::shared_ptr<const world::SubChunk>>> subChunks;
+    PlayerMotion::CellLookup lookup = [this, &subChunks](int32_t x, int32_t y, int32_t z) {
+        std::array<int32_t, 3> key { x >> 4, y >> 4, z >> 4 };
+        auto found = std::find_if(subChunks.begin(), subChunks.end(), [&](const auto& entry) { return entry.first == key; });
+        std::shared_ptr<const world::SubChunk> sub;
+        if (found != subChunks.end()) sub = found->second;
+        else {
+            sub = world.store().subChunk({ motionDimension, key[0], key[1], key[2] });
+            if (subChunks.size() < 64) subChunks.emplace_back(key, sub);
+        }
+        if (!sub || !assets) return MotionCell {};
+        const auto& table = world::BlockCollisions::shared();
+        auto resolve = [&](uint32_t layer) -> const world::CollisionState* {
+            uint32_t value = sub->runtimeId(layer, uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15));
+            if (value == world::ImplicitAir) return nullptr;
+            if (auto state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()))) return state;
+            return assets->visual(value, ids.hashed, ids.sequential.get()).flags & world::FlagAir ? nullptr : table.fullBlock();
+        };
+        return MotionCell { resolve(0), resolve(1) };
     };
     for (auto sent = std::next(corrected); sent != motionHistory.end(); ++sent) {
         replay.takeSettings(sent->after);
@@ -608,6 +648,7 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
                 replay.knockback(impulse.velocity);
             }
         }
+        subChunks.clear();
         MotionTick result = replay.step(sent->input, lookup);
         float eyeY = result.position.y + EyeHeight;
         replay.anchor({ result.position.x, eyeY - EyeHeight, result.position.z });

@@ -35,6 +35,9 @@ bool quiet(const Context& ui)
  */
 bool animating(const Node& node)
 {
+    if (!node.shown) {
+        return false;
+    }
     if (node.destroyed) {
         return true;
     }
@@ -90,34 +93,6 @@ std::string stripExtension(std::string texture)
         }
     }
     return texture;
-}
-
-/**
- * The section sign codes still in effect at the end of text, so a wrapped
- * line starts in the color and style the one before it ended in.
- */
-std::string formatting(std::string_view text)
-{
-    std::string color;
-    std::string styles;
-    for (size_t i = 0; i + 2 < text.size(); ++i) {
-        if (static_cast<unsigned char>(text[i]) != 0xC2 || static_cast<unsigned char>(text[i + 1]) != 0xA7) {
-            continue;
-        }
-        char code = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i + 2])));
-        std::string sequence(text.substr(i, 3));
-        if ((code >= '0' && code <= '9') || (code >= 'a' && code <= 'f') || (code >= 'g' && code <= 'v' && code != 'k' && code != 'l' && code != 'm' && code != 'n' && code != 'o' && code != 'r')) {
-            color = sequence;
-            styles.clear();
-        } else if (code == 'r') {
-            color.clear();
-            styles.clear();
-        } else if (code == 'k' || code == 'l' || code == 'm' || code == 'n' || code == 'o') {
-            styles += sequence;
-        }
-        i += 2;
-    }
-    return color + styles;
 }
 
 }
@@ -288,6 +263,18 @@ void JsonUiRuntime::overrideState(Node& control, Node& node)
         } else if (node.name == background || node.name == backgroundHover) {
             node.bound["#visible"] = UiValue::of(node.name == background ? !lit : lit);
         }
+    }
+}
+
+/**
+ * Drops what a sizing pass measured, so the next pass measures again with
+ * the sizes the last one gave.
+ */
+static void forgetMeasures(Node& node)
+{
+    node.measured = { false, false };
+    for (std::unique_ptr<Node>& child : node.children) {
+        forgetMeasures(*child);
     }
 }
 
@@ -887,6 +874,16 @@ void JsonUiRuntime::paint(Node& node)
         if (node.clip.w <= 0.0f || node.clip.h <= 0.0f) {
             return;
         }
+        // Custom renderers may float outside their declared control rectangle.
+        bool boundedCustom = node.type == "custom" && text(node, "renderer") == "gradient_renderer";
+        bool progress = node.type == "custom" && text(node, "renderer") == "progress_bar_renderer";
+        if (node.type == "image" || boundedCustom || progress) {
+            Rect bounds = progress ? Rect { rect.x, rect.y, rect.w + 1.0f, rect.h + 1.0f } : rect;
+            Rect visible = intersect(bounds, node.clip);
+            if (visible.w <= 0.0f || visible.h <= 0.0f) {
+                return;
+            }
+        }
         ui->setClip(node.clip);
     } else {
         ui->clearClip();
@@ -1099,36 +1096,35 @@ void JsonUiRuntime::paint(Node& node)
         float lineY = rect.y;
         float caretX = rect.x;
         float caretY = rect.y;
-        size_t start = 0;
-        std::string carried;
-        std::vector<std::string_view> wrapped;
-        while (true) {
-            size_t end = node.text.find('\n', start);
-            std::string segment = carried + node.text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            wrapped.clear();
-            if (ui->wrap(segment, style, rect.w / scale + 0.01f, wrapped) == 0) {
-                wrapped.assign(1, segment);
+        const Font::TextLayout& layout = labelLayout(node, rect.w / scale + 0.01f);
+        for (const Font::TextLine& line : layout.lines) {
+            if (lineY + LabelLineHeight * scale > bottom) {
+                return;
             }
-            for (size_t i = 0; i < wrapped.size(); ++i) {
-                if (lineY + LabelLineHeight * scale > bottom) {
-                    return;
+            float width = line.width * scale;
+            float lineX = alignment == "center" ? rect.x + std::floor((rect.w - width) * 0.5f) : alignment == "right" ? rect.right() - width : rect.x;
+            bool visible = true;
+            if (node.clipped && !line.obfuscated && !node.caret && ui->textFont().rasterScale() == ui->pixelScale() && scale > 0.0f) {
+                float margin = 2.0f / ui->pixelScale() + (shadow ? scale : 0.0f);
+                if (style != TextStyle::Pixel && style != TextStyle::Rune && !line.glyphs.empty()) {
+                    float pixels = ui->pixelScale();
+                    float extra = std::abs(std::max(1.0f, std::round(pixels * scale)) - scale * std::max(1.0f, std::round(pixels)));
+                    margin += static_cast<float>(line.glyphs.back().boldBefore + 1) * extra / pixels;
                 }
-                std::string line = i == 0 ? std::string(wrapped[i]) : carried + std::string(wrapped[i]);
-                carried = formatting(line);
-                float width = ui->measure(line, style) * scale;
-                float lineX = alignment == "center" ? rect.x + std::floor((rect.w - width) * 0.5f) : alignment == "right" ? rect.right() - width : rect.x;
-                if (shadow) {
-                    ui->textScaled(line, style, lineX + scale, lineY + scale, scale, color, true);
-                }
-                ui->textScaled(line, style, lineX, lineY, scale, color);
-                caretX = lineX + std::max(0.0f, width - scale);
-                caretY = lineY;
-                lineY += (LabelLineHeight + padding) * scale;
+                Rect ink { lineX + line.ink.x * scale - margin, lineY + line.ink.y * scale - margin,
+                    line.ink.w * scale + margin * 2.0f, line.ink.h * scale + margin * 2.0f };
+                Rect clipped = intersect(ink, node.clip);
+                visible = clipped.w > 0.0f && clipped.h > 0.0f;
             }
-            if (end == std::string::npos) {
-                break;
+            if (visible && shadow) {
+                ui->textLayoutLine(line, style, lineX + scale, lineY + scale, scale, color, true);
             }
-            start = end + 1;
+            if (visible) {
+                ui->textLayoutLine(line, style, lineX, lineY, scale, color);
+            }
+            caretX = lineX + std::max(0.0f, width - scale);
+            caretY = lineY;
+            lineY += (LabelLineHeight + padding) * scale;
         }
         if (caret) {
             paintCaret(caretX, caretY, scale, alpha);
@@ -1227,43 +1223,41 @@ void JsonUiRuntime::paintHoverText(const Node& node, float alpha)
     constexpr float Padding = 4.0f;
     constexpr float MouseGap = 12.0f;
     std::string value = lookup(node, "#hover_text").toText();
-    if (value.empty() || !root) {
+    if (value.empty() || !root || viewport.w <= 0.0f || viewport.h <= 0.0f) {
         return;
     }
     if (Localization::shared().has(value)) {
         value = tr(value, value);
     }
     float limit = static_cast<float>(number(node, "hover_text_max_width", 0.0));
-    std::vector<std::string_view> lines;
-    std::string_view rest = value;
-    while (true) {
-        size_t end = rest.find('\n');
-        std::string_view segment = rest.substr(0, end);
-        std::vector<std::string_view> wrapped;
-        if (limit <= 0.0f || ui->wrap(segment, TextStyle::Pixel, limit, wrapped) == 0) {
-            wrapped.assign(1, segment);
-        }
-        lines.insert(lines.end(), wrapped.begin(), wrapped.end());
-        if (end == std::string_view::npos) {
+    float padding = std::min(Padding, std::min(viewport.w, viewport.h) * 0.25f);
+    float available = std::max(0.01f, viewport.w - padding * 2.0f - 1.0f);
+    limit = limit > 0.0f && std::isfinite(limit) ? std::min(limit, available) : available;
+    const Font& font = ui->textFont();
+    if (hoverLayout.font != &font || hoverLayout.revision != font.revision() || hoverLayout.source != value || hoverLayout.width != limit) {
+        hoverLayout.layout = font.layout(value, TextStyle::Pixel, limit);
+        hoverLayout.font = &font;
+        hoverLayout.revision = font.revision();
+        hoverLayout.source = std::move(value);
+        hoverLayout.width = limit;
+    }
+    const Font::TextLayout& layout = hoverLayout.layout;
+    float height = static_cast<float>(layout.lines.size()) * LabelLineHeight;
+    Rect box { ui->mouseX() + MouseGap, ui->mouseY() - MouseGap,
+        std::min(viewport.w, layout.width + padding * 2.0f + 1.0f), std::min(viewport.h, height + padding * 2.0f + 1.0f) };
+    box.x = std::clamp(box.x, viewport.x, viewport.right() - box.w);
+    box.y = std::clamp(box.y, viewport.y, viewport.bottom() - box.h);
+    Color tint { 255, 255, 255, static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f) };
+    ui->setClip(viewport);
+    ui->nineSlice(box, "textures/ui/purpleBorder", tint);
+    ui->setClip({ box.x + padding, box.y + padding, std::max(0.0f, box.w - padding * 2.0f), std::max(0.0f, box.h - padding * 2.0f) });
+    float y = box.y + padding;
+    for (const Font::TextLine& line : layout.lines) {
+        if (y >= box.bottom() - padding) {
             break;
         }
-        rest.remove_prefix(end + 1);
-    }
-    float width = 0.0f;
-    for (std::string_view line : lines) {
-        width = std::max(width, ui->measure(line, TextStyle::Pixel));
-    }
-    float height = static_cast<float>(lines.size()) * LabelLineHeight;
-    Rect box { ui->mouseX() + MouseGap, ui->mouseY() - MouseGap, width + Padding * 2.0f, height + Padding * 2.0f };
-    box.x = std::min(box.x, root->w - box.w);
-    box.y = std::clamp(box.y, 0.0f, std::max(0.0f, root->h - box.h));
-    Color tint { 255, 255, 255, static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f) };
-    ui->clearClip();
-    ui->nineSlice(box, "textures/ui/purpleBorder", tint);
-    float y = box.y + Padding;
-    for (std::string_view line : lines) {
-        ui->pixelTextScaled(line, box.x + Padding + 1.0f, y + 1.0f, 1.0f, tint, true);
-        ui->pixelTextScaled(line, box.x + Padding, y, 1.0f, tint);
+        ui->textLayoutLine(line, TextStyle::Pixel, box.x + padding + 1.0f, y + 1.0f, 1.0f, tint, true);
+        ui->textLayoutLine(line, TextStyle::Pixel, box.x + padding, y, 1.0f, tint);
         y += LabelLineHeight;
     }
 }
@@ -1379,7 +1373,7 @@ void JsonUiScreen::holdButton(const std::string& id, bool held)
     }
 }
 
-void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
+void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::optional<uint64_t> generation)
 {
     if (!runtime->root) {
         return;
@@ -1388,11 +1382,17 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     r.ui = &ui;
     r.data = &data;
     r.now = secondsNow();
+    r.viewport = area;
     Node& root = *r.root;
+    bool sameData = generation ? r.laidDataSource == &data && r.laidDataGeneration == generation
+        : !r.laidDataGeneration && r.laidData == data;
 
-    if (r.laidOut && !r.virtualGrids && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
+    bool stable = r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
         && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
-        && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidHeld == r.held && r.laidData == data) {
+        && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidHeld == r.held && sameData
+        && r.laidFont == &ui.textFont() && r.laidFontRevision == ui.textFont().revision()
+        && r.laidLanguageRevision == Localization::shared().revision() && r.laidPixelScale == ui.pixelScale();
+    if (stable && (!r.virtualGrids || r.virtualGridsSettled)) {
         for (Node* node : r.painted) {
             r.paint(*node);
         }
@@ -1415,8 +1415,18 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     }
 
     root.inherited = 1.0f;
+    r.widthReadsHeight = false;
+    r.heightsKnown = false;
     r.size(root, 0, area.w);
     r.size(root, 1, area.h);
+    if (r.widthReadsHeight) {
+        forgetMeasures(root);
+        r.heightsKnown = true;
+        r.size(root, 0, area.w);
+        forgetMeasures(root);
+        r.size(root, 1, area.h);
+        r.heightsKnown = false;
+    }
 
     // Scrolling is clamped once the content is sized, and the scroll box takes the share of
     // its track the view does of the content.
@@ -1483,9 +1493,22 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data)
     }
     ui.clearClip();
     r.painted = std::move(painted);
+    r.virtualGridsSettled = stable;
     r.laidOut = true;
     r.laidArea = area;
-    r.laidData = data;
+    if (generation) {
+        if (!r.laidDataGeneration) {
+            r.laidData = {};
+        }
+    } else if (!sameData) {
+        r.laidData = data;
+    }
+    r.laidDataSource = &data;
+    r.laidDataGeneration = generation;
+    r.laidFont = &ui.textFont();
+    r.laidFontRevision = ui.textFont().revision();
+    r.laidLanguageRevision = Localization::shared().revision();
+    r.laidPixelScale = ui.pixelScale();
     r.laidMouseX = ui.mouseX();
     r.laidMouseY = ui.mouseY();
     r.laidBlocked = ui.isBlocked();

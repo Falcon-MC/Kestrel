@@ -719,12 +719,13 @@ void ParticleLibrary::load(PackSource& game, const std::vector<std::shared_ptr<c
         if (!pack) {
             continue;
         }
-        for (const auto& [path, content] : pack->files) {
+        for (const auto& path : pack->paths()) {
             if (!startsWith(path, "particles/") || !endsWith(path, ".json")) {
                 continue;
             }
             ParticleEffect effect;
-            if (parseEffect(content, effect)) {
+            auto content = pack->find(path);
+            if (content && parseEffect(*content, effect)) {
                 std::string identifier = effect.identifier;
                 effects[identifier] = std::move(effect);
             }

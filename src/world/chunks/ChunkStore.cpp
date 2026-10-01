@@ -137,6 +137,9 @@ void ChunkStore::commit(const SubChunkKey& key, SubChunk subChunk)
 {
     Column& column = columnsByKey[key.chunk()];
     auto existing = column.subChunks.find(key.y);
+    if (existing != column.subChunks.end() && existing->second->storages() == subChunk.storages()) {
+        return;
+    }
     if (subChunk.empty()) {
         if (existing != column.subChunks.end()) {
             column.subChunks.erase(existing);
@@ -159,8 +162,17 @@ bool ChunkStore::updateBlocks(const SubChunkKey& key, const std::vector<BlockUpd
     }
 
     auto existing = column->second.subChunks.find(key.y);
+    if (updates.size() == 1) {
+        const BlockUpdate& update = updates.front();
+        if (update.layer >= MaxStorageCount || update.x >= 16 || update.y >= 16 || update.z >= 16) return false;
+        uint32_t current = existing != column->second.subChunks.end()
+            ? existing->second->runtimeId(update.layer, update.x, update.y, update.z) : ImplicitAir;
+        if (current == update.runtimeId) return false;
+    }
     SubChunk updated = existing != column->second.subChunks.end() ? *existing->second : SubChunk {};
-    updated.apply(updates);
+    if (!updated.apply(updates)) {
+        return false;
+    }
     commit(key, std::move(updated));
     urgent.insert(key);
     return true;
@@ -244,6 +256,12 @@ std::set<SubChunkKey> ChunkStore::takeUrgent()
     return std::exchange(urgent, {});
 }
 
+void ChunkStore::deferDirty(const SubChunkKey& key, bool isUrgent)
+{
+    dirty.insert(key);
+    if (isUrgent) urgent.insert(key);
+}
+
 void ChunkStore::markDirty(const SubChunkKey& key)
 {
     dirty.insert(key);
@@ -256,6 +274,12 @@ void ChunkStore::markDirty(const SubChunkKey& key)
             for (int32_t dy = -1; dy <= 1; ++dy) {
                 if (column->second.subChunks.contains(key.y + dy)) {
                     dirty.insert({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+                }
+            }
+            // Every lower mesh samples this column when deciding direct sky.
+            for (const auto& [y, subChunk] : column->second.subChunks) {
+                if (y < key.y - 1) {
+                    dirty.insert({ key.dimension, key.x + dx, y, key.z + dz });
                 }
             }
         }

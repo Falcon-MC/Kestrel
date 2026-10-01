@@ -16,6 +16,7 @@
 #include "client/Session.h"
 #include "client/Social.h"
 #include "world/EntityAnimation.h"
+#include "render/Renderer.h"
 #include "world/Mesher.h"
 #include "menu/Menu.h"
 #include "menu/ServerStore.h"
@@ -38,6 +39,7 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace kestrel {
 
@@ -230,6 +232,7 @@ private:
     FreeCamera camera;
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;
+    std::shared_ptr<const SessionSnapshot> seenSessionSnapshot;
     PlayerView playerView;
     std::unique_ptr<audio::SoundEngine> soundEngine;
     std::shared_ptr<world::PackSource> vanillaSounds;
@@ -254,6 +257,20 @@ private:
     std::map<uint32_t, std::vector<uint8_t>> skinPixels;
     std::map<uint32_t, std::shared_ptr<const world::EntityRig>> skinRigs;
     std::unordered_map<uint64_t, world::EntityAnimator> animators;
+
+    /**
+     * An entity's bones as posed on the last two game ticks, drawn blended by
+     * how far the frame is into the current tick.
+     */
+    struct ActorPose {
+        std::vector<world::BoneMatrix> previous;
+        std::vector<world::BoneMatrix> current;
+        std::vector<world::BoneMatrix> interpolated;
+        std::vector<std::array<float, 24>> gpuTransforms;
+        std::vector<uint8_t> gpuTransformValid;
+        double tick = -1.0;
+    };
+    std::unordered_map<uint64_t, ActorPose> actorPoses;
     std::unordered_map<uint64_t, ActorMotion> motions;
     HudState hudState;
     std::map<std::string, bool> itemIcons;
@@ -313,7 +330,6 @@ private:
     std::optional<std::string> featuredFocus;
     bool featuredListed = false;
     bool featuredDirty = false;
-    uint64_t actorFrame = 0;
     world::EntityAnimator handAnimator;
     world::EntityAnimator handRestAnimator;
     world::EntityAnimator handMotionAnimator;
@@ -345,15 +361,34 @@ private:
     double consumeStarted = 0.0;
     std::string consumeIdentity;
     HudItem handItem;
-    std::string heldItemKey;
+    uint64_t heldItemFrame = 0;
     struct HeldItemFace {
         std::array<std::array<float, 3>, 4> corners;
         std::array<std::array<uint16_t, 2>, 4> uvs;
         uint32_t material;
         uint32_t shade;
     };
-    std::vector<HeldItemFace> heldItemMesh;
-    bool heldItemBlock = false;
+    struct HeldItemMesh {
+        std::vector<HeldItemFace> faces;
+        bool block = false;
+        uint32_t slot = 0;
+        uint64_t used = 0;
+    };
+    std::unordered_map<std::string, HeldItemMesh> heldMeshes;
+    std::vector<ActorDraw> actorDraws;
+    struct ActorGeometry {
+        uint64_t id = 0;
+        uint64_t used = 0;
+        std::vector<world::ModelQuadGpu> quads;
+    };
+    uint64_t nextActorGeometry = 1;
+    std::unordered_map<const world::EntityRig*, ActorGeometry> actorGeometry;
+    std::unordered_set<uint64_t> actorPresent;
+    std::vector<uint8_t> actorPartVisible;
+    std::vector<uint8_t> actorPartOwn;
+    std::vector<uint8_t> actorPartHidden;
+    std::vector<uint8_t> actorPartState;
+    std::vector<size_t> actorPartPath;
     std::vector<HeldItemFace> buildItemMesh(const HudItem& held, uint32_t layer, bool& block);
     struct DroppedItemMesh {
         std::vector<HeldItemFace> faces;

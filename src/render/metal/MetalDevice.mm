@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -29,6 +31,7 @@ NSString* functionName(std::string_view entry)
         { "ps_main", "ui_fragment" },
         { "vs_world", "world_vertex" },
         { "vs_model", "model_vertex" },
+        { "vs_actor", "actor_vertex" },
         { "vs_overlay", "overlay_vertex" },
         { "vs_sky", "sky_vertex" },
         { "ps_world", "world_fragment" },
@@ -130,6 +133,7 @@ public:
     id<MTLRenderPipelineState> state;
     id<MTLDepthStencilState> depth;
     bool constantsVertexOnly = false;
+    bool actorConstants = false;
 };
 
 class MetalTextureSet final : public TextureSet {
@@ -279,18 +283,52 @@ public:
         descriptor.arrayLength = desc.array ? desc.layers : 1;
         descriptor.mipmapLevelCount = desc.mipLevels;
         descriptor.usage = MTLTextureUsageShaderRead;
+        descriptor.storageMode = MTLStorageModePrivate;
         texture->texture = [device newTextureWithDescriptor:descriptor];
         return texture;
     }
 
     void uploadTexture(Texture& target, const std::vector<TextureData>& data) override
     {
+        uploadTextureAsync(target, data);
+        waitIdle();
+    }
+
+    void uploadTextureAsync(Texture& target, const std::vector<TextureData>& data) override
+    {
+        if (data.empty()) return;
         auto& texture = static_cast<MetalTexture&>(target);
+        id<MTLCommandBuffer> copy = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [copy blitCommandEncoder];
         for (const TextureData& entry : data) {
             NSUInteger w = std::max<uint32_t>(texture.description.width >> entry.mip, 1);
             NSUInteger h = std::max<uint32_t>(texture.description.height >> entry.mip, 1);
-            [texture.texture replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:entry.mip slice:entry.layer withBytes:entry.pixels bytesPerRow:w * 4 bytesPerImage:w * h * 4];
+            NSUInteger row = (w * 4 + 255) & ~NSUInteger(255);
+            id<MTLBuffer> staging = [device newBufferWithLength:row * h options:MTLResourceStorageModeShared];
+            for (NSUInteger y = 0; y < h; ++y) {
+                std::memcpy(static_cast<uint8_t*>(staging.contents) + y * row, entry.pixels + y * w * 4, w * 4);
+            }
+            [blit copyFromBuffer:staging sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:row * h sourceSize:MTLSizeMake(w, h, 1) toTexture:texture.texture destinationSlice:entry.layer destinationLevel:entry.mip destinationOrigin:MTLOriginMake(0, 0, 0)];
         }
+        [blit endEncoding];
+        [copy commit];
+    }
+
+    std::unique_ptr<Buffer> createPersistentBuffer(size_t size) override
+    {
+        id<MTLBuffer> buffer = [device newBufferWithLength:std::max<size_t>(size, 1) options:MTLResourceStorageModePrivate];
+        return std::make_unique<MetalBuffer>(buffer, size);
+    }
+
+    void uploadBuffer(Buffer& target, const void* data, size_t bytes) override
+    {
+        if (!bytes) return;
+        id<MTLBuffer> staging = [device newBufferWithBytes:data length:bytes options:MTLResourceStorageModeShared];
+        id<MTLCommandBuffer> copy = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [copy blitCommandEncoder];
+        [blit copyFromBuffer:staging sourceOffset:0 toBuffer:static_cast<MetalBuffer&>(target).buffer destinationOffset:0 size:bytes];
+        [blit endEncoding];
+        [copy commit];
     }
 
     std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) override
@@ -336,6 +374,7 @@ public:
         depth.depthWriteEnabled = desc.depthWrite ? YES : NO;
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
+        pipeline->actorConstants = desc.bindings.actorConstants;
         return pipeline;
     }
 
@@ -371,6 +410,7 @@ public:
             return submissions + 1;
         }
         dispatch_semaphore_wait(completion->slots, DISPATCH_TIME_FOREVER);
+        actorCursor = 0;
 
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
         pass.colorAttachments[0].texture = color;
@@ -426,6 +466,21 @@ public:
         if (!bound->constantsVertexOnly) {
             [encoder setFragmentBytes:values length:bytes atIndex:1];
         }
+    }
+
+    void setActorConstants(const void* values, uint32_t count) override
+    {
+        if (!encoder || !bound || !bound->actorConstants || !values || count != 36) return;
+        constexpr size_t pageBytes = 1024 * 1024;
+        constexpr size_t stride = 256;
+        size_t page = actorCursor / pageBytes;
+        size_t offset = actorCursor % pageBytes;
+        auto& pages = actorPages[frame];
+        if (page == pages.size()) pages.push_back(createBuffer(pageBytes));
+        std::memcpy(static_cast<uint8_t*>(pages[page]->mapped()) + offset, values, count * sizeof(uint32_t));
+        auto& buffer = static_cast<MetalBuffer&>(*pages[page]);
+        [encoder setVertexBuffer:buffer.buffer offset:offset atIndex:2];
+        actorCursor += stride;
     }
 
     void setTextures(const TextureSet& textures) override
@@ -630,6 +685,8 @@ private:
     const MetalTextureSet* boundTextures = nullptr;
     uint64_t submissions = 0;
     uint32_t frame = 0;
+    std::array<std::vector<std::unique_ptr<Buffer>>, FramesInFlight> actorPages;
+    size_t actorCursor = 0;
     bool captureWanted = false;
     id<MTLTexture> offscreenColor;
     id<MTLTexture> captureStaging;

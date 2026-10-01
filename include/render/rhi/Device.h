@@ -90,6 +90,7 @@ struct BindingLayout {
     bool constantsVertexOnly = false;
     uint32_t textureCount = 0;
     SamplerMode sampler = SamplerMode::PixelClamp;
+    bool actorConstants = false;
 };
 
 /**
@@ -192,6 +193,8 @@ public:
     virtual void waitIdle() = 0;
 
     virtual std::unique_ptr<Buffer> createBuffer(size_t size) = 0;
+    virtual std::unique_ptr<Buffer> createPersistentBuffer(size_t size) = 0;
+    virtual void uploadBuffer(Buffer& target, const void* data, size_t bytes) = 0;
     virtual std::unique_ptr<Texture> createTexture(const TextureDesc& desc) = 0;
 
     /**
@@ -199,6 +202,8 @@ public:
      * in place, leaving it ready for sampling.
      */
     virtual void uploadTexture(Texture& texture, const std::vector<TextureData>& data) = 0;
+    // Copies input before returning; staging survives until the queued copy completes.
+    virtual void uploadTextureAsync(Texture& texture, const std::vector<TextureData>& data) = 0;
     virtual std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) = 0;
     /**
      * Texture slots for pipelines that read count textures, 2D arrays when
@@ -225,6 +230,8 @@ public:
     virtual bool recording() const = 0;
     virtual void setPipeline(const Pipeline& pipeline) = 0;
     virtual void setConstants(const void* values, uint32_t count) = 0;
+    // Copies 36 words of actor pose data into frame-owned GPU storage.
+    virtual void setActorConstants(const void* values, uint32_t count) = 0;
     virtual void setTextures(const TextureSet& textures) = 0;
     virtual void setVertexBuffer(const Buffer& buffer, uint32_t stride, size_t bytes) = 0;
     virtual void setIndexBuffer(const Buffer& buffer, size_t bytes) = 0;

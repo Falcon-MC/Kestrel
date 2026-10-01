@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -208,7 +209,9 @@ public:
     /**
      * Lays out, draws and runs the input of the screen inside area.
      */
-    void draw(Context& ui, const Rect& area, const UiData& data);
+    // With generation, data must stay at this address for the screen's lifetime,
+    // and generation must advance on every mutation. Otherwise use the default.
+    void draw(Context& ui, const Rect& area, const UiData& data, std::optional<uint64_t> generation = std::nullopt);
 
     std::vector<UiEvent> takeEvents();
 

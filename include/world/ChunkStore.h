@@ -80,6 +80,7 @@ public:
     size_t columnCount() const;
     size_t subChunkCount() const;
     std::vector<SubChunkKey> takeDirty();
+    void deferDirty(const SubChunkKey& key, bool isUrgent = false);
 
     /**
      * The sub-chunks whose blocks changed one by one since the last call,

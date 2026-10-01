@@ -12,7 +12,8 @@ namespace kestrel {
 
 std::vector<SoundRequest> Session::takeSounds()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<SoundRequest> sounds = std::move(pendingSounds);
     pendingSounds.clear();
     return sounds;

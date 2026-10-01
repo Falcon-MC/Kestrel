@@ -57,7 +57,7 @@ void Client::loadPackGlyphs(const std::vector<std::shared_ptr<const world::PackF
     for (size_t index = 0; index < ui::Font::PixelPageCount; ++index) {
         std::string name = ui::Font::pixelPageName(index);
         for (const std::shared_ptr<const world::PackFiles>& pack : packs) {
-            const std::string* encoded = pack->find(name + ".png");
+            auto encoded = pack->find(name + ".png");
             if (!encoded) {
                 continue;
             }
@@ -161,7 +161,7 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
     }
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
         std::vector<std::string> paths = vanillaPaths;
-        if (const std::string* packDefs = (*pack)->find(UiDefsFile)) {
+        if (auto packDefs = (*pack)->find(UiDefsFile)) {
             for (std::string& path : listedUiFiles(*packDefs)) {
                 if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
                     paths.push_back(std::move(path));
@@ -169,7 +169,7 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
             }
         }
         for (const std::string& path : paths) {
-            if (const std::string* text = (*pack)->find(path)) {
+            if (auto text = (*pack)->find(path)) {
                 definitions->addFile(path, *text);
             }
         }
@@ -212,7 +212,7 @@ bool Client::loadPackTexture(const std::string& texture)
         return true;
     }
     for (const std::shared_ptr<const world::PackFiles>& pack : artPacks) {
-        const std::string* encoded = nullptr;
+        std::shared_ptr<const std::string> encoded;
         for (const char* extension : TextureExtensions) {
             if ((encoded = pack->find(texture + extension))) {
                 break;
@@ -226,7 +226,7 @@ bool Client::loadPackTexture(const std::string& texture)
             return false;
         }
         ui::NineSlice slice;
-        if (const std::string* sliceJson = pack->find(texture + ".json")) {
+        if (auto sliceJson = pack->find(texture + ".json")) {
             ui::readNineSlice(*sliceJson, slice);
         }
         float fit = bitmap.width > MaxPackTexture ? static_cast<float>(MaxPackTexture) / static_cast<float>(bitmap.width) : 1.0f;

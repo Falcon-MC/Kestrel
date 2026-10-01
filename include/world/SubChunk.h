@@ -44,7 +44,7 @@ public:
     }
 
     uint32_t runtimeId(size_t layer, uint32_t x, uint32_t y, uint32_t z) const;
-    void apply(const std::vector<BlockUpdate>& updates);
+    bool apply(const std::vector<BlockUpdate>& updates);
 
 private:
     uint8_t format = 9;

@@ -1,27 +1,24 @@
 #pragma once
-
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace kestrel::world {
-
-/**
- * The files of one resource pack sent by a server, unzipped and decrypted,
- * keyed by their path relative to the pack root.
- */
-struct PackFiles {
-    std::unordered_map<std::string, std::string> files;
-
-    const std::string* find(const std::string& path) const
-    {
-        auto found = files.find(path);
-        return found == files.end() ? nullptr : &found->second;
-    }
+class PackFiles {
+public:
+    struct Storage;
+    explicit PackFiles(std::shared_ptr<Storage> storage);
+    std::shared_ptr<const std::string> find(const std::string& path) const;
+    std::vector<std::string> paths() const;
+    std::shared_ptr<const PackFiles> withSubPack(const std::string& name) const;
+    size_t archiveBytes() const;
+    uint64_t expandedBytes() const;
+private:
+    std::shared_ptr<Storage> storage;
+    std::string subPack;
 };
-
 std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& archive, const std::string& contentKey, std::string& error);
-std::shared_ptr<const PackFiles> loadServerPackData(const std::string& archive, const std::string& contentKey, std::string& error);
-
+std::shared_ptr<const PackFiles> loadServerPackData(std::string archive, const std::string& contentKey, std::string& error);
 }

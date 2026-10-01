@@ -3,6 +3,7 @@
 #include "ui/GameAssets.h"
 #include "ui/Image.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -54,6 +55,7 @@ public:
     const BorderImage& border(std::string_view component, std::string_view state);
     void setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice = {});
     void clearDynamic(const std::string& name);
+    void beginFrame() { ++useClock; }
 
     bool dirty() const
     {
@@ -72,6 +74,9 @@ private:
         uint32_t slotWidth = 0;
         uint32_t slotHeight = 0;
         uint64_t lastUse = 0;
+        uint32_t downsample = 0;
+        uint32_t packedWidth() const { return std::max(1u, bitmap.width >> downsample); }
+        uint32_t packedHeight() const { return std::max(1u, bitmap.height >> downsample); }
     };
 
     /**

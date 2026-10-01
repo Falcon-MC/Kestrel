@@ -94,7 +94,7 @@ void main()
     }
     outColor = vec4(crack.rgb, 1.0);
 #else
-    vec4 texel = inEntity != 0u ? sampleEntity(inUv, inMaterial & 0x1fffu) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    vec4 texel = inEntity != 0u ? sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
     if ((inEntity & 4u) != 0u) texel.rgb = mix(texel.rgb, vec3(1.0, 0.0, 0.0), 0.5);
 #ifdef BLEND

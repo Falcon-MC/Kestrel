@@ -85,6 +85,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <exception>
 #include <fstream>
 #include <cstdio>
 #include <cstdlib>
@@ -212,7 +213,8 @@ std::filesystem::path packPath(const std::string& id, const std::string& version
 
 bool packMatches(const world::PackFiles& pack, const ResourcePackOffer& offer)
 {
-    const std::string* manifest = pack.find("manifest.json");
+    auto manifest = pack.find("manifest.json");
+    if (!manifest) manifest = pack.find("pack_manifest.json");
     auto document = manifest ? json::parse(*manifest) : nullptr;
     const auto* header = document ? document->get("header") : nullptr;
     const auto* uuid = header ? header->get("uuid") : nullptr;
@@ -265,7 +267,7 @@ bool savePack(const DownloadedResourcePack& pack, std::string& message)
 
 std::shared_ptr<const std::vector<uint8_t>> packTitle(const world::PackFiles& pack)
 {
-    const std::string* encoded = pack.find("textures/ui/title.png");
+    auto encoded = pack.find("textures/ui/title.png");
     std::vector<uint8_t> rgba;
     uint32_t width = 0;
     uint32_t height = 0;
@@ -383,7 +385,10 @@ bool parseHostPort(const std::string& address, std::string& host, unsigned short
 
 }
 
-Session::Session() = default;
+Session::Session()
+    : publishedSnapshot(std::make_shared<const SessionSnapshot>())
+{
+}
 
 Session::~Session()
 {
@@ -415,6 +420,7 @@ void Session::resetSnapshot(std::string name, std::string target)
     outgoingChat.clear();
     pendingForms.clear();
     outgoingForms.clear();
+    publishSnapshotLocked();
 }
 
 void Session::disconnect()
@@ -427,6 +433,7 @@ void Session::disconnect()
     if (current.state == SessionState::Joined) {
         current.state = SessionState::Idle;
     }
+    publishSnapshotLocked();
 }
 
 std::string_view Session::gameVersion()
@@ -441,8 +448,23 @@ int Session::protocolVersion()
 
 SessionSnapshot Session::snapshot() const
 {
-    std::lock_guard<std::mutex> guard(mutex);
-    return current;
+    return *sharedSnapshot();
+}
+
+std::shared_ptr<const SessionSnapshot> Session::sharedSnapshot() const
+{
+    return std::atomic_load_explicit(&publishedSnapshot, std::memory_order_acquire);
+}
+
+void Session::publishSnapshotLocked(std::shared_ptr<const SessionSnapshot> snapshot)
+{
+    if (!snapshot) snapshot = std::make_shared<const SessionSnapshot>(current);
+    auto previous = std::atomic_exchange_explicit(&publishedSnapshot, std::move(snapshot), std::memory_order_acq_rel);
+    if (previous) retiredSnapshots.push_back(std::move(previous));
+    if (std::this_thread::get_id() == snapshotProducerThread) {
+        retiredSnapshots.erase(std::remove_if(retiredSnapshots.begin(), retiredSnapshots.end(),
+            [](const auto& retired) { return retired.use_count() == 1; }), retiredSnapshots.end());
+    }
 }
 
 std::shared_ptr<const world::PackFiles> Session::cachedPack(const std::string& path)
@@ -452,9 +474,24 @@ std::shared_ptr<const world::PackFiles> Session::cachedPack(const std::string& p
     return found == packCache.end() ? nullptr : found->second;
 }
 
+void Session::cachePackLocked(const std::string& path, std::shared_ptr<const world::PackFiles> pack)
+{
+    constexpr size_t ArchiveBudget = 512ull * 1024 * 1024;
+    packCache[path] = std::move(pack);
+    size_t bytes = 0;
+    for (const auto& [key, cached] : packCache) bytes += cached->archiveBytes();
+    for (auto it = packCache.begin(); bytes > ArchiveBudget && it != packCache.end();) {
+        if (it->first == path) { ++it; continue; }
+        bytes -= it->second->archiveBytes();
+        it = packCache.erase(it);
+    }
+}
+
+
 std::vector<MeshUpdate> Session::takeMeshUpdates()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<MeshUpdate> updates = std::move(pendingUpdates);
     pendingUpdates.clear();
     return updates;
@@ -494,13 +531,14 @@ void Session::answerResourcePacks(bool download)
     current.packDownloading = download;
     current.packReceived = 0;
     current.packTotal = current.packBytes;
+    publishSnapshotLocked();
 }
 
 void Session::setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction)
 {
-    std::lock_guard<std::mutex> guard(mutex);
-    lookOrigin = origin;
-    lookDirection = direction;
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedLookOrigin = origin;
+    requestedLookDirection = direction;
 }
 
 /**
@@ -547,9 +585,18 @@ uint8_t Session::mediumAt(const std::array<double, 3>& position)
 
 void Session::setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta)
 {
-    std::lock_guard<std::mutex> guard(mutex);
-    boomOrigin = origin;
-    boomDelta = delta;
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedBoomOrigin = origin;
+    requestedBoomDelta = delta;
+}
+
+void Session::collectViewInput()
+{
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    lookOrigin = requestedLookOrigin;
+    lookDirection = requestedLookDirection;
+    boomOrigin = requestedBoomOrigin;
+    boomDelta = requestedBoomDelta;
 }
 
 /**
@@ -652,7 +699,7 @@ std::optional<TargetBlock> Session::traceTarget()
         std::string shown;
         switch (value.getType()) {
         case Tag::Type::Byte:
-            shown = value.asByte() ? "\xC2\xA7atrue" : "\xC2\xA7cfalse";
+            shown = value.asByte() ? "\xC2\xA7" "atrue" : "\xC2\xA7" "cfalse";
             break;
         case Tag::Type::Short:
             shown = std::to_string(value.asShort());
@@ -791,10 +838,11 @@ void Session::handleWorldPacket(std::string& payload)
         return;
     }
 
-    std::shared_ptr<Packet> packet = connection->decode(payload);
+    const size_t payloadSize = payload.size();
+    std::shared_ptr<Packet> packet = connection->decode(std::move(payload));
     if (!packet) {
         std::string details = std::string("Could not read ") + toString(id) + " (" + std::to_string(static_cast<int>(id)) + ")"
-            + "\nSize: " + std::to_string(payload.size()) + " bytes"
+            + "\nSize: " + std::to_string(payloadSize) + " bytes"
             + "\nError: " + connection->getLastDecodeError();
         debugLog(details);
         {
@@ -1169,7 +1217,8 @@ void Session::queueParticle(world::ParticleSpawn spawn)
 
 std::vector<world::ParticleSpawn> Session::takeParticles()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<world::ParticleSpawn> spawns = std::move(pendingParticles);
     pendingParticles.clear();
     return spawns;
@@ -1207,17 +1256,31 @@ void Session::finishDimensionChange()
 void Session::scheduleMeshes()
 {
     applyHiddenBlocks();
-    std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
-    std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
     if (!assets) {
         return;
     }
+    std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
+    std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
+    MotionVector feet = motion.position();
+    mesher->setView({ feet.x, feet.y, feet.z });
+    auto distance = [&](const world::SubChunkKey& key) {
+        double dx = double(key.x) * 16 + 8 - feet.x;
+        double dy = double(key.y) * 16 + 8 - feet.y;
+        double dz = double(key.z) * 16 + 8 - feet.z;
+        return dx * dx + dy * dy + dz * dz;
+    };
+    std::stable_sort(dirty.begin(), dirty.end(), [&](const auto& left, const auto& right) {
+        if (urgent.contains(left) != urgent.contains(right)) return urgent.contains(left);
+        return distance(left) < distance(right);
+    });
+    size_t admitted = 0;
 
     static constexpr int32_t Offsets[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
     for (const world::SubChunkKey& key : dirty) {
         uint64_t generation = ++meshGenerations[key];
         std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
         if (!center) {
+            mesher->cancel(key);
             auto existing = meshes.find(key);
             if (existing != meshes.end()) {
                 meshQuads -= existing->second->quadCount();
@@ -1225,6 +1288,10 @@ void Session::scheduleMeshes()
                 std::lock_guard<std::mutex> guard(mutex);
                 pendingUpdates.push_back({ key, nullptr });
             }
+            continue;
+        }
+        if (admitted >= world::MeshScheduler::QueueCapacity || !mesher->canSubmit(key)) {
+            world.store().deferDirty(key, urgent.contains(key));
             continue;
         }
 
@@ -1256,13 +1323,20 @@ void Session::scheduleMeshes()
         input.skyLight = key.dimension == 0;
         input.blockEntities = world.store().blockEntities(key);
         input.origin = { key.x * 16, key.y * 16, key.z * 16 };
-        mesher->submit(key, generation, std::move(input), assets, ids, urgent.contains(key));
+        if (mesher->submit(key, generation, std::move(input), assets, ids, urgent.contains(key))) {
+            ++admitted;
+        } else {
+            world.store().deferDirty(key, urgent.contains(key));
+        }
     }
 }
 
 void Session::collectMeshes()
 {
     for (world::MeshResult& result : mesher->takeResults()) {
+        if (!mesher->isCurrent(result)) {
+            continue;
+        }
         auto generation = meshGenerations.find(result.key);
         if (generation == meshGenerations.end() || generation->second != result.generation) {
             continue;
@@ -1307,28 +1381,46 @@ void Session::fail(const std::string& error)
     std::lock_guard<std::mutex> guard(mutex);
     if (cancelled) {
         current.state = SessionState::Idle;
+        publishSnapshotLocked();
         return;
     }
     current.state = SessionState::Failed;
     current.error = error;
+    publishSnapshotLocked();
 }
 
 void Session::run(std::string target, MinecraftAuthentication* authentication, std::string offlineName)
 {
-    std::optional<std::string> next = std::move(target);
-    while (next && !cancelled) {
-        std::string address = std::move(*next);
-        next = join(address, authentication, offlineName);
-        if (next) {
-            debugLog("transfer to " + *next);
-            std::string name;
-            {
-                std::lock_guard<std::mutex> guard(mutex);
-                name = current.name;
-            }
-            resetSnapshot(std::move(name), *next);
-        }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        snapshotProducerThread = std::this_thread::get_id();
     }
+    try {
+        std::optional<std::string> next = std::move(target);
+        while (next && !cancelled) {
+            std::string address = std::move(*next);
+            next = join(address, authentication, offlineName);
+            if (next) {
+                debugLog("transfer to " + *next);
+                std::string name;
+                {
+                    std::lock_guard<std::mutex> guard(mutex);
+                    name = current.name;
+                }
+                resetSnapshot(std::move(name), *next);
+            }
+        }
+    } catch (const std::exception& error) {
+        fail(error.what());
+    } catch (...) {
+        fail("Unexpected session failure");
+    }
+    std::lock_guard<std::mutex> guard(mutex);
+    if (cancelled && (current.state == SessionState::Joined || current.state == SessionState::Connecting || current.state == SessionState::Resolving)) {
+        current.state = SessionState::Idle;
+    }
+    publishSnapshotLocked();
+    snapshotProducerThread = {};
 }
 
 std::optional<std::string> Session::join(const std::string& target, MinecraftAuthentication* authentication, const std::string& offlineName)
@@ -1361,11 +1453,14 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
                 return false;
             }
             std::lock_guard<std::mutex> guard(mutex);
-            packCache[path.string()] = pack;
+            cachePackLocked(path.string(), pack);
         }
         if (auto title = packTitle(*pack)) {
             std::lock_guard<std::mutex> guard(mutex);
-            if (!current.titleImage) current.titleImage = std::move(title);
+            if (!current.titleImage) {
+                current.titleImage = std::move(title);
+                publishSnapshotLocked();
+            }
         }
         return true;
     };
@@ -1377,7 +1472,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             return false;
         }
         std::lock_guard<std::mutex> guard(mutex);
-        packCache[packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion).string()] = std::move(files);
+        cachePackLocked(packPath(pack.mOffer.mPackId, pack.mOffer.mPackVersion).string(), std::move(files));
         return true;
     };
     settings.mResourcePacks.mOffer = [this](const std::vector<ResourcePackOffer>& offers) {
@@ -1390,6 +1485,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             current.packBytes += offer.mPackSize;
             current.packSkippable = current.packSkippable && !offer.mRequired;
         }
+        publishSnapshotLocked();
     };
     settings.mResourcePacks.mDecision = [this]() {
         return static_cast<ResourcePackDecision>(packDecision.load());
@@ -1399,6 +1495,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         current.packDownloading = true;
         current.packReceived = received;
         current.packTotal = total;
+        publishSnapshotLocked();
     };
 
     std::string inviteCode = RealmsService::inviteCode(target);
@@ -1420,6 +1517,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         resolved.applyTo(settings);
         std::lock_guard<std::mutex> guard(mutex);
         current.state = SessionState::Connecting;
+        publishSnapshotLocked();
     } else if (target.rfind(RealmPrefix, 0) == 0 || !inviteCode.empty()) {
         if (!authentication) {
             fail("Sign in with Microsoft to join Realms");
@@ -1447,6 +1545,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         resolved.applyTo(settings);
         std::lock_guard<std::mutex> guard(mutex);
         current.state = SessionState::Connecting;
+        publishSnapshotLocked();
     } else if (target.rfind(ExperiencePrefix, 0) == 0) {
         if (!authentication) {
             fail("Sign in with Microsoft to join featured servers");
@@ -1459,6 +1558,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         }
         std::lock_guard<std::mutex> guard(mutex);
         current.state = SessionState::Connecting;
+        publishSnapshotLocked();
     } else if (!parseHostPort(target, settings.mHost, settings.mPort)) {
         fail("Invalid server address: " + target);
         return std::nullopt;
@@ -1474,6 +1574,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         if (id == MinecraftPacketIds::ResourcePackStack) {
             std::lock_guard<std::mutex> guard(mutex);
             current.packsResolved = true;
+            publishSnapshotLocked();
         }
     };
     settings.mDiagnostic = [](const std::string& message) { debugLog("network " + message); };
@@ -1482,6 +1583,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         std::lock_guard<std::mutex> guard(mutex);
         current.packPrompt = false;
         current.packDownloading = false;
+        publishSnapshotLocked();
     }
     for (const DownloadedResourcePack& pack : result.mResourcePacks) {
         std::string error;
@@ -1539,6 +1641,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         uuidByRuntime.clear();
         skinByUuid.clear();
         knownSkins.clear();
+        uploadedSkinPrints.clear();
         playerNames.clear();
         playerNamesByActor.clear();
         objectives.clear();
@@ -1585,6 +1688,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             std::snprintf(position, sizeof(position), "%.1f, %.1f, %.1f", startGame->mPlayerPosition.x, startGame->mPlayerPosition.y, startGame->mPlayerPosition.z);
             current.position = position;
         }
+        publishSnapshotLocked();
     }
 
     if (const std::shared_ptr<StartGamePacket>& startGame = connection->getStartGame()) {
@@ -1597,6 +1701,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     std::string assetsError;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::map<std::string, std::shared_ptr<const world::PackFiles>> usedPacks;
+    uint64_t expandedPackBytes = 0;
+    uint64_t archivedPackBytes = 0;
     std::string wantedAssets;
     for (const ResourcePackOffer& offer : result.mOfferedPacks) {
         std::filesystem::path path = packPath(offer.mPackId, offer.mPackVersion);
@@ -1619,15 +1725,29 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
                 return std::nullopt;
             }
         }
+        constexpr uint64_t MaxStackArchive = 512ull * 1024 * 1024;
+        if (pack->archiveBytes() > MaxStackArchive - archivedPackBytes) {
+            fail("Resource pack stack archives exceed memory budget");
+            return std::nullopt;
+        }
+        archivedPackBytes += pack->archiveBytes();
+        constexpr uint64_t MaxStackExpanded = 1024ull * 1024 * 1024;
+        if (pack->expandedBytes() > MaxStackExpanded - expandedPackBytes) {
+            fail("Resource pack stack expansion exceeds memory budget");
+            return std::nullopt;
+        }
+        expandedPackBytes += pack->expandedBytes();
+        usedPacks[path.string()] = pack;
+        pack = pack->withSubPack(offer.mSubPackName);
         std::shared_ptr<const std::vector<uint8_t>> title = packTitle(*pack);
         {
             std::lock_guard<std::mutex> guard(mutex);
             if (title && !current.titleImage) {
                 current.titleImage = std::move(title);
+                publishSnapshotLocked();
             }
         }
-        wantedAssets += path.string() + '\n';
-        usedPacks[path.string()] = pack;
+        wantedAssets += path.string() + ':' + offer.mSubPackName + '\n';
         packs.push_back(std::move(pack));
     }
     {
@@ -1707,19 +1827,31 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             debugLog("texture layers " + std::to_string(assets->textures().layers) + ", model templates " + std::to_string(assets->modelTemplates().size()));
             current.diagnosticVisuals = assets->diagnosticVisuals();
         }
+        publishSnapshotLocked();
     }
 
     std::string payload;
     double lastWorldPacket = secondsNow();
+    constexpr double PublicationSeconds = 1.0 / 60.0;
+    double nextPublication = 0.0;
+    uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
-        int waitMs = 50;
+        collectViewInput();
+        int waitMs = 5;
         if (spawnInitialized && nextMotionTick > 0.0) {
-            waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 1, OutlineRefreshMs);
+            waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 0, 5);
         }
         bool received = connection->readRaw(payload, waitMs, &cancelled);
         if (received) {
             lastWorldPacket = secondsNow();
             handleWorldPacket(payload);
+            ++receivedSincePublication;
+            const double batchDeadline = secondsNow() + 0.004;
+            for (size_t count = 1; count < 256 && !cancelled && !transferTarget && secondsNow() < batchDeadline; ++count) {
+                if (!connection->receiveRaw(payload)) break;
+                handleWorldPacket(payload);
+                ++receivedSincePublication;
+            }
         } else if (connection->isClosed()) {
             debugLog("connection closed: " + connection->getDisconnectReason() + "; last world packet "
                      + std::to_string(secondsNow() - lastWorldPacket) + " seconds ago; spawn=" + (spawnInitialized ? "initialized" : "waiting"));
@@ -1770,10 +1902,24 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             publishBreaking();
         }
 
-        std::lock_guard<std::mutex> guard(mutex);
-        if (received) {
-            ++current.packetsReceived;
+        connection->flush();
+        const double publicationNow = secondsNow();
+        if (publicationNow < nextPublication) continue;
+        nextPublication = publicationNow + PublicationSeconds;
+        std::vector<ActorView> publishedActors;
+        publishedActors.reserve(actors.size());
+        for (auto actor = actors.begin(); actor != actors.end();) {
+            constexpr double PickupSeconds = 0.25;
+            if (actor->second.pickedUpAt > 0.0 && publicationNow - actor->second.pickedUpAt > PickupSeconds) {
+                actor = actors.erase(actor);
+            } else {
+                publishedActors.push_back(actor->second);
+                ++actor;
+            }
         }
+        std::lock_guard<std::mutex> guard(mutex);
+        current.packetsReceived += receivedSincePublication;
+        receivedSincePublication = 0;
         current.world = world.stats();
         current.meshes = meshes.size();
         current.meshQuads = meshQuads;
@@ -1781,16 +1927,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         current.cohortComplete = world.cohortLoaded();
         current.updatesPending = !pendingUpdates.empty();
         current.localRuntimeId = localRuntimeId;
-        current.actors.clear();
-        for (auto actor = actors.begin(); actor != actors.end();) {
-            constexpr double PickupSeconds = 0.25;
-            if (actor->second.pickedUpAt > 0.0 && secondsNow() - actor->second.pickedUpAt > PickupSeconds) {
-                actor = actors.erase(actor);
-                continue;
-            }
-            current.actors.push_back(actor->second);
-            ++actor;
-        }
         if (double now = secondsNow(); now - lastReadinessLog >= 1.0) {
             lastReadinessLog = now;
             debugLog("columns " + std::to_string(current.world.columns) + " subchunks " + std::to_string(current.world.subChunks) + " pending " + std::to_string(current.world.pendingSubChunks)
@@ -1816,6 +1952,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             current.unresolvedLookups = assets->unresolvedLookups();
             current.lastUnresolved = assets->lastUnresolvedValue();
         }
+        auto publication = std::make_shared<SessionSnapshot>(current);
+        publication->actors = std::move(publishedActors);
+        publishSnapshotLocked(std::move(publication));
     }
 
     std::optional<std::string> next = std::exchange(transferTarget, std::nullopt);
@@ -1831,6 +1970,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         current.error = connection->getDisconnectReason();
     }
     connection.reset();
+    publishSnapshotLocked();
     return next;
 }
 

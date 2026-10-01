@@ -391,6 +391,8 @@ struct RenderControllerSource {
     std::vector<EntityPartRule> parts;
     std::string material;
     bool ignoreLighting = false;
+    std::array<molang::Script, 4> uvAnim;
+    bool uvAnimated = false;
 };
 
 /**
@@ -532,6 +534,22 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
         }
         if (const json::Value* value = controller.get("ignore_lighting"); value && value->mType == json::Value::Type::Boolean) {
             parsed.ignoreLighting = value->mBoolean;
+        }
+        if (const json::Value* animation = controller.get("uv_anim"); animation && animation->isObject()) {
+            static constexpr const char* Channels[4] = { "offset", "offset", "scale", "scale" };
+            for (size_t slot = 0; slot < 4; ++slot) {
+                double fallback = slot < 2 ? 0.0 : 1.0;
+                const json::Value* list = animation->get(Channels[slot]);
+                const json::Value* entry = list && list->isArray() && list->mArray.size() > slot % 2 ? list->mArray[slot % 2].get() : nullptr;
+                if (entry && entry->isNumber()) {
+                    parsed.uvAnim[slot] = molang::Script(entry->mNumber);
+                } else if (entry && entry->isString()) {
+                    parsed.uvAnim[slot] = molang::Script::compile(entry->mString, fallback);
+                } else {
+                    parsed.uvAnim[slot] = molang::Script(fallback);
+                }
+            }
+            parsed.uvAnimated = true;
         }
         if (const json::Value* visibility = controller.get("part_visibility"); visibility && visibility->isArray()) {
             for (const std::unique_ptr<json::Value>& entry : visibility->mArray) {
@@ -700,10 +718,13 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         }
     }
     for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
-        for (const auto& [path, content] : (*layer)->files) {
+        for (const auto& path : (*layer)->paths()) {
             if (!endsWith(path, ".json")) {
                 continue;
             }
+            auto bytes = (*layer)->find(path);
+            if (!bytes) continue;
+            const auto& content = *bytes;
             if (startsWith(path, "models/")) {
                 library.parse(stripJsonComments(content));
             } else if (startsWith(path, "entity/")) {
@@ -858,6 +879,8 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             controller.texture = source->second.texture;
             controller.parts = source->second.parts;
             controller.ignoreLighting = source->second.ignoreLighting;
+            controller.uvAnim = source->second.uvAnim;
+            controller.uvAnimated = source->second.uvAnimated;
             for (const std::string& choice : source->second.geometryChoices) {
                 controller.geometryChoices.push_back(rigOf(choice));
             }

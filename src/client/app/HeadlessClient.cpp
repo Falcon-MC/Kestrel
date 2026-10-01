@@ -64,7 +64,8 @@ int HeadlessClient::run()
             }
         }
         session.setRenderDistance(renderDistance);
-        SessionSnapshot snapshot = session.snapshot();
+        auto published = session.sharedSnapshot();
+        const SessionSnapshot& snapshot = *published;
         control->observe(snapshot);
         steer(snapshot);
         drainSession(snapshot);
@@ -161,7 +162,7 @@ bool HeadlessClient::handle(agent::Request& request)
     const std::string& method = request.method;
     agent::JsonWriter writer;
     if (method == "state") {
-        writer.beginObject().field("mode", "headless").field("session", agent::SessionControl::stateName(session.snapshot().state));
+        writer.beginObject().field("mode", "headless").field("session", agent::SessionControl::stateName(session.sharedSnapshot()->state));
         writer.field("formsOpen", forms.size()).field("renderDistance", renderDistance).field("lastEvent", events.last());
         writer.key("motion").beginObject()
             .field("forward", motion.forward)

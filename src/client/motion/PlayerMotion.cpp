@@ -185,7 +185,7 @@ bool PlayerMotion::poseFits(float poseHeight) const
     world::CollisionBox box = boundingBox();
     box.maxY = box.minY + poseHeight * scale - PoseFitInset;
     box.minY = box.minY + PoseFitInset;
-    return collisionBoxes(box).empty();
+    return !anyCollision(box);
 }
 
 /**
@@ -219,7 +219,7 @@ void PlayerMotion::updatePose(const MotionInput& input, MotionTick& tick)
 void PlayerMotion::updateGliding(const MotionInput& input, bool jumpPressed, MotionTick& tick)
 {
     bool was = isGliding;
-    bool usable = input.elytra && !onGround && !isFlying && !noClip && levitationLevel <= 0 && touchingLiquid(false).empty() && touchingLiquid(true).empty();
+    bool usable = input.elytra && !onGround && !isFlying && !noClip && levitationLevel <= 0 && !touchesLiquid(false) && !touchesLiquid(true);
     isGliding = usable && (was || jumpPressed);
     tick.startGliding = isGliding && !was;
     tick.stopGliding = !isGliding && was;
@@ -336,7 +336,7 @@ void PlayerMotion::launchRiptide(int32_t level, MotionTick& tick)
     velocity = velocity + push.scaled(strength / length);
     if (onGround) {
         world::CollisionBox lifted = offset(boundingBox(), { 0.0f, RiptideLift, 0.0f });
-        if (collisionBoxes(lifted).empty()) {
+        if (!anyCollision(lifted)) {
             feet.y += RiptideLift;
             onGround = false;
         }
@@ -359,6 +359,17 @@ void PlayerMotion::updateSpinAttack(MotionTick& tick)
 MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
 {
     lookup = &cells;
+    for (auto& entry : scratch->cells) entry.valid = false;
+    scratch->liquidsValid = false;
+    scratch->liquidKnown = {};
+    if (!boundedQuery(boundingBox())) {
+        velocity = {};
+        lookup = nullptr;
+        MotionTick held;
+        held.position = feet;
+        held.onGround = onGround;
+        return held;
+    }
     MotionTick tick;
     jumped = false;
     bool knockbackPending = hasKnockback;
@@ -368,11 +379,12 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         effective.forward = 0.0f;
         effective.sideways = 0.0f;
         effective.jump = false;
+        if (isFlying || noClip) effective.sneak = false;
     }
     updateInput(effective, tick);
-    updateSwimming(!touchingLiquid(false).empty(), tick);
+    updateSwimming(touchesLiquid(false), tick);
     updateSpinAttack(tick);
-    if (effective.riptide > 0 && !isFlying && !noClip && (!touchingLiquid(false).empty() || (effective.raining && exposedToRain()))) {
+    if (effective.riptide > 0 && !isFlying && !noClip && (touchesLiquid(false) || (effective.raining && exposedToRain()))) {
         launchRiptide(effective.riptide, tick);
     }
 
@@ -385,7 +397,7 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
             applyJump();
         }
     } else if (isFlying || noClip) {
-        runFlight(input);
+        runFlight(effective);
     } else if (isGliding) {
         applyKnockback();
         runGlide();
@@ -436,8 +448,8 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
 void PlayerMotion::simulate()
 {
     Fluid fluid = fluidState(boundingBox());
-    std::vector<std::array<int32_t, 3>> water = touchingLiquid(false);
-    std::vector<std::array<int32_t, 3>> lava = touchingLiquid(true);
+    const auto& water = touchingLiquid(false);
+    const auto& lava = touchingLiquid(true);
     if (!water.empty() || (isSwimming && lava.empty() && fluid.water)) {
         applyKnockback();
         applyLiquidFlow(water, false);
@@ -758,6 +770,7 @@ void PlayerMotion::runFlight(const MotionInput& input)
         velocity.y -= vertical;
     }
     if (noClip) {
+        if (!boundedQuery(extend(boundingBox(), velocity))) { velocity = {}; return; }
         feet = feet + velocity;
         onGround = false;
         collideX = false;

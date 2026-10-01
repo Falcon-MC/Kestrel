@@ -47,6 +47,7 @@ PalettedStorage PalettedStorage::uniform(uint32_t runtimeId)
 {
     PalettedStorage storage;
     storage.values.push_back(runtimeId);
+    storage.uses.push_back(static_cast<uint16_t>(BlocksPerSubChunk));
     return storage;
 }
 
@@ -133,11 +134,14 @@ bool PalettedStorage::decodeWithHeader(ByteReader& reader, uint8_t header, Palet
         error.clear();
     }
 
-    for (size_t linear = 0; linear < BlocksPerSubChunk && bits != 0; ++linear) {
-        if (storage.paletteIndex(linear) >= paletteSize) {
+    storage.uses.assign(paletteSize, 0);
+    for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
+        size_t paletteIndex = storage.paletteIndex(linear);
+        if (paletteIndex >= paletteSize) {
             error = "palette index out of bounds";
             return false;
         }
+        ++storage.uses[paletteIndex];
     }
 
     out = std::move(storage);
@@ -173,43 +177,97 @@ bool PalettedStorage::containsOnly(uint32_t runtimeId) const
     return true;
 }
 
-void PalettedStorage::apply(const std::vector<std::pair<size_t, uint32_t>>& updates)
+bool PalettedStorage::apply(const std::vector<std::pair<size_t, uint32_t>>& updates)
 {
-    std::unordered_map<size_t, uint32_t> finalValues;
-    for (const auto& [linear, runtimeId] : updates) {
-        finalValues[linear] = runtimeId;
+    if (updates.empty()) {
+        return false;
+    }
+    if (updates.size() == 1 && values.size() < BlocksPerSubChunk) {
+        auto [linear, runtimeId] = updates.front();
+        if (linear >= BlocksPerSubChunk || runtimeIdAt(linear) == runtimeId) {
+            return false;
+        }
+        size_t oldIndex = paletteIndex(linear);
+        auto found = std::find(values.begin(), values.end(), runtimeId);
+        size_t newIndex = size_t(found - values.begin());
+        if (found == values.end()) {
+            values.push_back(runtimeId);
+            uses.push_back(0);
+        }
+        --uses[oldIndex];
+        ++uses[newIndex];
+        if (uses[newIndex] == BlocksPerSubChunk) {
+            bits = 0;
+            words.clear();
+            values = { runtimeId };
+            uses = { static_cast<uint16_t>(BlocksPerSubChunk) };
+            return true;
+        }
+        uint8_t newBits = bitsForPaletteSize(values.size());
+        if (newBits != bits) {
+            std::vector<uint32_t> replacement(wordCount(newBits), 0);
+            for (size_t position = 0; position < BlocksPerSubChunk; ++position) {
+                writeIndex(replacement, newBits, position, static_cast<uint32_t>(paletteIndex(position)));
+            }
+            words = std::move(replacement);
+            bits = newBits;
+        }
+        writeIndex(words, bits, linear, static_cast<uint32_t>(newIndex));
+        return true;
     }
 
-    std::vector<uint32_t> resolved(BlocksPerSubChunk);
+    std::array<uint32_t, BlocksPerSubChunk> finalValues {};
+    std::array<bool, BlocksPerSubChunk> touched {};
+    for (const auto& [linear, runtimeId] : updates) {
+        if (linear < BlocksPerSubChunk) {
+            touched[linear] = true;
+            finalValues[linear] = runtimeId;
+        }
+    }
     bool changed = false;
     for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
-        uint32_t current = runtimeIdAt(linear);
-        auto it = finalValues.find(linear);
-        uint32_t value = it != finalValues.end() ? it->second : current;
-        changed |= value != current;
-        resolved[linear] = value;
+        if (touched[linear] && runtimeIdAt(linear) != finalValues[linear]) {
+            changed = true;
+            break;
+        }
     }
     if (!changed) {
-        return;
+        return false;
     }
 
     std::vector<uint32_t> palette;
-    std::unordered_map<uint32_t, uint32_t> indices;
-    for (uint32_t value : resolved) {
-        if (indices.emplace(value, static_cast<uint32_t>(palette.size())).second) {
-            palette.push_back(value);
+    std::unordered_map<uint32_t, uint32_t> lookup;
+    std::vector<uint32_t> oldRemap(values.size());
+    std::vector<bool> used(values.size(), false);
+    for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
+        if (!touched[linear]) {
+            used[paletteIndex(linear)] = true;
         }
     }
-
-    uint8_t newBits = palette.size() == 1 ? 0 : bitsForPaletteSize(palette.size());
-    std::vector<uint32_t> newWords(wordCount(newBits), 0);
-    for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
-        writeIndex(newWords, newBits, linear, indices[resolved[linear]]);
+    auto indexFor = [&](uint32_t value) {
+        auto [entry, inserted] = lookup.emplace(value, static_cast<uint32_t>(palette.size()));
+        if (inserted) palette.push_back(value);
+        return entry->second;
+    };
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (used[i]) oldRemap[i] = indexFor(values[i]);
     }
-
+    for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
+        if (touched[linear]) finalValues[linear] = indexFor(finalValues[linear]);
+    }
+    uint8_t newBits = bitsForPaletteSize(palette.size());
+    std::vector<uint32_t> newWords(wordCount(newBits), 0);
+    std::vector<uint16_t> newUses(palette.size(), 0);
+    for (size_t linear = 0; linear < BlocksPerSubChunk; ++linear) {
+        uint32_t next = touched[linear] ? finalValues[linear] : oldRemap[paletteIndex(linear)];
+        ++newUses[next];
+        writeIndex(newWords, newBits, linear, next);
+    }
     bits = newBits;
     words = std::move(newWords);
     values = std::move(palette);
+    uses = std::move(newUses);
+    return true;
 }
 
 }

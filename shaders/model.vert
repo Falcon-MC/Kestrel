@@ -54,6 +54,13 @@ void main()
         int value = (component & 1u) != 0u ? (int(word) >> 16) : (int(word << 16) >> 16);
         local[i] = float(value) / PositionScale;
     }
+    if ((inD.y & 0x80000000u) != 0u) {
+        for (uint axis = 0u; axis < 3u; ++axis) {
+            uint packedOffset = (inD.y >> (axis * 10u)) & 1023u;
+            int offset = int(packedOffset << 22u) >> 22;
+            local[axis] += float(offset) * (16384.0 / PositionScale);
+        }
+    }
     uint uvWord = words[6u + corner];
 
     vec3 position = draw.origin.xyz + local;
@@ -68,6 +75,10 @@ void main()
     outRelative = position;
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
-    outLight = cornerLight(inD.x, inD.y, corner);
+    outLight = cornerLight(inD.x, (inD.y & 0x80000000u) != 0u ? 0u : inD.y, corner);
     outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
+    if (outEntity != 0u && inD.w != 0u) {
+        outUv = unpackHalf2x16(inD.z) + outUv * unpackHalf2x16(inD.w);
+        outEntity |= 16u;
+    }
 }

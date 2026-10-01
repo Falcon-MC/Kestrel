@@ -26,6 +26,11 @@ float towardZero(float value, float limit)
 void PlayerMotion::move()
 {
     MotionVector requested = velocity;
+    if (!boundedQuery(extend(boundingBox(), requested))) {
+        velocity = {};
+        collideX = collideY = collideZ = true;
+        return;
+    }
     if (isSneaking && !isCrawling && onGround && requested.y <= 0.0f) {
         requested = avoidEdge(boundingBox(), requested);
         velocity = requested;
@@ -88,7 +93,7 @@ void PlayerMotion::move()
     bool mayStep = onGround || (yCollision && requested.y < 0.0f);
     if (mayStep && (xCollision || zCollision)) {
         Resolution stepped = autoStep(stuckInCollider);
-        bool stepBlocked = !collisionBoxes(stepped.box).empty();
+        bool stepBlocked = anyCollision(stepped.box);
         if (!stepBlocked && resolved.horizontalLengthSquared() < stepped.movement.horizontalLengthSquared()) {
             collision = stepped;
             resolved = stepped.movement;
@@ -112,23 +117,30 @@ MotionVector PlayerMotion::avoidEdge(const world::CollisionBox& box, MotionVecto
     world::CollisionBox support { box.minX + EdgeInset, box.minY, box.minZ + EdgeInset, box.maxX - EdgeInset, box.maxY, box.maxZ - EdgeInset };
     auto supported = [&](float x, float z) {
         world::CollisionBox moved = offset(support, { x, -StepHeight * 1.01f, z });
-        return !collisionBoxes(moved).empty();
+        return anyCollision(moved);
     };
     auto reduce = [](float value) {
         if (value < EdgeStep && value >= -EdgeStep) {
             return 0.0f;
         }
-        return value > 0.0f ? value - EdgeStep : value + EdgeStep;
+        float next = value > 0.0f ? value - EdgeStep : value + EdgeStep;
+        return next == value ? 0.0f : next;
     };
     float x = movement.x;
     float z = movement.z;
+    int remainingX = 256;
+    int remainingZ = 256;
+    int remainingBoth = 256;
     while (x != 0.0f && !supported(x, 0.0f)) {
+        if (--remainingX == 0) { x = 0.0f; break; }
         x = reduce(x);
     }
     while (z != 0.0f && !supported(0.0f, z)) {
+        if (--remainingZ == 0) { z = 0.0f; break; }
         z = reduce(z);
     }
     while (x != 0.0f && z != 0.0f && !supported(x, z)) {
+        if (--remainingBoth == 0) { x = z = 0.0f; break; }
         x = reduce(x);
         z = reduce(z);
     }

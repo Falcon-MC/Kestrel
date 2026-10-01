@@ -171,12 +171,12 @@ D3D12_STATIC_SAMPLER_DESC samplerState(SamplerMode mode)
 
 class D3D12Buffer final : public Buffer {
 public:
-    D3D12Buffer(ComPtr<ID3D12Resource> created, size_t bytes)
+    D3D12Buffer(ComPtr<ID3D12Resource> created, size_t bytes, bool map = true)
         : resource(std::move(created))
         , bytes(bytes)
     {
         D3D12_RANGE none { 0, 0 };
-        check(resource->Map(0, &none, &memory), "Map");
+        if (map) check(resource->Map(0, &none, &memory), "Map");
     }
 
     void* mapped() override
@@ -210,6 +210,7 @@ class D3D12Pipeline final : public Pipeline {
 public:
     ComPtr<ID3D12PipelineState> state;
     ID3D12RootSignature* signature = nullptr;
+    bool actorConstants = false;
 };
 
 class D3D12Device;
@@ -393,6 +394,27 @@ public:
         return std::make_unique<D3D12Buffer>(createUploadBuffer(static_cast<UINT64>(size)), size);
     }
 
+    std::unique_ptr<Buffer> createPersistentBuffer(size_t size) override
+    {
+        D3D12_HEAP_PROPERTIES heap = heapProperties(D3D12_HEAP_TYPE_DEFAULT);
+        D3D12_RESOURCE_DESC desc = bufferDescription(std::max<size_t>(size, 1));
+        ComPtr<ID3D12Resource> resource;
+        check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&resource)), "CreateCommittedResource: persistent buffer");
+        return std::make_unique<D3D12Buffer>(std::move(resource), size, false);
+    }
+
+    void uploadBuffer(Buffer& target, const void* data, size_t bytes) override
+    {
+        if (!bytes) return;
+        auto transfer = beginTransfer(bytes);
+        std::memcpy(transfer.mapped, data, bytes);
+        auto& buffer = static_cast<D3D12Buffer&>(target);
+        transition(transfer.list.Get(), buffer.resource.Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST);
+        transfer.list->CopyBufferRegion(buffer.resource.Get(), 0, transfer.staging.Get(), 0, bytes);
+        transition(transfer.list.Get(), buffer.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
+        queueTransfer(std::move(transfer));
+    }
+
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override
     {
         auto texture = std::make_unique<D3D12Texture>();
@@ -413,40 +435,41 @@ public:
 
     void uploadTexture(Texture& target, const std::vector<TextureData>& data) override
     {
+        uploadTextureAsync(target, data);
+        waitIdle();
+        collectTransfers(UINT32_MAX);
+    }
+
+    void uploadTextureAsync(Texture& target, const std::vector<TextureData>& data) override
+    {
         if (data.empty()) {
             return;
         }
         auto& texture = static_cast<D3D12Texture&>(target);
         D3D12_RESOURCE_DESC textureDesc = texture.resource->GetDesc();
-        UINT subresources = texture.description.layers * texture.description.mipLevels;
-        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(subresources);
-        std::vector<UINT> rows(subresources);
-        std::vector<UINT64> rowSizes(subresources);
-        UINT64 totalSize = 0;
-        device->GetCopyableFootprints(&textureDesc, 0, subresources, 0, footprints.data(), rows.data(), rowSizes.data(), &totalSize);
-
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(data.size());
         UINT64 stagingSize = 0;
         std::vector<UINT64> offsets(data.size());
         for (size_t i = 0; i < data.size(); ++i) {
             UINT index = data[i].mip + data[i].layer * texture.description.mipLevels;
+            UINT rows = 0;
+            UINT64 rowSize = 0;
+            UINT64 totalSize = 0;
+            device->GetCopyableFootprints(&textureDesc, index, 1, 0, &footprints[i], &rows, &rowSize, &totalSize);
             offsets[i] = stagingSize;
-            UINT64 bytes = static_cast<UINT64>(footprints[index].Footprint.RowPitch) * rows[index];
+            UINT64 bytes = static_cast<UINT64>(footprints[i].Footprint.RowPitch) * rows;
             stagingSize += (bytes + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
         }
 
-        ComPtr<ID3D12Resource> staging = createUploadBuffer(stagingSize);
-        uint8_t* mapped = nullptr;
-        D3D12_RANGE none { 0, 0 };
-        check(staging->Map(0, &none, reinterpret_cast<void**>(&mapped)), "Map");
-
-        uploadAllocator->Reset();
-        uploadList->Reset(uploadAllocator.Get(), nullptr);
+        auto transfer = beginTransfer(static_cast<size_t>(stagingSize));
+        auto* mapped = static_cast<uint8_t*>(transfer.mapped);
+        auto* list = transfer.list.Get();
         if (texture.sampled) {
-            transition(uploadList.Get(), texture.resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            transition(list, texture.resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         }
         for (size_t i = 0; i < data.size(); ++i) {
             UINT index = data[i].mip + data[i].layer * texture.description.mipLevels;
-            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = footprints[index];
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = footprints[i];
             footprint.Offset = offsets[i];
             uint32_t rowWidth = std::max<uint32_t>(texture.description.width >> data[i].mip, 1);
             uint32_t rowCount = std::max<uint32_t>(texture.description.height >> data[i].mip, 1);
@@ -458,24 +481,21 @@ public:
             destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
             destination.SubresourceIndex = index;
             D3D12_TEXTURE_COPY_LOCATION source {};
-            source.pResource = staging.Get();
+            source.pResource = transfer.staging.Get();
             source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
             source.PlacedFootprint = footprint;
-            uploadList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+            list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
         }
-        staging->Unmap(0, nullptr);
-        transition(uploadList.Get(), texture.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        transition(list, texture.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         texture.sampled = true;
-        uploadList->Close();
-        ID3D12CommandList* lists[] = { uploadList.Get() };
-        queue->ExecuteCommandLists(1, lists);
-        waitIdle();
+        queueTransfer(std::move(transfer));
     }
 
     std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) override
     {
         auto pipeline = std::make_unique<D3D12Pipeline>();
         pipeline->signature = rootSignature(desc.bindings);
+        pipeline->actorConstants = desc.bindings.actorConstants;
 
         ComPtr<ID3DBlob> vertexShader = compile(desc, true);
         ComPtr<ID3DBlob> pixelShader = compile(desc, false);
@@ -530,14 +550,23 @@ public:
     uint64_t beginFrame(float r, float g, float b) override
     {
         waitFor(fenceValues[frameIndex]);
+        collectTransfers(4);
         if (slotSubmissions[frameIndex] > completed) {
             completed = slotSubmissions[frameIndex];
         }
         uint64_t done = fence->GetCompletedValue();
-        std::erase_if(retired, [done](const RetiredBuffer& entry) {
-            return entry.fenceValue <= done;
-        });
+        uint32_t released = 0;
+        for (size_t index = 0; index < retired.size() && released < 4;) {
+            if (retired[index].fenceValue <= done) {
+                if (index + 1 != retired.size()) retired[index] = std::move(retired.back());
+                retired.pop_back();
+                ++released;
+            } else {
+                ++index;
+            }
+        }
 
+        actorCursor = 0;
         allocators[frameIndex]->Reset();
         commandList->Reset(allocators[frameIndex].Get(), nullptr);
 
@@ -572,6 +601,7 @@ public:
     void setPipeline(const Pipeline& pipeline) override
     {
         const auto& chosen = static_cast<const D3D12Pipeline&>(pipeline);
+        boundActorConstants = chosen.actorConstants;
         if (chosen.signature != boundSignature) {
             commandList->SetGraphicsRootSignature(chosen.signature);
             boundSignature = chosen.signature;
@@ -586,6 +616,21 @@ public:
     void setConstants(const void* values, uint32_t count) override
     {
         commandList->SetGraphicsRoot32BitConstants(0, count, values, 0);
+    }
+
+    void setActorConstants(const void* values, uint32_t count) override
+    {
+        if (!active || !boundActorConstants || !values || count != 36) return;
+        constexpr size_t pageBytes = 1024 * 1024;
+        constexpr size_t stride = 256;
+        size_t page = actorCursor / pageBytes;
+        size_t offset = actorCursor % pageBytes;
+        auto& pages = actorPages[frameIndex];
+        if (page == pages.size()) pages.push_back(createBuffer(pageBytes));
+        std::memcpy(static_cast<uint8_t*>(pages[page]->mapped()) + offset, values, count * sizeof(uint32_t));
+        auto& buffer = static_cast<D3D12Buffer&>(*pages[page]);
+        commandList->SetGraphicsRootConstantBufferView(2, buffer.resource->GetGPUVirtualAddress() + offset);
+        actorCursor += stride;
     }
 
     void setTextures(const TextureSet& textures) override
@@ -778,7 +823,7 @@ private:
 
     ID3D12RootSignature* rootSignature(const BindingLayout& bindings)
     {
-        auto key = std::make_tuple(bindings.constantCount, bindings.constantsVertexOnly, bindings.textureCount, static_cast<int>(bindings.sampler));
+        auto key = std::make_tuple(bindings.constantCount, bindings.constantsVertexOnly, bindings.textureCount, static_cast<int>(bindings.sampler), bindings.actorConstants);
         auto found = signatures.find(key);
         if (found != signatures.end()) {
             return found->second.Get();
@@ -789,7 +834,7 @@ private:
         range.BaseShaderRegister = 0;
         range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        D3D12_ROOT_PARAMETER parameters[2] {};
+        D3D12_ROOT_PARAMETER parameters[3] {};
         parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         parameters[0].Constants.Num32BitValues = bindings.constantCount;
         parameters[0].Constants.ShaderRegister = 0;
@@ -801,7 +846,10 @@ private:
 
         D3D12_STATIC_SAMPLER_DESC sampler = samplerState(bindings.sampler);
         D3D12_ROOT_SIGNATURE_DESC signatureDesc {};
-        signatureDesc.NumParameters = 2;
+        parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[2].Descriptor.ShaderRegister = 1;
+        parameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        signatureDesc.NumParameters = bindings.actorConstants ? 3 : 2;
         signatureDesc.pParameters = parameters;
         signatureDesc.NumStaticSamplers = 1;
         signatureDesc.pStaticSamplers = &sampler;
@@ -876,6 +924,98 @@ private:
         device->CreateDepthStencilView(depthBuffer.Get(), nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
     }
 
+    struct Transfer {
+        ComPtr<ID3D12CommandAllocator> allocator;
+        ComPtr<ID3D12GraphicsCommandList> list;
+        ComPtr<ID3D12Resource> staging;
+        void* mapped = nullptr;
+        size_t capacity = 0;
+        uint64_t fenceValue = 0;
+    };
+    std::vector<Transfer> transfers;
+    std::vector<Transfer> freeTransfers;
+    size_t freeTransferBytes = 0;
+
+    void collectTransfers(uint32_t releaseBudget = 0)
+    {
+        uint64_t done = fence->GetCompletedValue();
+        size_t completedBytes = freeTransferBytes;
+        for (const auto& transfer : transfers) {
+            if (transfer.fenceValue <= done) completedBytes += transfer.capacity;
+        }
+        constexpr size_t CompletedTransferBudget = 128 * 1024 * 1024;
+        for (size_t index = 0; index < transfers.size();) {
+            if (transfers[index].fenceValue > done) {
+                ++index;
+                continue;
+            }
+            const auto capacity = transfers[index].capacity;
+            bool cache = freeTransfers.size() < 32 && capacity <= 64 * 1024 * 1024 && freeTransferBytes <= 64 * 1024 * 1024 - capacity;
+            if (!cache && !releaseBudget && completedBytes <= CompletedTransferBudget) {
+                ++index;
+                continue;
+            }
+            if (cache) {
+                freeTransferBytes += capacity;
+                freeTransfers.push_back(std::move(transfers[index]));
+            } else {
+                completedBytes -= capacity;
+                if (releaseBudget) --releaseBudget;
+            }
+            if (index + 1 != transfers.size()) transfers[index] = std::move(transfers.back());
+            transfers.pop_back();
+        }
+    }
+
+    Transfer beginTransfer(size_t bytes)
+    {
+        collectTransfers();
+        size_t best = freeTransfers.size();
+        for (size_t index = 0; index < freeTransfers.size(); ++index) {
+            if (freeTransfers[index].capacity < bytes) continue;
+            if (best == freeTransfers.size() || freeTransfers[index].capacity < freeTransfers[best].capacity) best = index;
+        }
+        if (best == freeTransfers.size() && !freeTransfers.empty()) {
+            best = 0;
+            for (size_t index = 1; index < freeTransfers.size(); ++index) {
+                if (freeTransfers[index].capacity > freeTransfers[best].capacity) best = index;
+            }
+        }
+        Transfer transfer;
+        if (best != freeTransfers.size()) {
+            transfer = std::move(freeTransfers[best]);
+            freeTransferBytes -= transfer.capacity;
+            if (best + 1 != freeTransfers.size()) freeTransfers[best] = std::move(freeTransfers.back());
+            freeTransfers.pop_back();
+            check(transfer.allocator->Reset(), "Reset: transfer allocator");
+            check(transfer.list->Reset(transfer.allocator.Get(), nullptr), "Reset: transfer list");
+            if (transfer.capacity < bytes) {
+                transfer.capacity = std::max(bytes, transfer.capacity * 2);
+                transfer.staging = createUploadBuffer(transfer.capacity);
+                D3D12_RANGE none { 0, 0 };
+                check(transfer.staging->Map(0, &none, &transfer.mapped), "Map: transfer");
+            }
+        } else {
+            check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&transfer.allocator)), "CreateCommandAllocator: transfer");
+            check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, transfer.allocator.Get(), nullptr, IID_PPV_ARGS(&transfer.list)), "CreateCommandList: transfer");
+            transfer.capacity = std::max<size_t>(bytes, 64 * 1024);
+            transfer.staging = createUploadBuffer(transfer.capacity);
+            D3D12_RANGE none { 0, 0 };
+            check(transfer.staging->Map(0, &none, &transfer.mapped), "Map: transfer");
+        }
+        return transfer;
+    }
+
+    void queueTransfer(Transfer transfer)
+    {
+        check(transfer.list->Close(), "Close: transfer");
+        ID3D12CommandList* lists[] = { transfer.list.Get() };
+        queue->ExecuteCommandLists(1, lists);
+        transfer.fenceValue = ++fenceCounter;
+        check(queue->Signal(fence.Get(), transfer.fenceValue), "Signal: transfer");
+        transfers.push_back(std::move(transfer));
+    }
+
     ComPtr<ID3D12Resource> createUploadBuffer(UINT64 size)
     {
         D3D12_HEAP_PROPERTIES uploadHeap = heapProperties(D3D12_HEAP_TYPE_UPLOAD);
@@ -929,7 +1069,7 @@ private:
     ComPtr<ID3D12GraphicsCommandList> commandList;
     ComPtr<ID3D12CommandAllocator> uploadAllocator;
     ComPtr<ID3D12GraphicsCommandList> uploadList;
-    std::map<std::tuple<uint32_t, bool, uint32_t, int>, ComPtr<ID3D12RootSignature>> signatures;
+    std::map<std::tuple<uint32_t, bool, uint32_t, int, bool>, ComPtr<ID3D12RootSignature>> signatures;
     std::vector<RetiredBuffer> retired;
     ComPtr<ID3D12Fence> fence;
     HANDLE fenceEvent = nullptr;
@@ -942,6 +1082,9 @@ private:
     ID3D12RootSignature* boundSignature = nullptr;
     ID3D12PipelineState* boundState = nullptr;
     uint32_t boundTextures = UINT32_MAX;
+    bool boundActorConstants = false;
+    std::array<std::vector<std::unique_ptr<Buffer>>, FrameCount> actorPages;
+    size_t actorCursor = 0;
     bool active = false;
     uint32_t nextDescriptor = 0;
     uint32_t srvStride = 0;

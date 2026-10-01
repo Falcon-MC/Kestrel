@@ -339,6 +339,11 @@ size_t Context::wrap(std::string_view value, TextStyle style, float width, std::
     return font.wrap(value, style, width, lines);
 }
 
+void Context::textLayoutLine(const Font::TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow)
+{
+    font.drawLine(drawList, line, style, x, y, magnify, color, shadow);
+}
+
 bool Context::classicButton(std::string_view id, std::string_view label, const Rect& rect, bool enabled)
 {
     Interaction interaction = enabled ? interact(id, rect) : Interaction {};

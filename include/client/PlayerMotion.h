@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace kestrel {
@@ -209,6 +210,24 @@ private:
         bool bubbleSurface = false;
     };
 
+    struct CellHash {
+        size_t operator()(const std::array<int32_t, 3>& key) const {
+            size_t value = 0;
+            for (int32_t component : key) value ^= std::hash<int32_t>{}(component) + size_t(0x9e3779b9) + (value << 6) + (value >> 2);
+            return value;
+        }
+    };
+    struct Scratch {
+        struct CachedCell { std::array<int32_t, 3> key {}; MotionCell value; bool valid = false; };
+        std::array<CachedCell, 512> cells {};
+        std::vector<world::CollisionBox> shapes;
+        std::array<std::vector<std::array<int32_t, 3>>, 2> liquids;
+        world::CollisionBox liquidBox {};
+        bool liquidsValid = false;
+        std::array<bool, 2> liquidKnown {};
+        std::array<bool, 2> liquidPresent {};
+    };
+
     struct Resolution {
         world::CollisionBox box;
         MotionVector movement;
@@ -217,6 +236,8 @@ private:
 
     world::CollisionBox boundingBox() const;
     std::vector<world::CollisionBox> collisionBoxes(const world::CollisionBox& area) const;
+    bool anyCollision(const world::CollisionBox& area) const;
+    bool scanCollisions(const world::CollisionBox& area, std::vector<world::CollisionBox>* found) const;
     const world::CollisionState* cellState(int32_t x, int32_t y, int32_t z) const;
     MotionCell cell(int32_t x, int32_t y, int32_t z) const;
     const world::CollisionState* blockView(int32_t x, int32_t y, int32_t z) const;
@@ -230,7 +251,9 @@ private:
      * depth (0 for a source, 8 and up while falling) and whether there is one.
      */
     bool liquidAt(int32_t x, int32_t y, int32_t z, bool& lava, int32_t& depth) const;
-    std::vector<std::array<int32_t, 3>> touchingLiquid(bool lava) const;
+    const std::vector<std::array<int32_t, 3>>& touchingLiquid(bool lava) const;
+    bool touchesLiquid(bool lava) const;
+    bool scanLiquids(bool lava, bool firstOnly, std::vector<std::array<int32_t, 3>>* found) const;
     MotionVector liquidFlow(int32_t x, int32_t y, int32_t z, bool lava, int32_t depth) const;
     bool closesFlow(int32_t x, int32_t y, int32_t z) const;
     void applyLiquidFlow(const std::vector<std::array<int32_t, 3>>& blocks, bool lava);
@@ -275,6 +298,7 @@ private:
 
     const world::BlockCollisions* table = nullptr;
     const CellLookup* lookup = nullptr;
+    mutable std::shared_ptr<Scratch> scratch = std::make_shared<Scratch>();
 
     MotionVector feet;
     MotionVector velocity;

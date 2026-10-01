@@ -79,7 +79,8 @@ void Session::setAttackHeld(bool held)
 
 std::vector<ParticleBurst> Session::takeParticleBursts()
 {
-    std::lock_guard<std::mutex> guard(mutex);
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
     std::vector<ParticleBurst> bursts = std::move(pendingBursts);
     pendingBursts.clear();
     return bursts;

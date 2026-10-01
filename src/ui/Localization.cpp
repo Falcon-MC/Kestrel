@@ -83,6 +83,7 @@ void Localization::setInterfacePack(std::shared_ptr<world::PackSource> interface
 
 void Localization::rebuild()
 {
+    ++changes;
     texts.clear();
     splashTexts.clear();
     std::string splashFile;
@@ -90,7 +91,7 @@ void Localization::rebuild()
         pack->readText("splashes.json", splashFile);
     }
     for (auto server = serverPacks.rbegin(); server != serverPacks.rend(); ++server) {
-        if (const std::string* file = (*server)->find("splashes.json")) {
+        if (auto file = (*server)->find("splashes.json")) {
             splashFile = *file;
         }
     }
@@ -115,7 +116,7 @@ void Localization::rebuild()
             }
         }
         for (auto server = serverPacks.rbegin(); server != serverPacks.rend(); ++server) {
-            if (const std::string* text = (*server)->find(path)) {
+            if (auto text = (*server)->find(path)) {
                 parseLang(*text, texts);
             }
         }

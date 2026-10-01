@@ -268,9 +268,9 @@ void GeometryLibrary::load(const std::vector<std::shared_ptr<const PackFiles>>& 
 {
     byIdentifier.clear();
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
-        for (const auto& [path, content] : (*pack)->files) {
+        for (const auto& path : (*pack)->paths()) {
             if (path.rfind("models/", 0) == 0 && path.size() > 5 && path.compare(path.size() - 5, 5, ".json") == 0) {
-                parse(content);
+                if (auto content = (*pack)->find(path)) parse(*content);
             }
         }
     }

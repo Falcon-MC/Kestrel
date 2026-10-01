@@ -76,6 +76,7 @@ void InventoryScreen::setDefinitions(std::shared_ptr<const ui::JsonUi> value)
 {
     definitions = std::move(value);
     jsonScreen.reset();
+    jsonDataKey.reset();
     jsonRoot.clear();
 }
 
@@ -87,7 +88,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         return false;
     }
     std::string title = state.customName.empty() ? ui::tr(layout.title, layout.title) : state.customName;
-    if (!jsonScreen || jsonRoot != layout.screen || jsonTitle != title || jsonOpenRevision != state.openRevision) {
+    if (!jsonScreen || jsonRoot != layout.screen || jsonTitle != title) {
         jsonRoot = layout.screen;
         jsonTitle = title;
         jsonOpenRevision = state.openRevision;
@@ -105,6 +106,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             variables[indexes[index]] = ui::UiValue::of(double(index + 1));
         }
         jsonScreen = std::make_unique<ui::JsonUiScreen>(definitions, layout.screen, variables);
+        jsonDataKey.reset();
         jsonScreen->setKeyboardNavigation(true);
         dragging = false;
         dragSlots.clear();
@@ -117,334 +119,351 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
     if (!jsonScreen->valid()) {
         return false;
     }
-    ui::UiData data;
-    data.hideUnboundVisibility = true;
-    auto boolean = [&](const std::string& name, bool value) {
-        data.globals[name] = ui::UiValue::of(value);
-    };
-    auto number = [&](const std::string& name, double value) {
-        data.globals[name] = ui::UiValue::of(value);
-    };
-    auto text = [&](const std::string& name, const std::string& value) {
-        data.globals[name] = ui::UiValue::of(value);
-    };
     bool crafting = state.type == ContainerType::Inventory || state.type == ContainerType::Workbench;
     bool shown = crafting && book;
     bool wide = shown && creativeMode && wideCreative;
-    boolean("#is_survival_layout", !shown);
-    boolean("#is_recipe_book_layout", shown && !wide);
-    boolean("#is_creative_layout", wide);
-    boolean("#is_creative_mode", creativeMode);
-    boolean("#close_button_visible", true);
-    boolean("#is_creative_layout_button_visible", creativeMode);
-    boolean("#is_creative_and_recipe_book_layout", creativeMode && shown && !wide);
-    boolean("#is_creative_and_creative_layout", wide);
-    boolean("#is_left_tab_inventory", !shown);
-    boolean("#filtering_enabled", craftableOnly);
-    boolean("#needs_crafting_table", false);
-    boolean("#gamepad_helper_visible", false);
-    boolean("#show_persistent_bundle_hover_text", true);
-    const char* tabs[] = { "construct", "equipment", "items", "nature", "search" };
-    const char* visibleTabs[] = { "construction", "equipment", "items", "nature" };
-    for (int index = 0; index < 5; ++index) {
-        boolean(std::string("#is_left_tab_") + tabs[index], tab == index);
-        if (index < 4) {
-            boolean(std::string("#") + visibleTabs[index] + "_tab_visible", true);
-        }
-    }
-    text("#crafting_label_text", title);
-    text("#container_title", title);
-    text("#text_box_item_name", search);
-    text("#tab_label_text", title);
-    if (state.type == ContainerType::Anvil) {
-        text("#text_box_item_name", state.stationName);
-        std::string cost = ui::tr("container.repair.cost", "Enchantment Cost: %1");
-        size_t marker = cost.find("%1");
-        if (marker != std::string::npos) {
-            cost.replace(marker, 2, std::to_string(state.stationCost));
-        }
-        text("#cost_text", state.stationCost > 0 ? cost : std::string());
-        boolean("#cost_text_red", state.stationCost > state.experienceLevel && !creativeMode);
-        boolean("#cost_text_green", state.stationCost > 0 && (creativeMode || state.stationCost <= state.experienceLevel));
-        boolean("#cross_out_icon", !state.slots[Ui + 1].empty() && state.slots[Output].empty());
-    }
-    boolean("#is_container_screen", state.screen.empty());
-    if (state.type == ContainerType::Cartography) {
-        const auto& input = state.slots[Ui + 12];
-        const auto& material = state.slots[Ui + 13];
-        bool map = !input.empty() && (input.identifier == "minecraft:filled_map" || input.identifier == "minecraft:map");
-        bool clone = map && material.identifier == "minecraft:map";
-        bool extend = map && material.identifier == "minecraft:paper";
-        bool locator = map && material.identifier == "minecraft:compass";
-        bool locked = map && material.identifier == "minecraft:glass_pane";
-        boolean("#is_none_mode", !map);
-        boolean("#is_clone_mode", clone);
-        boolean("#is_extend_mode", extend);
-        boolean("#is_locator_map_mode", locator);
-        boolean("#is_locked_mode", locked);
-        boolean("#is_basic_map_mode", map && !clone && !extend && !locator && !locked);
-        boolean("#is_rename_mode", false);
-        text("#output_description", state.slots[Output].empty() ? std::string() : world::itemDisplayName(state.slots[Output].identifier));
-    }
-    if (state.type == ContainerType::SmithingTable) {
-        boolean("#cross_out_icon", !state.slots[Ui + 51].empty() && state.slots[Output].empty());
-    }
-    if (state.screen == "npc_interact.npc_screen") {
-        boolean("#student_view_visible", true);
-        text("#title_text", state.customName);
-        text("#dialogtext", state.dialogue);
-        number("#action_count", double(state.npcButtons.size()));
-        for (const auto& [index, label] : state.npcButtons) {
-            ui::UiRow button;
-            button["#student_button_text"] = ui::UiValue::of(label);
-            button["#student_button_visible"] = ui::UiValue::of(true);
-            data.collections["student_buttons_collection"].push_back(std::move(button));
-        }
-    }
-    if (state.screen == "book.book_screen" || state.type == ContainerType::Lectern) {
-        bookPage = std::clamp(bookPage, 0, std::max(0, int(state.pages.size()) - 1));
-        int spread = bookPage / 2 * 2;
-        boolean("#viewing", !bookSigning);
-        boolean("#signing", bookSigning);
-        boolean("#editable", state.bookEditable);
-        boolean("#author_editable", false);
-        boolean("#prev_page_button_active", spread > 0);
-        boolean("#next_page_button_active", spread + 2 < int(state.pages.size()) || (state.bookEditable && state.pages.size() < 50));
-        boolean("#finalize_button_enabled", state.bookEditable && !bookTitle.empty());
-        text("#title_text_box_item_name", bookTitle);
-        text("#author_text_box_item_name", state.author);
-        for (int side = 0; side < 2; ++side) {
-            int page = spread + side;
-            bool exists = page < int(state.pages.size());
-            ui::UiRow values;
-            values["#page_visible"] = ui::UiValue::of(exists);
-            values["#is_text_page"] = ui::UiValue::of(exists);
-            values["#editable"] = ui::UiValue::of(state.bookEditable);
-            values["#text_box_item_name"] = ui::UiValue::of(exists ? state.pages[page] : std::string());
-            values["#page_number"] = ui::UiValue::of(exists ? std::to_string(page + 1) : std::string());
-            values["#edit_button_active"] = ui::UiValue::of(state.bookEditable && bookPage != page);
-            values["#edit_controls_active"] = ui::UiValue::of(state.bookEditable && bookPage == page);
-            values["#insert_page_active"] = ui::UiValue::of(state.bookEditable && state.pages.size() < 50);
-            values["#swap_left_active"] = ui::UiValue::of(state.bookEditable && page > 0);
-            values["#swap_right_active"] = ui::UiValue::of(state.bookEditable && page + 1 < int(state.pages.size()));
-            data.collections["book_pages"].push_back(std::move(values));
-        }
-    }
-    if (state.type == ContainerType::Enchantment) {
-        for (int index = 0; index < 3; ++index) {
-            ui::UiRow option;
-            bool exists = index < int(state.enchantments.size());
-            bool enabled = exists && (creativeMode || (state.experienceLevel >= state.enchantments[index].mCost && state.slots[Ui + 15].count > index));
-            option["#selectable_button_visibility"] = ui::UiValue::of(enabled);
-            option["#unselectable_button_visibility"] = ui::UiValue::of(exists && !enabled);
-            option["#selectable_dust_is_visible"] = ui::UiValue::of(enabled);
-            option["#unselectable_dust_is_visible"] = ui::UiValue::of(exists && !enabled);
-            option["#cost"] = ui::UiValue::of(exists ? std::to_string(state.enchantments[index].mCost) : std::string());
-            option["#runes"] = ui::UiValue::of(exists ? state.enchantments[index].mEnchantName : std::string());
-            option["#hover_text"] = ui::UiValue::of(exists ? state.enchantments[index].mEnchantName : std::string());
-            data.collections["#enchant_buttons"].push_back(std::move(option));
-        }
-    }
-    if (state.type == ContainerType::Beacon) {
-        boolean("#supports_netherite", true);
-        const char* names[] = { "speed", "haste", "resist", "jump", "strength", "regen", "extra", "confirm", "cancel" };
-        const int powers[] = { 1, 3, 11, 8, 5, 10, beaconPrimary, 0, 0 };
-        for (int index = 0; index < 9; ++index) {
-            bool selected = index < 5 ? beaconPrimary == powers[index] : index < 7 && beaconSecondary == powers[index];
-            const int levels[] = { 1, 1, 2, 2, 3, 4, 4, 0, 0 };
-            bool enabled = state.beaconLevel >= levels[index] && (index != 7 || (beaconPrimary != 0 && !state.slots[Ui + 27].empty()));
-            ui::UiRow button;
-            button["#button_visible"] = ui::UiValue::of(true);
-            button["#active"] = ui::UiValue::of(enabled && !selected);
-            button["#inactive"] = ui::UiValue::of(!enabled);
-            button["#selected"] = ui::UiValue::of(enabled && selected);
-            data.collections[names[index]].push_back(std::move(button));
-        }
-    }
-    number("#furnace_arrow_ratio", 1.0 - state.furnaceProgress);
-    number("#furnace_flame_ratio", 1.0 - state.furnaceFlame);
-    auto property = [&](int key, int fallback = 0) {
-        auto found = state.properties.find(key);
-        return found == state.properties.end() ? fallback : found->second;
-    };
-    if (state.type == ContainerType::BrewingStand) {
-        number("#brewing_arrow_ratio", property(0) > 0 ? std::clamp(property(0) / 400.0, 0.0, 1.0) : 1.0);
-        number("#brewing_fuel_ratio", 1.0 - std::clamp(double(property(1)) / std::max(1, property(2, 20)), 0.0, 1.0));
-        number("#brewing_bubbles_ratio", property(0) > 0 ? (property(0) % 20) / 20.0 : 1.0);
-    }
-    if (state.type == ContainerType::Horse) {
-        auto equipment = mountSlots(state.mountIdentifier);
-        bool horse = equipment.body == MountSlots::Body::HorseArmor;
-        bool carpet = equipment.body == MountSlots::Body::Carpet;
-        bool nautilus = equipment.body == MountSlots::Body::NautilusArmor;
-        boolean("#has_saddle_slot", equipment.saddle);
-        boolean("#has_only_carpet_slot", !equipment.saddle && carpet);
-        boolean("#has_horse_armor_and_saddle_slot", equipment.saddle && horse);
-        boolean("#has_only_horse_armor_slot", !equipment.saddle && horse);
-        boolean("#has_carpet_and_saddle_slot", equipment.saddle && carpet);
-        boolean("#has_only_nautilus_armor_slot", !equipment.saddle && nautilus);
-        boolean("#has_nautilus_armor_and_saddle_slot", equipment.saddle && nautilus);
-        boolean("#is_chested", state.containerSize > 2);
-        text("#equip_grid_dimensions", "1," + std::to_string(int(equipment.saddle) + int(equipment.body != MountSlots::Body::None)));
-        text("#inv_grid_dimensions", std::to_string(std::max(0, state.containerSize - 2) / 3) + ",3");
-        number("#entity_id", double(state.mountRuntimeId));
-    }
-    if (state.type == ContainerType::Crafter) {
-        for (int index = 0; index < 9; ++index) {
-            boolean("#button_visible" + std::to_string(index), (state.disabledSlots & (1 << index)) != 0);
-        }
-        text("#redstone_arrow_texture", "textures/ui/redstone_arrow_unpowered");
-        number("#crafter_output_item", -1 - Output);
-        text("#output_stack_count", state.slots[Output].count > 1 ? std::to_string(state.slots[Output].count) : std::string());
-        text("#crafting_preview_info", state.slots[Output].empty() ? std::string() : world::itemDisplayName(state.slots[Output].identifier));
-    }
-    std::vector<HudItem> items(state.slots.begin(), state.slots.end());
-    std::set<int> ghostSlots;
-    if (crafting) {
-        for (int index = 0; index < 9; ++index) {
-            int slot = Craft + index;
-            if (items[slot].empty() && !state.recipeGhost[index].empty()) {
-                items[slot] = state.recipeGhost[index];
-                ghostSlots.insert(slot);
-            }
-        }
-        if (items[Output].empty() && !state.recipeGhostOutput.empty()) {
-            items[Output] = state.recipeGhostOutput;
-            ghostSlots.insert(Output);
-        }
-    }
-    auto row = [&](int slot) {
-        const HudItem& value = items[slot];
-        ui::UiRow result;
-        result["#item_renderer_data"] = ui::UiValue::of(double(slot));
-        result["#item_id_aux"] = ui::UiValue::of(double(-1 - slot));
-        result["#inventory_stack_count"] = ui::UiValue::of(value.count > 1 ? std::to_string(value.count) : std::string());
-        result["#item_stack_count"] = result["#inventory_stack_count"];
-        std::string tooltip = value.empty() ? std::string() : value.customName.empty() ? world::itemDisplayName(value.identifier) : value.customName;
-        static const char* enchantmentKeys[] = {
-            "protect.all", "protect.fire", "protect.fall", "protect.explosion", "protect.projectile", "thorns", "oxygen", "waterWalker", "waterWorker",
-            "damage.all", "damage.undead", "damage.arthropods", "knockback", "fire", "lootBonus", "digging", "untouching", "durability", "lootBonusDigger",
-            "arrowDamage", "arrowKnockback", "arrowFire", "arrowInfinite", "lootBonusFishing", "fishingSpeed", "frostwalker", "mending", "curse.binding",
-            "curse.vanishing", "tridentImpaling", "tridentRiptide", "tridentLoyalty", "tridentChanneling", "crossbowMultishot", "crossbowPiercing",
-            "crossbowQuickCharge", "soul_speed", "swift_sneak", "heavy_weapon.windburst", "heavy_weapon.density", "heavy_weapon.breach", "lunge"
-        };
-        for (const auto& [id, level] : value.enchantments) {
-            if (id >= 0 && id < int(std::size(enchantmentKeys)) && level > 0) {
-                std::string key = std::string("enchantment.") + enchantmentKeys[id];
-                tooltip += std::string("\n") + (id == 27 || id == 28 ? "\xC2\xA7" "c" : "\xC2\xA7" "7") + ui::tr(key, key);
-                tooltip += " " + ui::tr("enchantment.level." + std::to_string(level), std::to_string(level));
-            }
-        }
-        for (const std::string& line : value.lore) {
-            tooltip += '\n' + line;
-        }
-        if (state.type == ContainerType::Crafter && slot >= Container && slot < Container + 9 && value.empty()) {
-            tooltip = ui::tr("gui.togglable_slot", "Toggle Slot");
-        }
-        result["#hover_text"] = ui::UiValue::of(tooltip);
-        result["#is_selected_slot"] = ui::UiValue::of(slot == hoveredSlot);
-        result["#container_item_background"] = ui::UiValue::of(0.0);
-        for (const char* binding : { "#bundle_selected_item_visible", "#item_storage_visible", "#item_lock", "#item_lock_in_inventory", "#item_lock_in_slot" }) {
-            result[binding] = ui::UiValue::of(false);
-        }
-        result["#empty_armor_image_visible"] = ui::UiValue::of(value.empty());
-        result["#empty_offhand_image_visible"] = ui::UiValue::of(value.empty());
-        result["#empty_bottle_image_visible"] = ui::UiValue::of(value.empty());
-        result["#empty_fuel_image_visible"] = ui::UiValue::of(value.empty());
-        result["#empty_image_visible"] = ui::UiValue::of(value.empty());
-        int maximum = value.empty() ? 0 : world::itemMaxDurability(value.identifier);
-        double durability = maximum > 0 ? std::clamp(double(maximum - value.damage) / maximum, 0.0, 1.0) : 0.0;
-        result["#item_durability_visible"] = ui::UiValue::of(maximum > 0 && value.damage > 0);
-        result["#item_durability_total_amount"] = ui::UiValue::of(1000.0);
-        result["#item_durability_current_amount"] = ui::UiValue::of(durability * 1000.0);
-        return result;
-    };
-    for (const ContainerCollection& collection : layout.collections) {
-        auto& rows = data.collections[collection.name];
-        for (int slot : collection.slots) {
-            rows.push_back(row(slot));
-        }
-    }
-    std::vector<int> catalogEntries;
-    std::vector<int> catalogGroups;
-    std::set<int> listedGroups;
-    for (const auto& entry : state.stationOptions) {
-        int index = int(items.size());
-        items.push_back(entry.item);
-        auto values = row(index);
-        values["#stone_selector_total_items"] = ui::UiValue::of(double(state.stationOptions.size()));
-        values["#stone_cell_background_texture"] = ui::UiValue::of(entry.networkId == state.selectedStationRecipe ? "textures/ui/cell_image_invert" : "textures/ui/cell_image_normal");
-        data.collections["stones"].push_back(std::move(values));
-    }
-    number("#stone_selector_total_items", double(state.stationOptions.size()));
-    for (size_t index = 0; index < state.loomPatterns.size(); ++index) {
-        ui::UiRow option;
-        option["#banner_patterns"] = ui::UiValue::of(state.loomPatterns[index]);
-        option["#pattern_selector_total_items"] = ui::UiValue::of(double(state.loomPatterns.size()));
-        option["#pattern_cell_background_texture"] = ui::UiValue::of(int(index) == state.selectedStationRecipe ? "textures/ui/cell_image_invert" : "textures/ui/cell_image_normal");
-        data.collections["patterns"].push_back(std::move(option));
-    }
-    number("#pattern_selector_total_items", double(state.loomPatterns.size()));
     const auto& catalog = creativeMode ? state.creative : state.recipes;
-    if (shown && catalog) {
-        std::string query = search;
-        std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        for (size_t index = 0; index < catalog->size(); ++index) {
-            const InventoryCatalogItem& entry = (*catalog)[index];
-            bool available = creativeMode || std::find(state.craftable.begin(), state.craftable.end(), entry.networkId) != state.craftable.end();
-            if (craftableOnly && !available) {
-                continue;
+    auto& data = jsonData;
+    auto& items = jsonItems;
+    auto& ghostSlots = jsonGhostSlots;
+    auto& catalogEntries = jsonCatalogEntries;
+    auto& catalogGroups = jsonCatalogGroups;
+    JsonDataKey key { state.revision, state.openRevision, tab, bookPage, beaconPrimary, beaconSecondary,
+        creativeMode, book, wideCreative, craftableOnly, bookSigning, search, bookTitle, expandedGroups, ui::Localization::shared().revision() };
+    if (!jsonDataKey || *jsonDataKey != key) {
+        data = {};
+        catalogEntries.clear();
+        catalogGroups.clear();
+        ghostSlots.clear();
+        data.hideUnboundVisibility = true;
+        auto boolean = [&](const std::string& name, bool value) {
+            data.globals[name] = ui::UiValue::of(value);
+        };
+        auto number = [&](const std::string& name, double value) {
+            data.globals[name] = ui::UiValue::of(value);
+        };
+        auto text = [&](const std::string& name, const std::string& value) {
+            data.globals[name] = ui::UiValue::of(value);
+        };
+        boolean("#is_survival_layout", !shown);
+        boolean("#is_recipe_book_layout", shown && !wide);
+        boolean("#is_creative_layout", wide);
+        boolean("#is_creative_mode", creativeMode);
+        boolean("#close_button_visible", true);
+        boolean("#is_creative_layout_button_visible", creativeMode);
+        boolean("#is_creative_and_recipe_book_layout", creativeMode && shown && !wide);
+        boolean("#is_creative_and_creative_layout", wide);
+        boolean("#is_left_tab_inventory", !shown);
+        boolean("#filtering_enabled", craftableOnly);
+        boolean("#needs_crafting_table", false);
+        boolean("#gamepad_helper_visible", false);
+        boolean("#show_persistent_bundle_hover_text", true);
+        const char* tabs[] = { "construct", "equipment", "items", "nature", "search" };
+        const char* visibleTabs[] = { "construction", "equipment", "items", "nature" };
+        for (int index = 0; index < 5; ++index) {
+            boolean(std::string("#is_left_tab_") + tabs[index], tab == index);
+            if (index < 4) {
+                boolean(std::string("#") + visibleTabs[index] + "_tab_visible", true);
             }
-            const int categories[] = { 1, 3, 4, 2, 0 };
-            if (tab != 4 && entry.category != categories[tab]) {
-                continue;
+        }
+        text("#crafting_label_text", title);
+        text("#container_title", title);
+        text("#text_box_item_name", search);
+        text("#tab_label_text", title);
+        if (state.type == ContainerType::Anvil) {
+            text("#text_box_item_name", state.stationName);
+            std::string cost = ui::tr("container.repair.cost", "Enchantment Cost: %1");
+            size_t marker = cost.find("%1");
+            if (marker != std::string::npos) {
+                cost.replace(marker, 2, std::to_string(state.stationCost));
             }
-            std::string label = world::itemDisplayName(entry.item.identifier);
-            std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
+            text("#cost_text", state.stationCost > 0 ? cost : std::string());
+            boolean("#cost_text_red", state.stationCost > state.experienceLevel && !creativeMode);
+            boolean("#cost_text_green", state.stationCost > 0 && (creativeMode || state.stationCost <= state.experienceLevel));
+            boolean("#cross_out_icon", !state.slots[Ui + 1].empty() && state.slots[Output].empty());
+        }
+        boolean("#is_container_screen", state.screen.empty());
+        if (state.type == ContainerType::Cartography) {
+            const auto& input = state.slots[Ui + 12];
+            const auto& material = state.slots[Ui + 13];
+            bool map = !input.empty() && (input.identifier == "minecraft:filled_map" || input.identifier == "minecraft:map");
+            bool clone = map && material.identifier == "minecraft:map";
+            bool extend = map && material.identifier == "minecraft:paper";
+            bool locator = map && material.identifier == "minecraft:compass";
+            bool locked = map && material.identifier == "minecraft:glass_pane";
+            boolean("#is_none_mode", !map);
+            boolean("#is_clone_mode", clone);
+            boolean("#is_extend_mode", extend);
+            boolean("#is_locator_map_mode", locator);
+            boolean("#is_locked_mode", locked);
+            boolean("#is_basic_map_mode", map && !clone && !extend && !locator && !locked);
+            boolean("#is_rename_mode", false);
+            text("#output_description", state.slots[Output].empty() ? std::string() : world::itemDisplayName(state.slots[Output].identifier));
+        }
+        if (state.type == ContainerType::SmithingTable) {
+            boolean("#cross_out_icon", !state.slots[Ui + 51].empty() && state.slots[Output].empty());
+        }
+        if (state.screen == "npc_interact.npc_screen") {
+            boolean("#student_view_visible", true);
+            text("#title_text", state.customName);
+            text("#dialogtext", state.dialogue);
+            number("#action_count", double(state.npcButtons.size()));
+            for (const auto& [index, label] : state.npcButtons) {
+                ui::UiRow button;
+                button["#student_button_text"] = ui::UiValue::of(label);
+                button["#student_button_visible"] = ui::UiValue::of(true);
+                data.collections["student_buttons_collection"].push_back(std::move(button));
+            }
+        }
+        if (state.screen == "book.book_screen" || state.type == ContainerType::Lectern) {
+            bookPage = std::clamp(bookPage, 0, std::max(0, int(state.pages.size()) - 1));
+            int spread = bookPage / 2 * 2;
+            boolean("#viewing", !bookSigning);
+            boolean("#signing", bookSigning);
+            boolean("#editable", state.bookEditable);
+            boolean("#author_editable", false);
+            boolean("#prev_page_button_active", spread > 0);
+            boolean("#next_page_button_active", spread + 2 < int(state.pages.size()) || (state.bookEditable && state.pages.size() < 50));
+            boolean("#finalize_button_enabled", state.bookEditable && !bookTitle.empty());
+            text("#title_text_box_item_name", bookTitle);
+            text("#author_text_box_item_name", state.author);
+            for (int side = 0; side < 2; ++side) {
+                int page = spread + side;
+                bool exists = page < int(state.pages.size());
+                ui::UiRow values;
+                values["#page_visible"] = ui::UiValue::of(exists);
+                values["#is_text_page"] = ui::UiValue::of(exists);
+                values["#editable"] = ui::UiValue::of(state.bookEditable);
+                values["#text_box_item_name"] = ui::UiValue::of(exists ? state.pages[page] : std::string());
+                values["#page_number"] = ui::UiValue::of(exists ? std::to_string(page + 1) : std::string());
+                values["#edit_button_active"] = ui::UiValue::of(state.bookEditable && bookPage != page);
+                values["#edit_controls_active"] = ui::UiValue::of(state.bookEditable && bookPage == page);
+                values["#insert_page_active"] = ui::UiValue::of(state.bookEditable && state.pages.size() < 50);
+                values["#swap_left_active"] = ui::UiValue::of(state.bookEditable && page > 0);
+                values["#swap_right_active"] = ui::UiValue::of(state.bookEditable && page + 1 < int(state.pages.size()));
+                data.collections["book_pages"].push_back(std::move(values));
+            }
+        }
+        if (state.type == ContainerType::Enchantment) {
+            for (int index = 0; index < 3; ++index) {
+                ui::UiRow option;
+                bool exists = index < int(state.enchantments.size());
+                bool enabled = exists && (creativeMode || (state.experienceLevel >= state.enchantments[index].mCost && state.slots[Ui + 15].count > index));
+                option["#selectable_button_visibility"] = ui::UiValue::of(enabled);
+                option["#unselectable_button_visibility"] = ui::UiValue::of(exists && !enabled);
+                option["#selectable_dust_is_visible"] = ui::UiValue::of(enabled);
+                option["#unselectable_dust_is_visible"] = ui::UiValue::of(exists && !enabled);
+                option["#cost"] = ui::UiValue::of(exists ? std::to_string(state.enchantments[index].mCost) : std::string());
+                option["#runes"] = ui::UiValue::of(exists ? state.enchantments[index].mEnchantName : std::string());
+                option["#hover_text"] = ui::UiValue::of(exists ? state.enchantments[index].mEnchantName : std::string());
+                data.collections["#enchant_buttons"].push_back(std::move(option));
+            }
+        }
+        if (state.type == ContainerType::Beacon) {
+            boolean("#supports_netherite", true);
+            const char* names[] = { "speed", "haste", "resist", "jump", "strength", "regen", "extra", "confirm", "cancel" };
+            const int powers[] = { 1, 3, 11, 8, 5, 10, beaconPrimary, 0, 0 };
+            for (int index = 0; index < 9; ++index) {
+                bool selected = index < 5 ? beaconPrimary == powers[index] : index < 7 && beaconSecondary == powers[index];
+                const int levels[] = { 1, 1, 2, 2, 3, 4, 4, 0, 0 };
+                bool enabled = state.beaconLevel >= levels[index] && (index != 7 || (beaconPrimary != 0 && !state.slots[Ui + 27].empty()));
+                ui::UiRow button;
+                button["#button_visible"] = ui::UiValue::of(true);
+                button["#active"] = ui::UiValue::of(enabled && !selected);
+                button["#inactive"] = ui::UiValue::of(!enabled);
+                button["#selected"] = ui::UiValue::of(enabled && selected);
+                data.collections[names[index]].push_back(std::move(button));
+            }
+        }
+        number("#furnace_arrow_ratio", 1.0 - state.furnaceProgress);
+        number("#furnace_flame_ratio", 1.0 - state.furnaceFlame);
+        auto property = [&](int key, int fallback = 0) {
+            auto found = state.properties.find(key);
+            return found == state.properties.end() ? fallback : found->second;
+        };
+        if (state.type == ContainerType::BrewingStand) {
+            number("#brewing_arrow_ratio", property(0) > 0 ? std::clamp(property(0) / 400.0, 0.0, 1.0) : 1.0);
+            number("#brewing_fuel_ratio", 1.0 - std::clamp(double(property(1)) / std::max(1, property(2, 20)), 0.0, 1.0));
+            number("#brewing_bubbles_ratio", property(0) > 0 ? (property(0) % 20) / 20.0 : 1.0);
+        }
+        if (state.type == ContainerType::Horse) {
+            auto equipment = mountSlots(state.mountIdentifier);
+            bool horse = equipment.body == MountSlots::Body::HorseArmor;
+            bool carpet = equipment.body == MountSlots::Body::Carpet;
+            bool nautilus = equipment.body == MountSlots::Body::NautilusArmor;
+            boolean("#has_saddle_slot", equipment.saddle);
+            boolean("#has_only_carpet_slot", !equipment.saddle && carpet);
+            boolean("#has_horse_armor_and_saddle_slot", equipment.saddle && horse);
+            boolean("#has_only_horse_armor_slot", !equipment.saddle && horse);
+            boolean("#has_carpet_and_saddle_slot", equipment.saddle && carpet);
+            boolean("#has_only_nautilus_armor_slot", !equipment.saddle && nautilus);
+            boolean("#has_nautilus_armor_and_saddle_slot", equipment.saddle && nautilus);
+            boolean("#is_chested", state.containerSize > 2);
+            text("#equip_grid_dimensions", "1," + std::to_string(int(equipment.saddle) + int(equipment.body != MountSlots::Body::None)));
+            text("#inv_grid_dimensions", std::to_string(std::max(0, state.containerSize - 2) / 3) + ",3");
+            number("#entity_id", double(state.mountRuntimeId));
+        }
+        if (state.type == ContainerType::Crafter) {
+            for (int index = 0; index < 9; ++index) {
+                boolean("#button_visible" + std::to_string(index), (state.disabledSlots & (1 << index)) != 0);
+            }
+            text("#redstone_arrow_texture", "textures/ui/redstone_arrow_unpowered");
+            number("#crafter_output_item", -1 - Output);
+            text("#output_stack_count", state.slots[Output].count > 1 ? std::to_string(state.slots[Output].count) : std::string());
+            text("#crafting_preview_info", state.slots[Output].empty() ? std::string() : world::itemDisplayName(state.slots[Output].identifier));
+        }
+        items.assign(state.slots.begin(), state.slots.end());
+        if (crafting) {
+            for (int index = 0; index < 9; ++index) {
+                int slot = Craft + index;
+                if (items[slot].empty() && !state.recipeGhost[index].empty()) {
+                    items[slot] = state.recipeGhost[index];
+                    ghostSlots.insert(slot);
+                }
+            }
+            if (items[Output].empty() && !state.recipeGhostOutput.empty()) {
+                items[Output] = state.recipeGhostOutput;
+                ghostSlots.insert(Output);
+            }
+        }
+        auto row = [&](int slot) {
+            const HudItem& value = items[slot];
+            ui::UiRow result;
+            result["#item_renderer_data"] = ui::UiValue::of(double(slot));
+            result["#item_id_aux"] = ui::UiValue::of(double(-1 - slot));
+            result["#inventory_stack_count"] = ui::UiValue::of(value.count > 1 ? std::to_string(value.count) : std::string());
+            result["#item_stack_count"] = result["#inventory_stack_count"];
+            std::string tooltip = value.empty() ? std::string() : value.customName.empty() ? world::itemDisplayName(value.identifier) : value.customName;
+            static const char* enchantmentKeys[] = {
+                "protect.all", "protect.fire", "protect.fall", "protect.explosion", "protect.projectile", "thorns", "oxygen", "waterWalker", "waterWorker",
+                "damage.all", "damage.undead", "damage.arthropods", "knockback", "fire", "lootBonus", "digging", "untouching", "durability", "lootBonusDigger",
+                "arrowDamage", "arrowKnockback", "arrowFire", "arrowInfinite", "lootBonusFishing", "fishingSpeed", "frostwalker", "mending", "curse.binding",
+                "curse.vanishing", "tridentImpaling", "tridentRiptide", "tridentLoyalty", "tridentChanneling", "crossbowMultishot", "crossbowPiercing",
+                "crossbowQuickCharge", "soul_speed", "swift_sneak", "heavy_weapon.windburst", "heavy_weapon.density", "heavy_weapon.breach", "lunge"
+            };
+            for (const auto& [id, level] : value.enchantments) {
+                if (id >= 0 && id < int(std::size(enchantmentKeys)) && level > 0) {
+                    std::string key = std::string("enchantment.") + enchantmentKeys[id];
+                    tooltip += std::string("\n") + (id == 27 || id == 28 ? "\xC2\xA7" "c" : "\xC2\xA7" "7") + ui::tr(key, key);
+                    tooltip += " " + ui::tr("enchantment.level." + std::to_string(level), std::to_string(level));
+                }
+            }
+            for (const std::string& line : value.lore) {
+                tooltip += '\n' + line;
+            }
+            if (state.type == ContainerType::Crafter && slot >= Container && slot < Container + 9 && value.empty()) {
+                tooltip = ui::tr("gui.togglable_slot", "Toggle Slot");
+            }
+            result["#hover_text"] = ui::UiValue::of(tooltip);
+            result["#is_selected_slot"] = ui::UiValue::of(false);
+            result["#container_item_background"] = ui::UiValue::of(0.0);
+            for (const char* binding : { "#bundle_selected_item_visible", "#item_storage_visible", "#item_lock", "#item_lock_in_inventory", "#item_lock_in_slot" }) {
+                result[binding] = ui::UiValue::of(false);
+            }
+            result["#empty_armor_image_visible"] = ui::UiValue::of(value.empty());
+            result["#empty_offhand_image_visible"] = ui::UiValue::of(value.empty());
+            result["#empty_bottle_image_visible"] = ui::UiValue::of(value.empty());
+            result["#empty_fuel_image_visible"] = ui::UiValue::of(value.empty());
+            result["#empty_image_visible"] = ui::UiValue::of(value.empty());
+            int maximum = value.empty() ? 0 : world::itemMaxDurability(value.identifier);
+            double durability = maximum > 0 ? std::clamp(double(maximum - value.damage) / maximum, 0.0, 1.0) : 0.0;
+            result["#item_durability_visible"] = ui::UiValue::of(maximum > 0 && value.damage > 0);
+            result["#item_durability_total_amount"] = ui::UiValue::of(1000.0);
+            result["#item_durability_current_amount"] = ui::UiValue::of(durability * 1000.0);
+            return result;
+        };
+        for (const ContainerCollection& collection : layout.collections) {
+            auto& rows = data.collections[collection.name];
+            for (int slot : collection.slots) {
+                rows.push_back(row(slot));
+            }
+        }
+        std::set<int> listedGroups;
+        for (const auto& entry : state.stationOptions) {
+            int index = int(items.size());
+            items.push_back(entry.item);
+            auto values = row(index);
+            values["#stone_selector_total_items"] = ui::UiValue::of(double(state.stationOptions.size()));
+            values["#stone_cell_background_texture"] = ui::UiValue::of(entry.networkId == state.selectedStationRecipe ? "textures/ui/cell_image_invert" : "textures/ui/cell_image_normal");
+            data.collections["stones"].push_back(std::move(values));
+        }
+        number("#stone_selector_total_items", double(state.stationOptions.size()));
+        for (size_t index = 0; index < state.loomPatterns.size(); ++index) {
+            ui::UiRow option;
+            option["#banner_patterns"] = ui::UiValue::of(state.loomPatterns[index]);
+            option["#pattern_selector_total_items"] = ui::UiValue::of(double(state.loomPatterns.size()));
+            option["#pattern_cell_background_texture"] = ui::UiValue::of(int(index) == state.selectedStationRecipe ? "textures/ui/cell_image_invert" : "textures/ui/cell_image_normal");
+            data.collections["patterns"].push_back(std::move(option));
+        }
+        number("#pattern_selector_total_items", double(state.loomPatterns.size()));
+        if (shown && catalog) {
+            std::string query = search;
+            std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) {
                 return static_cast<char>(std::tolower(c));
             });
-            if (!query.empty() && label.find(query) == std::string::npos && entry.item.identifier.find(query) == std::string::npos) {
-                continue;
-            }
-            bool grouped = creativeMode && query.empty() && tab != 4 && entry.group >= 0 && !entry.groupName.empty();
-            if (grouped) {
-                if (listedGroups.insert(entry.group).second) {
-                    int icon = int(items.size());
-                    items.push_back(entry.item);
-                    auto header = row(icon);
-                    header["#container_item_background"] = ui::UiValue::of(expandedGroups.contains(entry.group) ? 2.0 : 1.0);
-                    header["#recipe_hover_text"] = ui::UiValue::of(ui::tr(entry.groupName, entry.groupName));
-                    header["#container_item_background_texture"] = ui::UiValue::of(expandedGroups.contains(entry.group)
-                        ? "textures/ui/recipe_book_dark_button_pressed" : "textures/ui/recipe_book_light_button");
-                    data.collections["recipe_book"].push_back(std::move(header));
-                    catalogEntries.push_back(int(index));
-                    catalogGroups.push_back(entry.group);
-                }
-                if (!expandedGroups.contains(entry.group)) {
+            for (size_t index = 0; index < catalog->size(); ++index) {
+                const InventoryCatalogItem& entry = (*catalog)[index];
+                bool available = creativeMode || std::find(state.craftable.begin(), state.craftable.end(), entry.networkId) != state.craftable.end();
+                if (craftableOnly && !available) {
                     continue;
                 }
+                const int categories[] = { 1, 3, 4, 2, 0 };
+                if (tab != 4 && entry.category != categories[tab]) {
+                    continue;
+                }
+                std::string label = world::itemDisplayName(entry.item.identifier);
+                std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                if (!query.empty() && label.find(query) == std::string::npos && entry.item.identifier.find(query) == std::string::npos) {
+                    continue;
+                }
+                bool grouped = creativeMode && query.empty() && tab != 4 && entry.group >= 0 && !entry.groupName.empty();
+                if (grouped) {
+                    if (listedGroups.insert(entry.group).second) {
+                        int icon = int(items.size());
+                        items.push_back(entry.item);
+                        auto header = row(icon);
+                        for (const char* binding : { "#inventory_stack_count", "#item_stack_count", "#recipe_craftable_count" }) {
+                            header[binding] = ui::UiValue::of(std::string());
+                        }
+                        header["#container_item_background"] = ui::UiValue::of(expandedGroups.contains(entry.group) ? 2.0 : 1.0);
+                        header["#recipe_hover_text"] = ui::UiValue::of(ui::tr(entry.groupName, entry.groupName));
+                        header["#container_item_background_texture"] = ui::UiValue::of(expandedGroups.contains(entry.group)
+                            ? "textures/ui/recipe_book_dark_button_pressed" : "textures/ui/recipe_book_light_button");
+                        data.collections["recipe_book"].push_back(std::move(header));
+                        catalogEntries.push_back(int(index));
+                        catalogGroups.push_back(entry.group);
+                    }
+                    if (!expandedGroups.contains(entry.group)) {
+                        continue;
+                    }
+                }
+                int item = static_cast<int>(items.size());
+                items.push_back(entry.item);
+                ui::UiRow values = row(item);
+                values["#container_item_background"] = ui::UiValue::of(!available ? 5.0 : grouped ? 3.0 : 0.0);
+                values["#craftable"] = ui::UiValue::of(available);
+                values["#recipe_item"] = ui::UiValue::of(true);
+                values["#is_group"] = ui::UiValue::of(false);
+                for (const char* binding : { "#inventory_stack_count", "#item_stack_count", "#recipe_craftable_count" }) {
+                    values[binding] = ui::UiValue::of(std::string());
+                }
+                values["#recipe_hover_text"] = values["#hover_text"];
+                values["#is_creative_selected_slot"] = ui::UiValue::of(false);
+                values["#container_item_background_texture"] = ui::UiValue::of(!available ? "textures/ui/recipe_book_red_button"
+                    : grouped ? "textures/ui/recipe_book_dark_button" : "textures/ui/recipe_book_item_bg");
+                data.collections["recipe_book"].push_back(std::move(values));
+                catalogEntries.push_back(static_cast<int>(index));
+                catalogGroups.push_back(-1);
             }
-            int item = static_cast<int>(items.size());
-            items.push_back(entry.item);
-            ui::UiRow values = row(item);
-            values["#container_item_background"] = ui::UiValue::of(!available ? 5.0 : grouped ? 3.0 : 0.0);
-            values["#craftable"] = ui::UiValue::of(available);
-            values["#recipe_item"] = ui::UiValue::of(true);
-            values["#is_group"] = ui::UiValue::of(false);
-            values["#recipe_craftable_count"] = ui::UiValue::of(!creativeMode && entry.item.count > 1 ? std::to_string(entry.item.count) : std::string());
-            values["#recipe_hover_text"] = values["#hover_text"];
-            values["#is_creative_selected_slot"] = ui::UiValue::of(false);
-            values["#container_item_background_texture"] = ui::UiValue::of(!available ? "textures/ui/recipe_book_red_button"
-                : grouped ? "textures/ui/recipe_book_dark_button" : "textures/ui/recipe_book_item_bg");
-            data.collections["recipe_book"].push_back(std::move(values));
-            catalogEntries.push_back(static_cast<int>(index));
-            catalogGroups.push_back(-1);
         }
+        number("#recipe_book_length", double(catalogEntries.size()));
+        number("#recipe_book_total_items", double(catalogEntries.size()));
+        key.page = bookPage;
+        jsonDataKey = std::move(key);
+        ++jsonDataGeneration;
     }
-    number("#recipe_book_length", double(catalogEntries.size()));
-    number("#recipe_book_total_items", double(catalogEntries.size()));
     auto drawItem = [&](const HudItem& value, const ui::Rect& rect, float alpha) {
         if (value.empty() || !itemIcon) {
             return;
@@ -506,7 +525,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             drawEnchantingBook(ui, rect, alpha, !state.slots[Ui + 14].empty());
         }
     });
-    jsonScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    jsonScreen->draw(ui, { 0.0f, 0.0f, width, height }, data, jsonDataGeneration);
     jsonScreen->setRenderer({});
     ui::UiEvent target = jsonScreen->pointerTarget();
     hoveredSlot = -1;

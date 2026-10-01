@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -184,6 +185,9 @@ public:
 
         cubePipeline = device->createPipeline(worldPipeline("vs_world", "ps_world", cubeLayout(), BlendMode::None, true, DepthCompare::Less));
         modelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less));
+        auto actorDesc = worldPipeline("vs_actor", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less);
+        actorDesc.bindings.actorConstants = true;
+        actorPipeline = device->createPipeline(actorDesc);
         modelBlendPipeline = device->createPipeline(worldPipeline("vs_model", "ps_blend", modelLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
         cubeBlendPipeline = device->createPipeline(worldPipeline("vs_world", "ps_blend", cubeLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
         skyPipeline = device->createPipeline(worldPipeline("vs_sky", "ps_sky", skyLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
@@ -225,11 +229,16 @@ public:
 
     void uploadUiAtlas(const uint8_t* pixels, uint32_t width, uint32_t height) override
     {
-        device->waitIdle();
-        atlas.reset();
-        atlas = device->createTexture({ width, height, 1, 1, false });
-        device->uploadTexture(*atlas, { { 0, 0, pixels } });
-        uiTextures->bind(0, atlas.get());
+        if (!atlas || atlasWidth != width || atlasHeight != height) {
+            device->waitIdle();
+            atlas = device->createTexture({ width, height, 1, 1, false });
+            device->uploadTexture(*atlas, { { 0, 0, pixels } });
+            uiTextures->bind(0, atlas.get());
+            atlasWidth = width;
+            atlasHeight = height;
+        } else {
+            device->uploadTextureAsync(*atlas, { { 0, 0, pixels } });
+        }
     }
 
     void uploadBlockTextures(const BlockTextureUpload& textures) override
@@ -303,14 +312,13 @@ public:
         if (layer >= entityLayers || !entityTextures[page]) {
             return;
         }
-        device->waitIdle();
         uint32_t slot = layer % EntityTexturePageLayers;
         std::vector<std::vector<uint8_t>> mips = entityMips(pixels, entitySize, EntityMipLevels);
         std::vector<TextureData> data { { slot, 0, pixels } };
         for (size_t level = 0; level < mips.size(); ++level) {
             data.push_back({ slot, static_cast<uint32_t>(level + 1), mips[level].data() });
         }
-        device->uploadTexture(*entityTextures[page], data);
+        device->uploadTextureAsync(*entityTextures[page], data);
     }
 
     void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) override
@@ -325,13 +333,22 @@ public:
         for (size_t stream = 0; stream < 4; ++stream) {
             size_t bytes = static_cast<size_t>(counts[stream]) * StreamStride[stream];
             if (bytes != 0) {
-                chunk.buffers[stream] = device->createBuffer(bytes);
-                std::memcpy(chunk.buffers[stream]->mapped(), sources[stream], bytes);
+                if (stream < 2) {
+                    chunk.buffers[stream] = acquirePersistent(bytes);
+                    device->uploadBuffer(*chunk.buffers[stream], sources[stream], bytes);
+                } else {
+                    auto& centers = chunk.centers[stream - 2];
+                    centers.resize(counts[stream]);
+                    const auto* data = static_cast<const uint8_t*>(sources[stream]);
+                    chunk.translucent[stream - 2].assign(data, data + bytes);
+                    for (size_t quad = 0; quad < counts[stream]; ++quad) centers[quad] = quadCenter(data + quad * StreamStride[stream], stream == 2);
+                }
             }
             chunk.counts[stream] = counts[stream];
         }
         chunk.origin = { originX, originY, originZ };
         chunks.emplace(id, std::move(chunk));
+        ++meshRevision;
     }
 
     void removeChunkMesh(uint64_t id) override
@@ -342,6 +359,7 @@ public:
         }
         retire(found->second);
         chunks.erase(found);
+        ++meshRevision;
     }
 
     void clearChunkMeshes() override
@@ -350,12 +368,14 @@ public:
             retire(chunk);
         }
         chunks.clear();
+        ++meshRevision;
     }
 
     void beginFrame(float r, float g, float b) override
     {
         uint64_t submission = device->beginFrame(r, g, b);
         uint64_t completed = device->completedSubmission();
+        collectPool();
         for (const CompletedFrame& frame : slotFrames) {
             if (frame.submission <= completed && frame.submission > completedReport.submission) {
                 completedReport = frame;
@@ -397,7 +417,7 @@ public:
         }
 
         ChunkFrustum frustum(view);
-        std::vector<const ChunkBuffer*> visible;
+        visible.clear();
         visible.reserve(chunks.size());
         for (const auto& [id, chunk] : chunks) {
             if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
@@ -431,24 +451,122 @@ public:
             device->setDepthRange(1.0f);
         };
         drawEntities(*modelPipeline, 0, view.entityQuadCount, 1.0f);
-
-        std::vector<std::pair<double, const ChunkBuffer*>> ordered;
-        for (const ChunkBuffer* chunk : visible) {
-            if (chunk->counts[2] || chunk->counts[3]) {
-                double dx = chunk->origin[0] + 8.0 - view.cameraX;
-                double dy = chunk->origin[1] + 8.0 - view.cameraY;
-                double dz = chunk->origin[2] + 8.0 - view.cameraZ;
-                ordered.emplace_back(dx * dx + dy * dy + dz * dz, chunk);
+        for (uint32_t index = 0; entityLayers && index < view.actorDrawCount; ++index) {
+            const ActorDraw& draw = view.actorDraws[index];
+            if (!draw.count || !draw.total) continue;
+            auto& mesh = actorMeshes[draw.geometryKey];
+            if (!mesh.buffer) {
+                mesh.buffer = acquirePersistent(size_t(draw.total) * ModelQuadBytes);
+                device->uploadBuffer(*mesh.buffer, draw.quads, size_t(draw.total) * ModelQuadBytes);
             }
+            mesh.used = recording.submission;
+            bind(*actorPipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            device->setActorConstants(draw.constants.data(), static_cast<uint32_t>(draw.constants.size()));
+            device->setVertexBuffer(*mesh.buffer, ModelQuadBytes, size_t(draw.total) * ModelQuadBytes);
+            device->draw(6, draw.count, 0, draw.first);
         }
-        std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
-            return left.first > right.first;
-        });
-        for (const auto& [distance, chunk] : ordered) {
-            drawStream(*modelBlendPipeline, *chunk, 3);
-            drawStream(*cubeBlendPipeline, *chunk, 2);
+
+
+        auto depth = [&](const std::array<float, 3>& point) {
+            return view.viewProjection[2] * point[0] + view.viewProjection[6] * point[1] + view.viewProjection[10] * point[2];
+        };
+        const std::array<double, 3> camera { view.cameraX, view.cameraY, view.cameraZ };
+        if (!terrainCacheValid || cachedMeshRevision != meshRevision || cachedCamera != camera || cachedProjection != view.viewProjection) {
+            terrainTransparent.clear();
+            for (const ChunkBuffer* chunk : visible) {
+                std::array<float, 3> relative {
+                    float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ)
+                };
+                for (size_t stream = 2; stream < 4; ++stream) {
+                    const auto& centers = chunk->centers[stream - 2];
+                    for (uint32_t quad = 0; quad < centers.size(); ++quad) {
+                        auto point = centers[quad];
+                        for (size_t axis = 0; axis < 3; ++axis) point[axis] += relative[axis];
+                        terrainTransparent.push_back({ depth(point), chunk, uint32_t(stream), quad });
+                    }
+                }
+            }
+            std::sort(terrainTransparent.begin(), terrainTransparent.end(), transparentBefore);
+            terrainCounts = {};
+            for (const auto& quad : terrainTransparent) ++terrainCounts[quad.stream - 2];
+            cachedCamera = camera;
+            cachedProjection = view.viewProjection;
+            cachedMeshRevision = meshRevision;
+            terrainCacheValid = true;
+            ++terrainGeneration;
         }
-        drawEntities(*modelBlendPipeline, view.entityQuadCount, view.entityBlendCount, 1.0f);
+        actorTransparent.clear();
+        const auto* entityData = static_cast<const uint8_t*>(view.entityQuads);
+        for (uint32_t quad = 0; entities && quad < view.entityBlendCount; ++quad) {
+            uint32_t index = view.entityQuadCount + quad;
+            auto point = quadCenter(entityData + size_t(index) * ModelQuadBytes, false);
+            for (size_t axis = 0; axis < 3; ++axis) point[axis] += view.entityOrigin[axis];
+            actorTransparent.push_back({ depth(point), nullptr, 3, index });
+        }
+        std::sort(actorTransparent.begin(), actorTransparent.end(), transparentBefore);
+        std::array<size_t, 2> sortedCounts = terrainCounts;
+        if (actorTransparent.empty()) {
+            if (terrainDataGeneration != terrainGeneration) {
+                for (size_t stream = 0; stream < 2; ++stream) terrainData[stream].resize(terrainCounts[stream] * StreamStride[stream + 2]);
+                terrainDraws = terrainTransparent;
+                std::array<uint32_t, 2> offsets {};
+                for (auto& quad : terrainDraws) {
+                    size_t stream = quad.stream - 2;
+                    size_t stride = StreamStride[quad.stream];
+                    std::memcpy(terrainData[stream].data() + size_t(offsets[stream]) * stride,
+                        quad.chunk->translucent[stream].data() + size_t(quad.quad) * stride, stride);
+                    quad.quad = offsets[stream]++;
+                }
+                terrainDataGeneration = terrainGeneration;
+            }
+            if (buffers.terrainGeneration != terrainGeneration) {
+                for (size_t stream = 0; stream < 2; ++stream) {
+                    if (terrainData[stream].empty()) continue;
+                    ensure(buffers.translucent[stream], terrainData[stream].size());
+                    std::memcpy(buffers.translucent[stream]->mapped(), terrainData[stream].data(), terrainData[stream].size());
+                }
+                buffers.terrainGeneration = terrainGeneration;
+            }
+        } else {
+            transparent.resize(terrainTransparent.size() + actorTransparent.size());
+            std::merge(terrainTransparent.begin(), terrainTransparent.end(), actorTransparent.begin(), actorTransparent.end(), transparent.begin(), transparentBefore);
+            sortedCounts[1] += actorTransparent.size();
+            std::array<uint8_t*, 2> sortedData {};
+            for (size_t stream = 0; stream < sortedCounts.size(); ++stream) {
+                if (sortedCounts[stream] == 0) continue;
+                ensure(buffers.translucent[stream], sortedCounts[stream] * StreamStride[stream + 2]);
+                sortedData[stream] = static_cast<uint8_t*>(buffers.translucent[stream]->mapped());
+            }
+            std::array<uint32_t, 2> offsets {};
+            for (auto& quad : transparent) {
+                size_t stream = quad.stream - 2;
+                size_t stride = StreamStride[quad.stream];
+                const uint8_t* source = quad.chunk ? quad.chunk->translucent[stream].data() : entityData;
+                std::memcpy(sortedData[stream] + size_t(offsets[stream]) * stride, source + size_t(quad.quad) * stride, stride);
+                quad.quad = offsets[stream]++;
+            }
+            buffers.terrainGeneration = 0;
+        }
+        const auto& sorted = actorTransparent.empty() ? terrainDraws : transparent;
+        for (size_t index = 0; index < sorted.size();) {
+            const auto& first = sorted[index];
+            uint32_t count = 1;
+            while (index + count < sorted.size()) {
+                const auto& next = sorted[index + count];
+                if (next.chunk != first.chunk || next.stream != first.stream || next.quad != first.quad + count) break;
+                ++count;
+            }
+            if (first.chunk) {
+                const auto& chunk = *first.chunk;
+                bind(first.stream == 2 ? *cubeBlendPipeline : *modelBlendPipeline, float(chunk.origin[0] - view.cameraX), float(chunk.origin[1] - view.cameraY), float(chunk.origin[2] - view.cameraZ));
+            } else {
+                bind(*modelBlendPipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            }
+            size_t stream = first.stream - 2;
+            device->setVertexBuffer(*buffers.translucent[stream], StreamStride[first.stream], sortedCounts[stream] * StreamStride[first.stream]);
+            device->draw(6, count, 0, first.quad);
+            index += count;
+        }
         drawEntities(*overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0f);
         drawEntities(*modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
@@ -604,6 +722,8 @@ private:
         std::array<std::unique_ptr<Buffer>, 4> buffers;
         std::array<uint32_t, 4> counts {};
         std::array<int32_t, 3> origin {};
+        std::array<std::vector<std::array<float, 3>>, 2> centers;
+        std::array<std::vector<uint8_t>, 2> translucent;
     };
 
     struct FrameBuffers {
@@ -611,6 +731,8 @@ private:
         std::unique_ptr<Buffer> indices;
         std::unique_ptr<Buffer> sky;
         std::unique_ptr<Buffer> entities;
+        std::array<std::unique_ptr<Buffer>, 2> translucent;
+        uint64_t terrainGeneration = 0;
         std::array<std::unique_ptr<Buffer>, CustomLayerCount> custom;
         std::unique_ptr<Buffer> postQuad;
     };
@@ -626,7 +748,110 @@ private:
     {
         for (std::unique_ptr<Buffer>& buffer : chunk.buffers) {
             if (buffer) {
-                device->retire(std::move(buffer));
+                pool.push_back({ std::move(buffer), device->submittedFrames() + 1 });
+            }
+        }
+    }
+
+    struct PooledBuffer {
+        std::unique_ptr<Buffer> buffer;
+        uint64_t safeAfter;
+    };
+    struct ActorMesh {
+        std::unique_ptr<Buffer> buffer;
+        uint64_t used = 0;
+    };
+    struct TransparentQuad {
+        float depth;
+        const ChunkBuffer* chunk;
+        uint32_t stream;
+        uint32_t quad;
+    };
+
+    static bool transparentBefore(const TransparentQuad& a, const TransparentQuad& b)
+    {
+        if (a.depth != b.depth) return a.depth > b.depth;
+        if (a.chunk != b.chunk) return std::less<const ChunkBuffer*> {}(a.chunk, b.chunk);
+        if (a.stream != b.stream) return a.stream < b.stream;
+        return a.quad < b.quad;
+    }
+
+    static std::array<float, 3> quadCenter(const void* data, bool cube)
+    {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        uint32_t words[16] {};
+        std::memcpy(words, bytes, cube ? CubeQuadBytes : ModelQuadBytes);
+        std::array<float, 3> center {};
+        if (cube) {
+            uint32_t geometry = words[0];
+            center = { float(geometry & 31), float((geometry >> 5) & 31), float((geometry >> 10) & 31) };
+            uint32_t face = (geometry >> 15) & 7;
+            float width = float(((geometry >> 18) & 15) + 1);
+            float height = float(((geometry >> 22) & 15) + 1);
+            if (face < 2) { center[0] += face == 1 ? 1.0f : 0.0f; center[1] += height * .5f; center[2] += width * .5f; }
+            else if (face < 4) { center[0] += width * .5f; center[1] += face == 3 ? 1.0f : 0.0f; center[2] += height * .5f; }
+            else { center[0] += width * .5f; center[1] += height * .5f; center[2] += face == 5 ? 1.0f : 0.0f; }
+        } else {
+            for (size_t component = 0; component < 12; ++component) {
+                uint16_t packed = uint16_t(words[component / 2] >> ((component & 1) * 16));
+                center[component % 3] += float(static_cast<int16_t>(packed)) / 1024.0f;
+            }
+            if (words[13] & 0x80000000u) {
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    int32_t packed = int32_t((words[13] >> (axis * 10)) & 1023u);
+                    if (packed & 512) packed -= 1024;
+                    center[axis] += float(packed) * 64.0f;
+                }
+            }
+        }
+        return center;
+    }
+
+    std::unique_ptr<Buffer> acquirePersistent(size_t bytes)
+    {
+        auto best = pool.end();
+        uint64_t completed = device->completedSubmission();
+        for (auto it = pool.begin(); it != pool.end(); ++it) {
+            if (it->safeAfter > completed || it->buffer->size() < bytes) continue;
+            if (best == pool.end() || it->buffer->size() < best->buffer->size()) best = it;
+        }
+        if (best != pool.end()) {
+            auto buffer = std::move(best->buffer);
+            pool.erase(best);
+            return buffer;
+        }
+        return device->createPersistentBuffer((bytes + 255) & ~size_t(255));
+    }
+
+    void collectPool()
+    {
+        uint64_t completed = device->completedSubmission();
+        size_t bytes = 0;
+        for (const auto& entry : pool) bytes += entry.buffer->size();
+        size_t destroyed = 0;
+        for (size_t index = 0; index < pool.size() && destroyed < 32;) {
+            if (bytes <= 64 * 1024 * 1024) break;
+            if (pool[index].safeAfter > completed) {
+                ++index;
+            } else {
+                bytes -= pool[index].buffer->size();
+                if (index != pool.size() - 1) std::swap(pool[index], pool.back());
+                pool.pop_back();
+                ++destroyed;
+            }
+        }
+        size_t actorBytes = 0;
+        for (const auto& [key, mesh] : actorMeshes) actorBytes += mesh.buffer->size();
+        uint64_t previousSubmission = device->submittedFrames();
+        for (auto it = actorMeshes.begin(); it != actorMeshes.end();) {
+            bool expired = it->second.used + 120 < completed;
+            bool overBudget = actorBytes > 128 * 1024 * 1024 && it->second.used < previousSubmission;
+            if (expired || overBudget) {
+                actorBytes -= it->second.buffer->size();
+                pool.push_back({ std::move(it->second.buffer), device->submittedFrames() + 1 });
+                it = actorMeshes.erase(it);
+            } else {
+                ++it;
             }
         }
     }
@@ -648,6 +873,7 @@ private:
     std::unique_ptr<Pipeline> uiPipeline;
     std::unique_ptr<Pipeline> cubePipeline;
     std::unique_ptr<Pipeline> modelPipeline;
+    std::unique_ptr<Pipeline> actorPipeline;
     std::unique_ptr<Pipeline> cubeBlendPipeline;
     std::unique_ptr<Pipeline> modelBlendPipeline;
     std::unique_ptr<Pipeline> overlayPipeline;
@@ -655,11 +881,29 @@ private:
     std::unique_ptr<TextureSet> uiTextures;
     std::unique_ptr<TextureSet> worldTextures;
     std::unique_ptr<Texture> atlas;
+    uint32_t atlasWidth = 0;
+    uint32_t atlasHeight = 0;
     std::array<std::unique_ptr<Texture>, BlockTexturePages> blockTextures;
     std::array<std::unique_ptr<Texture>, EntityTexturePages> entityTextures;
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
+    std::vector<PooledBuffer> pool;
+    std::vector<const ChunkBuffer*> visible;
+    std::vector<TransparentQuad> transparent;
+    std::vector<TransparentQuad> terrainTransparent;
+    std::vector<TransparentQuad> actorTransparent;
+    std::vector<TransparentQuad> terrainDraws;
+    std::array<std::vector<uint8_t>, 2> terrainData;
+    std::array<size_t, 2> terrainCounts {};
+    std::array<double, 3> cachedCamera {};
+    std::array<float, 16> cachedProjection {};
+    uint64_t meshRevision = 0;
+    uint64_t cachedMeshRevision = 0;
+    uint64_t terrainGeneration = 0;
+    uint64_t terrainDataGeneration = 0;
+    bool terrainCacheValid = false;
+    std::unordered_map<uint64_t, ActorMesh> actorMeshes;
     std::unordered_map<uint32_t, CustomPipeline> customPipelines;
     uint32_t nextShader = 1;
     std::vector<FrameBuffers> frames;

@@ -35,7 +35,8 @@ account and renders the world with the textures of the installed game.
 
 ## Building
 
-Requires CMake 3.24+, a C++20 compiler and zlib. Linux also needs the Vulkan SDK. The first configure
+Requires CMake 3.24+, a C++20 compiler and zlib. Linux also needs the Vulkan SDK and `glslc`; Vulkan shaders
+are generated from the GLSL sources during the build. The first configure
 needs network access to fetch the dependencies.
 
 ```

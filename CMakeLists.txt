@@ -177,6 +177,40 @@ endif()
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(NOT WIN32 AND NOT APPLE)
+    find_program(KESTREL_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/bin" REQUIRED)
+    set(KESTREL_SHADER_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/render/vulkan")
+    set(KESTREL_SHADER_HEADER "#pragma once\n#include <cstdint>\nnamespace kestrel::shaders {\n")
+    function(kestrel_vulkan_shader symbol source)
+        set(binary "${KESTREL_SHADER_DIRECTORY}/${symbol}.spv")
+        set(header "${KESTREL_SHADER_DIRECTORY}/${symbol}.inc")
+        add_custom_command(OUTPUT "${header}"
+            BYPRODUCTS "${binary}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${KESTREL_SHADER_DIRECTORY}"
+            COMMAND "${KESTREL_GLSLC}" -O ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${source}" -o "${binary}"
+            COMMAND ${CMAKE_COMMAND} "-DINPUT=${binary}" "-DOUTPUT=${header}" "-DSYMBOL=${symbol}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/EmbedSpirv.cmake"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${source}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/EmbedSpirv.cmake"
+            VERBATIM)
+        set(KESTREL_SHADER_OUTPUTS ${KESTREL_SHADER_OUTPUTS} "${header}" PARENT_SCOPE)
+        set(KESTREL_SHADER_HEADER "${KESTREL_SHADER_HEADER}#include \"${symbol}.inc\"\n" PARENT_SCOPE)
+    endfunction()
+    kestrel_vulkan_shader(UiVertex ui.vert)
+    kestrel_vulkan_shader(UiFragment ui.frag)
+    kestrel_vulkan_shader(WorldVertex world.vert)
+    kestrel_vulkan_shader(WorldFragment world.frag)
+    kestrel_vulkan_shader(BlendFragment world.frag -DBLEND)
+    kestrel_vulkan_shader(ModelVertex model.vert)
+    kestrel_vulkan_shader(ActorVertex actor.vert)
+    kestrel_vulkan_shader(SkyVertex sky.vert)
+    kestrel_vulkan_shader(SkyFragment sky.frag)
+    kestrel_vulkan_shader(OverlayVertex model.vert -DOVERLAY)
+    kestrel_vulkan_shader(OverlayFragment world.frag -DOVERLAY)
+    file(GENERATE OUTPUT "${KESTREL_SHADER_DIRECTORY}/UiShaders.h" CONTENT "${KESTREL_SHADER_HEADER}}\n")
+    add_custom_target(KestrelVulkanShaders DEPENDS ${KESTREL_SHADER_OUTPUTS})
+    add_dependencies(Kestrel KestrelVulkanShaders)
+    target_include_directories(Kestrel BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+endif()
 target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB::ZLIB)
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <optional>
 #include <unordered_map>
+#include <deque>
 
 namespace kestrel::world {
 
@@ -348,25 +349,61 @@ public:
         : assets(assets)
         , ids(ids)
         , input(input)
+        , retained(input.lighting)
     {
+    }
+
+    std::shared_ptr<const ChunkLighting> update(std::shared_ptr<const ChunkLighting> previous) const
+    {
+        size_t volume = size_t(Extent) * Extent * Extent;
+        filter.assign(volume, 0);
+        emission.assign(volume, 0);
+        occluder.assign(volume, 0);
+        loadBlocks(assets, ids, input);
+        std::vector<uint8_t> seeds(volume, 0);
+        if (input.skyLight) {
+            auto blocked = blockedColumns(assets, ids, input);
+            for (int32_t x = -Offset; x < Extent - Offset; ++x) {
+                for (int32_t z = -Offset; z < Extent - Offset; ++z) {
+                    if (blocked[size_t(x + Offset) * Extent + size_t(z + Offset)]) continue;
+                    for (int32_t y = Extent - Offset - 1; y >= -Offset; --y) {
+                        size_t cell = index(x, y, z);
+                        seeds[cell] = static_cast<uint8_t>(15 - std::min<uint8_t>(filter[cell], 15));
+                        if (filter[cell]) break;
+                    }
+                }
+            }
+        }
+        block = previous && previous->block.size() == volume ? previous->block : std::vector<uint8_t>(volume, 0);
+        sky = previous && previous->sky.size() == volume ? previous->sky : std::vector<uint8_t>(volume, 0);
+        relax(block, emission, previous.get(), false);
+        relax(sky, seeds, previous.get(), true);
+        auto result = std::make_shared<ChunkLighting>();
+        result->filter = std::move(filter);
+        result->emission = std::move(emission);
+        result->occluder = std::move(occluder);
+        result->block = std::move(block);
+        result->sky = std::move(sky);
+        result->skySeeds = std::move(seeds);
+        return result;
     }
 
     uint8_t blockAt(int32_t x, int32_t y, int32_t z) const
     {
         solve();
-        return inside(x, y, z) ? block[index(x, y, z)] : 0;
+        return inside(x, y, z) ? (retained ? retained->block : block)[index(x, y, z)] : 0;
     }
 
     uint8_t skyAt(int32_t x, int32_t y, int32_t z) const
     {
         solve();
-        return inside(x, y, z) ? sky[index(x, y, z)] : 0;
+        return inside(x, y, z) ? (retained ? retained->sky : sky)[index(x, y, z)] : 0;
     }
 
     bool occludes(int32_t x, int32_t y, int32_t z) const
     {
         solve();
-        return inside(x, y, z) && occluder[index(x, y, z)] != 0;
+        return inside(x, y, z) && (retained ? retained->occluder : occluder)[index(x, y, z)] != 0;
     }
 
     /**
@@ -495,7 +532,7 @@ private:
      */
     void solve() const
     {
-        if (solved) {
+        if (retained || solved) {
             return;
         }
         solved = true;
@@ -562,6 +599,40 @@ private:
                         }
                     }
                 }
+            }
+        }
+    }
+
+    void relax(std::vector<uint8_t>& levels, const std::vector<uint8_t>& seeds, const ChunkLighting* previous, bool skyChannel) const
+    {
+        const size_t volume = levels.size();
+        std::vector<uint8_t> queued(volume, 0);
+        std::deque<uint32_t> queue;
+        auto enqueue = [&](size_t cell) {
+            if (!queued[cell]) { queued[cell] = 1; queue.push_back(static_cast<uint32_t>(cell)); }
+        };
+        bool validPrevious = previous && previous->filter.size() == volume
+            && (skyChannel ? previous->skySeeds.size() == volume : previous->emission.size() == volume);
+        const std::vector<uint8_t>* oldSeeds = validPrevious ? &(skyChannel ? previous->skySeeds : previous->emission) : nullptr;
+        for (size_t cell = 0; cell < volume; ++cell) {
+            if ((!validPrevious && seeds[cell]) || (validPrevious && (filter[cell] != previous->filter[cell] || seeds[cell] != (*oldSeeds)[cell]))) enqueue(cell);
+        }
+        static constexpr int32_t Steps[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
+        while (!queue.empty()) {
+            size_t cell = queue.front(); queue.pop_front(); queued[cell] = 0;
+            int32_t x, y, z; cellOf(cell, x, y, z);
+            uint8_t nextLevel = std::min<uint8_t>(seeds[cell], 15);
+            for (const auto& step : Steps) {
+                int32_t nx = x + step[0], ny = y + step[1], nz = z + step[2];
+                if (!inside(nx, ny, nz)) continue;
+                int candidate = int(levels[index(nx, ny, nz)]) - std::max<int>(filter[cell], 1);
+                if (candidate > nextLevel) nextLevel = static_cast<uint8_t>(candidate);
+            }
+            if (nextLevel == levels[cell]) continue;
+            levels[cell] = nextLevel;
+            for (const auto& step : Steps) {
+                int32_t nx = x + step[0], ny = y + step[1], nz = z + step[2];
+                if (inside(nx, ny, nz)) enqueue(index(nx, ny, nz));
             }
         }
     }
@@ -677,6 +748,7 @@ private:
     const BlockAssets& assets;
     const IdMapping& ids;
     const MeshInput& input;
+    std::shared_ptr<const ChunkLighting> retained;
     mutable bool solved = false;
     mutable std::vector<uint8_t> filter;
     mutable std::vector<uint8_t> emission;
@@ -1361,6 +1433,25 @@ private:
     const LightField& field;
 };
 
+}
+
+std::shared_ptr<const ChunkLighting> updateChunkLighting(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, std::shared_ptr<const ChunkLighting> previous)
+{
+    PaletteFacts facts(assets, ids, input.center.get());
+    if (facts.isAir()) return {};
+    const BlockVisual* uniform = facts.uniformVisual();
+    if (uniform && input.center->storages().size() == 1 && uniform->emitsCubeGeometry()
+        && (uniform->flags & FlagOccludesFullFace) && !uniform->hasModel()
+        && uniform->blockEntity == EntityNone && !uniform->liquid) {
+        bool enclosed = true;
+        for (const auto& neighbour : input.neighbours) {
+            PaletteFacts adjacent(assets, ids, neighbour.get());
+            const BlockVisual* visual = adjacent.uniformVisual();
+            enclosed &= visual && (visual->flags & FlagOccludesFullFace);
+        }
+        if (enclosed) return {};
+    }
+    return LightField(assets, ids, input).update(std::move(previous));
 }
 
 ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)

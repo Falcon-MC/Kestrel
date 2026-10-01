@@ -263,6 +263,11 @@ int Client::run()
 
         menu.setChrome({ window->drawsCaptionButtons(), window->captionInsetLeft() / scale, window->maximized(), window->fullscreen() });
 
+        if (rebaked || skin.dirty()) {
+            Profiler::Section section(profiler, "ui atlas");
+            uploadAtlas();
+        }
+        skin.beginFrame();
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
         context.recordWidgets(agentServer != nullptr);
@@ -280,10 +285,6 @@ int Client::run()
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
             }
             context.endFrame();
-        }
-        if (rebaked || skin.dirty()) {
-            Profiler::Section section(profiler, "ui atlas");
-            uploadAtlas();
         }
 
         WindowChrome chrome;
@@ -438,6 +439,8 @@ int Client::run()
                 entityQuads.insert(entityQuads.end(), handQuads.begin(), handQuads.end());
                 entityQuads.insert(entityQuads.end(), overlayQuads.begin(), overlayQuads.end());
             }
+            view.actorDraws = actorDraws.data();
+            view.actorDrawCount = static_cast<uint32_t>(actorDraws.size());
             view.entityQuads = entityQuads.data();
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
@@ -1001,7 +1004,10 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
 
 void Client::syncSession()
 {
-    SessionSnapshot snapshot = session.snapshot();
+    auto published = session.sharedSnapshot();
+    const SessionSnapshot& snapshot = *published;
+    bool changed = published != seenSessionSnapshot;
+    seenSessionSnapshot = std::move(published);
     if (agentSession) {
         agentSession->observe(snapshot);
     }
@@ -1011,7 +1017,8 @@ void Client::syncSession()
         menu.setDebugView(buildDebugView(snapshot));
     }
     updateAudio(snapshot);
-    applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : std::vector<std::shared_ptr<const world::PackFiles>> {});
+    static const std::vector<std::shared_ptr<const world::PackFiles>> noPacks;
+    applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : noPacks);
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
         shownTitle = snapshot.titleImage;
@@ -1051,12 +1058,12 @@ void Client::syncSession()
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
-        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + 1 + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        uint32_t particleBase = assets->entityTextureLayers() + world::SkinSlots + 1 + world::DroppedIconSlots;
+        entityPixels.resize(entityPixels.size() + size_t(world::SkinSlots + HeldItemTextureSlots + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
+        uint32_t particleBase = assets->entityTextureLayers() + world::SkinSlots + HeldItemTextureSlots + world::DroppedIconSlots;
         uint32_t particleLayers = loadParticles(snapshot.packs, particleBase, entityPixels);
         renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, particleBase + particleLayers);
-        heldItemKey.clear();
-        heldItemMesh.clear();
+        heldMeshes.clear();
+        actorGeometry.clear();
         droppedMeshes.clear();
         droppedIconKeys = {};
         nextDroppedIcon = 0;
@@ -1074,6 +1081,7 @@ void Client::syncSession()
             partMatches.clear();
             armorBoneMatches.clear();
             animators.clear();
+            actorPoses.clear();
             for (const auto& [name, rendered] : itemIcons) {
                 skin.clearDynamic(name);
             }
@@ -1106,28 +1114,47 @@ void Client::syncSession()
     timeState.thunderLevel = snapshot.thunderLevel;
     timeState.cameraMedium = snapshot.cameraMedium;
     timeState.dimension = snapshot.dimension;
-    actorViews = std::move(snapshot.actors);
+    if (changed) {
+        actorViews = snapshot.actors;
+    } else {
+        actorViews.resize(snapshot.actors.size());
+        for (size_t index = 0; index < actorViews.size(); ++index) {
+            const ActorView& source = snapshot.actors[index];
+            ActorView& target = actorViews[index];
+            target.x = source.x;
+            target.y = source.y;
+            target.z = source.z;
+            target.yaw = source.yaw;
+            target.headYaw = source.headYaw;
+            target.pitch = source.pitch;
+        }
+    }
     localRuntime = snapshot.localRuntimeId;
     localSkinSlot = snapshot.localSkinSlot;
     boomFraction = snapshot.boomFraction;
     localSlim = snapshot.localSlim;
-    menu.setCommands(std::move(snapshot.commands));
-    menu.setPlayers(std::move(snapshot.players));
+    if (changed) {
+        menu.setCommands(snapshot.commands);
+        menu.setPlayers(snapshot.players);
+    }
     menu.setOperatorCommands(snapshot.player.operatorCommands);
     if (snapshot.hud.lastSwing > hudState.lastSwing) {
         startSwing(secondsNow());
     }
-    hudState = std::move(snapshot.hud);
-    sidebarView = std::move(snapshot.sidebar);
-    selectionView = std::move(snapshot.selection);
+    if (changed) {
+        hudState = snapshot.hud;
+        sidebarView = snapshot.sidebar;
+        selectionView = snapshot.selection;
+        crackViews = snapshot.cracks;
+        chestLidViews = snapshot.chestLids;
+    }
     ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
     targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();
-    crackViews = std::move(snapshot.cracks);
-    chestLidViews = std::move(snapshot.chestLids);
     for (const ParticleBurst& burst : session.takeParticleBursts()) {
         blockParticles.spawn(burst);
     }
     takeSessionParticles(snapshot);
+    bool skinsChanged = false;
     for (SkinUpload& skin : session.takeSkinUploads()) {
         if (blockAssets) {
             renderer->updateEntityTexture(blockAssets->skinLayerBase() + skin.slot, skin.pixels.data());
@@ -1136,7 +1163,12 @@ void Client::syncSession()
             this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ world::EntityTextureSize, world::EntityTextureSize, skin.pixels }, 64));
         }
         skinPixels[skin.slot] = std::move(skin.pixels);
+        if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
         skinRigs[skin.slot] = std::move(skin.rig);
+        skinsChanged = true;
+    }
+    if (skinsChanged) {
+        actorPoses.clear();
         partMatches.clear();
         armorBoneMatches.clear();
     }
@@ -1164,11 +1196,11 @@ void Client::syncSession()
         info.status = menu::SessionStatus::Failed;
         break;
     }
-    info.name = std::move(snapshot.name);
-    info.displayName = std::move(snapshot.displayName);
-    info.levelName = std::move(snapshot.levelName);
-    info.gameMode = std::move(snapshot.gameMode);
-    info.position = std::move(snapshot.position);
+    info.name = snapshot.name;
+    info.displayName = snapshot.displayName;
+    info.levelName = snapshot.levelName;
+    info.gameMode = snapshot.gameMode;
+    info.position = snapshot.position;
     info.dimension = snapshot.dimension;
     info.chunkRadius = snapshot.chunkRadius;
     info.packetsReceived = snapshot.packetsReceived;
@@ -1177,14 +1209,14 @@ void Client::syncSession()
     info.pendingSubChunks = snapshot.world.pendingSubChunks;
     info.blockUpdates = snapshot.world.blockUpdates;
     info.worldErrors = snapshot.world.decodeErrors;
-    info.lastWorldError = std::move(snapshot.world.lastError);
+    info.lastWorldError = snapshot.world.lastError;
     info.meshes = snapshot.meshes;
     info.meshQuads = snapshot.meshQuads;
     info.meshJobs = snapshot.meshJobs;
     info.textureLayers = snapshot.textureLayers;
     info.materials = snapshot.materials;
     info.diagnosticVisuals = snapshot.diagnosticVisuals;
-    info.assetsError = std::move(snapshot.assetsError);
+    info.assetsError = snapshot.assetsError;
     info.packPrompt = snapshot.packPrompt;
     info.packCount = snapshot.packCount;
     info.packSkippable = snapshot.packSkippable;
@@ -1193,8 +1225,8 @@ void Client::syncSession()
     info.packReceived = snapshot.packReceived;
     info.packTotal = snapshot.packTotal;
     info.packsResolved = snapshot.packsResolved;
-    info.error = std::move(snapshot.error);
-    info.packetError = std::move(snapshot.packetError);
+    info.error = snapshot.error;
+    info.packetError = snapshot.packetError;
     info.dead = snapshot.dead && snapshot.state == SessionState::Joined;
     info.changingDimension = snapshot.changingDimension && snapshot.state == SessionState::Joined;
     if (info.dead && !snapshot.deathCause.empty()) {

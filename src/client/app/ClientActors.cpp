@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <optional>
 #include <unordered_set>
 
@@ -13,7 +14,13 @@ namespace kestrel {
 
 namespace {
 
-constexpr double MaxActorDistance = 120.0;
+constexpr double ActorCandidateRadius = 72.0;
+constexpr double MaxPlayerDistance = 192.0;
+constexpr float PlayerWidth = 0.6f;
+constexpr float PlayerHeight = 1.8f;
+constexpr float DefaultActorWidth = 1.0f;
+constexpr float DefaultActorHeight = 2.0f;
+constexpr float PoseMargin = 0.5f;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
@@ -32,9 +39,30 @@ constexpr uint64_t InvisibleFlag = 1ull << 5;
 constexpr uint64_t CanShowNameFlag = 1ull << 14;
 constexpr uint64_t AlwaysShowNameFlag = 1ull << 15;
 
-int16_t roundToShort(float value)
+
+
+/**
+ * A float as a 16-bit half float, rounded to nearest, clamped to the largest
+ * finite half and flushed to zero below the smallest normal one.
+ */
+uint16_t toHalf(float value)
 {
-    return static_cast<int16_t>(value >= 0.0f ? static_cast<int32_t>(value + 0.5f) : static_cast<int32_t>(value - 0.5f));
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    uint32_t sign = (bits >> 16) & 0x8000u;
+    int32_t exponent = static_cast<int32_t>((bits >> 23) & 0xffu) - 127 + 15;
+    uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent <= 0) {
+        return static_cast<uint16_t>(sign);
+    }
+    if (exponent >= 31) {
+        return static_cast<uint16_t>(sign | 0x7bffu);
+    }
+    uint32_t half = (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13);
+    if (mantissa & 0x1000u) {
+        ++half;
+    }
+    return static_cast<uint16_t>(sign | std::min(half, 0x7bffu));
 }
 
 struct QuadCorner {
@@ -45,15 +73,9 @@ struct QuadCorner {
 world::ModelQuadGpu packCorners(const std::array<QuadCorner, 4>& corners, uint32_t layer, uint32_t shadeWord)
 {
     world::ModelQuadGpu gpu;
-    std::array<int16_t, 12> positions {};
-    for (size_t corner = 0; corner < 4; ++corner) {
-        for (size_t axis = 0; axis < 3; ++axis) {
-            positions[corner * 3 + axis] = roundToShort(corners[corner].position[axis]);
-        }
-    }
-    for (size_t word = 0; word < 6; ++word) {
-        gpu.words[word] = uint32_t(uint16_t(positions[word * 2])) | (uint32_t(uint16_t(positions[word * 2 + 1])) << 16);
-    }
+    std::array<std::array<float, 3>, 4> positions;
+    for (size_t corner = 0; corner < 4; ++corner) positions[corner] = corners[corner].position;
+    packEntityPositions(positions, gpu.words);
     for (size_t corner = 0; corner < 4; ++corner) {
         uint32_t u = static_cast<uint32_t>(std::clamp(corners[corner].uv[0] * 4096.0f + 0.5f, 0.0f, 65535.0f));
         uint32_t v = static_cast<uint32_t>(std::clamp(corners[corner].uv[1] * 4096.0f + 0.5f, 0.0f, 65535.0f));
@@ -277,23 +299,34 @@ std::optional<world::BoneMatrix> invert(const world::BoneMatrix& m)
 
 /**
  * The quads of every entity close enough to the camera, placed around origin
- * in 1/256 block: every bone posed by the entity's animations, then the model
- * scaled and turned to its body yaw. Entity quads set bit 5 of the shade word
- * so they sample the entity textures, and bit 6 when their material adds
- * light; the rest take the light around the entity unless their render
- * controller ignores lighting. Quads whose material
- * blends go to blended. Zero scale entities draw
- * nothing; invisible ones hide their body but keep their armor and held item.
+ * in 1/256 block: players within 192 blocks, anything else within 72 blocks
+ * on every axis, and only when its bounding box may be on screen. Animations
+ * run once per game tick; each frame draws the bones blended between the
+ * last two tick poses by the partial tick, then the model scaled and turned
+ * to its body yaw. Each face takes the shade of the axis its posed normal is
+ * closest to. Entity quads set bit 5 of the shade word so they sample the
+ * entity textures, and bit 6 when their material adds light; the rest take
+ * the light around the entity unless their render controller ignores
+ * lighting. A render controller's uv_anim goes in words 14 and 15 as half
+ * float offset and scale, wrapped per pixel. Quads whose material blends go
+ * to blended. Zero scale entities draw nothing; invisible ones hide their
+ * body but keep their armor and held item.
  */
 void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
 {
+    actorDraws.clear();
+    ++heldItemFrame;
     if (!blockAssets) {
         animators.clear();
         return;
     }
     double now = secondsNow();
     double worldTime = currentWorldTime(timeState);
-    ++actorFrame;
+    double tickStart = playerView.tickTime;
+    if (tickStart <= 0.0 || tickStart > now || now - tickStart > 2.0 / TicksPerSecond) {
+        tickStart = std::floor(now * TicksPerSecond) / TicksPerSecond;
+    }
+    float partialTick = static_cast<float>(std::clamp((now - tickStart) * TicksPerSecond, 0.0, 1.0));
     WorldView cullView;
     float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
     cullView.viewProjection = camera.viewProjection(aspect);
@@ -304,7 +337,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     bool facing = perspective == PerspectiveFront;
     float viewYaw = wrapDegrees(camera.minecraftYaw() + (facing ? 180.0f : 0.0f));
     float viewPitch = facing ? -camera.minecraftPitch() : camera.minecraftPitch();
-    std::unordered_set<uint64_t> present;
+    auto& present = actorPresent;
+    present.clear();
+    if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
         if (actor.scale <= 0.0f) {
@@ -314,13 +349,20 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         double dx = actor.x - origin[0];
         double dy = actor.y - origin[1];
         double dz = actor.z - origin[2];
-        if (std::abs(dx) > MaxActorDistance || std::abs(dy) > MaxActorDistance || std::abs(dz) > MaxActorDistance) {
+        bool player = actor.identifier == "minecraft:player";
+        std::array<double, 3> fromCamera { actor.x - camera.x(), actor.y + 1.0 - camera.y(), actor.z - camera.z() };
+        if (player) {
+            if (fromCamera[0] * fromCamera[0] + fromCamera[1] * fromCamera[1] + fromCamera[2] * fromCamera[2] > MaxPlayerDistance * MaxPlayerDistance) {
+                continue;
+            }
+        } else if (std::abs(actor.x - camera.x()) > ActorCandidateRadius || std::abs(actor.y - camera.y()) > ActorCandidateRadius || std::abs(actor.z - camera.z()) > ActorCandidateRadius) {
             continue;
         }
-        int32_t blockX = static_cast<int32_t>(std::floor(actor.x));
-        int32_t blockY = static_cast<int32_t>(std::floor(actor.y));
-        int32_t blockZ = static_cast<int32_t>(std::floor(actor.z));
-        if (!frustum.contains(cullView, blockX - 8, blockY - 7, blockZ - 8)) {
+        float boxWidth = actor.width > 0.0f ? actor.width : (player ? PlayerWidth : DefaultActorWidth) * actor.scale;
+        float boxHeight = actor.height > 0.0f ? actor.height : (player ? PlayerHeight : DefaultActorHeight) * actor.scale;
+        float halfWidth = boxWidth * 0.5f + PoseMargin;
+        float halfHeight = boxHeight * 0.5f + PoseMargin;
+        if (!frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth)) {
             continue;
         }
         uint32_t light = lightCorners(actor.x, actor.y, actor.z);
@@ -411,21 +453,36 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
         }
         const world::EntityRig& rig = *chosenRig;
-        double cameraDistance = std::sqrt((actor.x - camera.x()) * (actor.x - camera.x()) + (actor.y - camera.y()) * (actor.y - camera.y()) + (actor.z - camera.z()) * (actor.z - camera.z()));
-        uint64_t interval = cameraDistance < 16.0 ? 1 : cameraDistance < 32.0 ? 2 : cameraDistance < 64.0 ? 4 : 8;
-        bool stale = animator.matrices().size() != rig.bones.size();
-        if (stale || (actorFrame + actor.runtimeId) % interval == 0) {
+        ActorPose& pose = actorPoses[actor.runtimeId];
+        bool stale = animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || tickStart - pose.tick > 3.0 / TicksPerSecond;
+        if (stale || pose.tick != tickStart) {
             Profiler::Section section(profiler, "  animation");
             animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
+            pose.previous = stale ? animator.matrices() : std::move(pose.current);
+            pose.current = animator.matrices();
+            pose.tick = tickStart;
         }
-        const std::vector<world::BoneMatrix>& matrices = animator.matrices();
+        std::vector<world::BoneMatrix>& matrices = pose.interpolated;
+        bool interpolated = false;
+        auto interpolatePose = [&] {
+            if (interpolated) return;
+            interpolated = true;
+            matrices = pose.current;
+            if (pose.previous.size() != matrices.size()) return;
+            for (size_t bone = 0; bone < matrices.size(); ++bone) {
+                for (size_t cell = 0; cell < matrices[bone].size(); ++cell) {
+                    float from = pose.previous[bone][cell];
+                    matrices[bone][cell] = from + (matrices[bone][cell] - from) * partialTick;
+                }
+            }
+        };
         float scale = animator.scale() * actor.scale * 16.0f;
         auto hiddenBones = [&](const world::EntityRenderController& source) {
-            std::vector<uint8_t> hidden;
-            if (source.parts.empty()) {
-                return hidden;
-            }
-            std::vector<uint8_t> visible(source.parts.size(), 1);
+            auto& hidden = actorPartHidden;
+            hidden.clear();
+            if (source.parts.empty()) return std::cref(hidden);
+            auto& visible = actorPartVisible;
+            visible.assign(source.parts.size(), 1);
             for (size_t rule = 0; rule < source.parts.size(); ++rule) {
                 visible[rule] = animator.evaluate(source.parts[rule].visible) != 0.0 ? 1 : 0;
             }
@@ -440,24 +497,32 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     }
                 }
             }
-            std::vector<uint8_t> own(rig.bones.size(), 0);
+            auto& own = actorPartOwn;
+            own.assign(rig.bones.size(), 0);
             for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
                 if (lastRule[bone] >= 0) {
                     own[bone] = visible[lastRule[bone]] ? 0 : 1;
                 }
             }
             hidden.assign(rig.bones.size(), 0);
+            actorPartState.assign(rig.bones.size(), 0);
             for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
+                if (actorPartState[bone] == 2) continue;
+                actorPartPath.clear();
                 int32_t walker = static_cast<int32_t>(bone);
-                for (size_t steps = 0; walker >= 0 && steps <= rig.bones.size(); ++steps) {
-                    if (own[walker]) {
-                        hidden[bone] = 1;
-                        break;
-                    }
-                    walker = rig.bones[walker].parent;
+                while (walker >= 0 && size_t(walker) < rig.bones.size() && actorPartState[size_t(walker)] == 0) {
+                    actorPartState[size_t(walker)] = 1;
+                    actorPartPath.push_back(size_t(walker));
+                    walker = rig.bones[size_t(walker)].parent;
+                }
+                uint8_t inherited = walker >= 0 && size_t(walker) < rig.bones.size() && actorPartState[size_t(walker)] == 2 ? hidden[size_t(walker)] : 0;
+                for (auto it = actorPartPath.rbegin(); it != actorPartPath.rend(); ++it) {
+                    inherited |= own[*it];
+                    hidden[*it] = inherited;
+                    actorPartState[*it] = 2;
                 }
             }
-            return hidden;
+            return std::cref(hidden);
         };
         auto textureOf = [&](const world::EntityRenderController* source) {
             uint32_t chosen = source ? pickChoice(animator, source->texture, source->textureChoices) : world::NoEntityChoice;
@@ -474,18 +539,37 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             static_cast<float>((camera.y() - origin[1]) * 256.0),
             static_cast<float>((camera.z() - origin[2]) * 256.0),
         };
-        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit) {
+        auto uvAnimOf = [&](const world::EntityRenderController* source) {
+            std::array<uint32_t, 2> words {};
+            if (!source || !source->uvAnimated) {
+                return words;
+            }
+            std::array<float, 4> values { 0.0f, 0.0f, 1.0f, 1.0f };
+            for (size_t slot = 0; slot < values.size(); ++slot) {
+                double value = animator.evaluate(source->uvAnim[slot]);
+                if (std::isfinite(value)) {
+                    values[slot] = static_cast<float>(value);
+                }
+            }
+            if (values[0] == 0.0f && values[1] == 0.0f && values[2] == 1.0f && values[3] == 1.0f) {
+                return words;
+            }
+            words[0] = uint32_t(toHalf(values[0] - std::floor(values[0]))) | (uint32_t(toHalf(values[1] - std::floor(values[1]))) << 16);
+            words[1] = uint32_t(toHalf(values[2])) | (uint32_t(toHalf(values[3])) << 16);
+            return words;
+        };
+        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
             const world::ModelQuad& quad = rig.quads[index];
-            size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : matrices.size();
+            size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
             if (bone < hidden.size() && hidden[bone]) {
                 return;
             }
+            interpolatePose();
             const world::BoneMatrix* matrix = bone < matrices.size() ? &matrices[bone] : nullptr;
-            std::array<QuadCorner, 4> corners;
-            for (size_t corner = 0; corner < 4; ++corner) {
-                float x = quad.positions[corner][0] / 16.0f;
-                float y = quad.positions[corner][1] / 16.0f;
-                float z = quad.positions[corner][2] / 16.0f;
+            auto place = [&](const std::array<float, 3>& point) {
+                float x = point[0];
+                float y = point[1];
+                float z = point[2];
                 if (matrix) {
                     const world::BoneMatrix& m = *matrix;
                     float px = m[0] * x + m[1] * y + m[2] * z + m[3];
@@ -498,9 +582,16 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 x *= scale;
                 y *= scale;
                 z *= scale;
-                float turnedX = cosine * x + sine * z;
-                float turnedZ = -sine * x + cosine * z;
-                corners[corner].position = { baseX + turnedX, baseY + y, baseZ + turnedZ };
+                return std::array<float, 3> { baseX + cosine * x + sine * z, baseY + y, baseZ - sine * x + cosine * z };
+            };
+            std::array<QuadCorner, 4> corners;
+            std::array<float, 3> center {};
+            for (size_t corner = 0; corner < 4; ++corner) {
+                std::array<float, 3> point { quad.positions[corner][0] / 16.0f, quad.positions[corner][1] / 16.0f, quad.positions[corner][2] / 16.0f };
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    center[axis] += point[axis] * 0.25f;
+                }
+                corners[corner].position = place(point);
                 corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
             }
             bool inward = (quad.flags & world::QuadInward) != 0;
@@ -518,11 +609,18 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     return;
                 }
             }
-            uint32_t shadeWord = (quad.flags & world::QuadFaceMask) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
+            uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
-            appendTiled(corners, layer, blockAssets->entityTileGrid(layer), shadeWord, target);
+            world::EntityTileGrid grid = blockAssets->entityTileGrid(layer);
+            appendTiled(corners, layer, grid, shadeWord, target);
+            if (grid.single() && uvAnim[1] != 0) {
+                for (size_t placed = first; placed < target.size(); ++placed) {
+                    target[placed].words[14] = uvAnim[0];
+                    target[placed].words[15] = uvAnim[1];
+                }
+            }
             if (lit) {
                 lightQuads(target, first, light);
             }
@@ -535,22 +633,25 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
                 uint32_t picked = pickChoice(animator, source.geometry, source.geometryChoices);
                 uint32_t layer = textureOf(&source);
-                std::vector<uint8_t> hidden = hiddenBones(source);
+                const std::vector<uint8_t>& hidden = hiddenBones(source).get();
+                std::array<uint32_t, 2> uvAnim = uvAnimOf(&source);
                 for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
                     const world::CombinedQuadSource& from = model->combinedSources[quad];
                     if (from.controller == index && from.rig == picked) {
-                        emit(quad, layer, hidden, source.blend, source.oneSided, !source.ignoreLighting);
+                        emit(quad, layer, hidden, source.blend, source.oneSided, !source.ignoreLighting, uvAnim);
                     }
                 }
             }
         } else if (!invisible) {
             uint32_t layer = actor.skinSlot != NoSkin ? blockAssets->skinLayerBase() + actor.skinSlot : textureOf(controller);
-            std::vector<uint8_t> hidden = controller ? hiddenBones(*controller) : std::vector<uint8_t> {};
+            actorPartHidden.clear();
+            const std::vector<uint8_t>& hidden = controller ? hiddenBones(*controller).get() : actorPartHidden;
             world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
             bool oneSided = controller && controller->oneSided;
             bool lit = !controller || !controller->ignoreLighting;
+            std::array<uint32_t, 2> uvAnim = uvAnimOf(controller);
             for (size_t index = 0; index < rig.quads.size(); ++index) {
-                emit(index, layer, hidden, blend, oneSided, lit);
+                emit(index, layer, hidden, blend, oneSided, lit, uvAnim);
             }
         }
         size_t firstWorn = out.size();
@@ -558,13 +659,16 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             std::array<float, 3> p { posed[0] * scale, posed[1] * scale, posed[2] * scale };
             return std::array<float, 3> { baseX + cosine * p[0] + sine * p[2], baseY + p[1], baseZ - sine * p[0] + cosine * p[2] };
         };
-        if (actor.identifier == "minecraft:player") {
+        if (actor.identifier == "minecraft:player" && std::any_of(actor.armor.begin(), actor.armor.end(), [](const std::string& item) { return !item.empty(); })) {
+            interpolatePose();
             bool hurt = actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5;
             appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out);
         }
         if (actor.runtimeId == LocalActorId) {
+            interpolatePose();
             appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
         } else if (actor.identifier == "minecraft:player" && !actor.held.empty()) {
+            interpolatePose();
             appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
         }
         lightQuads(out, firstWorn, light);
@@ -574,6 +678,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             ++it;
         } else {
             it = animators.erase(it);
+        }
+    }
+    for (auto it = actorPoses.begin(); it != actorPoses.end();) {
+        if (present.count(it->first)) {
+            ++it;
+        } else {
+            it = actorPoses.erase(it);
         }
     }
     for (auto it = swimAmounts.begin(); it != swimAmounts.end();) {
@@ -637,19 +748,24 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
             }
             const world::BoneMatrix& m = matrices[size_t(bone)];
             const world::ModelQuad& quad = look.rig->quads[index];
-            std::array<QuadCorner, 4> corners;
-            for (size_t corner = 0; corner < 4; ++corner) {
-                float x = quad.positions[corner][0] / 16.0f;
-                float y = quad.positions[corner][1] / 16.0f;
-                float z = quad.positions[corner][2] / 16.0f;
-                corners[corner].position = toWorld({
-                    m[0] * x + m[1] * y + m[2] * z + m[3],
-                    m[4] * x + m[5] * y + m[6] * z + m[7],
-                    m[8] * x + m[9] * y + m[10] * z + m[11],
+            auto place = [&](const std::array<float, 3>& point) {
+                return toWorld({
+                    m[0] * point[0] + m[1] * point[1] + m[2] * point[2] + m[3],
+                    m[4] * point[0] + m[5] * point[1] + m[6] * point[2] + m[7],
+                    m[8] * point[0] + m[9] * point[1] + m[10] * point[2] + m[11],
                 });
+            };
+            std::array<QuadCorner, 4> corners;
+            std::array<float, 3> center {};
+            for (size_t corner = 0; corner < 4; ++corner) {
+                std::array<float, 3> point { quad.positions[corner][0] / 16.0f, quad.positions[corner][1] / 16.0f, quad.positions[corner][2] / 16.0f };
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    center[axis] += point[axis] * 0.25f;
+                }
+                corners[corner].position = place(point);
                 corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
             }
-            appendTiled(corners, look.layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag | shadeFlags, out);
+            appendTiled(corners, look.layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | shadeFlags, out);
         }
     }
 }
@@ -777,19 +893,24 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
         world::BoneMatrix m = compose(hand, matrices[bone]);
         const world::ModelQuad& quad = rig.quads[index];
         std::array<float, 3> anchor = state.bones[bone].anchoredToHolder ? holderPivot : std::array<float, 3> {};
-        std::array<QuadCorner, 4> corners;
-        for (size_t corner = 0; corner < 4; ++corner) {
-            float x = quad.positions[corner][0] / 16.0f + anchor[0];
-            float y = quad.positions[corner][1] / 16.0f + anchor[1];
-            float z = quad.positions[corner][2] / 16.0f + anchor[2];
-            corners[corner].position = toWorld({
-                m[0] * x + m[1] * y + m[2] * z + m[3],
-                m[4] * x + m[5] * y + m[6] * z + m[7],
-                m[8] * x + m[9] * y + m[10] * z + m[11],
+        auto place = [&](const std::array<float, 3>& point) {
+            return toWorld({
+                m[0] * point[0] + m[1] * point[1] + m[2] * point[2] + m[3],
+                m[4] * point[0] + m[5] * point[1] + m[6] * point[2] + m[7],
+                m[8] * point[0] + m[9] * point[1] + m[10] * point[2] + m[11],
             });
+        };
+        std::array<QuadCorner, 4> corners;
+        std::array<float, 3> center {};
+        for (size_t corner = 0; corner < 4; ++corner) {
+            std::array<float, 3> point { quad.positions[corner][0] / 16.0f + anchor[0], quad.positions[corner][1] / 16.0f + anchor[1], quad.positions[corner][2] / 16.0f + anchor[2] };
+            for (size_t axis = 0; axis < 3; ++axis) {
+                center[axis] += point[axis] * 0.25f;
+            }
+            corners[corner].position = place(point);
             corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
         }
-        appendTiled(corners, layer, grid, (quad.flags & world::QuadFaceMask) | EntityQuadFlag, out);
+        appendTiled(corners, layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag, out);
     }
     return true;
 }
@@ -931,7 +1052,9 @@ void Client::interpolateActors(double now)
     constexpr double MinGlide = 0.05;
     constexpr double MaxGlide = 0.15;
     constexpr double SnapDistance = 8.0;
-    std::unordered_set<uint64_t> present;
+    auto& present = actorPresent;
+    present.clear();
+    if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
         std::array<double, 3> target { actor.x, actor.y, actor.z };
