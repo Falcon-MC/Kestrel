@@ -27,6 +27,10 @@ enum class FoliageVariant : uint8_t {
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
  */
 struct BiomeColors {
+    uint32_t waterFog = 0x44AFF5;
+    float waterFogStart = 0.0f;
+    float waterFogEnd = 60.0f;
+    bool waterFogRelative = false;
     uint32_t grass = 0xFFFFFF;
     uint32_t foliage = 0xFFFFFF;
     uint32_t birch = 0xFFFFFF;

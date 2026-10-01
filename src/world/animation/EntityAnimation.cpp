@@ -970,6 +970,15 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
 
 double EntityAnimator::query(const std::string& name, std::span<const double> arguments)
 {
+    if (name == "swim_amount") return current.swimAmount;
+    if (name == "is_in_water") {
+        if (current.inWater) return *current.inWater ? 1.0 : 0.0;
+        const std::string& id = current.identifier;
+        bool aquatic = id == "minecraft:cod" || id == "minecraft:salmon" || id == "minecraft:pufferfish"
+            || id == "minecraft:tropicalfish" || id == "minecraft:squid" || id == "minecraft:glow_squid"
+            || id == "minecraft:guardian" || id == "minecraft:elder_guardian" || id == "minecraft:dolphin" || id == "minecraft:axolotl";
+        return ((current.flags[0] >> 57) & 1) || (aquatic && !current.onGround) ? 1.0 : 0.0;
+    }
     auto argument = [&](size_t index) {
         return index < arguments.size() ? arguments[index] : 0.0;
     };

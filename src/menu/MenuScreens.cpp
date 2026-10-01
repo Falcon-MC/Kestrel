@@ -861,6 +861,13 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         }
 
         rowY = y;
+        settingsRow(ui, x, y, w, tr("options.fov.toggle.name", "Field of view can be altered by gameplay"),
+            tr("options.fov.toggle.description", "Allow gameplay effects like sprinting or potion use to temporarily change the Field Of View"), 31.33f);
+        if (toggle(ui, "video:gameplayfov", { x + w - 12.0f - 38.0f, rowY + 7.67f, 38.0f, 16.0f }, fovAlteredByGameplay)) {
+            fovAlteredByGameplay = !fovAlteredByGameplay;
+        }
+
+        rowY = y;
         settingsRow(ui, x, y, w, tr("options.framerateLimit", "Max framerate"), "Caps how many frames are drawn each second", 44.0f);
         int fpsSteps = (MaxMaxFps - MinMaxFps) / MaxFpsStep + 1;
         int fpsStep = fpsLimit == UnlimitedFps ? fpsSteps : (std::clamp(fpsLimit, MinMaxFps, MaxMaxFps) - MinMaxFps) / MaxFpsStep;

@@ -280,7 +280,7 @@ private:
     void updateSpinAttack(MotionTick& tick);
     void simulate();
     void runGroundAndAir();
-    void runWater(const Fluid& fluid, bool touchingWater);
+    void runWater(const Fluid& fluid);
     void runLava();
     void runFlight(const MotionInput& input);
     void runGlide();

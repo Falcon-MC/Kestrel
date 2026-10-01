@@ -133,6 +133,7 @@ struct TargetBlock {
 };
 
 struct ActorView {
+    int64_t uniqueId = 0;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     uint64_t runtimeId = 0;
@@ -389,6 +390,7 @@ struct NearbyBlocks {
     int32_t dimension = 0;
     std::array<int32_t, 3> base {};
     std::vector<std::shared_ptr<const world::SubChunk>> subChunks;
+    std::vector<std::shared_ptr<const world::PalettedStorage>> biomes;
     std::shared_ptr<const world::BlockAssets> assets;
     world::IdMapping ids;
 
@@ -450,8 +452,23 @@ struct MeshUpdate {
     std::shared_ptr<void> credit;
 };
 
+/**
+ * The last field of view the server set through a camera instruction: its
+ * degrees, how long the change eases and with which curve, or a release back
+ * to the player's own setting. serial counts the instructions received.
+ */
+struct CameraFovRequest {
+    uint64_t serial = 0;
+    float degrees = 0.0f;
+    float easeSeconds = 0.0f;
+    int easeType = 0;
+    bool clear = false;
+};
+
 struct SessionSnapshot {
     SessionState state = SessionState::Idle;
+    CameraFovRequest cameraFov;
+    int64_t localUniqueActorId = 0;
     uint64_t localRuntimeId = 0;
     std::string name;
     std::string target;
@@ -484,6 +501,7 @@ struct SessionSnapshot {
     size_t customPermutations = 0;
     std::string blockAtPlayer;
     double boomFraction = 0.0;
+    double serverBoomFraction = 0.0;
     bool dead = false;
     bool changingDimension = false;
     std::string deathCause;
@@ -521,6 +539,7 @@ struct SessionSnapshot {
     bool updatesPending = false;
     std::vector<ActorView> actors;
     std::shared_ptr<const NearbyBlocks> nearby;
+    std::shared_ptr<const NearbyBlocks> cameraBlocks;
     std::shared_ptr<const LoadedBlocks> loaded;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
@@ -549,6 +568,7 @@ public:
     SessionSnapshot snapshot() const;
     std::shared_ptr<const SessionSnapshot> sharedSnapshot() const;
     std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32);
+    std::vector<std::shared_ptr<const Packet>> takeCameraEvents();
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
     std::vector<ChatMessage> takeChatMessages();
@@ -563,7 +583,10 @@ public:
      */
     void sendChat(std::string text);
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
+    void setRenderedCamera(const std::array<double, 3>& origin);
+    std::pair<uint8_t, uint32_t> cameraEnvironment(const SessionSnapshot& snapshot, const std::array<double, 3>& position, bool renderedSurface = true);
     void setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
+    void setServerCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
     void selectHotbarSlot(int slot);
@@ -663,6 +686,7 @@ private:
     void queueSound(SoundRequest request);
     void queueParticle(world::ParticleSpawn spawn);
     void publishNearby();
+    void publishCameraBlocks();
     void publishLoaded();
     void applyHiddenBlocks();
     void hideNewValues(const world::SubChunk* subChunk);
@@ -751,6 +775,7 @@ private:
     void markChestLid(const std::array<int32_t, 3>& cell, bool moving);
     void publishBreaking();
     double boomFraction();
+    double boomFraction(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
     uint8_t mediumAt(const std::array<double, 3>& position);
 
     std::thread worker;
@@ -773,19 +798,24 @@ private:
     std::map<world::SubChunkKey, std::shared_ptr<const world::ChunkMesh>> meshes;
     size_t meshQuads = 0;
     std::deque<MeshUpdate> pendingUpdates;
+    std::vector<std::shared_ptr<const Packet>> pendingCameraEvents;
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
     int64_t localUniqueId = 0;
     std::string localUuid;
     std::mutex viewInputMutex;
     std::array<double, 3> requestedLookOrigin {};
+    std::array<double, 3> requestedRenderedCamera {};
+    std::array<double, 3> renderedCamera {};
     std::array<float, 3> requestedLookDirection { 0.0f, 0.0f, -1.0f };
     std::array<double, 3> requestedBoomOrigin {};
     std::array<double, 3> requestedBoomDelta {};
+    std::array<double, 3> requestedServerBoomOrigin {}, requestedServerBoomDelta {};
     std::array<double, 3> lookOrigin {};
     std::array<float, 3> lookDirection { 0.0f, 0.0f, -1.0f };
     std::array<double, 3> boomOrigin {};
     std::array<double, 3> boomDelta {};
+    std::array<double, 3> serverBoomOrigin {}, serverBoomDelta {};
     std::atomic<int> packDecision { 0 };
     std::atomic<int> requestedRadius { 16 };
     int sentRadius = 0;

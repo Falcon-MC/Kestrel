@@ -308,7 +308,19 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
     channel = mix(channel, 1.0, saturate(draw.params.z));
     float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
-    float amount = smoothstep(draw.fog.w, draw.params.x, length(relative));
+    float amount = draw.params.w == 1.0 ? clamp((length(relative) - draw.fog.w) / max(draw.params.x - draw.fog.w, 0.0001), 0.0, 1.0)
+        : smoothstep(draw.fog.w, draw.params.x, length(relative));
+    if (draw.params.w == 1.0) {
+        float3 tint = draw.fog.rgb;
+        for (int i = 0; i < 3; ++i) {
+            float c = max(color[i], 0.0f), f = max(tint[i], 0.0f);
+            c = c <= 0.04045f ? c / 12.92f : pow((c + 0.055f) / 1.055f, 2.4f);
+            f = f <= 0.04045f ? f / 12.92f : pow((f + 0.055f) / 1.055f, 2.4f);
+            c = mix(c, f, amount);
+            color[i] = c <= 0.0031308f ? c * 12.92f : 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
+        }
+        return color;
+    }
     return mix(color, draw.fog.rgb, amount);
 }
 

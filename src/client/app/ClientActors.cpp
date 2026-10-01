@@ -334,7 +334,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     cullView.cameraY = camera.y();
     cullView.cameraZ = camera.z();
     ChunkFrustum frustum(cullView);
-    bool facing = perspective == PerspectiveFront;
+    bool facing = camera.isFacingSubject();
     float viewYaw = wrapDegrees(camera.minecraftYaw() + (facing ? 180.0f : 0.0f));
     float viewPitch = facing ? -camera.minecraftPitch() : camera.minecraftPitch();
     auto& present = actorPresent;
@@ -362,9 +362,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         float boxHeight = actor.height > 0.0f ? actor.height : (player ? PlayerHeight : DefaultActorHeight) * actor.scale;
         float halfWidth = boxWidth * 0.5f + PoseMargin;
         float halfHeight = boxHeight * 0.5f + PoseMargin;
-        if (!frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth)) {
-            continue;
-        }
+        // Collision bounds need not enclose custom skins or animated geometry.
+        // Outside that box, reject individual posed faces rather than the actor.
+        bool cullFaces = !frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth);
         uint32_t light = lightCorners(actor.x, actor.y, actor.z);
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
@@ -400,6 +400,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.identifier = actor.identifier;
         input.name = actor.name;
         input.onGround = actor.onGround;
+        if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot, { actor.x, actor.y + 0.1, actor.z }, false).first == 1;
         input.cameraX = camera.x();
         input.cameraY = camera.y();
         input.cameraZ = camera.z();
@@ -427,11 +428,14 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 input.engineVariables.push_back({ "attack_time", swingProgressSince(actor.lastSwing, now) });
             }
         }
-        float& swimAmount = swimAmounts[actor.runtimeId];
         bool swimmingFlag = (actor.flags[SwimmingFlag / 64] >> (SwimmingFlag % 64)) & 1;
-        float swimStep = static_cast<float>(std::min(now - lastActorTime, 0.25) * 2.0);
+        float& swimAmount = swimAmounts.try_emplace(actor.runtimeId, swimmingFlag ? 1.0f : 0.0f).first->second;
+        float swimStep = static_cast<float>(std::clamp(now - lastActorTime, 0.0, 0.25) * 4.0);
         swimAmount = std::clamp(swimAmount + (swimmingFlag ? swimStep : -swimStep), 0.0f, 1.0f);
+        input.swimAmount = swimAmount;
         input.engineVariables.push_back({ "swim_amount", swimAmount });
+        input.engineVariables.push_back({ "left_arm_swim_amount", swimAmount });
+        input.engineVariables.push_back({ "right_arm_swim_amount", swimAmount });
         if (model->rigs.empty()) {
             continue;
         }
@@ -593,6 +597,25 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
                 corners[corner].position = place(point);
                 corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
+            }
+            if (cullFaces) {
+                auto minimum = corners[0].position;
+                auto maximum = minimum;
+                for (size_t corner = 1; corner < corners.size(); ++corner) {
+                    for (size_t axis = 0; axis < 3; ++axis) {
+                        minimum[axis] = std::min(minimum[axis], corners[corner].position[axis]);
+                        maximum[axis] = std::max(maximum[axis], corners[corner].position[axis]);
+                    }
+                }
+                if (!frustum.containsBox(cullView,
+                        origin[0] + (double(minimum[0]) + maximum[0]) / 512.0,
+                        origin[1] + (double(minimum[1]) + maximum[1]) / 512.0,
+                        origin[2] + (double(minimum[2]) + maximum[2]) / 512.0,
+                        (maximum[0] - minimum[0]) / 512.0f,
+                        (maximum[1] - minimum[1]) / 512.0f,
+                        (maximum[2] - minimum[2]) / 512.0f)) {
+                    return;
+                }
             }
             bool inward = (quad.flags & world::QuadInward) != 0;
             if (inward || oneSided) {
@@ -1024,6 +1047,11 @@ std::vector<menu::NameTag> Client::buildNameTags() const
  */
 ActorView Client::localActorView(float deltaSeconds)
 {
+    bool inWater = seenSessionSnapshot && session.cameraEnvironment(*seenSessionSnapshot,
+        { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.1, eyePosition[2] }, false).first == 1;
+    bool swimming = playerView.sprinting && inWater;
+    localSwimAmount = std::clamp(localSwimAmount + (swimming ? 1.0f : -1.0f)
+        * std::clamp(deltaSeconds, 0.0f, 0.25f) * 4.0f, 0.0f, 1.0f);
     ActorView self;
     self.runtimeId = LocalActorId;
     self.lastHurt = hudState.lastHurt;
@@ -1033,7 +1061,7 @@ ActorView Client::localActorView(float deltaSeconds)
     self.z = eyePosition[2];
     self.headYaw = camera.minecraftYaw();
     self.pitch = camera.minecraftPitch();
-    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (playerView.swimming ? 1ull << SwimmingFlag : 0);
+    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;
     for (size_t slot = 0; slot < self.armor.size(); ++slot) {

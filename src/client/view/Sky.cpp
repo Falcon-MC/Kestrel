@@ -150,10 +150,14 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
     return frame;
 }
 
-SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium)
+SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds,
+    uint32_t waterColor, float waterStart, float waterEnd)
 {
-    constexpr std::array<float, 3> WaterFog { 0.152f, 0.380f, 0.484f };
-    constexpr float WaterFogEnd = 32.0f;
+    std::array<float, 3> WaterFog { float((waterColor >> 16) & 255) / 255.0f,
+        float((waterColor >> 8) & 255) / 255.0f, float(waterColor & 255) / 255.0f };
+    float seconds = std::isfinite(submergedSeconds) ? std::max(0.0f, submergedSeconds) : 0.0f;
+    float fraction = seconds <= 5.0f ? lerp(0.25f, 0.6f, seconds / 5.0f)
+        : seconds < 30.0f ? lerp(0.6f, 1.0f, (seconds - 5.0f) / 25.0f) : 1.0f;
     constexpr std::array<float, 3> LavaFog { 0.702f, 0.313f, 0.0f };
     constexpr float LavaFogEnd = 3.0f;
     if (medium != 1 && medium != 2) {
@@ -161,8 +165,8 @@ SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium)
     }
     SkyFrame result = frame;
     result.fogColor = medium == 1 ? WaterFog : LavaFog;
-    result.fogStart = 0.0f;
-    result.fogEnd = medium == 1 ? WaterFogEnd : LavaFogEnd;
+    result.fogStart = medium == 1 ? waterStart : 0.0f;
+    result.fogEnd = medium == 1 ? waterEnd * fraction : LavaFogEnd;
     result.zenith = result.fogColor;
     result.horizon = result.fogColor;
     return result;

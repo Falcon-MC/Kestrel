@@ -116,6 +116,7 @@ struct WorldView {
     float fogEnd = 256.0f;
     float daylight = 1.0f;
     float nightVision = 0.0f;
+    uint8_t cameraMedium = 0;
     std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
@@ -171,6 +172,7 @@ struct WorldConstants {
         values[24] = view.fogEnd;
         values[25] = view.daylight;
         values[26] = view.nightVision;
+        values[27] = float(view.cameraMedium);
         values[28] = view.sunDirection[0];
         values[29] = view.sunDirection[1];
         values[30] = view.sunDirection[2];

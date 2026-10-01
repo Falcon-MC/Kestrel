@@ -38,7 +38,7 @@ void Client::updateAudio(const SessionSnapshot& snapshot)
         categories[i] = static_cast<float>(volumes[i + 1]) / 100.0f;
     }
     soundEngine->setVolumes(static_cast<float>(volumes[0]) / 100.0f, categories);
-    soundEngine->setListener({ camera.x(), camera.y(), camera.z() }, camera.forward());
+    soundEngine->setListener(serverCamera.playerListener() ? eyePosition : std::array<double, 3> { camera.x(), camera.y(), camera.z() }, camera.forward());
 
     if (widgets.clicks != heardClicks) {
         heardClicks = widgets.clicks;
@@ -49,6 +49,13 @@ void Client::updateAudio(const SessionSnapshot& snapshot)
     }
 
     double now = secondsNow();
+    bool underwater = worldShown && snapshot.state == SessionState::Joined && snapshot.cameraMedium == 1;
+    if (underwater != underwaterAudio) {
+        if (snapshot.state == SessionState::Joined)
+            soundEngine->playNamed(underwater ? "ambient.underwater.enter" : "ambient.underwater.exit", {}, false);
+        underwaterAudio = underwater;
+    }
+    soundEngine->setLoop("ambient.underwater.loop", underwater);
     if (worldShown && snapshot.rainLevel > 0.0f && snapshot.cameraMedium == 0) {
         if (now >= nextRainSoundAt) {
             nextRainSoundAt = now + 0.4 + (std::rand() % 400) / 1000.0;

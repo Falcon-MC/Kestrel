@@ -183,6 +183,22 @@ bool SoundEngine::playNamed(const std::string& name, const std::array<double, 3>
     return true;
 }
 
+void SoundEngine::setLoop(const std::string& name, bool enabled)
+{
+    if (!impl->running) return;
+    if (!enabled) { stop(name); return; }
+    for (const auto& voice : impl->voices) {
+        if (!voice->music && voice->name == name && voice->hasSound && !ma_sound_at_end(&voice->sound)) return;
+    }
+    ResolvedSound sound;
+    if (!sounds || !sounds->resolve(name, 1.0f, 1.0f, sound)) return;
+    play(sound, {}, false);
+    if (!impl->voices.empty()) {
+        auto& voice = impl->voices.back();
+        if (voice->name == name && voice->hasSound) ma_sound_set_looping(&voice->sound, MA_TRUE);
+    }
+}
+
 void SoundEngine::playMusic(const ResolvedSound& sound)
 {
     if (!impl->running || !sounds || !sound.variant) {

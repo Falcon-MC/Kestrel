@@ -42,9 +42,11 @@ public:
     {
         facingSubject = facing;
     }
+    bool isFacingSubject() const { return facingSubject; }
 
     Mat4 viewProjection(float aspect) const;
     void setHurtProgress(float remaining) { hurtProgress = remaining; }
+    void setServerRoll(float degrees) { serverRoll = degrees; }
 
     /**
      * Tangent of half the vertical field of view for a width to height ratio.
@@ -77,6 +79,7 @@ private:
     float baseFov = DefaultFovDegrees;
     bool facingSubject = false;
     float hurtProgress = 0.0f;
+    float serverRoll = 0.0f;
 };
 
 }

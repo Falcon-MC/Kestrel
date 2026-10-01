@@ -39,6 +39,8 @@ void Client::loadSettings()
             menu.setPaperDollHidden(value == "1");
         } else if (key == "vsync") {
             menu.setVsync(value == "1");
+        } else if (key == "gameplayFov") {
+            menu.setGameplayFov(value == "1");
         } else if (key == "safeArea") {
             float parsed = std::strtof(value.c_str(), nullptr);
             if (parsed >= menu::MinSafeArea && parsed <= menu::MaxSafeArea) {
@@ -91,6 +93,7 @@ void Client::loadSettings()
     savedFov = menu.fov();
     savedPaperDollHidden = menu.paperDollHidden();
     savedVsync = menu.vsync();
+    savedGameplayFov = menu.gameplayFov();
     savedSafeArea = menu.safeArea();
     savedBrightness = menu.brightness();
     savedVolumes = menu.soundVolumes();
@@ -110,6 +113,7 @@ void Client::saveSettings()
     file << "fullscreen=" << (savedFullscreen ? 1 : 0) << '\n';
     file << "hidePaperDoll=" << (menu.paperDollHidden() ? 1 : 0) << '\n';
     file << "vsync=" << (menu.vsync() ? 1 : 0) << '\n';
+    file << "gameplayFov=" << (menu.gameplayFov() ? 1 : 0) << '\n';
     file << "safeArea=" << menu.safeArea() << '\n';
     file << "brightness=" << menu.brightness() << '\n';
     file << "language=" << menu.language() << '\n';
@@ -137,6 +141,7 @@ void Client::saveSettings()
     savedFov = menu.fov();
     savedPaperDollHidden = menu.paperDollHidden();
     savedVsync = menu.vsync();
+    savedGameplayFov = menu.gameplayFov();
     savedSafeArea = menu.safeArea();
     savedBrightness = menu.brightness();
     savedVolumes = menu.soundVolumes();

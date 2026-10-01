@@ -31,7 +31,8 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
  * each with its own fog colour closing in from the camera; 0 leaves the frame
  * unchanged.
  */
-SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium);
+SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds = 30.0f,
+    uint32_t waterColor = 0x44AFF5, float waterStart = 0.0f, float waterEnd = 60.0f);
 
 std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLayer, uint32_t moonLayer);
 

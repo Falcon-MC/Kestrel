@@ -316,7 +316,20 @@ float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
     channel = lerp(channel, 1.0, saturate(params.z));
     float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
     float3 color = rgb * shade * pow(light, 1.0 / 2.2);
-    float amount = smoothstep(fog.w, params.x, length(relative));
+    float amount = params.w == 1.0 ? saturate((length(relative) - fog.w) / max(params.x - fog.w, 0.0001))
+        : smoothstep(fog.w, params.x, length(relative));
+    if (params.w == 1.0) {
+        float3 tint = fog.rgb;
+        for (int i = 0; i < 3; ++i) {
+            float c = max(color[i], 0.0);
+            float f = max(tint[i], 0.0);
+            c = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+            f = f <= 0.04045 ? f / 12.92 : pow((f + 0.055) / 1.055, 2.4);
+            c = lerp(c, f, amount);
+            color[i] = c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+        }
+        return color;
+    }
     return lerp(color, fog.rgb, amount);
 }
 

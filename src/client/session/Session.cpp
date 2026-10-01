@@ -20,6 +20,9 @@
 #include "Protocol/Packets/AnimatePacket.h"
 #include "Protocol/Packets/AddPlayerPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
+#include "Protocol/Packets/CameraInstructionPacket.h"
+#include "Protocol/Packets/CameraPresetsPacket.h"
+#include "Protocol/Packets/CameraShakePacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/AddItemActorPacket.h"
@@ -501,6 +504,15 @@ std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum)
     return updates;
 }
 
+std::vector<std::shared_ptr<const Packet>> Session::takeCameraEvents()
+{
+    std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
+    if (!guard.owns_lock()) return {};
+    std::vector<std::shared_ptr<const Packet>> events;
+    events.swap(pendingCameraEvents);
+    return events;
+}
+
 /**
  * Tells the server the local player has finished loading, once, after its
  * PlayerSpawn status; the connection hands over before that status arrives so
@@ -598,9 +610,109 @@ void Session::collectViewInput()
 {
     std::lock_guard<std::mutex> guard(viewInputMutex);
     lookOrigin = requestedLookOrigin;
+    renderedCamera = requestedRenderedCamera;
     lookDirection = requestedLookDirection;
     boomOrigin = requestedBoomOrigin;
     boomDelta = requestedBoomDelta;
+    serverBoomOrigin = requestedServerBoomOrigin;
+    serverBoomDelta = requestedServerBoomDelta;
+}
+
+void Session::setRenderedCamera(const std::array<double, 3>& origin)
+{
+    for (double axis : origin) if (!std::isfinite(axis) || std::abs(axis) > 30000000.0) return;
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedRenderedCamera = origin;
+}
+
+std::pair<uint8_t, uint32_t> Session::cameraEnvironment(const SessionSnapshot& snapshot, const std::array<double, 3>& position, bool renderedSurface)
+{
+    if (!snapshot.assets || (!snapshot.nearby && !snapshot.cameraBlocks) || snapshot.state != SessionState::Joined) return { 0, 1 };
+    for (double axis : position) if (!std::isfinite(axis) || std::abs(axis) > 30000000.0) return { 0, 1 };
+    int32_t x = int32_t(std::floor(position[0])), y = int32_t(std::floor(position[1])), z = int32_t(std::floor(position[2]));
+    world::SubChunkKey key { snapshot.dimension, x >> 4, y >> 4, z >> 4 };
+    const auto& cameraBlocks = snapshot.cameraBlocks ? snapshot.cameraBlocks : snapshot.nearby;
+    auto& area = *cameraBlocks;
+    int32_t bx = key.x - area.base[0], by = key.y - area.base[1], bz = key.z - area.base[2];
+    std::shared_ptr<const world::PalettedStorage> biome;
+    if (area.dimension == snapshot.dimension && bx >= 0 && by >= 0 && bz >= 0
+        && bx < NearbyBlocks::Span && by < NearbyBlocks::Span && bz < NearbyBlocks::Span) {
+        size_t index = size_t((bx * NearbyBlocks::Span + by) * NearbyBlocks::Span + bz);
+        if (index < area.biomes.size()) biome = area.biomes[index];
+    }
+    uint32_t biomeId = biome ? biome->runtimeId(x & 15, y & 15, z & 15) : 1;
+    auto visualAt = [&](int32_t atX, int32_t atY, int32_t atZ, uint32_t layer) -> const world::BlockVisual* {
+        std::shared_ptr<const world::SubChunk> sub;
+        auto& nearby = *cameraBlocks;
+        int32_t sx = (atX >> 4) - nearby.base[0], sy = (atY >> 4) - nearby.base[1], sz = (atZ >> 4) - nearby.base[2];
+        if (nearby.dimension == snapshot.dimension && sx >= 0 && sy >= 0 && sz >= 0
+            && sx < NearbyBlocks::Span && sy < NearbyBlocks::Span && sz < NearbyBlocks::Span) {
+            size_t index = size_t((sx * NearbyBlocks::Span + sy) * NearbyBlocks::Span + sz);
+            if (index < nearby.subChunks.size()) sub = nearby.subChunks[index];
+        }
+        if (!sub && snapshot.loaded) {
+            auto found = snapshot.loaded->subChunks.find({ snapshot.dimension, atX >> 4, atY >> 4, atZ >> 4 });
+            if (found != snapshot.loaded->subChunks.end()) sub = found->second;
+        }
+        if (!sub) return nullptr;
+        uint32_t value = sub->runtimeId(layer, atX & 15, atY & 15, atZ & 15);
+        return value == world::ImplicitAir ? nullptr : &snapshot.assets->visual(value, area.ids.hashed, area.ids.sequential.get());
+    };
+    auto liquid = [&](int32_t atX, int32_t atY, int32_t atZ, uint8_t& level) -> uint8_t {
+        for (uint32_t layer = 0; layer < 2; ++layer) {
+            const auto* visual = visualAt(atX, atY, atZ, layer);
+            if (visual && visual->liquid) { level = visual->liquidLevel; return visual->liquid; }
+        }
+        return 0;
+    };
+    uint8_t level = 0, above = 0;
+    uint8_t kind = liquid(x, y, z, level);
+    if (!kind) return { 0, biomeId };
+    double surface = level >= 8 || liquid(x, y + 1, z, above) == kind ? 1.0 : (8.0 - (level & 7)) / 9.0;
+    if (renderedSurface) {
+        constexpr int32_t corners[4][4][2] = {
+            { {0,0}, {-1,0}, {0,-1}, {-1,-1} }, { {0,0}, {1,0}, {0,-1}, {1,-1} },
+            { {0,0}, {1,0}, {0,1}, {1,1} }, { {0,0}, {-1,0}, {0,1}, {-1,1} }
+        };
+        std::array<float, 4> heights {};
+        for (size_t corner = 0; corner < 4; ++corner) {
+            const auto& offsets = corners[corner];
+            uint8_t depth = 0;
+            bool diagonal = liquid(x + offsets[1][0], y, z + offsets[1][1], depth) == kind
+                || liquid(x + offsets[2][0], y, z + offsets[2][1], depth) == kind;
+            size_t count = diagonal ? 4 : 3;
+            bool covered = false;
+            for (size_t i = 0; i < count; ++i)
+                covered |= liquid(x + offsets[i][0], y + 1, z + offsets[i][1], depth) == kind;
+            if (covered) { heights[corner] = 255; continue; }
+            uint32_t total = 0, weight = 0;
+            for (size_t i = 0; i < count; ++i) {
+                int32_t sx = x + offsets[i][0], sz = z + offsets[i][1];
+                uint8_t sample = liquid(sx, y, sz, depth);
+                if (sample == kind) {
+                    uint32_t height = depth >= 8 ? 227 : ((8 - (depth & 7)) * 255 + 4) / 9;
+                    uint32_t sampleWeight = height >= 204 ? 10 : 1;
+                    total += height * sampleWeight;
+                    weight += sampleWeight;
+                } else if (!sample) {
+                    const auto* visual = visualAt(sx, y, sz, 0);
+                    if (!visual || !(visual->flags & world::FlagOccludesFullFace)) ++weight;
+                }
+            }
+            heights[corner] = weight ? float((total + weight / 2) / weight) : 0.0f;
+        }
+        float fx = float(position[0] - x), fz = float(position[2] - z);
+        surface = (fz <= fx ? heights[0] + fx * (heights[1] - heights[0]) + fz * (heights[2] - heights[1])
+            : heights[0] + fx * (heights[2] - heights[3]) + fz * (heights[3] - heights[0])) / 255.0f;
+    }
+    return { kind && position[1] - y < surface ? kind : uint8_t(0), biomeId };
+}
+
+void Session::setServerCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta)
+{
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedServerBoomOrigin = origin;
+    requestedServerBoomDelta = delta;
 }
 
 /**
@@ -613,35 +725,41 @@ void Session::collectViewInput()
  */
 double Session::boomFraction()
 {
+    return boomFraction(boomOrigin, boomDelta);
+}
+
+double Session::boomFraction(const std::array<double, 3>& boomOrigin, const std::array<double, 3>& boomDelta)
+{
     constexpr double Radius = 0.2;
     constexpr double Epsilon = 0.001;
     double length = std::sqrt(boomDelta[0] * boomDelta[0] + boomDelta[1] * boomDelta[1] + boomDelta[2] * boomDelta[2]);
     if (length < 1.0e-6) {
         return 1.0;
     }
-    std::array<int32_t, 3> low {};
-    std::array<int32_t, 3> high {};
-    for (size_t axis = 0; axis < 3; ++axis) {
-        double a = boomOrigin[axis];
-        double b = boomOrigin[axis] + boomDelta[axis];
-        low[axis] = static_cast<int32_t>(std::floor(std::min(a, b) - Radius)) - 1;
-        high[axis] = static_cast<int32_t>(std::floor(std::max(a, b) + Radius)) + 1;
+    if (!std::isfinite(length) || length > 1024.0) return 0.0;
+    for (double coordinate : boomOrigin) if (!std::isfinite(coordinate) || std::abs(coordinate) > 30000000.0) return 0.0;
+    // Sample candidate cells along the swept camera box, then intersect their
+    // exact collision boxes. Large orbital radii must not scan a cubic volume.
+    std::set<std::array<int32_t, 3>> cells;
+    size_t steps = static_cast<size_t>(std::ceil(length * 2.0));
+    for (size_t step = 0; step <= steps; ++step) {
+        std::array<int32_t, 3> cell {};
+        for (size_t axis = 0; axis < 3; ++axis)
+            cell[axis] = static_cast<int32_t>(std::floor(boomOrigin[axis] + boomDelta[axis] * double(step) / double(steps)));
+        for (int32_t x = -1; x <= 1; ++x)
+            for (int32_t y = -1; y <= 1; ++y)
+                for (int32_t z = -1; z <= 1; ++z) cells.insert({ cell[0] + x, cell[1] + y, cell[2] + z });
     }
     const world::BlockCollisions& table = world::BlockCollisions::shared();
     world::BlockCollisions::Lookup lookup = [this](int32_t x, int32_t y, int32_t z) {
         return motionCell(x, y, z).primary;
     };
     std::vector<world::CollisionBox> boxes;
-    for (int32_t x = low[0]; x <= high[0]; ++x) {
-        for (int32_t y = low[1]; y <= high[1]; ++y) {
-            for (int32_t z = low[2]; z <= high[2]; ++z) {
-                if (!world.store().isLoaded({ motionDimension, x >> 4, z >> 4 })) {
-                    return 0.0;
-                }
-                if (const world::CollisionState* state = motionCell(x, y, z).primary) {
-                    table.boxes(*state, x, y, z, lookup, boxes);
-                }
-            }
+    for (const auto& cell : cells) {
+        auto [x, y, z] = cell;
+        if (!world.store().isLoaded({ motionDimension, x >> 4, z >> 4 })) return 0.0;
+        if (const world::CollisionState* state = motionCell(x, y, z).primary) {
+            table.boxes(*state, x, y, z, lookup, boxes);
         }
     }
     double fraction = 1.0;
@@ -767,6 +885,9 @@ void Session::handleWorldPacket(std::string& payload)
     }
 
     switch (id) {
+    case MinecraftPacketIds::CameraInstruction:
+    case MinecraftPacketIds::CameraPresets:
+    case MinecraftPacketIds::CameraShake:
     case MinecraftPacketIds::PlayStatus:
     case MinecraftPacketIds::BlockActorData:
     case MinecraftPacketIds::LevelChunk:
@@ -971,6 +1092,7 @@ void Session::handleWorldPacket(std::string& payload)
         if (runtime != localRuntimeId) {
             ActorView actor;
             actor.runtimeId = runtime;
+            actor.uniqueId = player->mRuntimeActorId;
             actor.identifier = "minecraft:player";
             actor.name = player->mUsername;
             std::string uuid = player->mUuid.toString();
@@ -993,6 +1115,7 @@ void Session::handleWorldPacket(std::string& payload)
         uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
         ActorView actor;
         actor.runtimeId = runtime;
+        actor.uniqueId = added->mUniqueActorId;
         actor.identifier = added->mIdentifier;
         actor.scale = metadataScale(added->mMetadata, 1.0f);
         applyActorMetadata(added->mMetadata, actor);
@@ -1003,6 +1126,7 @@ void Session::handleWorldPacket(std::string& payload)
         uint64_t runtime = dropped->mRuntimeActorId;
         ActorView actor;
         actor.runtimeId = runtime;
+        actor.uniqueId = dropped->mUniqueActorId;
         actor.identifier = "minecraft:item";
         actor.item = hudItemOf(dropped->mItemInHand);
         actor.width = 0.25f;
@@ -1205,12 +1329,31 @@ void Session::handleWorldPacket(std::string& payload)
         }
         std::lock_guard<std::mutex> guard(mutex);
         pendingParticles.clear();
+        std::erase_if(pendingCameraEvents, [](const auto& event) { return dynamic_cast<const CameraPresetsPacket*>(event.get()) == nullptr; });
+        current.cameraFov = {};
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
     } else if (auto action = std::dynamic_pointer_cast<PlayerActionPacket>(packet)) {
         if (action->mAction == PlayerActionType::DimensionChangeSuccess) {
             dimensionAckReceived = true;
         }
+    } else if (auto camera = std::dynamic_pointer_cast<CameraInstructionPacket>(packet)) {
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            pendingCameraEvents.push_back(camera);
+        }
+        if (camera->mHasFovInstruction) {
+            const CameraFovInstruction& fov = camera->mFovInstruction;
+            std::lock_guard<std::mutex> guard(mutex);
+            ++current.cameraFov.serial;
+            current.cameraFov.degrees = fov.mFov;
+            current.cameraFov.easeSeconds = fov.mEaseTime;
+            current.cameraFov.easeType = static_cast<int>(fov.mEaseType);
+            current.cameraFov.clear = fov.mClear;
+        }
+    } else if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet) || std::dynamic_pointer_cast<CameraShakePacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        pendingCameraEvents.push_back(packet);
     }
 }
 
@@ -1655,7 +1798,10 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         localXuid = result.mIdentity.mXuid;
         current.chunkRadius = connection->getChunkRadius();
         current.joinCount = ++joins;
+        current.cameraFov = {};
         pendingUpdates.clear();
+        current.serverBoomFraction = 0.0;
+        pendingCameraEvents.clear();
         pendingSkins.clear();
         actors.clear();
         runtimeByUnique.clear();
@@ -1681,6 +1827,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             current.hashedIds = startGame->mBlockNetworkIdsHashed;
             localRuntimeId = startGame->mRuntimeActorId;
             localUniqueId = startGame->mUniqueActorId;
+            current.localUniqueActorId = localUniqueId;
+            current.localRuntimeId = localRuntimeId;
             localUuid.clear();
             current.hud = HudState {};
             current.hud.gameType = static_cast<int32_t>(startGame->mPlayerGameType == GameType::Default ? startGame->mLevelGameType : startGame->mPlayerGameType);
@@ -1948,6 +2096,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         current.cohortComplete = world.cohortLoaded();
         current.updatesPending = !pendingUpdates.empty();
         current.localRuntimeId = localRuntimeId;
+        current.localUniqueActorId = localUniqueId;
         if (double now = secondsNow(); now - lastReadinessLog >= 1.0) {
             lastReadinessLog = now;
             debugLog("columns " + std::to_string(current.world.columns) + " subchunks " + std::to_string(current.world.subChunks) + " pending " + std::to_string(current.world.pendingSubChunks)
@@ -1967,6 +2116,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             }
             current.targetBlock = traceTarget();
             current.boomFraction = boomFraction();
+            current.serverBoomFraction = boomFraction(serverBoomOrigin, serverBoomDelta);
             current.cameraMedium = mediumAt(lookOrigin);
             current.airSequential = assets->airSequentialId();
             current.airHash = assets->airNetworkHash();

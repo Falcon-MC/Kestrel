@@ -110,7 +110,7 @@ Family classify(const std::string& name)
     }
     if (contains(name, "stained_glass") || name == "glass" || name == "tinted_glass" || name == "ice" || name == "frosted_ice"
         || name == "slime" || name == "honey_block" || endsWith(name, "copper_grate") || name == "mob_spawner"
-        || name == "trial_spawner" || name == "vault" || name == "beacon") {
+        || name == "trial_spawner" || name == "vault" || name == "beacon" || name == "scaffolding") {
         return Family::TransparentCube;
     }
     return Family::Cube;

@@ -572,6 +572,7 @@ void Session::runMotionTick(double now)
         }
     }
     MotionVector feet = motion.position();
+    publishCameraBlocks();
     if (clientTick % 20 == 0) {
         char line[192];
         std::snprintf(line, sizeof(line), "tick %llu feet %.4f %.4f %.4f velocity %.4f %.4f %.4f ground %d jump %d sprint %d sneak %d", static_cast<unsigned long long>(clientTick), feet.x, feet.y, feet.z,

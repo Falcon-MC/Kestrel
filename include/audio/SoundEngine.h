@@ -35,6 +35,7 @@ public:
 
     void play(const ResolvedSound& sound, const std::array<double, 3>& position, bool positional);
     bool playNamed(const std::string& name, const std::array<double, 3>& position, bool positional, float volume = 1.0f, float pitch = 1.0f);
+    void setLoop(const std::string& name, bool enabled);
     void playMusic(const ResolvedSound& sound);
     bool musicPlaying() const;
     void stopMusic();
