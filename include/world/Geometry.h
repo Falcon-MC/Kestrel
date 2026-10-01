@@ -47,6 +47,25 @@ struct GeometryTextureMesh {
     Vec3f scale { 1.0f, 1.0f, 1.0f };
 };
 
+/**
+ * One corner of an authored polygon: its position in model pixels, its normal
+ * and its texture coordinate, v measured up from the bottom of the texture.
+ */
+struct GeometryPolyVertex {
+    Vec3f position {};
+    Vec3f normal {};
+    std::array<float, 2> uv {};
+};
+
+/**
+ * A bone's polygon mesh expanded into triangles, three corners each, with
+ * UVs in texels or normalized to the texture when normalizedUvs is set.
+ */
+struct GeometryPolyMesh {
+    bool normalizedUvs = false;
+    std::vector<GeometryPolyVertex> triangles;
+};
+
 struct GeometryBone {
     std::string name;
     std::string parent;
@@ -59,6 +78,7 @@ struct GeometryBone {
     bool neverRender = false;
     std::vector<GeometryCube> cubes;
     std::vector<GeometryTextureMesh> textureMeshes;
+    GeometryPolyMesh polyMesh;
     // Which fields the file spelled out, so a legacy child geometry only
     // overrides those and keeps the rest of its parent's bone. reset drops
     // the parent's cubes.
@@ -71,6 +91,7 @@ struct GeometryBone {
     bool bindingSet = false;
     bool cubesSet = false;
     bool textureMeshesSet = false;
+    bool polyMeshSet = false;
     bool reset = false;
 };
 
@@ -97,6 +118,12 @@ public:
     void parse(const std::string& text);
     void resolveInheritance();
     const Geometry* find(const std::string& identifier) const;
+
+    /**
+     * The geometry of that identifier, the exact spelling first and then any
+     * one differing only in letter case, as skins name their models.
+     */
+    const Geometry* findIgnoringCase(const std::string& identifier) const;
     const Geometry* first() const;
 
 private:

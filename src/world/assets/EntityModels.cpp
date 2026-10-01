@@ -19,6 +19,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 
 namespace kestrel::world {
@@ -220,6 +221,67 @@ void appendTextureMeshes(const GeometryBone& bone, uint16_t boneIndex, const Mes
 }
 
 /**
+ * The shading face of a polygon from its normal in model handedness: the
+ * face of the axis it leans along the most, or none for a zero normal.
+ */
+uint32_t polyFaceId(const std::array<float, 3>& normal)
+{
+    int axis = 0;
+    for (int candidate = 1; candidate < 3; ++candidate) {
+        if (std::abs(normal[candidate]) > std::abs(normal[axis])) {
+            axis = candidate;
+        }
+    }
+    if (normal[axis] == 0.0f) {
+        return 0;
+    }
+    if (axis == 0) {
+        return normal[0] < 0.0f ? 3 : 4;
+    }
+    if (axis == 1) {
+        return normal[1] < 0.0f ? 1 : 2;
+    }
+    return normal[2] < 0.0f ? 5 : 6;
+}
+
+/**
+ * Adds a bone's polygon mesh, each triangle as a quad whose last corner
+ * repeats its third. Positions are model pixels, flipped on x like cubes, and
+ * UVs count v up from the bottom of the texture.
+ */
+void appendPolyMesh(const GeometryBone& bone, uint16_t boneIndex, float width, float height, EntityRig& model)
+{
+    if (!bone.polyMeshSet) {
+        return;
+    }
+    const GeometryPolyMesh& mesh = bone.polyMesh;
+    float scaleU = mesh.normalizedUvs ? 1.0f : 1.0f / width;
+    float scaleV = mesh.normalizedUvs ? 1.0f : 1.0f / height;
+    for (size_t first = 0; first + 2 < mesh.triangles.size(); first += 3) {
+        ModelQuad quad;
+        std::array<float, 3> normal {};
+        for (size_t corner = 0; corner < 4; ++corner) {
+            const GeometryPolyVertex& vertex = mesh.triangles[first + std::min<size_t>(corner, 2)];
+            std::array<float, 3> point { -vertex.position[0], vertex.position[1], vertex.position[2] };
+            for (int axis = 0; axis < 3; ++axis) {
+                quad.positions[corner][axis] = static_cast<int16_t>(std::clamp<long>(std::lround(point[axis] * 16.0f), -32768L, 32767L));
+            }
+            float u = std::clamp(vertex.uv[0] * scaleU, 0.0f, 1.0f);
+            float v = std::clamp(1.0f - vertex.uv[1] * scaleV, 0.0f, 1.0f);
+            quad.uvs[corner] = { static_cast<uint16_t>(u * 4096.0f), static_cast<uint16_t>(v * 4096.0f) };
+            if (corner < 3) {
+                normal[0] -= vertex.normal[0];
+                normal[1] += vertex.normal[1];
+                normal[2] += vertex.normal[2];
+            }
+        }
+        quad.flags = polyFaceId(normal) | QuadTwoSided;
+        model.quads.push_back(quad);
+        model.quadBones.push_back(boneIndex);
+    }
+}
+
+/**
  * Turns a geometry into an animatable model. Geometry files mirror the x axis
  * and the x and y rotations, so pivots, cubes and rotations are flipped back
  * into world handedness; each cube is turned around its own pivot and its
@@ -373,6 +435,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextur
                 model.quadBones.push_back(static_cast<uint16_t>(boneIndex));
             }
         }
+        appendPolyMesh(bone, static_cast<uint16_t>(boneIndex), width, height, model);
     }
 }
 
@@ -616,25 +679,35 @@ void combineRigs(EntityModel& model)
 
 }
 
-std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch)
+std::string skinGeometryName(const std::string& resourcePatch, const std::string& key)
 {
-    if (geometryData.empty()) {
+    std::unique_ptr<json::Value> patch = json::parse(stripJsonComments(resourcePatch));
+    const json::Value* geometry = patch ? patch->get("geometry") : nullptr;
+    const json::Value* named = geometry ? geometry->get(key) : nullptr;
+    return named && named->isString() ? named->mString : std::string();
+}
+
+std::shared_ptr<const EntityRig> buildSkinRig(const std::string& geometryData, const std::string& resourcePatch, const GeometryLibrary* catalog, const std::string& key)
+{
+    std::string name = skinGeometryName(resourcePatch, key);
+    if (name.empty()) {
         return nullptr;
     }
-    std::string name;
-    if (std::unique_ptr<json::Value> patch = json::parse(stripJsonComments(resourcePatch))) {
-        const json::Value* geometry = patch->get("geometry");
-        const json::Value* fallback = geometry ? geometry->get("default") : nullptr;
-        if (fallback && fallback->isString()) {
-            name = fallback->mString;
-        }
-    }
     GeometryLibrary library;
-    library.parse(stripJsonComments(geometryData));
-    library.resolveInheritance();
-    const Geometry* geometry = name.empty() ? nullptr : library.find(name);
-    if (!geometry) {
-        geometry = library.first();
+    std::string_view data = geometryData;
+    while (!data.empty() && std::isspace(static_cast<unsigned char>(data.front()))) {
+        data.remove_prefix(1);
+    }
+    while (!data.empty() && std::isspace(static_cast<unsigned char>(data.back()))) {
+        data.remove_suffix(1);
+    }
+    if (!data.empty() && data != "null") {
+        library.parse(stripJsonComments(std::string(data)));
+        library.resolveInheritance();
+    }
+    const Geometry* geometry = library.findIgnoringCase(name);
+    if (!geometry && catalog) {
+        geometry = catalog->findIgnoringCase(name);
     }
     if (!geometry) {
         return nullptr;
@@ -938,6 +1011,25 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             buildEntityRig(*geometry, armorRigs[slot]);
         }
     }
+    if (const Geometry* geometry = library.find("geometry.cape")) {
+        buildEntityRig(*geometry, cape);
+        for (size_t index = 0; index < cape.quads.size(); ++index) {
+            size_t bone = index < cape.quadBones.size() ? cape.quadBones[index] : cape.bones.size();
+            if (bone >= cape.bones.size()) {
+                continue;
+            }
+            for (std::array<int16_t, 3>& corner : cape.quads[index].positions) {
+                std::array<float, 3> point { corner[0] / 16.0f, corner[1] / 16.0f, corner[2] / 16.0f };
+                point = rotateEulerAround(point, cape.bones[bone].pivot, cape.bones[bone].rotation);
+                for (int axis = 0; axis < 3; ++axis) {
+                    corner[axis] = static_cast<int16_t>(std::lround(point[axis] * 16.0f));
+                }
+            }
+        }
+        for (EntityBone& bone : cape.bones) {
+            bone.rotation = {};
+        }
+    }
     for (const char* material : { "leather", "chain", "iron", "gold", "diamond", "netherite", "copper", "turtle" }) {
         for (const char* suffix : { "_1", "_2" }) {
             std::string path = "textures/models/armor/" + std::string(material) + suffix;
@@ -952,6 +1044,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
+    geometries = std::make_shared<const GeometryLibrary>(std::move(library));
 }
 
 ArmorLook BlockAssets::armorLook(size_t slot, const std::string& identifier) const

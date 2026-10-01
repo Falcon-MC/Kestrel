@@ -17,13 +17,13 @@ void Menu::globalResourcesPage(Context& ui, float x, float& y, float w)
         if (!globalPacksBusy) globalPackActions.push_back({ kind, std::move(id), std::move(value) });
     };
     settingsHeading(ui, x, y, w, tr("menu.globalpacks", "Global Resources"),
-        "Apply resource packs to menus and every server. Higher packs take priority.");
+        tr("kestrel.globalResources.description", "Apply resource packs to menus and every server. Higher packs take priority."));
     float left = x + 12, width = w - 24, gap = 6, button = (width - gap * 2) / 3;
-    if (ui.pressableButton("global:import", "pressableElevatedPrimary", tr("resourcePack.import", "Import"), { left, y, button, 20 })) action(Kind::Import);
-    if (ui.pressableButton("global:reload", "pressableElevatedSecondary", tr("resourcePack.reload", "Reload"), { left + button + gap, y, button, 20 })) action(Kind::Reload);
-    if (ui.pressableButton("global:folder", "pressableElevatedSecondary", tr("resourcePack.openFolder", "Open Folder"), { left + (button + gap) * 2, y, button, 20 })) action(Kind::OpenFolder);
+    if (ui.pressableButton("global:import", "pressableElevatedPrimary", tr("kestrel.globalResources.import", "Import"), { left, y, button, 20 }, TextStyle::Ui, !globalPacksBusy)) action(Kind::Import);
+    if (ui.pressableButton("global:reload", "pressableElevatedSecondary", tr("kestrel.globalResources.reload", "Reload"), { left + button + gap, y, button, 20 }, TextStyle::Ui, !globalPacksBusy)) action(Kind::Reload);
+    if (ui.pressableButton("global:folder", "pressableElevatedSecondary", tr("kestrel.globalResources.folder", "Folder"), { left + (button + gap) * 2, y, button, 20 }, TextStyle::Ui, !globalPacksBusy)) action(Kind::OpenFolder);
     y += 27;
-    if (globalPacksBusy) y += ui.paragraph("Loading resource packs...", TextStyle::Ui, left, y, width, Muted0) + 6;
+    if (globalPacksBusy) y += ui.paragraph(tr("kestrel.globalResources.loading", "Loading resource packs..."), TextStyle::Ui, left, y, width, Muted0) + 6;
     else if (!globalPacksStatus.empty()) y += ui.paragraph(globalPacksStatus, TextStyle::Ui, left, y, width, Muted0) + 6;
     size_t active = std::count_if(globalPacks.begin(), globalPacks.end(), [](const auto& entry) { return entry.active; });
     float half = (width - gap) / 2;
@@ -57,7 +57,8 @@ void Menu::globalResourcesPage(Context& ui, float x, float& y, float w)
             UiData data;
             auto& row = data.collections["global_packs"].emplace_back();
             row["#name"] = UiValue::of(entry.name);
-            row["#description"] = UiValue::of(entry.error.empty() ? entry.description : entry.error);
+            // Expanded details are drawn below the card, once, with measured height.
+            row["#description"] = UiValue::of(std::string());
             row["#size"] = UiValue::of(std::to_string(entry.bytes / 1024) + " KB");
             row["#icon_path"] = UiValue::of(entry.icon ? "dynamic/global_pack/" + entry.id : std::string("textures/ui/missing_pack_icon"));
             row["#icon_zip"] = UiValue::of(std::string());
@@ -84,7 +85,7 @@ void Menu::globalResourcesPage(Context& ui, float x, float& y, float w)
             if (!entry.error.empty()) y += ui.paragraph(entry.error, TextStyle::Ui, left + 4, y, width - 8, Muted0) + 7;
             if (entry.error.empty()) {
                 if (ui.pressableButton("global:toggle:" + entry.id, "pressableElevatedPrimary",
-                    entry.active ? tr("resourcePack.deactivate", "Deactivate") : tr("resourcePack.activate", "Activate"), { left, y, width - (entry.active ? 52 : 0), 20 }))
+                    entry.active ? tr("kestrel.globalResources.deactivate", "Deactivate") : tr("kestrel.globalResources.activate", "Activate"), { left, y, width - (entry.active ? 52 : 0), 20 }, TextStyle::Ui, !globalPacksBusy))
                     action(entry.active ? Kind::Deactivate : Kind::Activate, entry.id);
                 if (entry.active) {
                     if (position > 0 && ui.pressableButton("global:up:" + entry.id, "pressableElevatedSecondary", "", { left + width - 46, y, 20, 20 })) action(Kind::Up, entry.id);
@@ -94,7 +95,7 @@ void Menu::globalResourcesPage(Context& ui, float x, float& y, float w)
                 }
                 y += 26;
                 if (!entry.subPacks.empty()) {
-                    std::string current = "Default";
+                    std::string current = tr("kestrel.globalResources.default", "Default");
                     size_t next = 0;
                     for (size_t i = 0; i < entry.subPacks.size(); ++i) if (entry.subPacks[i].first == entry.selectedSubPack) { current = entry.subPacks[i].second; next = i + 1; }
                     if (ui.pressableButton("global:variant:" + entry.id, "pressableElevatedSecondary", current, { left, y, width, 20 }))
@@ -103,18 +104,24 @@ void Menu::globalResourcesPage(Context& ui, float x, float& y, float w)
                 }
             }
             bool removing = removingGlobalPack == entry.id;
+            if (removing) {
+                y += ui.paragraph(trf("kestrel.globalResources.confirmDescription", "Delete %s permanently?", { entry.name }), TextStyle::Ui, left, y, width, White) + 6;
+            }
             if (ui.pressableButton("global:remove:" + entry.id, removing ? "pressableElevatedDestructive" : "pressableElevatedSecondary",
-                removing ? "Confirm Delete" : tr("resourcePack.delete", "Delete"), { left, y, width, 20 })) {
+                removing ? tr("kestrel.globalResources.confirm", "Confirm") : tr("kestrel.globalResources.delete", "Delete"), { left, y, removing ? half : width, 20 }, TextStyle::Ui, !globalPacksBusy)) {
                 if (removing) { action(Kind::Remove, entry.id); removingGlobalPack.clear(); openedGlobalPack.clear(); }
                 else removingGlobalPack = entry.id;
             }
+            if (removing && ui.pressableButton("global:cancel:" + entry.id, "pressableElevatedSecondary", tr("gui.cancel", "Cancel"), { left + half + gap, y, half, 20 })) removingGlobalPack.clear();
             y += 28;
         }
         ++position;
     }
     if (showActiveGlobalPacks) {
-        ui.pressableButton("global:vanilla", "pressableElevatedSecondary", "Minecraft", { left, y, width, 44 });
-        y += 50;
-    } else if (!displayed) y += ui.paragraph("Import a .mcpack or .zip file to add a resource pack.", TextStyle::Ui, left, y, width, Muted0) + 12;
+        ui.sprite({ left + 1, y, 42, 42 }, "textures/ui/glyph_resource_pack");
+        ui.text("Minecraft", TextStyle::Ui, left + 48, y + 3, White, width - 54);
+        ui.text(tr("kestrel.globalResources.base", "Default resources"), TextStyle::Ui, left + 48, y + 19, Muted0, width - 54);
+        y += 48;
+    } else if (!displayed) y += ui.paragraph(tr("kestrel.globalResources.empty", "Import a .mcpack or .zip file to add a resource pack."), TextStyle::Ui, left, y, width, Muted0) + 12;
 }
 }

@@ -65,6 +65,56 @@ uint16_t toHalf(float value)
     return static_cast<uint16_t>(sign | std::min(half, 0x7bffu));
 }
 
+constexpr const char* PersonaBlinkAlias = "blink";
+constexpr double SkinFramesPerSecond = 7.0;
+constexpr float BlinkFrameOffset = 0.5f;
+
+/**
+ * The engine variable a persona animation controller reads the frame count
+ * of a sheet of that kind from.
+ */
+const char* skinFramesVariable(SkinAnimationKind kind)
+{
+    switch (kind) {
+    case SkinAnimationKind::Face:
+        return "animation_frames_face";
+    case SkinAnimationKind::Body32:
+        return "animation_frames_32x32";
+    default:
+        return "animation_frames_128x128";
+    }
+}
+
+const world::molang::Script& lifeTimeScript()
+{
+    static const world::molang::Script script = world::molang::Script::compile("query.life_time");
+    return script;
+}
+
+const world::molang::Script& blinkingScript()
+{
+    static const world::molang::Script script = world::molang::Script::compile("variable.is_blinking");
+    return script;
+}
+
+/**
+ * How far down its sheet an animation is: a blinking face shows its second
+ * half while the blink controller says it blinks, every other sheet steps
+ * through its frames seven times a second over the entity's life.
+ */
+float skinFrameOffset(SkinAnimationKind kind, bool blinking, uint32_t frames, double lifeTime, double blinkState)
+{
+    if (kind == SkinAnimationKind::Face && blinking) {
+        return static_cast<float>(blinkState) * BlinkFrameOffset;
+    }
+    double count = static_cast<double>(std::max<uint32_t>(frames, 1));
+    double frame = std::fmod(std::floor(lifeTime * SkinFramesPerSecond), count);
+    if (frame < 0.0) {
+        frame += count;
+    }
+    return static_cast<float>(frame / count);
+}
+
 struct QuadCorner {
     std::array<float, 3> position {};
     std::array<float, 2> uv {};
@@ -88,14 +138,105 @@ world::ModelQuadGpu packCorners(const std::array<QuadCorner, 4>& corners, uint32
 }
 
 /**
+ * Keeps the part of a polygon on one side of a UV line, cutting the edges
+ * that cross it with positions following the UVs along each edge.
+ */
+std::vector<QuadCorner> clipUv(const std::vector<QuadCorner>& polygon, size_t axis, float bound, bool above)
+{
+    std::vector<QuadCorner> kept;
+    for (size_t index = 0; index < polygon.size(); ++index) {
+        const QuadCorner& from = polygon[index];
+        const QuadCorner& to = polygon[(index + 1) % polygon.size()];
+        bool fromInside = above ? from.uv[axis] >= bound : from.uv[axis] <= bound;
+        bool toInside = above ? to.uv[axis] >= bound : to.uv[axis] <= bound;
+        if (fromInside) {
+            kept.push_back(from);
+        }
+        if (fromInside == toInside) {
+            continue;
+        }
+        float t = (bound - from.uv[axis]) / (to.uv[axis] - from.uv[axis]);
+        QuadCorner cut;
+        for (size_t component = 0; component < 3; ++component) {
+            cut.position[component] = from.position[component] + (to.position[component] - from.position[component]) * t;
+        }
+        cut.uv[0] = from.uv[0] + (to.uv[0] - from.uv[0]) * t;
+        cut.uv[1] = from.uv[1] + (to.uv[1] - from.uv[1]) * t;
+        cut.uv[axis] = bound;
+        kept.push_back(cut);
+    }
+    return kept;
+}
+
+/**
+ * Pushes a triangle whose texture is spread over a grid of layers: it is
+ * clipped to each tile its UVs reach, and every piece is fanned into
+ * triangles drawn as quads repeating their last corner.
+ */
+void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+{
+    std::vector<QuadCorner> triangle { corners[0], corners[1], corners[2] };
+    std::array<float, 2> low { 1.0f, 1.0f };
+    std::array<float, 2> high { 0.0f, 0.0f };
+    for (QuadCorner& corner : triangle) {
+        corner.uv[0] *= grid.coverX;
+        corner.uv[1] *= grid.coverY;
+        for (size_t axis = 0; axis < 2; ++axis) {
+            low[axis] = std::min(low[axis], corner.uv[axis]);
+            high[axis] = std::max(high[axis], corner.uv[axis]);
+        }
+    }
+    std::array<uint32_t, 2> tiles { grid.tilesX, grid.tilesY };
+    std::array<uint32_t, 2> first {};
+    std::array<uint32_t, 2> last {};
+    for (size_t axis = 0; axis < 2; ++axis) {
+        first[axis] = std::min(static_cast<uint32_t>(std::max(low[axis], 0.0f) * float(tiles[axis])), tiles[axis] - 1);
+        last[axis] = std::min(static_cast<uint32_t>(std::max(high[axis], 0.0f) * float(tiles[axis])), tiles[axis] - 1);
+    }
+    for (uint32_t tileY = first[1]; tileY <= last[1]; ++tileY) {
+        for (uint32_t tileX = first[0]; tileX <= last[0]; ++tileX) {
+            std::vector<QuadCorner> piece = triangle;
+            if (tileX > 0) {
+                piece = clipUv(piece, 0, float(tileX) / float(tiles[0]), true);
+            }
+            if (tileX + 1 < tiles[0]) {
+                piece = clipUv(piece, 0, float(tileX + 1) / float(tiles[0]), false);
+            }
+            if (tileY > 0) {
+                piece = clipUv(piece, 1, float(tileY) / float(tiles[1]), true);
+            }
+            if (tileY + 1 < tiles[1]) {
+                piece = clipUv(piece, 1, float(tileY + 1) / float(tiles[1]), false);
+            }
+            if (piece.size() < 3) {
+                continue;
+            }
+            for (QuadCorner& corner : piece) {
+                corner.uv[0] = std::clamp(corner.uv[0] * float(tiles[0]) - float(tileX), 0.0f, 1.0f);
+                corner.uv[1] = std::clamp(corner.uv[1] * float(tiles[1]) - float(tileY), 0.0f, 1.0f);
+            }
+            for (size_t fan = 1; fan + 1 < piece.size(); ++fan) {
+                std::array<QuadCorner, 4> part { piece[0], piece[fan], piece[fan + 1], piece[fan + 1] };
+                out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord));
+            }
+        }
+    }
+}
+
+/**
  * Pushes a quad whose texture may be spread over a grid of layers. Such a
  * quad is cut along the tile edges it crosses, each piece sampling the one
- * layer under it with its UVs moved into that tile.
+ * layer under it with its UVs moved into that tile; a quad repeating its last
+ * corner is a triangle and is clipped to the tiles instead.
  */
 void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
 {
     if (grid.single()) {
         out.push_back(packCorners(corners, layer, shadeWord));
+        return;
+    }
+    if (corners[2].position == corners[3].position && corners[2].uv == corners[3].uv) {
+        appendTiledTriangle(corners, layer, grid, shadeWord, out);
         return;
     }
     uint32_t tilesX = grid.tilesX;
@@ -188,6 +329,22 @@ float wrapDegrees(float degrees)
 {
     float wrapped = std::fmod(degrees + 180.0f, 360.0f);
     return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
+}
+
+/**
+ * The yaw an actor's model is placed with in the world: sprite bones carry
+ * the camera's rotation in a half turned basis, projectile bones carry their
+ * absolute rotation, and everything else turns with its body.
+ */
+float actorWorldYaw(const ActorView& actor)
+{
+    if (world::cameraFacingSprite(actor.identifier)) {
+        return 180.0f;
+    }
+    if (world::targetRotationIsAbsolute(actor.identifier)) {
+        return 0.0f;
+    }
+    return wrapDegrees(actor.yaw);
 }
 
 /**
@@ -295,6 +452,105 @@ std::optional<world::BoneMatrix> invert(const world::BoneMatrix& m)
     return out;
 }
 
+}
+
+void Client::releaseSkinLayers(uint32_t slot)
+{
+    for (uint32_t layer = 0; layer < skinLayerOwners.size(); ++layer) {
+        if (skinLayerOwners[layer] == slot + 1) {
+            skinLayerOwners[layer] = 0;
+            skinPixels.erase(layer);
+            skinTileGrids.erase(layer);
+        }
+    }
+    skinViews.erase(slot);
+}
+
+Client::SkinTexture Client::placeSkinTexture(uint32_t slot, const SkinImage& image, uint32_t maxTiles)
+{
+    SkinTexture placed;
+    if (image.empty()) {
+        return placed;
+    }
+    constexpr uint32_t Side = world::EntityTextureSize;
+    uint32_t limit = std::clamp<uint32_t>(maxTiles, 1, world::MaxEntityTiles);
+    uint32_t tilesX = std::clamp<uint32_t>((image.width + Side - 1) / Side, 1, limit);
+    uint32_t tilesY = std::clamp<uint32_t>((image.height + Side - 1) / Side, 1, limit);
+    auto freeRun = [&](uint32_t count) -> std::optional<uint32_t> {
+        uint32_t run = 0;
+        for (uint32_t layer = 0; layer < skinLayerOwners.size(); ++layer) {
+            run = skinLayerOwners[layer] == 0 ? run + 1 : 0;
+            if (run == count) {
+                return layer + 1 - count;
+            }
+        }
+        return std::nullopt;
+    };
+    std::optional<uint32_t> first = freeRun(tilesX * tilesY);
+    if (!first) {
+        tilesX = 1;
+        tilesY = 1;
+        first = freeRun(1);
+    }
+    if (!first) {
+        return placed;
+    }
+    uint32_t spanX = tilesX * Side;
+    uint32_t spanY = tilesY * Side;
+    for (uint32_t tileY = 0; tileY < tilesY; ++tileY) {
+        for (uint32_t tileX = 0; tileX < tilesX; ++tileX) {
+            uint32_t layer = *first + tileY * tilesX + tileX;
+            std::vector<uint8_t> pixels(size_t(Side) * Side * 4);
+            for (uint32_t y = 0; y < Side; ++y) {
+                size_t sourceY = size_t(tileY * Side + y) * image.height / spanY;
+                for (uint32_t x = 0; x < Side; ++x) {
+                    size_t sourceX = size_t(tileX * Side + x) * image.width / spanX;
+                    std::memcpy(pixels.data() + (size_t(y) * Side + x) * 4, image.pixels.data() + (sourceY * image.width + sourceX) * 4, 4);
+                }
+            }
+            skinLayerOwners[layer] = slot + 1;
+            if (blockAssets) {
+                renderer->updateEntityTexture(blockAssets->skinLayerBase() + layer, pixels.data());
+            }
+            skinPixels[layer] = std::move(pixels);
+        }
+    }
+    placed.layer = *first;
+    placed.grid = world::EntityTileGrid { tilesX, tilesY, 1.0f, 1.0f };
+    placed.present = true;
+    if (!placed.grid.single()) {
+        skinTileGrids[placed.layer] = placed.grid;
+    }
+    return placed;
+}
+
+const Client::SkinView* Client::skinViewOf(uint32_t slot) const
+{
+    auto found = skinViews.find(slot);
+    return found == skinViews.end() ? nullptr : &found->second;
+}
+
+world::EntityTileGrid Client::tileGridOf(uint32_t layer) const
+{
+    if (!blockAssets) {
+        return {};
+    }
+    uint32_t base = blockAssets->skinLayerBase();
+    if (layer >= base && layer < base + world::SkinPoolLayers) {
+        auto found = skinTileGrids.find(layer - base);
+        return found == skinTileGrids.end() ? world::EntityTileGrid {} : found->second;
+    }
+    return blockAssets->entityTileGrid(layer);
+}
+
+void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out) const
+{
+    std::array<QuadCorner, 4> placed;
+    for (size_t corner = 0; corner < 4; ++corner) {
+        placed[corner].position = corners[corner];
+        placed[corner].uv = uvs[corner];
+    }
+    appendTiled(placed, layer, tileGridOf(layer), shadeWord, out);
 }
 
 /**
@@ -436,6 +692,16 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.engineVariables.push_back({ "swim_amount", swimAmount });
         input.engineVariables.push_back({ "left_arm_swim_amount", swimAmount });
         input.engineVariables.push_back({ "right_arm_swim_amount", swimAmount });
+        const SkinView* skinView = actor.skinSlot != NoSkin ? skinViewOf(actor.skinSlot) : nullptr;
+        if (skinView) {
+            for (const SkinAnimationView& animation : skinView->animations) {
+                input.engineVariables.push_back({ skinFramesVariable(animation.kind), double(animation.frames) });
+                if (animation.kind == SkinAnimationKind::Face) {
+                    input.engineVariables.push_back({ "use_blinking_animation", animation.blinking ? 1.0 : 0.0 });
+                    input.extraAnimations.push_back(PersonaBlinkAlias);
+                }
+            }
+        }
         if (model->rigs.empty()) {
             continue;
         }
@@ -532,7 +798,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             uint32_t chosen = source ? pickChoice(animator, source->texture, source->textureChoices) : world::NoEntityChoice;
             return chosen != world::NoEntityChoice ? chosen : model->layer;
         };
-        float radians = (180.0f - wrapDegrees(actor.yaw)) * 3.14159265f / 180.0f;
+        float radians = (180.0f - actorWorldYaw(actor)) * 3.14159265f / 180.0f;
         float cosine = std::cos(radians);
         float sine = std::sin(radians);
         float baseX = static_cast<float>(dx * 256.0);
@@ -562,14 +828,33 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             words[1] = uint32_t(toHalf(values[2])) | (uint32_t(toHalf(values[3])) << 16);
             return words;
         };
-        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
-            const world::ModelQuad& quad = rig.quads[index];
-            size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
-            if (bone < hidden.size() && hidden[bone]) {
-                return;
+        auto wornBones = [&](const world::EntityRig& worn, const world::EntityRig& wearer) -> const std::vector<int32_t>& {
+            std::vector<int32_t>& matched = armorBoneMatches[{ &worn, &wearer }];
+            if (matched.size() == worn.bones.size()) {
+                return matched;
             }
-            interpolatePose();
-            const world::BoneMatrix* matrix = bone < matrices.size() ? &matrices[bone] : nullptr;
+            int32_t body = -1;
+            for (size_t bone = 0; bone < wearer.bones.size(); ++bone) {
+                if (lowercase(wearer.bones[bone].name) == "body") {
+                    body = static_cast<int32_t>(bone);
+                }
+            }
+            matched.assign(worn.bones.size(), -1);
+            for (size_t piece = 0; piece < worn.bones.size(); ++piece) {
+                std::string name = lowercase(worn.bones[piece].name);
+                for (size_t bone = 0; bone < wearer.bones.size(); ++bone) {
+                    if (lowercase(wearer.bones[bone].name) == name) {
+                        matched[piece] = static_cast<int32_t>(bone);
+                        break;
+                    }
+                }
+                if (matched[piece] < 0 && name == "cape") {
+                    matched[piece] = body;
+                }
+            }
+            return matched;
+        };
+        auto emitQuad = [&](const world::ModelQuad& quad, const world::BoneMatrix* matrix, uint32_t layer, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim, float offsetV) {
             auto place = [&](const std::array<float, 3>& point) {
                 float x = point[0];
                 float y = point[1];
@@ -596,7 +881,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     center[axis] += point[axis] * 0.25f;
                 }
                 corners[corner].position = place(point);
-                corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
+                corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f + offsetV };
             }
             if (cullFaces) {
                 auto minimum = corners[0].position;
@@ -636,7 +921,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
-            world::EntityTileGrid grid = blockAssets->entityTileGrid(layer);
+            world::EntityTileGrid grid = tileGridOf(layer);
             appendTiled(corners, layer, grid, shadeWord, target);
             if (grid.single() && uvAnim[1] != 0) {
                 for (size_t placed = first; placed < target.size(); ++placed) {
@@ -646,6 +931,30 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             if (lit) {
                 lightQuads(target, first, light);
+            }
+        };
+        auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
+            const world::ModelQuad& quad = rig.quads[index];
+            size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
+            if (bone < hidden.size() && hidden[bone]) {
+                return;
+            }
+            interpolatePose();
+            emitQuad(quad, bone < matrices.size() ? &matrices[bone] : nullptr, layer, blend, oneSided, lit, uvAnim, 0.0f);
+        };
+        auto emitWorn = [&](const world::EntityRig& worn, const std::vector<int32_t>& wearer, const std::vector<uint8_t>& hidden, uint32_t layer, float offsetV, bool showHead) {
+            interpolatePose();
+            for (size_t index = 0; index < worn.quads.size(); ++index) {
+                size_t piece = index < worn.quadBones.size() ? worn.quadBones[index] : wearer.size();
+                int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
+                if (bone >= 0 && size_t(bone) < hidden.size() && hidden[size_t(bone)]) {
+                    std::string name = lowercase(worn.bones[piece].name);
+                    if (!showHead || (name != "head" && name != "hat")) {
+                        continue;
+                    }
+                }
+                const world::BoneMatrix* matrix = bone >= 0 && size_t(bone) < matrices.size() ? &matrices[size_t(bone)] : nullptr;
+                emitQuad(worn.quads[index], matrix, layer, world::EntityBlend::Opaque, false, true, {}, offsetV);
             }
         };
         if (!invisible && combined) {
@@ -666,7 +975,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
             }
         } else if (!invisible) {
-            uint32_t layer = actor.skinSlot != NoSkin ? blockAssets->skinLayerBase() + actor.skinSlot : textureOf(controller);
+            uint32_t layer = skinView && skinView->base.present ? blockAssets->skinLayerBase() + skinView->base.layer : textureOf(controller);
             actorPartHidden.clear();
             const std::vector<uint8_t>& hidden = controller ? hiddenBones(*controller).get() : actorPartHidden;
             world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
@@ -675,6 +984,18 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             std::array<uint32_t, 2> uvAnim = uvAnimOf(controller);
             for (size_t index = 0; index < rig.quads.size(); ++index) {
                 emit(index, layer, hidden, blend, oneSided, lit, uvAnim);
+            }
+            if (skinView) {
+                double lifeTime = animator.evaluate(lifeTimeScript());
+                double blinking = animator.evaluate(blinkingScript());
+                for (const SkinAnimationView& animation : skinView->animations) {
+                    float offsetV = skinFrameOffset(animation.kind, animation.blinking, animation.frames, std::isfinite(lifeTime) ? lifeTime : 0.0, std::isfinite(blinking) ? blinking : 0.0);
+                    emitWorn(*animation.rig, wornBones(*animation.rig, rig), hidden, blockAssets->skinLayerBase() + animation.texture.layer, offsetV, true);
+                }
+                const world::EntityRig* cape = blockAssets->capeRig();
+                if (cape && skinView->cape.present && actor.armor[1] != "minecraft:elytra") {
+                    emitWorn(*cape, wornBones(*cape, rig), hidden, blockAssets->skinLayerBase() + skinView->cape.layer, 0.0f, false);
+                }
             }
         }
         size_t firstWorn = out.size();
@@ -1102,6 +1423,7 @@ void Client::interpolateActors(double now)
             motion.lastSample = now;
             motion.moves = actor.moves;
             motion.teleports = actor.teleports;
+            motion.launchTurns = actor.launchTurns;
             motion.bodyYaw = actor.yaw;
             motion.lastFrame = now;
             motion.lastShown = target;
@@ -1114,6 +1436,14 @@ void Client::interpolateActors(double now)
             motion.start = now;
             motion.lastSample = now;
             motion.moves = actor.moves;
+        }
+        if (actor.launchTurns != motion.launchTurns) {
+            motion.launchTurns = actor.launchTurns;
+            motion.turnFrom = turn;
+            motion.turnShown = turn;
+            if (now - motion.start >= motion.duration) {
+                motion.turnTo = turn;
+            }
         }
         double t = motion.duration > 0.0 ? std::clamp((now - motion.start) / motion.duration, 0.0, 1.0) : 1.0;
         for (size_t axis = 0; axis < 3; ++axis) {

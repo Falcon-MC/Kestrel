@@ -177,7 +177,21 @@ struct AnimationInput {
     double itemUseTicks = 0.0;
     std::vector<std::pair<std::string, double>> engineVariables;
     std::vector<std::pair<std::string, double>> contextVariables;
+    // Animation aliases the engine plays besides the entity's own list, like the persona blink for animated faces.
+    std::vector<std::string> extraAnimations;
 };
+
+/**
+ * Whether the entity animates its full yaw through the target rotation
+ * queries, so its world placement must not turn it again.
+ */
+bool targetRotationIsAbsolute(const std::string& identifier);
+
+/**
+ * Whether the entity is an item sprite turned toward the camera by its
+ * animation, placed in the camera basis rather than by its body yaw.
+ */
+bool cameraFacingSprite(const std::string& identifier);
 
 /**
  * The animation state of one entity: its Molang variables, controller states

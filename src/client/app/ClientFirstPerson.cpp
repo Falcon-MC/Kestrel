@@ -272,6 +272,18 @@ Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float 
 }
 
 /**
+ * A model quad's corner UVs over the whole texture.
+ */
+std::array<std::array<float, 2>, 4> quadUvs(const world::ModelQuad& quad)
+{
+    std::array<std::array<float, 2>, 4> uvs {};
+    for (size_t corner = 0; corner < 4; ++corner) {
+        uvs[corner] = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
+    }
+    return uvs;
+}
+
+/**
  * Packs a quad whose corners are in 1/256 block around the draw origin.
  */
 world::ModelQuadGpu packQuad(const std::array<Vec3, 4>& corners, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shadeWord)
@@ -291,7 +303,7 @@ world::ModelQuadGpu packQuad(const std::array<Vec3, 4>& corners, const std::arra
 
 uint32_t Client::heldItemLayer() const
 {
-    return blockAssets ? blockAssets->skinLayerBase() + world::SkinSlots : 0;
+    return blockAssets ? blockAssets->skinLayerBase() + world::SkinPoolLayers : 0;
 }
 
 /**
@@ -313,7 +325,9 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
         if (auto skinRig = skinRigs.find(localSkinSlot); skinRig != skinRigs.end() && skinRig->second) {
             rig = skinRig->second.get();
         }
-        skinLayer = blockAssets->skinLayerBase() + localSkinSlot;
+        if (const SkinView* view = skinViewOf(localSkinSlot); view && view->base.present) {
+            skinLayer = blockAssets->skinLayerBase() + view->base.layer;
+        }
     }
     return model;
 }
@@ -484,7 +498,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 16.0f, [&](const Vec3& pixels) {
             return modelToWorld(matrices[bone], pixels);
         });
-        out.push_back(packQuad(corners, quad.uvs, skinLayer, posedFace | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u)));
+        appendEntityQuad(corners, quadUvs(quad), skinLayer, posedFace | EntityQuadFlag | (input.hurtTime > 0.0f ? 1u << 7 : 0u), out);
     }
     std::array<std::string, 4> armor;
     for (size_t piece = 0; piece < armor.size(); ++piece) {
@@ -696,7 +710,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
             corners[corner] = place(p);
         }
         uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f / 16.0f, place);
-        out.push_back(packQuad(corners, quad.uvs, skinLayer, posedFace | EntityQuadFlag | hurt));
+        appendEntityQuad(corners, quadUvs(quad), skinLayer, posedFace | EntityQuadFlag | hurt, out);
     }
     appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
     appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);

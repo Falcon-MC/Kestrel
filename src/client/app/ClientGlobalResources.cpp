@@ -1,6 +1,7 @@
 #include "client/Client.h"
 #include "platform/Shell.h"
 #include "ui/Image.h"
+#include "ui/Localization.h"
 
 namespace kestrel {
 
@@ -45,7 +46,11 @@ void Client::updateGlobalResources()
     }
     const auto snapshot = session.sharedSnapshot();
     bool reloading = snapshot->state == SessionState::Joined && snapshot->resourceReloading;
-    std::string status = reloading ? "Applying resource packs..." : globalResources.message();
+    std::string status = globalResources.message();
+    if (status == "Global resources updated") status = ui::tr("kestrel.globalResources.updated", status);
+    else if (status == "Deactivated packs with missing dependencies") status = ui::tr("kestrel.globalResources.dependencies", status);
+    else if (status.starts_with("Imported ")) status = ui::trf("kestrel.globalResources.imported", "Imported %s", { status.substr(9) });
+    if (reloading) status = ui::tr("kestrel.globalResources.applying", "Applying resource packs...");
     if (snapshot->state == SessionState::Joined && !snapshot->resourceReloadError.empty()) status = snapshot->resourceReloadError;
     menu.setGlobalResourceStatus(globalResources.busy() || reloading, std::move(status));
 }
