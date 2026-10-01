@@ -13,6 +13,35 @@ namespace {
 constexpr float PopupHoldPerCharacter = 0.04f;
 constexpr float JukeboxHoldSeconds = 1.0f;
 
+/**
+ * Who a chat line comes from, for the chat settings' mutes: players talking,
+ * whispering or announcing, a player's emote, or the server.
+ */
+menu::ChatSource chatSource(const ChatMessage& message)
+{
+    switch (message.kind) {
+    case ChatMessage::Kind::Chat:
+    case ChatMessage::Kind::Whisper:
+    case ChatMessage::Kind::Announcement:
+    case ChatMessage::Kind::WhisperJson:
+    case ChatMessage::Kind::AnnouncementJson:
+        return menu::ChatSource::Player;
+    case ChatMessage::Kind::Translation: {
+        std::string_view key = message.message;
+        if (!key.empty() && key.front() == '%') {
+            key.remove_prefix(1);
+        }
+        if (key == "chat.type.emote") {
+            return menu::ChatSource::Emote;
+        }
+        bool spoken = key == "chat.type.text" || key == "chat.type.announcement" || key == "commands.message.display.incoming";
+        return spoken ? menu::ChatSource::Player : menu::ChatSource::System;
+    }
+    default:
+        return menu::ChatSource::System;
+    }
+}
+
 size_t codepoints(std::string_view text)
 {
     size_t count = 0;
@@ -36,7 +65,7 @@ void Client::syncChat()
             continue;
         }
         if (!line.empty()) {
-            menu.addChatLine(std::move(line));
+            menu.addChatLine(std::move(line), chatSource(message));
         } else {
             showHudText(message, std::move(body));
         }

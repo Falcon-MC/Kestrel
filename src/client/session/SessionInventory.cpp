@@ -1,5 +1,7 @@
 #include "SessionData.h"
+#include "client/ContainerLayout.h"
 #include "client/DebugLog.h"
+#include "Core/Json/Json.h"
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/ContainerOpenPacket.h"
 #include "Protocol/Packets/ContainerClosePacket.h"
@@ -11,6 +13,14 @@
 #include "Protocol/Packets/InventorySlotPacket.h"
 #include "Protocol/Packets/ItemStackRequestPacket.h"
 #include "Protocol/Packets/ItemStackResponsePacket.h"
+#include "Protocol/Packets/PlayerEnchantOptionsPacket.h"
+#include "Protocol/Packets/NpcDialoguePacket.h"
+#include "Protocol/Packets/NpcRequestPacket.h"
+#include "Protocol/Packets/BookEditPacket.h"
+#include "Protocol/Packets/PlayerToggleCrafterSlotRequestPacket.h"
+#include "Protocol/Packets/TrimDataPacket.h"
+#include "Protocol/Packets/BlockActorDataPacket.h"
+#include "Protocol/Packets/LecternUpdatePacket.h"
 
 #include <algorithm>
 #include <limits>
@@ -19,6 +29,20 @@ namespace kestrel {
 namespace {
 using namespace inventory;
 
+int integerTag(const Tag& compound, const std::string& key, int fallback)
+{
+    const Tag* value = compound.isCompound() ? compound.get(key) : nullptr;
+    if (!value) {
+        return fallback;
+    }
+    switch (value->getType()) {
+    case Tag::Type::Byte: return value->asByte();
+    case Tag::Type::Short: return value->asShort();
+    case Tag::Type::Int: return value->asInt();
+    default: return fallback;
+    }
+}
+
 int containerSize(ContainerType type)
 {
     switch (type) {
@@ -26,6 +50,9 @@ int containerSize(ContainerType type)
     case ContainerType::Hopper: case ContainerType::MinecartHopper: return 5;
     case ContainerType::Dispenser: case ContainerType::Dropper: return 9;
     case ContainerType::Furnace: case ContainerType::BlastFurnace: case ContainerType::Smoker: return 3;
+    case ContainerType::BrewingStand: return 5;
+    case ContainerType::Crafter: return 9;
+    case ContainerType::Horse: return 2;
     default: return 0;
     }
 }
@@ -37,20 +64,106 @@ void Session::requestInventory(InventoryCommand command)
     if (inventoryCommands.size() < 128) inventoryCommands.push_back(std::move(command));
 }
 
+bool Session::openBook(int slot)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    if (slot < 0 || slot >= 36) {
+        return false;
+    }
+    const auto& item = inventoryModel.slots[slot];
+    if (item.isAir()) {
+        return false;
+    }
+    const std::string& identifier = item.mDefinition->getIdentifier();
+    if (identifier != "minecraft:writable_book" && identifier != "minecraft:written_book") {
+        return false;
+    }
+    auto& view = current.hud.container;
+    view.screen = "book.book_screen";
+    view.bookEditable = identifier == "minecraft:writable_book";
+    view.bookSlot = slot;
+    view.pages.clear();
+    view.author.clear();
+    view.bookTitle.clear();
+    Tag tag = item.mTag.isCompound() ? item.mTag : Tag::ofCompound();
+    if (const Tag* pages = tag.get("pages"); pages && pages->isList()) {
+        for (const auto& page : pages->getList()) {
+            if (view.pages.size() == 50) {
+                break;
+            }
+            const Tag* text = page.isCompound() ? page.get("text") : nullptr;
+            view.pages.push_back(text && text->getType() == Tag::Type::String ? text->asString() : std::string());
+        }
+    }
+    if (view.pages.empty()) {
+        view.pages.emplace_back();
+    }
+    if (const Tag* author = tag.get("author"); author && author->getType() == Tag::Type::String) {
+        view.author = author->asString();
+    }
+    if (const Tag* title = tag.get("title"); title && title->getType() == Tag::Type::String) {
+        view.bookTitle = title->asString();
+    }
+    if (view.bookEditable && playerNamesByActor.contains(localUniqueId)) {
+        view.author = playerNamesByActor.at(localUniqueId);
+    }
+    ++view.openRevision;
+    ++view.revision;
+    return true;
+}
+
 // Called with mutex held: copy only lightweight display data, never raw NBT, to the render thread.
 void Session::publishInventory()
 {
     auto& hud = current.hud;
     auto& view = hud.container;
+    inventoryModel.creativeMode = hud.gameType == 1;
     for (int i = 0; i < SlotCount; ++i) view.slots[i] = hudItemOf(inventoryModel.slots[i]);
     for (int i = 0; i < 36; ++i) hud.inventory[i] = view.slots[i];
     for (int i = 0; i < 4; ++i) hud.armor[i] = view.slots[Armor + i];
     hud.offhand = view.slots[Offhand];
-    if (const auto* recipe = inventoryModel.matchingRecipe()) view.slots[Output] = hudItemOf(recipe->output);
+    if (inventoryModel.type == ContainerType::Inventory || inventoryModel.type == ContainerType::Workbench) {
+        if (const auto* recipe = inventoryModel.matchingRecipe()) {
+            view.slots[Output] = hudItemOf(recipe->output);
+        }
+    } else if (const auto* recipe = inventoryModel.matchingStationRecipe()) {
+        view.slots[Output] = hudItemOf(inventoryModel.stationRecipeResult(*recipe));
+    } else if (inventoryModel.type == ContainerType::Anvil || inventoryModel.type == ContainerType::Grindstone || inventoryModel.type == ContainerType::Loom) {
+        inventoryModel.bookDefinition = itemDefinitions.getDefinition("minecraft:book");
+        view.slots[Output] = hudItemOf(inventoryModel.stationPreview(nullptr, &view.stationCost));
+    } else if (inventoryModel.type == ContainerType::Crafter) {
+        InventoryModel preview = inventoryModel;
+        preview.type = ContainerType::Workbench;
+        for (int index = 0; index < 9; ++index) {
+            preview.slots[Craft + index] = inventoryModel.slots[Container + index];
+        }
+        const auto* recipe = preview.matchingRecipe();
+        view.slots[Output] = recipe ? hudItemOf(recipe->output) : HudItem {};
+    }
+    view.stationName = inventoryModel.stationNameEdited ? inventoryModel.stationName : hudItemOf(inventoryModel.slots[Ui + 1]).customName;
+    view.selectedStationRecipe = inventoryModel.stationRecipe;
+    view.loomPatterns = inventoryModel.type == ContainerType::Loom ? inventoryModel.availableLoomPatterns() : std::vector<std::string>();
+    if (inventoryModel.type == ContainerType::Loom) {
+        auto selected = std::find(view.loomPatterns.begin(), view.loomPatterns.end(), inventoryModel.loomPattern);
+        view.selectedStationRecipe = selected == view.loomPatterns.end() ? -1 : int(selected - view.loomPatterns.begin());
+    }
+    view.stationOptions.clear();
+    if (inventoryModel.type == ContainerType::Stonecutter) {
+        for (const auto& recipe : inventoryModel.recipes) {
+            if ((recipe.recipe.mBlockName == "stonecutter" || recipe.recipe.mBlockName == "minecraft:stonecutter")
+                && recipe.recipe.mInputs.size() == 1 && inventoryModel.ingredientMatches(recipe.recipe.mInputs.front(), inventoryModel.slots[Ui + 3])) {
+                InventoryCatalogItem option;
+                option.item = hudItemOf(recipe.output);
+                option.networkId = recipe.recipe.mRecipeNetId;
+                view.stationOptions.push_back(std::move(option));
+            }
+        }
+    }
     view.windowId = inventoryModel.windowId;
     view.type = inventoryModel.type;
     view.containerSize = inventoryModel.containerSize;
     view.pending = pendingInventoryRequest != 0;
+    view.experienceLevel = hud.level;
     view.craftable.clear();
     for (const auto& recipe : inventoryModel.recipes) if (inventoryModel.canCraft(recipe)) view.craftable.push_back(recipe.recipe.mRecipeNetId);
     ++view.revision;
@@ -58,7 +171,71 @@ void Session::publishInventory()
 
 void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
 {
-    if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
+    if (auto block = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        auto& view = current.hud.container;
+        if (inventoryModel.windowId != 0 && block->mData.isCompound()
+            && view.blockPosition == std::array<int, 3> { block->mBlockPosition.x, block->mBlockPosition.y, block->mBlockPosition.z }) {
+            view.disabledSlots = integerTag(block->mData, "disabled_slots", view.disabledSlots);
+            view.beaconLevel = integerTag(block->mData, "Levels", view.beaconLevel);
+            inventoryModel.disabledSlots = view.disabledSlots;
+            view.customName = block->mData.getString("CustomName", view.customName);
+            ++view.revision;
+        }
+    } else if (auto trims = std::dynamic_pointer_cast<TrimDataPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        inventoryModel.trimPatterns.clear();
+        inventoryModel.trimMaterials.clear();
+        for (const auto& pattern : trims->mPatterns) {
+            inventoryModel.trimPatterns[pattern.mItemName] = pattern.mPatternId;
+        }
+        for (const auto& material : trims->mMaterials) {
+            inventoryModel.trimMaterials[material.mItemName] = material.mMaterialId;
+        }
+        publishInventory();
+    } else if (auto options = std::dynamic_pointer_cast<PlayerEnchantOptionsPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.container.enchantments = options->mOptions;
+        publishInventory();
+    } else if (auto dialogue = std::dynamic_pointer_cast<NpcDialoguePacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        auto& view = current.hud.container;
+        if (dialogue->mAction == NpcDialoguePacket::Action::Close) {
+            if (view.screen == "npc_interact.npc_screen" && view.npcId == uint64_t(dialogue->mUniqueActorId)) {
+                view.screen.clear();
+                ++view.closeRevision;
+            }
+            return;
+        }
+        view.screen = "npc_interact.npc_screen";
+        view.npcId = uint64_t(dialogue->mUniqueActorId);
+        view.scene = dialogue->mSceneName;
+        view.customName = dialogue->mNpcName;
+        view.dialogue = dialogue->mDialogue;
+        view.npcButtons.clear();
+        auto actions = dialogue->mActionJson.size() <= 1024 * 1024 ? json::parse(dialogue->mActionJson) : nullptr;
+        if (actions && actions->isArray()) {
+            for (size_t index = 0; index < std::min<size_t>(256, actions->mArray.size()); ++index) {
+                const auto& action = actions->mArray[index];
+                if (!action || !action->isObject()) {
+                    continue;
+                }
+                const auto* mode = action->get("mode");
+                const auto* label = action->get("button_name");
+                if ((!mode || mode->number() == 0) && label && label->isString()) {
+                    view.npcButtons.emplace_back(int(index), label->string());
+                }
+            }
+        }
+        NpcRequestPacket opening;
+        opening.mRuntimeActorId = view.npcId;
+        opening.mRequestType = NpcRequestPacket::RequestType::ExecuteOpeningCommands;
+        opening.mActionType = 0;
+        opening.mSceneName = view.scene;
+        transmit(opening);
+        ++view.openRevision;
+        ++view.revision;
+    } else if (auto content = std::dynamic_pointer_cast<InventoryContentPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         if (content->mContainerId == 0) {
             // A full inventory is a resync, including when a proxy switches servers.
@@ -103,6 +280,30 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         inventoryModel.windowId = uint8_t(open->mWindowId);
         inventoryModel.type = open->mType;
         inventoryModel.containerSize = containerSize(open->mType);
+        inventoryModel.stationRecipe = -1;
+        inventoryModel.stationName.clear();
+        inventoryModel.stationNameEdited = false;
+        inventoryModel.loomPattern.clear();
+        current.hud.container.screen.clear();
+        current.hud.container.enchantments.clear();
+        current.hud.container.properties.clear();
+        current.hud.container.blockIdentifier.clear();
+        current.hud.container.blockPosition = { open->mBlockPosition.x, open->mBlockPosition.y, open->mBlockPosition.z };
+        current.hud.container.mountIdentifier.clear();
+        current.hud.container.mountRuntimeId = 0;
+        current.hud.container.disabledSlots = 0;
+        current.hud.container.beaconLevel = 0;
+        if (auto runtime = runtimeByUnique.find(open->mUniqueActorId); runtime != runtimeByUnique.end()) {
+            current.hud.container.mountRuntimeId = runtime->second;
+            if (auto actor = actors.find(runtime->second); actor != actors.end()) {
+                current.hud.container.mountIdentifier = actor->second.identifier;
+            }
+        }
+        inventoryModel.mountIdentifier = current.hud.container.mountIdentifier;
+        if (open->mUniqueActorId == -1 && assets) {
+            uint32_t value = blockAt(open->mBlockPosition.x, open->mBlockPosition.y, open->mBlockPosition.z);
+            current.hud.container.blockIdentifier = assets->blockName(value, ids.hashed, ids.sequential.get());
+        }
         enderChestOpen = false;
         if (open->mType == ContainerType::Container && open->mUniqueActorId == -1 && assets) {
             uint32_t block = blockAt(open->mBlockPosition.x, open->mBlockPosition.y, open->mBlockPosition.z);
@@ -118,9 +319,34 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
                 auto found = entities->find(static_cast<uint16_t>(world::linearIndex(uint32_t(at.x & 15), uint32_t(at.y & 15), uint32_t(at.z & 15))));
                 const Tag* name = found != entities->end() ? found->second.get("CustomName") : nullptr;
                 if (name && name->getType() == Tag::Type::String) current.hud.container.customName = name->asString();
+                if (found != entities->end()) {
+                    current.hud.container.disabledSlots = integerTag(found->second, "disabled_slots", 0);
+                    current.hud.container.beaconLevel = integerTag(found->second, "Levels", 0);
+                    if (open->mType == ContainerType::Lectern) {
+                        auto& view = current.hud.container;
+                        view.bookEditable = false;
+                        view.bookSlot = -1;
+                        view.pages.clear();
+                        const Tag* book = found->second.get("book");
+                        const Tag* tag = book && book->isCompound() ? book->get("tag") : nullptr;
+                        const Tag* pages = tag && tag->isCompound() ? tag->get("pages") : nullptr;
+                        if (pages && pages->isList()) {
+                            for (const auto& page : pages->getList()) {
+                                if (view.pages.size() >= 50) {
+                                    break;
+                                }
+                                view.pages.push_back(page.isCompound() ? page.getString("text", "") : std::string());
+                            }
+                            view.author = tag->getString("author", "");
+                            view.bookTitle = tag->getString("title", "");
+                        }
+                    }
+                }
             }
         }
         for (int i = Container; i < SlotCount; ++i) inventoryModel.slots[i] = ItemStack::air();
+        inventoryModel.slots[Output] = ItemStack::air();
+        inventoryModel.disabledSlots = current.hud.container.disabledSlots;
         current.hud.container.furnaceProgress = 0;
         current.hud.container.furnaceFlame = 0;
         ++current.hud.container.openRevision;
@@ -166,6 +392,21 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
                         item.mCount = update.mCount;
                         item.mNetId = update.mStackNetworkId;
                         item.mUsingNetId = true;
+                        if (!update.mCustomName.empty() || !update.mFilteredCustomName.empty() || update.mDurabilityCorrection != 0) {
+                            if (!item.mTag.isCompound()) {
+                                item.mTag = Tag::ofCompound();
+                            }
+                            if (!update.mCustomName.empty() || !update.mFilteredCustomName.empty()) {
+                                const Tag* previous = item.mTag.get("display");
+                                Tag display = previous && previous->isCompound() ? *previous : Tag::ofCompound();
+                                display.putString("Name", update.mFilteredCustomName.empty() ? update.mCustomName : update.mFilteredCustomName);
+                                item.mTag.put("display", std::move(display));
+                            }
+                            if (update.mDurabilityCorrection != 0) {
+                                item.mTag.putInt("Damage", update.mDurabilityCorrection);
+                            }
+                            item.mUserData.clear();
+                        }
                     }
                 }
             }
@@ -196,9 +437,17 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
     } else if (auto recipes = std::dynamic_pointer_cast<CraftingDataPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         if (recipes->mCleanRecipes) inventoryModel.recipes.clear();
+        if (recipes->mCleanRecipes) {
+            inventoryModel.repairRecipe = -1;
+        }
+        for (const auto& recipe : recipes->mMultiRecipes) {
+            if (recipe.mUuid == Uuid::fromString("00000000-0000-0000-0000-000000000001")) {
+                inventoryModel.repairRecipe = recipe.mRecipeNetId;
+            }
+        }
         auto append = [&](const auto& entries, bool shaped) {
             for (const auto& entry : entries) {
-                if (entry.mOutputs.empty() || (entry.mBlockName != "crafting_table" && entry.mBlockName != "minecraft:crafting_table")) continue;
+                if (entry.mOutputs.empty()) continue;
                 if (entry.mInputs.size() > 9 || (shaped && (entry.mWidth < 1 || entry.mHeight < 1))) continue;
                 std::vector<ItemStack> stacks;
                 for (const auto& output : entry.mOutputs) {
@@ -220,8 +469,34 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         };
         append(recipes->mShapedRecipes, true);
         append(recipes->mShapelessRecipes, false);
+        std::vector<CraftingRecipeEntry> smithing;
+        for (const auto& entry : recipes->mSmithingTransformRecipes) {
+            CraftingRecipeEntry recipe;
+            recipe.mRecipeId = entry.mRecipeId;
+            recipe.mBlockName = entry.mBlockName;
+            recipe.mRecipeNetId = entry.mRecipeNetId;
+            recipe.mInputs = { entry.mTemplate, entry.mInput, entry.mAddition };
+            recipe.mOutputs = { entry.mOutput };
+            smithing.push_back(std::move(recipe));
+        }
+        append(smithing, false);
+        for (const auto& entry : recipes->mSmithingTrimRecipes) {
+            InventoryRecipe recipe;
+            recipe.recipe.mRecipeId = entry.mRecipeId;
+            recipe.recipe.mBlockName = entry.mBlockName;
+            recipe.recipe.mRecipeNetId = entry.mRecipeNetId;
+            recipe.recipe.mInputs = { entry.mTemplate, entry.mInput, entry.mAddition };
+            recipe.trim = true;
+            std::erase_if(inventoryModel.recipes, [&](const auto& existing) {
+                return existing.recipe.mRecipeNetId == entry.mRecipeNetId;
+            });
+            inventoryModel.recipes.push_back(std::move(recipe));
+        }
         auto catalog = std::make_shared<std::vector<InventoryCatalogItem>>();
         for (const auto& recipe : inventoryModel.recipes) {
+            if (recipe.recipe.mBlockName != "crafting_table" && recipe.recipe.mBlockName != "minecraft:crafting_table") {
+                continue;
+            }
             InventoryCatalogItem item;
             item.item = hudItemOf(recipe.output);
             item.networkId = recipe.recipe.mRecipeNetId;
@@ -234,8 +509,13 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
     } else if (auto data = std::dynamic_pointer_cast<ContainerSetDataPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         if (uint8_t(data->mWindowId) == inventoryModel.windowId) {
-            if (data->mProperty == 0) current.hud.container.furnaceProgress = std::clamp(data->mValue / 200.0f, 0.0f, 1.0f);
-            if (data->mProperty == 1) current.hud.container.furnaceFlame = std::clamp(data->mValue / 200.0f, 0.0f, 1.0f);
+            auto& view = current.hud.container;
+            view.properties[data->mProperty] = data->mValue;
+            float duration = inventoryModel.type == ContainerType::Furnace ? 200.0f : 100.0f;
+            view.furnaceProgress = std::clamp(view.properties[0] / duration, 0.0f, 1.0f);
+            int total = view.properties[2];
+            view.furnaceFlame = total > 0 ? std::clamp(float(view.properties[1]) / float(total), 0.0f, 1.0f) : 0.0f;
+            ++view.revision;
         }
     }
 }
@@ -278,7 +558,131 @@ void Session::flushInventory()
         transmit(open);
         return;
     }
+    auto& view = current.hud.container;
+    if (inventoryModel.type == ContainerType::Lectern && command.action == InventoryAction::BookPage) {
+        if (command.slot >= 0 && command.slot < int(view.pages.size())) {
+            LecternUpdatePacket page;
+            page.mPage = uint8_t(command.slot);
+            page.mTotalPages = uint8_t(std::min(size_t(255), view.pages.size()));
+            page.mBlockPosition = Vector3i(view.blockPosition[0], view.blockPosition[1], view.blockPosition[2]);
+            transmit(page);
+        }
+        return;
+    }
+    if (command.action == InventoryAction::ToggleCrafter) {
+        if (inventoryModel.type != ContainerType::Crafter || command.slot < 0 || command.slot >= 9 || !inventoryModel.slots[Container + command.slot].isAir()) {
+            return;
+        }
+        PlayerToggleCrafterSlotRequestPacket toggle;
+        toggle.mBlockPosition = Vector3i(view.blockPosition[0], view.blockPosition[1], view.blockPosition[2]);
+        toggle.mSlot = int8_t(command.slot);
+        toggle.mDisabled = (view.disabledSlots & (1 << command.slot)) == 0;
+        transmit(toggle);
+        view.disabledSlots ^= 1 << command.slot;
+        inventoryModel.disabledSlots = view.disabledSlots;
+        ++view.revision;
+        return;
+    }
+    if (view.screen == "book.book_screen") {
+        if (command.action == InventoryAction::Close) {
+            view.screen.clear();
+            return;
+        }
+        if (!view.bookEditable || view.bookSlot < 0 || view.bookSlot >= 36) {
+            return;
+        }
+        if (command.action != InventoryAction::BookPage && command.action != InventoryAction::BookSign) {
+            return;
+        }
+        BookEditPacket edit;
+        edit.mInventorySlot = view.bookSlot;
+        edit.mPageNumber = command.slot;
+        edit.mSecondaryPageNumber = command.value;
+        edit.mText = command.text;
+        if (command.action == InventoryAction::BookSign) {
+            if (command.text.empty() || command.text.size() > 64) {
+                return;
+            }
+            edit.mAction = BookEditPacket::Action::SignBook;
+            edit.mTitle = command.text;
+            edit.mAuthor = view.author;
+            view.bookEditable = false;
+            view.bookTitle = command.text;
+        } else {
+            if (command.slot < 0 || command.slot >= 50 || command.text.size() > 4096) {
+                return;
+            }
+            if (command.value == -1) {
+                if (view.pages.size() >= 50 || command.slot > int(view.pages.size())) {
+                    return;
+                }
+                edit.mAction = BookEditPacket::Action::AddPage;
+                view.pages.insert(view.pages.begin() + command.slot, command.text);
+            } else if (command.value == -2) {
+                if (view.pages.size() <= 1 || command.slot >= int(view.pages.size())) {
+                    return;
+                }
+                edit.mAction = BookEditPacket::Action::DeletePage;
+                view.pages.erase(view.pages.begin() + command.slot);
+            } else if (command.value >= 0) {
+                if (command.slot >= int(view.pages.size()) || command.value >= int(view.pages.size())) {
+                    return;
+                }
+                edit.mAction = BookEditPacket::Action::SwapPages;
+                std::swap(view.pages[command.slot], view.pages[command.value]);
+            } else {
+                if (command.slot >= int(view.pages.size())) {
+                    return;
+                }
+                edit.mAction = BookEditPacket::Action::ReplacePage;
+                view.pages[command.slot] = command.text;
+            }
+        }
+        transmit(edit);
+        ++view.revision;
+        return;
+    }
+    if (view.screen == "npc_interact.npc_screen") {
+        if (command.action == InventoryAction::NpcAction || command.action == InventoryAction::Close) {
+            NpcRequestPacket reply;
+            reply.mRuntimeActorId = view.npcId;
+            reply.mSceneName = view.scene;
+            reply.mActionType = 0;
+            reply.mRequestType = NpcRequestPacket::RequestType::ExecuteClosingCommands;
+            if (command.action == InventoryAction::NpcAction) {
+                if (command.value < 0 || command.value >= int(view.npcButtons.size())) {
+                    return;
+                }
+                reply.mActionType = view.npcButtons[command.value].first;
+                reply.mRequestType = NpcRequestPacket::RequestType::ExecuteCommandAction;
+            } else {
+                view.screen.clear();
+            }
+            transmit(reply);
+        }
+        return;
+    }
     inventoryModel.creativeMode = current.hud.gameType == 1;
+    if (command.action == InventoryAction::Rename && command.text.size() > 512) {
+        return;
+    }
+    if (command.slot == Output && inventoryModel.type == ContainerType::Anvil && !inventoryModel.creativeMode) {
+        int cost = 0;
+        inventoryModel.anvilPreview(nullptr, &cost);
+        if (cost > current.hud.level) {
+            return;
+        }
+    }
+    if (command.action == InventoryAction::Enchant) {
+        if (inventoryModel.type != ContainerType::Enchantment || command.value < 0 || command.value >= int(view.enchantments.size())) {
+            return;
+        }
+        const auto& option = view.enchantments[command.value];
+        if (!inventoryModel.creativeMode && (current.hud.level < option.mCost || inventoryModel.slots[Ui + 15].mCount <= command.value)) {
+            return;
+        }
+        command.value = option.mEnchantNetId;
+    }
     if (command.action == InventoryAction::Close) inventoryClosing = true;
     inventoryBefore = inventoryModel.slots;
     if (inventoryRequestId < std::numeric_limits<int32_t>::min() + 2) inventoryRequestId = -1;

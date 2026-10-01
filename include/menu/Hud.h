@@ -98,6 +98,19 @@ struct HudGameTip {
 struct HudChatLine {
     std::string text;
     uint64_t serial = 0;
+    // The line's $chat_text_color, as a JSON array of its channels.
+    std::string color = "[1.0, 1.0, 1.0]";
+};
+
+/**
+ * How the chat settings draw chat lines: the $chat_font_type, the
+ * $chat_font_scale_factor and the $chat_line_spacing padding both the HUD
+ * and the chat screen pass their message controls.
+ */
+struct ChatStyle {
+    std::string fontType = "default";
+    double fontScale = 1.0;
+    double linePadding = 0.0;
 };
 
 // The game's HudElement ids, as SetHud names them.
@@ -144,6 +157,7 @@ struct HudView {
     HudTitle title;
     HudGameTip gameTip;
     std::vector<HudChatLine> chat;
+    ChatStyle chatStyle;
     float health = 20.0f;
     float maxHealth = 20.0f;
     float absorption = 0.0f;

@@ -78,6 +78,47 @@ const Tag* itemComponent(const Tag& tag, const std::string& name, int depth = 0)
 }
 
 /**
+ * The use duration in ticks a server item states in its components: the
+ * use_modifiers use_duration in seconds, or the older use_duration in ticks.
+ * 0 when it states none.
+ */
+int32_t componentUseTicks(const Tag& components)
+{
+    auto number = [](const Tag* tag) -> double {
+        if (!tag) {
+            return 0.0;
+        }
+        switch (tag->getType()) {
+        case Tag::Type::Float:
+            return tag->asFloat();
+        case Tag::Type::Double:
+            return tag->asDouble();
+        case Tag::Type::Int:
+            return tag->asInt();
+        case Tag::Type::Short:
+            return tag->asShort();
+        case Tag::Type::Byte:
+            return tag->asByte();
+        default:
+            return 0.0;
+        }
+    };
+    double ticks = 0.0;
+    const Tag* modifiers = itemComponent(components, "minecraft:use_modifiers");
+    if (modifiers && modifiers->getType() == Tag::Type::Compound) {
+        ticks = number(modifiers->get("use_duration")) * 20.0;
+    }
+    if (ticks < 1.0) {
+        const Tag* legacy = itemComponent(components, "minecraft:use_duration");
+        if (legacy && legacy->getType() == Tag::Type::Compound) {
+            legacy = legacy->get("value");
+        }
+        ticks = number(legacy);
+    }
+    return std::isfinite(ticks) && ticks >= 1.0 ? static_cast<int32_t>(std::lround(ticks)) : 0;
+}
+
+/**
  * The HUD view of a network stack: identifier, count, aux, the Damage tag of
  * tools and armor and the custom name under display.Name.
  */
@@ -102,6 +143,7 @@ HudItem hudItemOf(const ItemStack& stack)
     if (!hand) hand = itemComponent(components, "hand_equipped");
     if (hand && hand->getType() == Tag::Type::Compound) hand = hand->get("value");
     if (hand && hand->getType() == Tag::Type::Byte) item.handEquipped = hand->asByte() != 0;
+    item.useTicks = componentUseTicks(components);
     if (stack.mTag.getType() != Tag::Type::Compound) {
         return item;
     }
@@ -112,6 +154,33 @@ HudItem hudItemOf(const ItemStack& stack)
     if (display && display->getType() == Tag::Type::Compound) {
         if (const Tag* name = display->get("Name"); name && name->getType() == Tag::Type::String) {
             item.customName = name->asString();
+        }
+        if (const Tag* lore = display->get("Lore"); lore && lore->isList()) {
+            for (const Tag& line : lore->getList()) {
+                if (line.getType() == Tag::Type::String && item.lore.size() < 128) {
+                    item.lore.push_back(line.asString());
+                }
+            }
+        }
+    }
+    if (const Tag* enchantments = stack.mTag.get("ench"); enchantments && enchantments->isList()) {
+        item.enchanted = !enchantments->getList().empty();
+        for (const Tag& enchantment : enchantments->getList()) {
+            if (!enchantment.isCompound() || item.enchantments.size() >= 128) {
+                continue;
+            }
+            const Tag* id = enchantment.get("id");
+            const Tag* level = enchantment.get("lvl");
+            if (id && level && id->getType() == Tag::Type::Short && level->getType() == Tag::Type::Short) {
+                item.enchantments.emplace_back(id->asShort(), level->asShort());
+            }
+        }
+    }
+    if (const Tag* patterns = stack.mTag.get("Patterns"); patterns && patterns->isList()) {
+        for (const auto& pattern : patterns->getList()) {
+            if (pattern.isCompound() && item.bannerPatterns.size() < 16) {
+                item.bannerPatterns.emplace_back(pattern.getString("Pattern", ""), pattern.getInt("Color", 0));
+            }
         }
     }
     return item;

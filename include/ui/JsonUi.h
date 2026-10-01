@@ -37,6 +37,7 @@ struct UiValue {
     static UiValue of(bool value);
     static UiValue of(double value);
     static UiValue of(std::string value);
+    static UiValue of(const char* value);
 
     bool truthy() const;
     double toNumber() const;
@@ -72,6 +73,7 @@ struct UiData {
     UiRow globals;
     std::unordered_map<std::string, std::vector<UiRow>> collections;
     std::unordered_map<std::string, std::vector<UiFactoryItem>> factories;
+    bool hideUnboundVisibility = false;
     bool operator==(const UiData&) const = default;
 };
 
@@ -170,7 +172,7 @@ struct JsonUiRuntime;
  */
 class JsonUiScreen {
 public:
-    JsonUiScreen(std::shared_ptr<const JsonUi> definitions, std::string root);
+    JsonUiScreen(std::shared_ptr<const JsonUi> definitions, std::string root, const UiRow& variables = {});
     ~JsonUiScreen();
 
     JsonUiScreen(const JsonUiScreen&) = delete;
@@ -184,6 +186,13 @@ public:
     bool valid() const;
 
     void setRenderer(UiRenderer renderer);
+
+    /**
+     * Lets the arrow keys and Tab move the focus between the buttons and
+     * toggles on screen, the focused one showing its hover state, and Enter
+     * press it, the way the game moves its focus without a mouse.
+     */
+    void setKeyboardNavigation(bool enabled);
 
     /**
      * Starts the animations waiting for play_event.
@@ -215,9 +224,18 @@ public:
     void blur();
 
     /**
+     * Shows the caret in the always listening edit boxes, for screens that
+     * type into them from outside while they never hold the focus.
+     */
+    void showListeningCaret(bool shown);
+
+    /**
      * Something under the mouse takes clicks, like a button or a slider.
      */
     bool hovering() const;
+
+    UiEvent pointerTarget() const;
+    bool pointerInsideContent(float x, float y) const;
 
     /**
      * The control tree as last laid out, one line per control with its name,

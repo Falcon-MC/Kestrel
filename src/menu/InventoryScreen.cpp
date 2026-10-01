@@ -55,6 +55,9 @@ std::vector<InventoryCommand> InventoryScreen::takeCommands() { std::vector<Inve
 bool InventoryScreen::handleKeys(const InputState& input, Key inventoryKey)
 {
     if (!active) return false;
+    if (jsonScreen && jsonScreen->editing() && !input.escape) {
+        return true;
+    }
     if (input.escape || (!searchFocused && input.pressedKey == inventoryKey)) { close(); return true; }
     if (searchFocused) {
         if (input.isHeld(Key::Control) && input.pressedKey == Key::A) search.clear();
@@ -71,6 +74,9 @@ bool InventoryScreen::handleKeys(const InputState& input, Key inventoryKey)
 
 void InventoryScreen::draw(ui::Context& ui, float width, float height, const std::function<void(float,float,float)>& player)
 {
+    if (drawJson(ui, width, height, player)) {
+        return;
+    }
     const auto& input = active ? ui.input() : NoInput;
     const bool workbench = state.type == ContainerType::Workbench;
     const bool container = state.containerSize > 0;

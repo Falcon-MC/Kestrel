@@ -4,6 +4,7 @@
 #include "client/DebugLog.h"
 #include "world/BlockAssets.h"
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -90,6 +91,14 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
             break;
         case 81:
             actor.alwaysShowName = entry.mByteValue != 0;
+            break;
+        case 84:
+            actor.scoreTag = entry.mStringValue;
+            break;
+        case 143:
+            if (std::isfinite(entry.mFloatValue)) {
+                actor.nameplateDistance = entry.mFloatValue;
+            }
             break;
         case 8:
             actor.effectColor = static_cast<uint32_t>(entry.mIntValue);

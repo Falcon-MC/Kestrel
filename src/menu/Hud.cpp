@@ -435,9 +435,10 @@ ui::UiData hudData(const HudView& view)
         data.factories["chat_item_factory"].push_back({ "chat_item", {
             { "$chat_item_lifetime", number(ChatLifetime) },
             { "$chat_background_opacity", number(ChatBackgroundOpacity) },
-            { "$chat_font_scale_factor", number(1.0) },
-            { "$chat_line_spacing", number(0.0) },
-            { "$chat_font_type", text("default") },
+            { "$chat_font_scale_factor", number(view.chatStyle.fontScale) },
+            { "$chat_line_spacing", number(view.chatStyle.linePadding) },
+            { "$chat_font_type", text(view.chatStyle.fontType) },
+            { "$chat_text_color", text(line.color) },
         }, line.serial });
     }
     return data;

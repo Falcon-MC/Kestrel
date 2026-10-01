@@ -354,7 +354,7 @@ int Client::run()
             saveSettings();
         }
         renderer->setVsync(menu.vsync());
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync ||menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync ||menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -1113,6 +1113,7 @@ void Client::syncSession()
     localSlim = snapshot.localSlim;
     menu.setCommands(std::move(snapshot.commands));
     menu.setPlayers(std::move(snapshot.players));
+    menu.setOperatorCommands(snapshot.player.operatorCommands);
     if (snapshot.hud.lastSwing > hudState.lastSwing) {
         startSwing(secondsNow());
     }

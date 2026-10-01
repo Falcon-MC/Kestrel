@@ -61,7 +61,14 @@ private:
     struct Archive {
         std::string data;
         std::unordered_map<std::string, std::pair<size_t, size_t>> entries;
+        std::unordered_map<std::string, std::string> folded;
         size_t dataStart = 0;
+
+        /**
+         * The entry stored under name, or under the same name in another
+         * letter case, the way the game finds files whatever their case.
+         */
+        const std::pair<size_t, size_t>* find(const std::string& name) const;
     };
 
     struct LooseFiles {

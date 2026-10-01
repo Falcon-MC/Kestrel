@@ -18,9 +18,13 @@ constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr int SwimmingFlag = 57;
-constexpr double MaxNameTagDistance = 64.0;
-constexpr double NameTagLift = 0.5;
-constexpr float NameTagPixelSize = 0.025f;
+constexpr double HeadClearance = 0.7;
+constexpr double ExtraLineRaise = 0.125;
+constexpr double StandingHeight = 1.8;
+constexpr double SneakingHeight = 1.5;
+constexpr double ScoreTagDistance = 10.0;
+constexpr float CrosshairRadius = 48.0f;
+constexpr float NameTagPixelSize = 1.6f / 60.0f;
 constexpr uint64_t SneakingFlag = 1ull << 1;
 constexpr uint64_t UsingItemFlag = 1ull << 4;
 constexpr double TicksPerSecond = 20.0;
@@ -798,11 +802,13 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
  * eight blocks snap.
  */
 /**
- * Names over entities the way the game floats them: players whose name may
- * show, and anything flagged to always show its name, which is how servers
- * put floating text in the world. Each sits half a block over the entity's
- * box. Glyphs have a fixed world size on a camera-facing plane, sorted back
- * to front, with the same projected depth as that plane.
+ * Names over entities the way the game floats them: every visible player,
+ * anything flagged to always show its name, which is how servers put
+ * floating text in the world, and show-name mobs near the crosshair, within
+ * each entity's nameplate distance. The score tag joins within ten blocks.
+ * A tag hangs 0.7 blocks over the entity's box, 0.125 higher per extra line,
+ * at 1.6/60 blocks per font pixel on a camera-facing plane; see-through tags
+ * come first, then a sneaking entity's depth tested one, each back to front.
  */
 std::vector<menu::NameTag> Client::buildNameTags() const
 {
@@ -813,42 +819,76 @@ std::vector<menu::NameTag> Client::buildNameTags() const
     Mat4 matrix = camera.viewProjection(width / std::max(height, 1.0f));
     float focalPixels = height / (2.0f * camera.halfVerticalTangent(width / std::max(height, 1.0f)));
     for (const ActorView& actor : actorViews) {
-        if (actor.name.empty()) {
+        if (actor.name.empty() || (actor.flags[0] & InvisibleFlag) != 0) {
             continue;
         }
         bool player = actor.identifier == "minecraft:player";
-        bool sneaking = player && (actor.flags[0] & SneakingFlag) != 0;
-        if (player && (actor.flags[0] & InvisibleFlag) != 0) continue;
-        bool always = actor.alwaysShowName || (actor.flags[0] & AlwaysShowNameFlag) != 0;
-        if (!always && (!player || (actor.flags[0] & CanShowNameFlag) == 0 || (actor.flags[0] & InvisibleFlag) != 0)) {
+        bool sneaking = (actor.flags[0] & SneakingFlag) != 0;
+        bool always = player || actor.alwaysShowName || (actor.flags[0] & AlwaysShowNameFlag) != 0;
+        if (!always && (actor.flags[0] & CanShowNameFlag) == 0) {
             continue;
         }
         std::array<double, 3> feet { actor.x, actor.y, actor.z };
         if (auto motion = motions.find(actor.runtimeId); motion != motions.end()) {
             feet = motion->second.shown;
         }
-        double box = actor.height > 0.0f ? actor.height : player ? 1.8 * actor.scale : 0.0;
-        double dx = feet[0] - camera.x();
-        double dy = feet[1] + box + NameTagLift - camera.y();
-        double dz = feet[2] - camera.z();
-        double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (distance > (sneaking ? 32.0 : MaxNameTagDistance)) {
+        double fx = feet[0] - camera.x();
+        double fy = feet[1] - camera.y();
+        double fz = feet[2] - camera.z();
+        double distance = std::sqrt(fx * fx + fy * fy + fz * fz);
+        if (!std::isfinite(distance) || distance > actor.nameplateDistance) {
             continue;
         }
-        auto anchor = project(matrix, dx, dy, dz);
+        std::vector<std::string> lines;
+        auto split = [&](const std::string& text) {
+            size_t start = 0;
+            while (start <= text.size()) {
+                size_t end = text.find('\n', start);
+                std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                if (!line.empty()) {
+                    lines.push_back(std::move(line));
+                }
+                if (end == std::string::npos) {
+                    break;
+                }
+                start = end + 1;
+            }
+        };
+        split(actor.name);
+        if (distance < ScoreTagDistance) {
+            split(actor.scoreTag);
+        }
+        if (lines.empty()) {
+            continue;
+        }
+        double box = actor.height > 0.0f ? actor.height : (sneaking ? SneakingHeight : StandingHeight) * actor.scale;
+        double lift = box + HeadClearance + ExtraLineRaise * static_cast<double>(lines.size() - 1);
+        auto anchor = project(matrix, fx, fy + lift, fz);
         if (!anchor) {
             continue;
         }
+        float pixelX = static_cast<float>(((*anchor)[0] + 1.0) * 0.5 * width);
+        float pixelY = static_cast<float>((1.0 - (*anchor)[1]) * 0.5 * height);
+        if (!always && std::hypot(pixelX - width * 0.5f, pixelY - height * 0.5f) > CrosshairRadius) {
+            continue;
+        }
         menu::NameTag tag;
-        tag.text = actor.name;
-        tag.x = static_cast<float>(((*anchor)[0] + 1.0) * 0.5 * width) / scale;
-        tag.y = static_cast<float>((1.0 - (*anchor)[1]) * 0.5 * height) / scale;
+        for (size_t line = 0; line < lines.size(); ++line) {
+            tag.text += (line ? "\n" : "") + lines[line];
+        }
+        tag.x = pixelX / scale;
+        tag.y = pixelY / scale;
         tag.magnify = NameTagPixelSize * focalPixels / (static_cast<float>((*anchor)[2]) * scale);
         tag.depth = static_cast<float>((*anchor)[3]);
         tag.sneaking = sneaking;
-        placed.emplace_back((*anchor)[2], std::move(tag));
+        placed.emplace_back(distance, std::move(tag));
     }
-    std::sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) {
+        if (a.second.sneaking != b.second.sneaking) {
+            return !a.second.sneaking;
+        }
+        return a.first > b.first;
+    });
     std::vector<menu::NameTag> tags;
     tags.reserve(placed.size());
     for (auto& [distance, tag] : placed) {

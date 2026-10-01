@@ -3,6 +3,7 @@
 
 #include "render/Renderer.h"
 #include "world/BlockAssets.h"
+#include "world/ItemInfo.h"
 
 #include <algorithm>
 #include <cctype>
@@ -140,6 +141,137 @@ Vec3 rotate(const Vec3& point, const Vec3& degrees)
     p = { p[0] * std::cos(ay) + p[2] * std::sin(ay), p[1], -p[0] * std::sin(ay) + p[2] * std::cos(ay) };
     p = { p[0] * std::cos(az) - p[1] * std::sin(az), p[0] * std::sin(az) + p[1] * std::cos(az), p[2] };
     return p;
+}
+
+using Mat4 = std::array<float, 16>;
+
+Mat4 identity()
+{
+    return { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+}
+
+/**
+ * Row-major product a * b, so b applies to a point first.
+ */
+Mat4 operator*(const Mat4& a, const Mat4& b)
+{
+    Mat4 out {};
+    for (size_t row = 0; row < 4; ++row) {
+        for (size_t column = 0; column < 4; ++column) {
+            for (size_t k = 0; k < 4; ++k) {
+                out[row * 4 + column] += a[row * 4 + k] * b[k * 4 + column];
+            }
+        }
+    }
+    return out;
+}
+
+Mat4 translation(float x, float y, float z)
+{
+    Mat4 m = identity();
+    m[3] = x;
+    m[7] = y;
+    m[11] = z;
+    return m;
+}
+
+Mat4 uniformScale(float s)
+{
+    Mat4 m = identity();
+    m[0] = s;
+    m[5] = s;
+    m[10] = s;
+    return m;
+}
+
+Mat4 rotationX(float degrees)
+{
+    float c = std::cos(degrees * Pi / 180.0f);
+    float s = std::sin(degrees * Pi / 180.0f);
+    return { 1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0, 0, 0, 1 };
+}
+
+Mat4 rotationY(float degrees)
+{
+    float c = std::cos(degrees * Pi / 180.0f);
+    float s = std::sin(degrees * Pi / 180.0f);
+    return { c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1 };
+}
+
+Mat4 rotationZ(float degrees)
+{
+    float c = std::cos(degrees * Pi / 180.0f);
+    float s = std::sin(degrees * Pi / 180.0f);
+    return { c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+}
+
+Vec3 transformed(const Mat4& m, const Vec3& p)
+{
+    return { m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+        m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+        m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] };
+}
+
+/**
+ * The default transforms the game applies to a flat sprite in hand: the 1.5
+ * scale and tilt that seat the held sprite mesh in the grip.
+ */
+Mat4 itemDefault()
+{
+    return uniformScale(1.5f) * rotationY(50.0f) * rotationZ(335.0f) * translation(0.075f, -0.245f, -0.1f);
+}
+
+/**
+ * Items whose icon the game turns half a revolution in first person.
+ */
+bool mirroredArt(const std::string& identifier)
+{
+    return identifier == "minecraft:fishing_rod" || identifier == "minecraft:carrot_on_a_stick" || identifier == "minecraft:warped_fungus_on_a_stick";
+}
+
+/**
+ * Whether using an item over time means eating or drinking it, as opposed to
+ * drawing, charging, aiming or thrusting it.
+ */
+bool consumed(const std::string& identifier)
+{
+    if (identifier.rfind("minecraft:", 0) != 0) {
+        return false;
+    }
+    std::string name = identifier.substr(10);
+    return name != "bow" && name != "trident" && name != "spyglass" && name != "crossbow" && name != "camera"
+        && !name.ends_with("_spear");
+}
+
+/**
+ * Camera-space placement of the first person held item, in blocks with x to
+ * the right, y up and z backwards: the swing offset or the eat and drink
+ * raise, the anchor, the equip dip, the swing turns and the 0.4 hand scale,
+ * then the default item transforms for a sprite. consumeTicks and
+ * consumeDuration describe an eat or drink under way, duration 0 for none.
+ */
+Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float consumeTicks, float consumeDuration)
+{
+    float sine = std::sin(swing * Pi);
+    float rootSine = std::sin(std::sqrt(swing) * Pi);
+    Mat4 lead;
+    if (consumeDuration > 0.0f) {
+        float remaining = consumeDuration - consumeTicks + 1.0f;
+        float progress = 1.0f - remaining / consumeDuration;
+        float bob = progress > 0.2f ? std::abs(std::cos(remaining * 0.25f * Pi)) * 0.1f : 0.0f;
+        float raise = 1.0f - std::pow(std::clamp(1.0f - progress, 0.0f, 1.0f), 27.0f);
+        lead = translation(0.0f, bob, 0.0f) * translation(raise * 0.55f, raise * -0.5f, 0.0f) * rotationY(raise * 90.0f)
+            * rotationX(raise * 10.0f) * rotationZ(raise * 30.0f);
+    } else {
+        lead = translation(rootSine * -0.4f, std::sin(std::sqrt(swing) * Pi * 2.0f) * 0.2f, sine * -0.2f);
+    }
+    Mat4 held = lead * translation(0.56f, -0.52f, -0.72f) * translation(0.0f, (1.0f - equip) * -0.6f, 0.0f) * rotationY(45.0f)
+        * rotationY(std::sin(swing * swing * Pi) * -20.0f) * rotationZ(rootSine * -20.0f) * rotationX(rootSine * -80.0f)
+        * uniformScale(0.4f);
+    if (block) {
+        return held;
+    }
+    return held * (mirrored ? rotationY(180.0f) : identity()) * itemDefault();
 }
 
 /**
@@ -375,30 +507,59 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         if (name == "player_arm_height") value = 1.0;
     }
     handRestAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, rest);
+    world::AnimationInput still = input;
+    for (auto& [name, value] : still.engineVariables) {
+        if (name == "attack_time") value = 0.0;
+        if (name == "player_arm_height") value = 1.0;
+    }
+    handMotionAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, still);
     const auto& restMatrices = handRestAnimator.matrices();
-    if (restMatrices.size() != matrices.size()) return;
-    auto currentFrame = relativeFrame(body, matrices[static_cast<size_t>(itemBone)]);
+    const auto& motionMatrices = handMotionAnimator.matrices();
+    if (restMatrices.size() != matrices.size() || motionMatrices.size() != matrices.size()) {
+        return;
+    }
+    auto motionFrame = relativeFrame(motionMatrices[static_cast<size_t>(bodyBone)], motionMatrices[static_cast<size_t>(itemBone)]);
     auto restFrame = relativeFrame(restMatrices[static_cast<size_t>(bodyBone)], restMatrices[static_cast<size_t>(itemBone)]);
-    auto restInverse = inverseBasis(restFrame);
-    Vec3 displacement = add(transformPoint(currentFrame, anchor.pivot), scaled(transformPoint(restFrame, anchor.pivot), -1.0f));
+    Vec3 motion = add(transformPoint(motionFrame, anchor.pivot), scaled(transformPoint(restFrame, anchor.pivot), -1.0f));
     float modelScale = handAnimator.scale() / 16.0f;
-    auto place = [&](const Vec3& local, bool cube) {
-        Vec3 pose = cube ? Vec3 { 12.0f, -35.0f, 0.0f }
-            : held.handEquipped ? Vec3 { 0.0f, -30.0f, 75.0f } : Vec3 { 0.0f, -30.0f, 0.0f };
-        Vec3 p = rotate(local, pose);
-        Vec3 bodyPoint { -p[0], p[1], -p[2] };
-        Vec3 unposed {};
-        for (size_t row = 0; row < 3; ++row) {
-            for (size_t k = 0; k < 3; ++k) unposed[row] += restInverse[row * 3 + k] * bodyPoint[k];
+
+    double ticksUsed = 0.0;
+    int32_t consumeDuration = 0;
+    if (consumed(held.identifier)) {
+        consumeDuration = held.useTicks > 0 ? held.useTicks : blockAssets->itemUseTicks(held.identifier);
+        if (consumeDuration <= 0) {
+            consumeDuration = world::itemDrinkTicks(held.identifier);
         }
-        Vec3 animated = add(transformPoint(currentFrame, unposed), { -currentFrame[3], -currentFrame[7], -currentFrame[11] });
-        Vec3 turned { 0.56f - animated[0] - displacement[0] * modelScale,
-            (held.handEquipped ? -0.36f : -0.48f) + animated[1] + displacement[1] * modelScale,
-            -0.85f - animated[2] - displacement[2] * modelScale };
+    }
+    if (consumeDuration > 0 && session.useIsHeld() && menu.capturesMouse()) {
+        if (consumeIdentity != heldIdentity || consumeStarted <= 0.0) {
+            consumeIdentity = heldIdentity;
+            consumeStarted = now;
+        }
+        ticksUsed = (now - consumeStarted) * 20.0;
+        if (ticksUsed >= consumeDuration) {
+            consumeStarted = now;
+            ticksUsed = 0.0;
+        }
+    } else {
+        consumeStarted = 0.0;
+        consumeIdentity.clear();
+    }
+    bool consuming = consumeStarted > 0.0;
+    float consumeTicks = static_cast<float>(ticksUsed);
+    float consumeLength = consuming ? static_cast<float>(consumeDuration) : 0.0f;
+    Mat4 blockPlacement = firstPersonItem(true, false, attackTime, handEquip, consumeTicks, consumeLength);
+    Mat4 spritePlacement = firstPersonItem(false, mirroredArt(held.identifier), attackTime, handEquip, consumeTicks, consumeLength);
+    auto place = [&](const Vec3& local, bool cube) {
+        Vec3 shaped = cube
+            ? scaled(local, 1.0f / HeldCubeSize)
+            : Vec3 { -(local[0] / HeldItemSize + 0.5f), local[1] / HeldItemSize + 0.5f, local[2] / HeldItemSize - 1.0f / 32.0f };
+        Vec3 view = transformed(cube ? blockPlacement : spritePlacement, shaped);
+        Vec3 turned { view[0] - motion[0] * modelScale, view[1] + motion[1] * modelScale, view[2] - motion[2] * modelScale };
         Vec3 world = add(add(scaled(axes[0], turned[0] * handZoom), scaled(axes[1], turned[1] * handZoom)), scaled(axes[2], turned[2]));
         return add(eyePoint, scaled(world, 256.0f));
     };
-    appendHeldItem(held, place, out);
+    appendHeldItem(held, place, out, true);
 }
 
 bool Client::paperDollVisible()
@@ -603,7 +764,7 @@ float Client::swingProgress()
  * the item, in blocks around its center, to 1/256 block around the draw
  * origin; it is told whether the item is a cube so it can pose it.
  */
-void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out)
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite)
 {
     if (held.empty() || !blockAssets) {
         return;
@@ -615,8 +776,15 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
     }
     for (const HeldItemFace& face : heldItemMesh) {
         std::array<Vec3, 4> corners;
-        for (size_t i = 0; i < 4; ++i) corners[i] = place(face.corners[i], heldItemBlock);
-        out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
+        for (size_t i = 0; i < 4; ++i) {
+            size_t corner = mirroredSprite && !heldItemBlock ? 3 - i : i;
+            corners[i] = place(face.corners[corner], heldItemBlock);
+        }
+        std::array<std::array<uint16_t, 2>, 4> uvs = face.uvs;
+        if (mirroredSprite && !heldItemBlock) {
+            std::reverse(uvs.begin(), uvs.end());
+        }
+        out.push_back(packQuad(corners, uvs, face.material, face.shade));
     }
 }
 

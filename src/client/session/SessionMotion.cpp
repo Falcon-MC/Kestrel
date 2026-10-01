@@ -264,6 +264,7 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         motion.setAbilities(mayFly, flying, noClip, flySpeed, verticalFlySpeed);
         std::lock_guard<std::mutex> guard(mutex);
         current.player.mayFly = mayFly;
+        current.player.operatorCommands = abilities->mAbilities.mCommandPermission > 0;
     } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
         motion.setGameType(mode->mGamemode);
     }

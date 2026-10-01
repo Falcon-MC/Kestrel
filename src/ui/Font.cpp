@@ -50,6 +50,8 @@ constexpr std::array<FaceSpec, static_cast<size_t>(TextStyle::Count)> Specs { {
     { Noto, 20.0f },
     { Seven, 8.0f * 10.0f / theme::Rem },
     { Ten, 10.0f * 10.0f / theme::Rem },
+    { Noto, 10.0f * 10.0f / theme::Rem },
+    { Seven, 8.0f * 10.0f / theme::Rem },
 } };
 
 constexpr uint32_t AtlasWidth = Skin::AtlasSize;
@@ -324,6 +326,7 @@ std::string Font::pixelPageName(size_t index)
 
 void Font::reloadPixelPages()
 {
+    runes = BitmapPage {};
     for (BitmapPage& page : pages) {
         page = BitmapPage {};
     }
@@ -586,6 +589,10 @@ float Font::pixelAdvance(char32_t cp) const
 
 float Font::advance(TextStyle style, char32_t cp) const
 {
+    if (style == TextStyle::Rune) {
+        const BitmapPage& page = runePage();
+        return cp == U' ' ? PixelSpace : std::round(page.end[cp & 255] * 8.0f / page.cell) + 1.0f;
+    }
     if (style == TextStyle::Pixel) {
         return pixelAdvance(cp);
     }
@@ -622,7 +629,7 @@ float Font::measure(std::string_view text, TextStyle style) const
     while (nextVisible(text, i, state, Color {}, cp)) {
         width += advance(style, cp) + (state.bold ? boldStep(style) : 0.0f);
     }
-    if (style == TextStyle::Pixel && width > 0.0f) {
+    if ((style == TextStyle::Pixel || style == TextStyle::Rune) && width > 0.0f) {
         width -= 1.0f;
     }
     return width;
@@ -630,7 +637,7 @@ float Font::measure(std::string_view text, TextStyle style) const
 
 float Font::lineHeight(TextStyle style) const
 {
-    if (style == TextStyle::Pixel) {
+    if (style == TextStyle::Pixel || style == TextStyle::Rune) {
         return PixelLineHeight;
     }
     return faces[static_cast<size_t>(style)].lineHeight / scale;
@@ -715,8 +722,69 @@ void Font::emitPixel(DrawList& list, std::string_view text, float x, float y, Co
     }
 }
 
+const Font::BitmapPage& Font::runePage() const
+{
+    if (runes.tried || !skin) {
+        return runes;
+    }
+    runes.tried = true;
+    runes.sprite = "font/ascii_sga";
+    const Bitmap* bitmap = skin->bitmap(runes.sprite);
+    if (!bitmap || bitmap->width < 16 || bitmap->height != bitmap->width) {
+        return runes;
+    }
+    runes.cell = bitmap->width / 16;
+    for (uint32_t code = 0; code < 256; ++code) {
+        for (uint32_t column = 0; column < runes.cell; ++column) {
+            for (uint32_t row = 0; row < runes.cell; ++row) {
+                size_t pixel = ((code / 16 * runes.cell + row) * bitmap->width + code % 16 * runes.cell + column) * 4;
+                if (bitmap->rgba[pixel + 3] > 0) {
+                    runes.end[code] = uint8_t(column + 1);
+                    break;
+                }
+            }
+        }
+    }
+    runes.loaded = true;
+    return runes;
+}
+
+void Font::emitRunes(DrawList& list, std::string_view text, float x, float y, Color color, bool shadow, float magnify) const
+{
+    const BitmapPage& page = runePage();
+    if (!page.loaded) {
+        return;
+    }
+    const Sprite& sheet = skin->sprite(page.sprite);
+    if (!sheet.valid) {
+        return;
+    }
+    float unit = scale * magnify;
+    float pen = std::round(x * scale);
+    float top = std::round(y * scale);
+    float du = (sheet.image.u1 - sheet.image.u0) / 16.0f;
+    float dv = (sheet.image.v1 - sheet.image.v0) / 16.0f;
+    Formatting state;
+    state.color = color;
+    size_t offset = 0;
+    char32_t code = 0;
+    while (nextVisible(text, offset, state, color, code)) {
+        if (code != U' ') {
+            float u = sheet.image.u0 + float(code % 16) * du;
+            float v = sheet.image.v0 + float((code & 255) / 16) * dv;
+            uint32_t tint = (shadow ? shaded(state.color) : state.color).packed();
+            list.quad(pen, top, pen + 8.0f * unit, top + 8.0f * unit, u, v, u + du, v + dv, tint);
+        }
+        pen += advance(TextStyle::Rune, code) * unit;
+    }
+}
+
 void Font::emit(DrawList& list, std::string_view text, TextStyle style, float x, float y, Color color, bool shadow, float magnify) const
 {
+    if (style == TextStyle::Rune) {
+        emitRunes(list, text, x, y, color, shadow, magnify);
+        return;
+    }
     if (style == TextStyle::Pixel) {
         emitPixel(list, text, x, y, color, shadow, magnify);
         return;
@@ -849,34 +917,33 @@ void Font::drawPixelScaled(DrawList& list, std::string_view text, float x, float
 
 void Font::drawNameTag(DrawList& list, std::string_view text, Color color, bool background) const
 {
-    float lines = 1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n'));
-    float y = -9.0f * lines;
+    constexpr float LinePitch = 10.0f;
+    size_t lines = 1 + static_cast<size_t>(std::count(text.begin(), text.end(), '\n'));
     if (background) {
-        // One box behind the whole tag, as wide as its widest line, so blank lines stay backed too.
-        float widest = 0.0f;
+        int32_t half = 0;
         for (std::string_view rest = text;;) {
             size_t end = rest.find('\n');
-            widest = std::max(widest, measure(rest.substr(0, end), TextStyle::Pixel));
+            half = std::max(half, static_cast<int32_t>(std::lround(measure(rest.substr(0, end), TextStyle::Pixel))) / 2);
             if (end == std::string_view::npos) break;
             rest.remove_prefix(end + 1);
         }
-        if (widest > 0.0f) {
-            // Bedrock backs tags with half transparent black, twice Java's.
-            float x = -std::floor(widest * 0.5f);
-            list.fill({ x - 1.0f, y - 1.0f, widest + 2.0f, 9.0f * lines }, { 0, 0, 0, 128 });
+        float extent = static_cast<float>(half) + 1.0f;
+        for (size_t line = 0; line < lines; ++line) {
+            float top = LinePitch * static_cast<float>(line);
+            list.fill({ -extent, top - 1.0f, extent * 2.0f, LinePitch }, { 0, 0, 0, 64 });
         }
     }
+    float y = 0.0f;
     std::string carried;
     while (true) {
         size_t end = text.find('\n');
         std::string line = carried + std::string(text.substr(0, end));
-        float width = measure(line, TextStyle::Pixel);
-        float x = -std::floor(width * 0.5f);
+        float x = -static_cast<float>(static_cast<int32_t>(std::lround(measure(line, TextStyle::Pixel))) / 2);
         emitPixel(list, line, x / scale, y / scale, color, false, 1.0f / scale);
         carried = activeFormatting(line);
         if (end == std::string_view::npos) break;
         text.remove_prefix(end + 1);
-        y += 9.0f;
+        y += LinePitch;
     }
 }
 

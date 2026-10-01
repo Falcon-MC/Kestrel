@@ -2,6 +2,7 @@
 
 #include "client/Inventory.h"
 #include "menu/Hud.h"
+#include "ui/JsonUi.h"
 
 #include <functional>
 #include <set>
@@ -14,6 +15,7 @@ public:
     bool creativeMode = false;
     InventoryState state;
     std::function<HudSlot(const HudItem&)> itemIcon;
+    std::function<void(ui::Context&, const std::string&, const ui::Rect&, float)> entityRenderer;
 
     void open();
     void requestOpen() { send(InventoryAction::Open); }
@@ -22,8 +24,20 @@ public:
     bool handleKeys(const InputState& input, Key inventoryKey);
     void draw(ui::Context& ui, float width, float height, const std::function<void(float, float, float)>& player);
     std::vector<InventoryCommand> takeCommands();
+    void setDefinitions(std::shared_ptr<const ui::JsonUi> definitions);
 
 private:
+    bool drawJson(ui::Context& ui, float width, float height, const std::function<void(float, float, float)>& player);
+    std::shared_ptr<const ui::JsonUi> definitions;
+    std::unique_ptr<ui::JsonUiScreen> jsonScreen;
+    std::string jsonRoot;
+    std::string jsonTitle;
+    uint64_t jsonOpenRevision = 0;
+    int bookPage = 0;
+    bool bookSigning = false;
+    std::string bookTitle;
+    int beaconPrimary = 0;
+    int beaconSecondary = 0;
     void send(InventoryAction action, int slot = -1, int value = 0, bool all = false);
     bool book = true;
     bool wideCreative = false;

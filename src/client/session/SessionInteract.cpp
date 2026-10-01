@@ -267,6 +267,9 @@ void Session::interact(bool use)
         }
         return;
     } else if (block) {
+        if (!usableBlock(block->name) && openBook(slot)) {
+            return;
+        }
         if (!useSelectionVerified()) {
             recordUse(false, secondsNow(), BlockUse::Nothing);
             return;
@@ -276,6 +279,9 @@ void Session::interact(bool use)
         useOnBlock(*block, false, outcome);
         return;
     } else {
+        if (openBook(slot)) {
+            return;
+        }
         packet.mTransactionType = InventoryTransactionType::ItemUse;
         packet.mActionType = ClickAir;
         packet.mBlockFace = -1;

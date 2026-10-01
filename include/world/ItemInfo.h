@@ -37,6 +37,12 @@ std::string itemDisplayName(const std::string& identifier);
 int32_t itemMaxUseTicks(const std::string& identifier);
 
 /**
+ * How many ticks drinking a potion, an ominous bottle or milk takes, which the
+ * game sets in code rather than in its behavior pack; 0 for other items.
+ */
+int32_t itemDrinkTicks(const std::string& identifier);
+
+/**
  * The frame query.get_animation_frame gives for an item that has been in use
  * for the given ticks: 0 while idle, then the bow's three pulling stages.
  */

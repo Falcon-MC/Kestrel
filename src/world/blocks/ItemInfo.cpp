@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cctype>
+#include <unordered_map>
 #include <utility>
 
 namespace kestrel::world {
@@ -160,6 +161,11 @@ std::string itemDisplayName(const std::string& identifier)
 int32_t itemMaxUseTicks(const std::string& identifier)
 {
     return identifier == "minecraft:bow" || identifier == "minecraft:trident" ? 72000 : 0;
+}
+
+int32_t itemDrinkTicks(const std::string& identifier)
+{
+    return identifier == "minecraft:potion" || identifier == "minecraft:ominous_bottle" || identifier == "minecraft:milk_bucket" ? 32 : 0;
 }
 
 int32_t itemUseAnimationFrame(const std::string& identifier, double ticksUsed)
