@@ -742,7 +742,13 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
             const json::Value* entry = resolve(node, bounds->mArray[static_cast<size_t>(axis)].get());
             float amount = 0.0f;
             for (const Term& part : parseExtent(entry, TermKind::Pixel)) {
+                // A bound on the other axis, like the squaring panel's "100%y" width cap, waits on the height pass.
+                if (part.kind == TermKind::OwnY && axis == 0) {
+                    widthReadsHeight = true;
+                }
                 amount += part.kind == TermKind::Pixel ? part.amount
+                    : part.kind == TermKind::OwnX ? part.amount * node.w
+                    : part.kind == TermKind::OwnY ? part.amount * node.h
                     : part.kind == TermKind::Parent || part.kind == TermKind::Fill ? part.amount * parent
                     : part.kind == TermKind::Default ? part.amount * natural(node, axis)
                     : part.kind == TermKind::Children || part.kind == TermKind::ChildrenMax ? part.amount * intrinsic(node, axis)

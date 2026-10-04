@@ -214,6 +214,7 @@ struct Node {
     std::string edit;
     bool caret = false;
     bool selected = false;
+    int wheelSlice = -1;
     std::unordered_map<const Node*, bool> states;
 };
 
@@ -316,6 +317,7 @@ struct JsonUiRuntime {
     void animate(Node& node);
     void update(Node& node, int depth, Node* control);
     static bool isControl(const Node& node);
+    int wheelSliceAt(const Node& node, float x, float y) const;
     void chooseStates(Node& node);
     bool heldDown(const Node& node) const;
     void overrideState(Node& control, Node& node);

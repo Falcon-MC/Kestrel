@@ -222,6 +222,23 @@ bool JsonUiRuntime::flag(const Node& node, std::string_view name, bool fallback)
     return value.kind == UiValue::Kind::None ? fallback : value.truthy();
 }
 
+namespace {
+
+/**
+ * A property bag #index picks the value a screen controller keeps for that
+ * slot, which the screen publishes as "name:index"; empty without one.
+ */
+std::string slotted(const jsonui::Node& node, const std::string& name)
+{
+    auto index = node.bound.find("#index");
+    if (index == node.bound.end() || index->second.kind != UiValue::Kind::Number) {
+        return {};
+    }
+    return name + ":" + std::to_string(static_cast<int>(index->second.number));
+}
+
+}
+
 UiValue JsonUiRuntime::lookup(const Node& node, const std::string& name) const
 {
     if (name.empty()) {
@@ -251,6 +268,9 @@ UiValue JsonUiRuntime::lookup(const Node& node, const std::string& name) const
         }
     }
     if (data) {
+        if (auto found = data->globals.find(slotted(node, name)); found != data->globals.end()) {
+            return found->second;
+        }
         if (auto found = data->globals.find(name); found != data->globals.end()) {
             return found->second;
         }
@@ -1188,6 +1208,9 @@ void JsonUiRuntime::bind(Node& node)
                 return {};
             }
             if (data) {
+                if (auto found = data->globals.find(slotted(node, key)); found != data->globals.end()) {
+                    return found->second;
+                }
                 if (auto found = data->globals.find(key); found != data->globals.end()) {
                     return found->second;
                 }
