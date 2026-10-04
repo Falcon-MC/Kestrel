@@ -456,6 +456,20 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     bool knockbackPending = hasKnockback;
     tick.knockback = pendingKnockback;
     MotionInput effective = input;
+    if (effective.autoJump && onGround && !effective.sneak && !immobile && !isFlying && (collideX || collideZ)
+        && (effective.forward != 0 || effective.sideways != 0)) {
+        float angle = effective.yaw * 3.14159265f / 180.0f;
+        float dx = -std::sin(angle) * effective.forward - std::cos(angle) * effective.sideways;
+        float dz = std::cos(angle) * effective.forward - std::sin(angle) * effective.sideways;
+        float length = std::hypot(dx, dz);
+        dx *= 0.7f / length; dz *= 0.7f / length;
+        auto target = boundingBox();
+        target.minX += dx; target.maxX += dx;
+        target.minZ += dz; target.maxZ += dz;
+        target.minY += 1; target.maxY += 1;
+        auto boxes = collisionBoxes(target);
+        if (std::none_of(boxes.begin(), boxes.end(), [&](const auto& box) { return target.intersects(box); })) effective.jump = true;
+    }
     if (immobile) {
         effective.forward = 0.0f;
         effective.sideways = 0.0f;

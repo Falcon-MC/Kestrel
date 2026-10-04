@@ -1,8 +1,25 @@
 #include "util/Text.h"
 
 #include <cctype>
+#include <charconv>
+#if defined(__APPLE__)
+#include <cstdlib>
+#include <locale.h>
+#endif
 
 namespace kestrel::util {
+
+float parseFloat(std::string_view text)
+{
+#if defined(__APPLE__)
+    static locale_t locale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    return strtof_l(std::string(text).c_str(), nullptr, locale);
+#else
+    float value = 0.0f;
+    std::from_chars(text.data(), text.data() + text.size(), value);
+    return value;
+#endif
+}
 
 bool startsWith(std::string_view value, std::string_view prefix)
 {

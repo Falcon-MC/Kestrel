@@ -59,7 +59,13 @@ constexpr std::pair<const char*, bool> ContextFlags[] = {
     { "is_world_create", false }, { "is_world_edit", false }, { "is_template_create", false },
     { "is_realms_edit", false }, { "is_realm_slot", false }, { "is_mp_host", false }, { "is_mp_client", false },
     { "non_config_realms_env", false }, { "realms_pack_feature_enabled", false }, { "gamepad_supported", true },
-    { "keyboard_and_mouse_supported", true }, { "touch_supported", false }, { "supports_flite_tts", false },
+    { "keyboard_and_mouse_supported", true },
+#if defined(KESTREL_IOS)
+    { "touch_supported", true },
+#else
+    { "touch_supported", false },
+#endif
+    { "supports_flite_tts", false },
     { "platform_tts_exists", false }, { "ignore_creator_section", false }, { "may_include_world_section", false },
     { "ignore_global_resources_section", false }, { "ignore_storage_section", false },
     { "ignore_profile_switch_account_button", false }, { "ignore_profile_sso_toggle", true },
@@ -123,6 +129,20 @@ constexpr Choice ChatDurations[] = {
     { "chat_message_duration_radio_TenSec", "options.notificationDuration.chat.TenSec" },
     { "chat_message_duration_radio_ThirtySec", "options.notificationDuration.chat.ThirtySec" },
 };
+constexpr Choice JoystickVisibility[] = {
+    { "joystick_visibility_visible", "options.joystickVisibilityOption.visibleJoystick" },
+    { "joystick_visibility_hidden", "options.joystickVisibilityOption.hiddenJoystick" },
+    { "joystick_visibility_hidden_when_unused", "options.joystickVisibilityOption.hiddenJoystickWhenUnused" },
+};
+constexpr Choice TopButtonScale[] = {
+    { "top_button_scale_radio_small", "options.topButtonScale.small" },
+    { "top_button_scale_radio_medium", "options.topButtonScale.medium" },
+    { "top_button_scale_radio_big", "options.topButtonScale.big" },
+};
+constexpr Choice SneakMode[] = {
+    { "sneak_toggle", "options.sneakOption.toggle" },
+    { "sneak_hold", "options.sneakOption.hold" },
+};
 
 constexpr Option toggle(const char* name, const char* label, bool on)
 {
@@ -141,6 +161,23 @@ constexpr Option dropdown(const char* name, const char* label, const Choice (&ch
 }
 
 const Option Options[] = {
+    dropdown("joystick_visibility", "options.joystickVisibilityOption", JoystickVisibility, 0),
+    dropdown("top_button_scale", "options.topButtonScale", TopButtonScale, 1),
+    dropdown("sneak", "options.sneakOption", SneakMode, 0),
+    slider("touch_sensitivity", "options.sensitivity", 0, 100, 50),
+    slider("spyglass_touch_dampening", "options.spyglassdampen", 0, 100, 50),
+    slider("touch_button_size", "options.buttonSize", 60, 150, 100),
+    slider("touch_control_opacity", "options.controlOpacity", 20, 100, 70),
+    toggle("touch_invert_y_axis", "options.invertYAxis", false),
+    toggle("touch_autojump", "options.autojump", true),
+    toggle("left_handed", "options.lefthanded", false),
+    toggle("sprint_on_movement", "options.sprintOnMovement", false),
+    toggle("show_action_button", "options.showActionButton", true),
+    toggle("show_block_select_button", "options.showBlockSelectButton", false),
+    toggle("show_toggle_camera_perspective_button", "options.showToggleCameraPerspectiveButton", false),
+    toggle("split_controls", "options.usetouchpad", false),
+    toggle("swap_jump_and_sneak", "options.swapJumpAndSneak", false),
+    toggle("hotbar_only_touch", "options.hotbarOnlyTouch", false),
     dropdown("content_log_gui_level", "options.content_log_gui.level", ContentLevels, 0),
     dropdown("toast_notification_duration", "options.notificationDuration.Toast", ToastDurations, 0),
     dropdown("chat_message_duration", "options.notificationDuration.Chat", ChatDurations, 1),
@@ -254,6 +291,8 @@ std::string sectionTitle(int section)
         return "options.keyboardAndMouseSettings";
     case 15:
         return "options.controllerSettings";
+    case 16:
+        return "options.touchSettings";
     case 18:
         return "options.generalTitle";
     case 19:
@@ -384,6 +423,16 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
     data.hideUnboundVisibility = true;
     UiRow& globals = data.globals;
     globals["#radio:navigation_tab"] = UiValue::of(static_cast<double>(vanillaSettingsSection));
+    int touchMode = optionValue("touch_control_mode", 1);
+    globals["#touch_controls_v2"] = UiValue::of(touchMode != 2);
+    globals["#touch_controls_v2_crosshair_mode"] = UiValue::of(touchMode == 1);
+    globals["#touch_selected"] = UiValue::of(touchMode == 0);
+    globals["#crosshair_selected"] = UiValue::of(touchMode == 1);
+    globals["#classic_selected"] = UiValue::of(touchMode == 2);
+    globals["#new_touch_control_schemes_settings"] = UiValue::of(true);
+    globals["#resizable_ui_active"] = UiValue::of(true);
+    globals["#modify_layout_enabled"] = UiValue::of(true);
+    globals["#crosshair_action_button_on"] = UiValue::of(touchMode == 1);
     const auto scaleRange = guiScaleRange(width * ui.pixelScale(), height * ui.pixelScale());
     for (Option option : Options) {
         if (std::string_view(option.name) == "gui_scale") {
@@ -506,7 +555,25 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
 
     bindGlobalResources(data);
 
+    bool modal = touchSettingsRoot.has_value();
+    ui.setBlocked(modal);
     settingsUi->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    ui.setBlocked(false);
+    if (modal) {
+        if (!touchSettingsUi || touchSettingsUi->definitions() != jsonUi) touchSettingsUi = std::make_unique<JsonUiScreen>(jsonUi, *touchSettingsRoot);
+        touchSettingsUi->draw(ui, { 0, 0, width, height }, data);
+        for (const auto& event : touchSettingsUi->takeEvents()) {
+            if (event.kind == UiEvent::Kind::Slider) {
+                for (const auto& option : Options) if (event.name == option.name) setOptionValue(option.name, option.min + int(std::lround(event.value)));
+            } else if (event.name.starts_with("button.touch_mode_")) {
+                setOptionValue("touch_control_mode", event.name.back() - '0');
+                touchSettingsRoot.reset();
+            } else if (event.name == "button.menu_cancel" || event.name == "button.touch_done") touchSettingsRoot.reset();
+        }
+        if (ui.input().escape) touchSettingsRoot.reset();
+        if (!touchSettingsRoot) touchSettingsUi.reset();
+        return true;
+    }
     if (vanillaSettingsSection == ModsSection) {
         if (std::optional<Rect> area = settingsUi->controlRect("content_area")) {
             Rect view { area->x, area->y, area->w + 7.0f, area->h };
@@ -575,6 +642,16 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             continue;
         }
         if (event.kind != UiEvent::Kind::Button) {
+            continue;
+        }
+        if (event.name == "button.select_control_mode" || event.name == "button.modify_control_layout") {
+            touchSettingsRoot = event.name == "button.select_control_mode" ? "kestrel_touch.mode_selection" : "kestrel_touch.customize";
+            touchSettingsUi.reset();
+            continue;
+        }
+        if (event.name == "button.reset_touch_bindings") {
+            extraOptionValues.erase("touch_autojump");
+            for (const char* name : { "touch_control_mode", "joystick_visibility", "top_button_scale", "sneak", "touch_sensitivity", "spyglass_touch_dampening", "touch_button_size", "touch_control_opacity", "touch_invert_y_axis", "left_handed", "sprint_on_movement", "show_action_button", "show_block_select_button", "show_toggle_camera_perspective_button", "split_controls", "swap_jump_and_sneak", "hotbar_only_touch" }) extraOptionValues.erase(name);
             continue;
         }
         if (event.name == "button.menu_open_uri" && !event.text.empty()) {

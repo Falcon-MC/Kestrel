@@ -300,6 +300,16 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
         }
     }
 
+    auto touchUi = assets.readPackFile("ui/kestrel_touch_controls.json");
+    if (!touchUi.empty()) definitions->addFile("ui/kestrel_touch_controls.json", std::string(touchUi.begin(), touchUi.end()));
+    if (!touchUi.empty()) definitions->addFile("ui/settings_sections/controls_section.json", R"({
+      "touch_section/common_touch_settings/option_slider_0": {
+        "$slider_steps_binding_name": "#touch_sensitivity_steps"
+      },
+      "touch_section/common_touch_settings/option_slider_damen": {
+        "$slider_steps_binding_name": "#spyglass_touch_dampening_steps"
+      }
+    })");
     std::vector<std::string> textures = definitions->texturePaths();
     timer.mark("json ui: definitions read");
     for (const std::string& texture : textures) {

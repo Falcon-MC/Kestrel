@@ -62,6 +62,7 @@ struct MotionInput {
     bool sneak = false;
     bool sprint = false;
     bool usingItem = false;
+    bool autoJump = false;
     float yaw = 0.0f;
     float pitch = 0.0f;
     bool elytra = false;

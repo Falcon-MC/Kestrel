@@ -1589,6 +1589,8 @@ void Menu::gameView(Context& ui, float width, float height)
 
 void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
 {
+    touchSettingsUi.reset();
+    touchSettingsRoot.reset();
     jsonUi = std::move(definitions);
     hudScreen.reset();
     safeZoneScreen.reset();
@@ -1917,6 +1919,12 @@ std::string* Menu::focusedText()
         break;
     }
     return nullptr;
+}
+
+bool Menu::wantsTextInput()
+{
+    return focusedText() || forms.editing() || (settingsUi && settingsUi->editing())
+        || (chatSettingsUi && chatSettingsUi->editing());
 }
 
 void Menu::navigate(Screen target)
