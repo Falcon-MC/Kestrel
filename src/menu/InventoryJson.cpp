@@ -655,7 +655,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
                     send(creativeMode ? InventoryAction::Creative : InventoryAction::SelectRecipe,
                         creativeMode && input.isHeld(Key::Shift) ? AnyInventorySlot : -1, entry.networkId, !secondary);
                 }
-            } else if (state.screen.empty() && !jsonScreen->hovering() && !jsonScreen->pointerInsideContent(ui.mouseX(), ui.mouseY())) {
+            } else if (state.screen.empty() && target.name.empty() && !jsonScreen->pointerInsideContent(ui.mouseX(), ui.mouseY())) {
                 send(InventoryAction::Drop, inventory::Cursor, 0, !secondary);
             }
         }
