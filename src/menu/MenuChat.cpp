@@ -525,6 +525,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
 
     globals["#message_text_box_content"] = UiValue::of(chatDraft);
     chatUi->showListeningCaret(interactive);
+    chatUi->showListeningSelection(interactive && selectedField == Field::Chat && !chatDraft.empty());
 
     std::vector<ui::UiRow>& messages = data.collections["messages_factory"];
     std::vector<ui::UiFactoryItem>& made = data.factories["messages_factory"];

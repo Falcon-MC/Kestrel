@@ -335,8 +335,53 @@ float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> enti
     return entities3.sample(blockSampler, uv, index);
 }
 
+constant uint EndPortalLayer = 0x1fffu;
+constant int EndPortalLayers = 15;
+constant float3 EndPortalBase = float3(0.02, 0.05, 0.06);
+constant float3 EndPortalColors[16] = {
+    float3(114.0, 108.0, 193.0), float3(105.0, 204.0, 159.0), float3(74.0, 107.0, 213.0), float3(37.0, 196.0, 184.0),
+    float3(150.0, 143.0, 184.0), float3(122.0, 219.0, 167.0), float3(144.0, 219.0, 216.0), float3(62.0, 221.0, 139.0),
+    float3(32.0, 139.0, 133.0), float3(133.0, 132.0, 182.0), float3(105.0, 140.0, 132.0), float3(42.0, 180.0, 181.0),
+    float3(59.0, 203.0, 168.0), float3(43.0, 139.0, 216.0), float3(83.0, 184.0, 132.0), float3(72.0, 141.0, 157.0),
+};
+
+float endStar(float2 uv)
+{
+    float2 cell = floor(fract(uv) * 256.0);
+    float seed = fract(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+    if (seed > 0.032) {
+        return 0.0;
+    }
+    return 0.15 + fract(seed * 977.0) * 0.85;
+}
+
+float3 endPortalColor(constant DrawData& draw, float3 relative)
+{
+    float4 clip = draw.viewProjection * float4(relative, 1.0);
+    float2 screen = clip.xy / max(abs(clip.w), 0.0001) * 0.5 + 0.5;
+    float time = fmod(draw.origin.w, 24000000.0) / 24000.0;
+    float3 color = EndPortalBase;
+    for (int i = 0; i < EndPortalLayers; ++i) {
+        float layer = float(i + 1);
+        float angle = (layer * layer * 4321.0 + layer * 9.0) * 2.0 * M_PI_F / 180.0;
+        float scale = (4.5 - layer / 4.0) * 2.0;
+        float2 shifted = screen * 0.5 + 0.25 + float2(17.0 / layer, (2.0 + layer / 1.5) * time * 1.5);
+        float2 turned = float2(cos(angle) * shifted.x - sin(angle) * shifted.y, sin(angle) * shifted.x + cos(angle) * shifted.y) * scale;
+        color += endStar(turned) * EndPortalColors[i] / 255.0 * 0.6;
+    }
+    return min(color, float3(1.0));
+}
+
+bool isEndPortal(WorldOut in)
+{
+    return in.entity == 0 && (in.material & 0x1fffu) == EndPortalLayer;
+}
+
 fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
+    if (isEndPortal(in)) {
+        return float4(endPortalColor(draw, in.relative), 1.0);
+    }
     float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
@@ -409,6 +454,9 @@ fragment float4 overlay_fragment(WorldOut in [[stage_in]], texture2d_array<float
 
 fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
+    if (isEndPortal(in)) {
+        return float4(endPortalColor(draw, in.relative), 1.0);
+    }
     float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);

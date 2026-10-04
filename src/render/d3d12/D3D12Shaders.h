@@ -345,6 +345,48 @@ float4 applyTint(float4 texel, uint tint)
     return float4(texel.rgb * color, texel.a);
 }
 
+static const uint EndPortalLayer = 0x1fffu;
+static const int EndPortalLayers = 15;
+static const float3 EndPortalBase = float3(0.02, 0.05, 0.06);
+static const float3 EndPortalColors[16] = {
+    float3(114.0, 108.0, 193.0), float3(105.0, 204.0, 159.0), float3(74.0, 107.0, 213.0), float3(37.0, 196.0, 184.0),
+    float3(150.0, 143.0, 184.0), float3(122.0, 219.0, 167.0), float3(144.0, 219.0, 216.0), float3(62.0, 221.0, 139.0),
+    float3(32.0, 139.0, 133.0), float3(133.0, 132.0, 182.0), float3(105.0, 140.0, 132.0), float3(42.0, 180.0, 181.0),
+    float3(59.0, 203.0, 168.0), float3(43.0, 139.0, 216.0), float3(83.0, 184.0, 132.0), float3(72.0, 141.0, 157.0),
+};
+
+float endStar(float2 uv)
+{
+    float2 cell = floor(frac(uv) * 256.0);
+    float seed = frac(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+    if (seed > 0.032) {
+        return 0.0;
+    }
+    return 0.15 + frac(seed * 977.0) * 0.85;
+}
+
+float3 endPortalColor(float3 relative)
+{
+    float4 clip = mul(viewProjection, float4(relative, 1.0));
+    float2 screen = clip.xy / max(abs(clip.w), 0.0001) * 0.5 + 0.5;
+    float time = fmod(origin.w, 24000000.0) / 24000.0;
+    float3 color = EndPortalBase;
+    for (int i = 0; i < EndPortalLayers; ++i) {
+        float layer = float(i + 1);
+        float angle = radians((layer * layer * 4321.0 + layer * 9.0) * 2.0);
+        float scale = (4.5 - layer / 4.0) * 2.0;
+        float2 shifted = screen * 0.5 + 0.25 + float2(17.0 / layer, (2.0 + layer / 1.5) * time * 1.5);
+        float2 turned = float2(cos(angle) * shifted.x - sin(angle) * shifted.y, sin(angle) * shifted.x + cos(angle) * shifted.y) * scale;
+        color += endStar(turned) * EndPortalColors[i] / 255.0 * 0.6;
+    }
+    return min(color, float3(1.0, 1.0, 1.0));
+}
+
+bool isEndPortal(WorldOut input)
+{
+    return input.entity == 0 && (input.material & 0x1fffu) == EndPortalLayer;
+}
+
 float4 surfaceTexel(WorldOut input)
 {
     if (input.entity != 0) {
@@ -365,6 +407,9 @@ float4 surfaceTexel(WorldOut input)
 
 float4 ps_world(WorldOut input) : SV_Target
 {
+    if (isEndPortal(input)) {
+        return float4(endPortalColor(input.relative), 1.0);
+    }
     float4 texel = surfaceTexel(input);
     if (input.entity != 0) {
         if (texel.a < 0.1) {
@@ -380,6 +425,9 @@ float4 ps_world(WorldOut input) : SV_Target
 
 float4 ps_blend(WorldOut input) : SV_Target
 {
+    if (isEndPortal(input)) {
+        return float4(endPortalColor(input.relative), 1.0);
+    }
     float4 texel = surfaceTexel(input);
     if (texel.a < 0.004) {
         discard;

@@ -4,6 +4,7 @@
 #include "render/Renderer.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -582,7 +583,6 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     if (tickStart <= 0.0 || tickStart > now || now - tickStart > 2.0 / TicksPerSecond) {
         tickStart = std::floor(now * TicksPerSecond) / TicksPerSecond;
     }
-    float partialTick = static_cast<float>(std::clamp((now - tickStart) * TicksPerSecond, 0.0, 1.0));
     WorldView cullView;
     float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
     cullView.viewProjection = camera.viewProjection(aspect);
@@ -598,6 +598,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
+        const double actorTickStart = world::projectileEntity(actor.identifier) && actor.projectileTickTime > 0.0 ? actor.projectileTickTime : tickStart;
+        const float actorPartialTick = float(std::clamp((now - actorTickStart) * TicksPerSecond, 0.0, 1.0));
         if (actor.scale <= 0.0f) {
             continue;
         }
@@ -656,6 +658,21 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.identifier = actor.identifier;
         input.name = actor.name;
         input.onGround = actor.onGround;
+        if (world::projectileEntity(actor.identifier)) {
+            input.tickPositionDelta = actor.projectilePositionDelta;
+            input.frameAlpha = actorPartialTick;
+            input.shakeTime = actor.projectileShakeTicks;
+            input.attachedToEntity = actor.fireworkShooterId != -1;
+            if (actor.projectileTickTime > 0.0) {
+                input.x = actor.projectilePrevious[0] + actor.projectilePositionDelta[0];
+                input.y = actor.projectilePrevious[1] + actor.projectilePositionDelta[1];
+                input.z = actor.projectilePrevious[2] + actor.projectilePositionDelta[2];
+                input.yaw = actor.projectileCurrentTurn[0];
+                input.headYaw = actor.projectileCurrentTurn[1];
+                input.pitch = actor.projectileCurrentTurn[2];
+                input.now = actorTickStart;
+            }
+        }
         if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot, { actor.x, actor.y + 0.1, actor.z }, false).first == 1;
         input.cameraX = camera.x();
         input.cameraY = camera.y();
@@ -724,13 +741,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
         const world::EntityRig& rig = *chosenRig;
         ActorPose& pose = actorPoses[actor.runtimeId];
-        bool stale = animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || tickStart - pose.tick > 3.0 / TicksPerSecond;
-        if (stale || pose.tick != tickStart) {
+        bool stale = animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
+        if (stale || pose.tick != actorTickStart) {
             Profiler::Section section(profiler, "  animation");
             animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
             pose.previous = stale ? animator.matrices() : std::move(pose.current);
             pose.current = animator.matrices();
-            pose.tick = tickStart;
+            pose.tick = actorTickStart;
         }
         std::vector<world::BoneMatrix>& matrices = pose.interpolated;
         bool interpolated = false;
@@ -742,7 +759,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             for (size_t bone = 0; bone < matrices.size(); ++bone) {
                 for (size_t cell = 0; cell < matrices[bone].size(); ++cell) {
                     float from = pose.previous[bone][cell];
-                    matrices[bone][cell] = from + (matrices[bone][cell] - from) * partialTick;
+                    matrices[bone][cell] = from + (matrices[bone][cell] - from) * actorPartialTick;
                 }
             }
         };
@@ -903,7 +920,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
             }
             bool inward = (quad.flags & world::QuadInward) != 0;
-            if (inward || oneSided) {
+            if (inward || oneSided || !(quad.flags & world::QuadTwoSided)) {
                 std::array<float, 3> edgeA {}, edgeB {}, toCamera {};
                 for (size_t axis = 0; axis < 3; ++axis) {
                     edgeA[axis] = corners[1].position[axis] - corners[0].position[axis];
@@ -933,10 +950,98 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 lightQuads(target, first, light);
             }
         };
+        pose.gpuTransformValid.assign(rig.bones.size() + 1, 0);
+        pose.gpuTransforms.resize(rig.bones.size() + 1);
+        auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided) {
+            auto& cached = actorGeometry[&rig];
+            if (!cached.id) {
+                cached.id = nextActorGeometry++;
+                cached.quads.resize(rig.quads.size());
+                for (size_t q = 0; q < rig.quads.size(); ++q) {
+                    const auto& source = rig.quads[q];
+                    auto& words = cached.quads[q].words;
+                    for (size_t component = 0; component < 12; ++component) {
+                        uint32_t value = uint16_t(source.positions[component / 3][component % 3]);
+                        words[component / 2] |= value << ((component % 2) * 16);
+                    }
+                    for (size_t corner = 0; corner < 4; ++corner)
+                        words[6 + corner] = uint32_t(source.uvs[corner][0]) | (uint32_t(source.uvs[corner][1]) << 16);
+                    words[11] = source.flags & world::QuadFaceMask;
+                }
+            }
+            cached.used = heldItemFrame;
+            size_t slot = bone < pose.current.size() ? bone : rig.bones.size();
+            auto& transform = pose.gpuTransforms[slot];
+            if (!pose.gpuTransformValid[slot]) {
+                constexpr world::BoneMatrix identity { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+                const float factor = scale / 256.0f;
+                for (size_t state = 0; state < 2; ++state) {
+                    const auto& bones = state ? pose.current : pose.previous;
+                    const auto& m = bone < bones.size() ? bones[bone] : identity;
+                    for (size_t column = 0; column < 4; ++column) {
+                        transform[state * 12 + column] = factor * (cosine * m[column] + sine * m[8 + column]);
+                        transform[state * 12 + 4 + column] = factor * m[4 + column];
+                        transform[state * 12 + 8 + column] = factor * (-sine * m[column] + cosine * m[8 + column]);
+                    }
+                    transform[state * 12 + 3] += float(dx);
+                    transform[state * 12 + 7] += float(dy);
+                    transform[state * 12 + 11] += float(dz);
+                }
+                pose.gpuTransformValid[slot] = 1;
+            }
+            if (oneSided) {
+                auto point = [&](size_t corner) {
+                    std::array<float, 3> placed {};
+                    for (size_t axis = 0; axis < 3; ++axis) {
+                        for (size_t column = 0; column < 4; ++column) {
+                            float coefficient = transform[axis * 4 + column] + (transform[12 + axis * 4 + column] - transform[axis * 4 + column]) * actorPartialTick;
+                            placed[axis] += coefficient * (column == 3 ? 1.0f : rig.quads[index].positions[corner][column] / 16.0f);
+                        }
+                    }
+                    return placed;
+                };
+                const auto a = point(0), b = point(1), c = point(3);
+                std::array<float, 3> ab {}, ac {}, toCamera {};
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    ab[axis] = b[axis] - a[axis]; ac[axis] = c[axis] - a[axis];
+                    toCamera[axis] = cameraLocal[axis] / 256.0f - a[axis];
+                }
+                if ((ab[1] * ac[2] - ab[2] * ac[1]) * toCamera[0]
+                    + (ab[2] * ac[0] - ab[0] * ac[2]) * toCamera[1]
+                    + (ab[0] * ac[1] - ab[1] * ac[0]) * toCamera[2] >= 0.0f) return;
+            }
+            ActorDraw draw;
+            draw.geometryKey = cached.id;
+            draw.quads = cached.quads.data();
+            draw.total = uint32_t(cached.quads.size());
+            draw.first = uint32_t(index);
+            draw.count = 1;
+            std::copy(transform.begin(), transform.end(), draw.constants.begin());
+            draw.constants[24] = actorPartialTick;
+            draw.constants[25] = std::bit_cast<float>(layer);
+            uint32_t flags = EntityQuadFlag | (lit ? (1u << 8) : 0u);
+            if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) flags |= 1u << 7;
+            draw.constants[26] = std::bit_cast<float>(flags);
+            draw.constants[27] = std::bit_cast<float>(light);
+            draw.constants[30] = draw.constants[31] = 1.0f;
+            if (!actorDraws.empty()) {
+                auto& previous = actorDraws.back();
+                if (previous.geometryKey == draw.geometryKey && previous.first + previous.count == draw.first && previous.constants == draw.constants) {
+                    ++previous.count;
+                    return;
+                }
+            }
+            actorDraws.push_back(draw);
+        };
         auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
             if (bone < hidden.size() && hidden[bone]) {
+                return;
+            }
+            if (world::projectileEntity(actor.identifier) && !cullFaces && blend == world::EntityBlend::Opaque && !(quad.flags & world::QuadInward)
+                && tileGridOf(layer).single() && uvAnim[1] == 0) {
+                emitGpu(index, bone, layer, lit, oneSided || !(quad.flags & world::QuadTwoSided));
                 return;
             }
             interpolatePose();
@@ -1024,6 +1129,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             it = animators.erase(it);
         }
     }
+    std::erase_if(actorGeometry, [&](const auto& entry) { return heldItemFrame - entry.second.used > 120; });
     for (auto it = actorPoses.begin(); it != actorPoses.end();) {
         if (present.count(it->first)) {
             ++it;
@@ -1406,6 +1512,18 @@ void Client::interpolateActors(double now)
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
+        if (world::projectileEntity(actor.identifier)) {
+            if (actor.projectileTickTime > 0.0) {
+                const double alpha = std::clamp((now - actor.projectileTickTime) * TicksPerSecond, 0.0, 1.0);
+                actor.x = actor.projectilePrevious[0] + (actor.x - actor.projectilePrevious[0]) * alpha;
+                actor.y = actor.projectilePrevious[1] + (actor.y - actor.projectilePrevious[1]) * alpha;
+                actor.z = actor.projectilePrevious[2] + (actor.z - actor.projectilePrevious[2]) * alpha;
+                actor.yaw = actor.projectilePreviousTurn[0] + wrapDegrees(actor.yaw - actor.projectilePreviousTurn[0]) * float(alpha);
+                actor.headYaw = actor.projectilePreviousTurn[1] + wrapDegrees(actor.headYaw - actor.projectilePreviousTurn[1]) * float(alpha);
+                actor.pitch = actor.projectilePreviousTurn[2] + wrapDegrees(actor.pitch - actor.projectilePreviousTurn[2]) * float(alpha);
+            }
+            continue;
+        }
         std::array<double, 3> target { actor.x, actor.y, actor.z };
         std::array<float, 3> turn { actor.yaw, actor.headYaw, actor.pitch };
         auto [entry, created] = motions.try_emplace(actor.runtimeId);

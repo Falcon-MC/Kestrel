@@ -37,6 +37,11 @@ inline constexpr uint32_t DiagnosticMaterial = 0;
 inline constexpr uint32_t TextureSize = 16;
 inline constexpr uint32_t TextureMipLevels = 5;
 inline constexpr size_t MaxTextureLayers = 4096;
+/**
+ * The layer a material names to be drawn as the end portal starfield instead of
+ * a texture: past every real layer, so the terrain shaders tell it apart.
+ */
+inline constexpr uint32_t EndPortalLayer = 0x1FFFu;
 inline constexpr uint32_t NoModelTemplate = 0xFFFFFFFFu;
 inline constexpr uint32_t DestroyStages = 10;
 

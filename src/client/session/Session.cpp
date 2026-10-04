@@ -468,7 +468,7 @@ void Session::publishSnapshotLocked(std::shared_ptr<const SessionSnapshot> snaps
     if (!snapshot) snapshot = std::make_shared<const SessionSnapshot>(current);
     auto previous = std::atomic_exchange_explicit(&publishedSnapshot, std::move(snapshot), std::memory_order_acq_rel);
     if (previous) retiredSnapshots.push_back(std::move(previous));
-    if (std::this_thread::get_id() == snapshotProducerThread) {
+    if (snapshotProducerThread == std::thread::id {} || std::this_thread::get_id() == snapshotProducerThread) {
         retiredSnapshots.erase(std::remove_if(retiredSnapshots.begin(), retiredSnapshots.end(),
             [](const auto& retired) { return retired.use_count() == 1; }), retiredSnapshots.end());
     }
@@ -1197,6 +1197,12 @@ void Session::handleWorldPacket(std::string& payload)
             std::lock_guard<std::mutex> guard(mutex);
             current.riding.clear();
         }
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            std::erase_if(current.hud.bossBars, [&](const BossBarView& bar) {
+                return bar.bossId == removed->mUniqueActorId;
+            });
+        }
         auto runtime = runtimeByUnique.find(removed->mUniqueActorId);
         if (auto picked = runtime != runtimeByUnique.end() ? actors.find(runtime->second) : actors.end(); picked != actors.end() && picked->second.pickedUpAt > 0.0) {
             runtimeByUnique.erase(runtime);
@@ -1462,11 +1468,13 @@ void Session::scheduleMeshes()
 
     static constexpr int32_t Offsets[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
     for (const world::SubChunkKey& key : dirty) {
-        uint64_t generation = ++meshGenerations[key];
+        uint64_t generation = ++nextMeshGeneration;
+        meshGenerations.insert_or_assign(key, generation);
         mesher->invalidate(key, generation);
         std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
         if (!center) {
             mesher->cancel(key);
+            meshGenerations.erase(key);
             auto existing = meshes.find(key);
             if (existing != meshes.end()) {
                 meshQuads -= existing->second->quadCount();

@@ -61,6 +61,15 @@ public:
     std::string text(std::string_view key, std::string_view fallback) const;
 
     /**
+     * A label's text localized the way the game's Localization::_get does:
+     * text without % is one whole key; otherwise every %token of letters,
+     * digits, '-', '.' and '_' becomes its translation or, missing, its own
+     * text, the character ending it kept as is. Keys match exactly, then in
+     * lower case.
+     */
+    std::string label(std::string_view text) const;
+
+    /**
      * The text of a key with its %s, %1$s, %1, %d and %% placeholders filled
      * from the arguments in order or by position.
      */

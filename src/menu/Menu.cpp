@@ -1,5 +1,7 @@
 #include "menu/Menu.h"
 
+#include "client/DebugLog.h"
+
 #include "platform/Shell.h"
 #include "ui/Context.h"
 #include "ui/Localization.h"
@@ -436,10 +438,22 @@ void Menu::frame(Context& ui, float width, float height)
 
 void Menu::safeFrame(Context& ui, float width, float height)
 {
+    static bool timed = false;
+    std::optional<StartupTimer> timer;
+    if (!timed) {
+        timed = true;
+        timer.emplace();
+    }
+    auto mark = [&](const char* step) {
+        if (timer) {
+            timer->mark(std::string("menu: ") + step);
+        }
+    };
     if (!skinChoiceLoaded) {
         skinChoiceLoaded = true;
         applySkinChoice(ui);
     }
+    mark("skin choice");
     if (ui.input().mousePressed) {
         field = Field::None;
         rebinding.reset();
@@ -481,9 +495,11 @@ void Menu::safeFrame(Context& ui, float width, float height)
     bool modal = dialog != Dialog::None || socialOpen;
     ui.setBlocked(modal || capturesMouse());
 
+    mark("hud cover");
     if (!worldVisible()) {
         panorama(ui);
     }
+    mark("panorama");
 
     if (dialog != shownDialog) {
         leavingDialog = shownDialog;
@@ -545,6 +561,7 @@ void Menu::safeFrame(Context& ui, float width, float height)
         }
         ui.clearLayer();
     }
+    mark("screen content");
 
     ui.setBlocked(false);
     auto drawSocial = [&] {
@@ -582,10 +599,12 @@ void Menu::safeFrame(Context& ui, float width, float height)
     if (socialOpen && !loading && socialOverPause) {
         drawSocial();
     }
+    mark("social and dialogs");
 
     inventoryLayer(ui, width, height, now);
     // Only a closed form still playing its exit is left to draw here.
     forms.draw(ui, width, height);
+    mark("inventory and forms");
 
     if (inGame() && session.changingDimension) {
         dimensionScreen(ui);
@@ -593,6 +612,7 @@ void Menu::safeFrame(Context& ui, float width, float height)
     toast(ui, width, height);
     toasts.draw(ui, width, height);
     handleKeys(ui);
+    mark("toasts and keys");
 }
 
 void Menu::dialogContent(Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled)
@@ -744,6 +764,16 @@ void Menu::panorama(Context& ui)
     float focal = 1.0f / std::tan(42.5f * Degrees) * height * 0.5f;
 
     ui.fill({ 0.0f, 0.0f, width, height }, { 0, 0, 0, 255 });
+    std::optional<StartupTimer> timer;
+    if (std::find(panoramaReady.begin(), panoramaReady.end(), false) != panoramaReady.end()) {
+        timer.emplace();
+        std::vector<std::string> faces;
+        for (int index = 0; index < 6; ++index) {
+            faces.push_back("ui/panorama_alternate_" + std::to_string(index));
+        }
+        ui.skin().preload(faces);
+        timer->mark("panorama: preload");
+    }
     for (int index = 0; index < 6; ++index) {
         const CubeFace& face = Faces[index];
         std::string name = "dynamic/panorama_" + std::to_string(index);
@@ -813,6 +843,9 @@ void Menu::panorama(Context& ui)
                 ui.spriteQuad(points, name, texels, { 255, 255, 255, 255 });
             }
         }
+    }
+    if (timer) {
+        timer->mark("panorama: reduce and draw");
     }
 }
 

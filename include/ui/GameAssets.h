@@ -55,6 +55,12 @@ public:
     }
 
     bool readTexture(const std::string& path, Bitmap& out, NineSlice* slice = nullptr, NineSlice* texels = nullptr, std::vector<SpriteFrame>* frames = nullptr);
+
+    /**
+     * A texture's encoded file, undecoded, so several can be decoded at once
+     * off the thread that reads the pack.
+     */
+    bool readTextureBytes(const std::string& path, std::string& encoded);
     void setResourcePacks(std::vector<std::shared_ptr<const world::PackFiles>> packs);
     bool readArchived(const std::string& archive, const std::string& name, std::string& out);
     bool readBaseArchived(const std::string& archive, const std::string& name, std::string& out);

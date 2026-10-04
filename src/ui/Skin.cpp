@@ -1,6 +1,7 @@
 #include "ui/Skin.h"
 
 #include "ui/Image.h"
+#include "client/DebugLog.h"
 #include "ui/Theme.h"
 
 #include "TitlePng.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <sstream>
 
 namespace kestrel::ui {
@@ -234,6 +236,46 @@ const Bitmap* Skin::bitmap(std::string_view name)
 {
     Entry& entry = load(name);
     return entry.bitmap.rgba.empty() ? nullptr : &entry.bitmap;
+}
+
+void Skin::preload(const std::vector<std::string>& names)
+{
+    StartupTimer timer;
+    std::vector<std::pair<std::string, std::string>> pending;
+    for (const std::string& name : names) {
+        if (name.rfind("ui/", 0) != 0 || entries.count(name)) {
+            continue;
+        }
+        std::string encoded;
+        if (assets.readTextureBytes("textures/" + name, encoded)) {
+            pending.emplace_back(name, std::move(encoded));
+        }
+    }
+    timer.mark("preload: read " + std::to_string(pending.size()) + " files");
+    std::vector<std::future<Bitmap>> decoding;
+    for (auto& [name, encoded] : pending) {
+        decoding.push_back(std::async(std::launch::async, [&encoded = encoded] {
+            Bitmap decoded;
+            if (!decodeBitmap(encoded, decoded)) {
+                decoded = {};
+            }
+            return decoded;
+        }));
+    }
+    for (size_t i = 0; i < pending.size(); ++i) {
+        Bitmap decoded = decoding[i].get();
+        if (decoded.rgba.empty()) {
+            continue;
+        }
+        Entry entry;
+        entry.bitmap = std::move(decoded);
+        entry.sprite.width = static_cast<float>(entry.bitmap.width);
+        entry.sprite.height = static_cast<float>(entry.bitmap.height);
+        entry.lastUse = useClock;
+        entries.emplace(pending[i].first, std::move(entry));
+        changed = true;
+    }
+    timer.mark("preload: decode");
 }
 
 void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)

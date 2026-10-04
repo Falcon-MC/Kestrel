@@ -33,7 +33,7 @@ if errorlevel 1 (
 )
 
 echo [2/2] Building Kestrel...
-cmake --build build --config Release >> "%LOG%" 2>&1
+cmake --build build --config Release --parallel 4 >> "%LOG%" 2>&1
 set BUILD_RESULT=%errorlevel%
 
 type "%LOG%"

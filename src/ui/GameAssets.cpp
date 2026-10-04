@@ -108,6 +108,7 @@ GameAssets::GameAssets()
         return;
     }
     pack = std::make_unique<world::PackSource>(vanilla);
+    pack->indexInBackground();
     hbui = vanilla.parent_path().parent_path() / "gui" / "dist" / "hbui";
 }
 
@@ -144,6 +145,11 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
         }
     }
     return true;
+}
+
+bool GameAssets::readTextureBytes(const std::string& path, std::string& encoded)
+{
+    return pack && pack->readTexture(path, encoded);
 }
 
 bool GameAssets::readArchived(const std::string& archive, const std::string& name, std::string& out)

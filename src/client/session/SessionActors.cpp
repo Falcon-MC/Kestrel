@@ -4,6 +4,7 @@
 #include "client/DebugLog.h"
 #include "util/Text.h"
 #include "world/BlockAssets.h"
+#include "world/EntityAnimation.h"
 
 #include <algorithm>
 #include <array>
@@ -262,6 +263,9 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
         case 79:
             actor.poseIndex = entry.mIntValue;
             break;
+        case 141:
+            if (entry.mFormat == EntityDataFormat::Long) actor.fireworkShooterId = entry.mLongValue;
+            break;
         case 81:
             actor.alwaysShowName = entry.mByteValue != 0;
             break;
@@ -308,7 +312,22 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     if (teleport) {
         ++actor->second.teleports;
     }
+    if (actor->second.identifier == "minecraft:arrow" && onGround && !actor->second.onGround && !teleport)
+        actor->second.projectileShakeTicks = 7;
     actor->second.onGround = onGround;
+    if (world::projectileEntity(actor->second.identifier)) {
+        auto& view = actor->second;
+        view.projectileTarget = { x, y, z };
+        view.projectileTargetTurn = { yaw, headYaw, pitch };
+        view.projectileTicksRemaining = teleport ? 0 : 3;
+        if (!teleport) return;
+        view.projectilePrevious = view.projectileTarget;
+        view.projectilePositionDelta = {};
+        view.projectileShakeTicks = 0;
+        view.projectilePreviousTurn = view.projectileTargetTurn;
+        view.projectileCurrentTurn = view.projectileTargetTurn;
+        view.projectileTickTime = secondsNow();
+    }
     actor->second.x = x;
     actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
     actor->second.z = z;
@@ -336,7 +355,40 @@ void Session::setActorMotion(uint64_t runtimeId, float x, float y, float z)
     constexpr float Degrees = 180.0f / 3.14159265f;
     view.yaw = std::atan2(x, z) * Degrees;
     view.pitch = std::atan2(y, std::hypot(x, z)) * Degrees;
+    view.projectilePreviousTurn[0] = view.yaw;
+    view.projectilePreviousTurn[2] = view.pitch;
+    view.projectileCurrentTurn = { view.yaw, view.headYaw, view.pitch };
+    if (!view.projectileTicksRemaining) view.projectileTargetTurn = { view.yaw, view.headYaw, view.pitch };
     ++view.launchTurns;
+}
+
+void Session::tickProjectiles(double tickTime)
+{
+    for (auto& [id, view] : actors) {
+        if (!world::projectileEntity(view.identifier)) continue;
+        view.projectilePrevious = { view.x, view.y, view.z };
+        view.projectilePreviousTurn = { view.yaw, view.headYaw, view.pitch };
+        view.projectileCurrentTurn = view.projectilePreviousTurn;
+        if (view.projectileTickTime == 0.0 && !view.projectileTicksRemaining) {
+            view.projectileTarget = view.projectilePrevious;
+            view.projectileTargetTurn = view.projectilePreviousTurn;
+        }
+        view.projectileTickTime = tickTime;
+        if (view.projectileShakeTicks) --view.projectileShakeTicks;
+        view.projectilePositionDelta = {};
+        if (!view.projectileTicksRemaining) continue;
+        const double divisor = view.projectileTicksRemaining--;
+        std::array<double, 3> position;
+        std::array<float, 3> turn;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            position[axis] = view.projectilePrevious[axis] + (view.projectileTarget[axis] - view.projectilePrevious[axis]) / divisor;
+            turn[axis] = view.projectilePreviousTurn[axis] + std::remainder(view.projectileTargetTurn[axis] - view.projectilePreviousTurn[axis], 360.0f) / float(divisor);
+        }
+        view.x = position[0]; view.y = position[1]; view.z = position[2];
+        for (size_t axis = 0; axis < 3; ++axis) view.projectilePositionDelta[axis] = position[axis] - view.projectilePrevious[axis];
+        view.yaw = turn[0]; view.headYaw = turn[1]; view.pitch = turn[2];
+        view.projectileCurrentTurn = turn;
+    }
 }
 
 /**

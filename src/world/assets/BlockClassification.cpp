@@ -66,6 +66,11 @@ bool isShelfName(const std::string& name)
     return endsWith(name, "_shelf");
 }
 
+bool isEndPortalName(const std::string& name)
+{
+    return name == "end_portal" || name == "end_gateway";
+}
+
 bool isDeferredName(const std::string& name)
 {
     return name == "chest" || name == "trapped_chest" || name == "ender_chest" || endsWith(name, "copper_chest") || name == "bed"

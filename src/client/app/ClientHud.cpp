@@ -37,8 +37,8 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
     int shimmerFrame = 0;
     if (item.enchanted) {
         double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        shimmerFrame = int(std::fmod(now * 8.0, 32.0));
-        name += "#enchanted";
+        shimmerFrame = int(std::fmod(std::fmod(now, 3600.0) * menu.glintSpeed() / 100.0 * 8.0, 32.0));
+        name += "#enchanted" + std::to_string(menu.glintStrength());
     }
     auto known = itemIcons.find(name);
     if (known == itemIcons.end() || (item.enchanted && itemIconFrames[name] != shimmerFrame)) {
@@ -57,7 +57,7 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
                             uint32_t u = uint32_t(x + (pass ? y : world::ItemIconSize - y) + shimmerFrame * (pass ? 3 : 5)) % glint->width;
                             uint32_t v = uint32_t(y + shimmerFrame * (pass ? 5 : 2)) % glint->height;
                             size_t source = (size_t(v) * glint->width + u) * 4;
-                            float opacity = glint->rgba[source + 3] / 255.0f * 0.35f;
+                            float opacity = glint->rgba[source + 3] / 255.0f * 0.35f * menu.glintStrength() / 100.0f;
                             for (size_t channel = 0; channel < 3; ++channel) {
                                 pixels[target + channel] = uint8_t(std::min(255.0f, pixels[target + channel] + glint->rgba[source + channel] * opacity));
                             }
@@ -166,7 +166,7 @@ menu::HudView Client::buildHudView()
         view.sidebar = sidebarData();
     }
     for (const BossBarView& bar : state.bossBars) {
-        view.bossBars.push_back({ bar.title, bar.progress, bar.color });
+        view.bossBars.push_back({ bar.title, bar.progress, bar.color, bar.overlay });
     }
     view.crosshair = perspective == PerspectiveFirst && !cameraDetached && !view.hidden(menu::HudElement::Crosshair);
     view.showHotbar = state.gameType != 6;

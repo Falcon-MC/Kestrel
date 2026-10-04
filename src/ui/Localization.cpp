@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <optional>
 
 namespace kestrel::ui {
 
@@ -193,6 +194,65 @@ std::string Localization::text(std::string_view key, std::string_view fallback) 
 {
     auto found = texts.find(std::string(key));
     return found == texts.end() ? std::string(fallback) : found->second;
+}
+
+std::string Localization::label(std::string_view text) const
+{
+    auto key = [&](std::string_view name) -> const std::string* {
+        if (name.empty()) {
+            return nullptr;
+        }
+        if (auto found = texts.find(std::string(name)); found != texts.end()) {
+            return &found->second;
+        }
+        std::string lower(name);
+        bool upper = false;
+        for (char& c : lower) {
+            if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+                upper = true;
+            }
+        }
+        if (!upper) {
+            return nullptr;
+        }
+        auto found = texts.find(lower);
+        return found == texts.end() ? nullptr : &found->second;
+    };
+    if (text.empty()) {
+        return {};
+    }
+    if (text.find('%') == std::string_view::npos) {
+        const std::string* found = key(text);
+        return found ? *found : std::string(text);
+    }
+    std::string out;
+    out.reserve(text.size());
+    auto substitute = [&](std::string_view token) {
+        const std::string* found = key(token);
+        out += found ? std::string_view(*found) : token;
+    };
+    std::optional<size_t> token;
+    for (size_t at = 0; at < text.size(); ++at) {
+        char c = text[at];
+        if (token) {
+            bool part = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_';
+            if (part) {
+                continue;
+            }
+            substitute(text.substr(*token, at - *token));
+            out.push_back(c);
+            token.reset();
+        } else if (c == '%') {
+            token = at + 1;
+        } else {
+            out.push_back(c);
+        }
+    }
+    if (token) {
+        substitute(text.substr(*token));
+    }
+    return out;
 }
 
 std::string Localization::fill(std::string_view pattern, const std::vector<std::string>& arguments)

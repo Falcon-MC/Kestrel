@@ -610,6 +610,29 @@ public:
         brightnessPercent = percent < MinBrightness ? MinBrightness : percent > MaxBrightness ? MaxBrightness : percent;
     }
 
+    /**
+     * The accessibility glint strength and speed in percent, 0 to 100.
+     */
+    int glintStrength() const
+    {
+        return glintStrengthPercent;
+    }
+
+    void setGlintStrength(int percent)
+    {
+        glintStrengthPercent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    }
+
+    int glintSpeed() const
+    {
+        return glintSpeedPercent;
+    }
+
+    void setGlintSpeed(int percent)
+    {
+        glintSpeedPercent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    }
+
     void setSocial(SocialSnapshot snapshot);
 
     /**
@@ -1208,6 +1231,12 @@ private:
     std::string globalPacksStatus, openedGlobalPack, removingGlobalPack;
     bool globalPacksBusy = false;
     bool showActiveGlobalPacks = true;
+    std::unique_ptr<ui::JsonUiScreen> globalPacksUi;
+    std::optional<std::pair<bool, size_t>> globalPackSelected;
+    std::optional<std::pair<bool, size_t>> globalPackDetails;
+    bool globalSelectedExpanded = true;
+    bool globalAvailableExpanded = true;
+    bool vanillaGlobalResourcesPage(ui::Context& ui, float x, float& y, float w);
     std::string openedMod;
     std::string removingMod;
     std::string editModFile;
@@ -1261,6 +1290,8 @@ private:
     bool fovAlteredByGameplay = true;
     float safeZone = MaxSafeArea;
     int brightnessPercent = DefaultBrightness;
+    int glintStrengthPercent = 100;
+    int glintSpeedPercent = 100;
     std::string languageCode = "en_US";
     std::array<int, VolumeChannelCount> volumes { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
     bool quit = false;

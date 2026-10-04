@@ -19,13 +19,21 @@ void Client::updateAudio(const SessionSnapshot& snapshot)
 {
     const auto& packs = snapshot.state == SessionState::Joined ? snapshot.packs : globalResources.packs();
     ui::Localization::shared().setServerPacks(packs);
+    if (pendingSoundEngine.valid() && pendingSoundEngine.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        soundEngine = pendingSoundEngine.get();
+    }
     if (!soundEngine || !soundEngine->ready()) {
         return;
     }
-    if (!soundLibraryBuilt || packs != soundPacks) {
+    if ((!soundLibraryBuilt || packs != soundPacks) && !pendingSoundLibrary.valid()) {
         soundPacks = packs;
         soundLibraryBuilt = true;
-        auto library = std::make_shared<audio::SoundLibrary>(vanillaSounds, musicSounds, soundPacks);
+        pendingSoundLibrary = std::async(std::launch::async, [vanilla = vanillaSounds, music = musicSounds, packs = soundPacks] {
+            return std::make_shared<audio::SoundLibrary>(vanilla, music, packs);
+        });
+    }
+    if (pendingSoundLibrary.valid() && pendingSoundLibrary.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        std::shared_ptr<audio::SoundLibrary> library = pendingSoundLibrary.get();
         debugLog("sound library: " + std::to_string(library->definitionCount()) + " definitions, " + std::to_string(library->musicCount()) + " music situations, vanilla " + (vanillaSounds ? vanillaSounds->root().string() : std::string("none")) + ", music " + (musicSounds ? musicSounds->root().string() : std::string("none")));
         soundEngine->setLibrary(std::move(library));
         musicSituation.clear();

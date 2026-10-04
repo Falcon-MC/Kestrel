@@ -3,6 +3,7 @@
 #include "client/DebugLog.h"
 
 #include "D3D12Shaders.h"
+#include "platform/Paths.h"
 #include "platform/Window.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -17,6 +18,9 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -80,6 +84,31 @@ ComPtr<ID3DBlob> compile(const PipelineDesc& desc, bool vertex)
         size = desc.source->hlsl.size();
         entry = vertex ? "vs_main" : "ps_main";
     }
+    uint64_t hash = 14695981039346656037ull;
+    auto feed = [&](const char* bytes, size_t length) {
+        for (size_t i = 0; i < length; ++i) {
+            hash = (hash ^ static_cast<unsigned char>(bytes[i])) * 1099511628211ull;
+        }
+        hash = (hash ^ 0xff) * 1099511628211ull;
+    };
+    feed(source, size);
+    feed(entry, std::strlen(entry));
+    feed(target, std::strlen(target));
+    char name[32];
+    std::snprintf(name, sizeof(name), "%016llx.cso", static_cast<unsigned long long>(hash));
+    std::filesystem::path cached = platform::dataDirectory() / "shadercache" / name;
+
+    std::error_code error;
+    if (std::filesystem::exists(cached, error)) {
+        std::ifstream file(cached, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        ComPtr<ID3DBlob> blob;
+        if (!bytes.empty() && SUCCEEDED(D3DCreateBlob(bytes.size(), &blob))) {
+            std::memcpy(blob->GetBufferPointer(), bytes.data(), bytes.size());
+            return blob;
+        }
+    }
+
     ComPtr<ID3DBlob> code;
     ComPtr<ID3DBlob> errors;
     HRESULT hr = D3DCompile(source, size, "kestrel.hlsl", nullptr, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
@@ -91,6 +120,14 @@ ComPtr<ID3DBlob> compile(const PipelineDesc& desc, bool vertex)
         }
         throw std::runtime_error(message);
     }
+    std::filesystem::create_directories(cached.parent_path(), error);
+    std::filesystem::path partial = cached;
+    partial += ".tmp";
+    {
+        std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+        file.write(static_cast<const char*>(code->GetBufferPointer()), static_cast<std::streamsize>(code->GetBufferSize()));
+    }
+    std::filesystem::rename(partial, cached, error);
     return code;
 }
 

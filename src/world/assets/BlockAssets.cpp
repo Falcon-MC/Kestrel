@@ -418,6 +418,17 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         return id;
     };
 
+    uint32_t endPortalMaterial = DiagnosticMaterial;
+    auto endPortalFor = [&]() -> uint32_t {
+        if (endPortalMaterial == DiagnosticMaterial) {
+            Material material;
+            material.layer = EndPortalLayer;
+            endPortalMaterial = static_cast<uint32_t>(materialTable.size());
+            materialTable.push_back(material);
+        }
+        return endPortalMaterial;
+    };
+
     std::map<std::string, uint32_t> templateByKey;
     auto pushTemplate = [&](const std::vector<ModelQuad>& modelQuads, uint32_t flags) {
         templates.push_back({ static_cast<uint32_t>(quads.size()), static_cast<uint32_t>(modelQuads.size()), flags });
@@ -638,7 +649,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             uint32_t fixedTint = name == "waterlily" || name == "lily_pad" ? LilyPadColor : 0;
             for (int face = 0; face < 6; ++face) {
                 std::string key = faceKeyFor(face);
-                materials[face] = key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), fixedTint, blockTint(name, face));
+                materials[face] = isEndPortalName(name) ? endPortalFor() : key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), fixedTint, blockTint(name, face));
                 complete &= materials[face] != DiagnosticMaterial;
             }
             auto uniform = [&](int face) {
@@ -1173,7 +1184,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         for (int face = 0; face < 6; ++face) {
             bool rotate = false;
             std::string key = textures ? resolveTextureKey(textures, FaceOrder[face], axis, facing, rotate) : fallbackKey;
-            visual.faces[face] = key.empty() ? DiagnosticMaterial : materialFor(key, rotate, 0, tint, blockTint(name, face));
+            visual.faces[face] = isEndPortalName(name) ? endPortalFor() : key.empty() ? DiagnosticMaterial : materialFor(key, rotate, 0, tint, blockTint(name, face));
             resolved &= visual.faces[face] != DiagnosticMaterial;
         }
         if (!resolved) {

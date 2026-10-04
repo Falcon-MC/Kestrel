@@ -62,6 +62,18 @@ void Profiler::endFrame()
     double frame = millisecondsBetween(frameStart, now);
     frameSum += frame;
     frameWorst = std::max(frameWorst, frame);
+    if (!firstLogged || (frame > 200.0 && frames < 1000)) {
+        firstLogged = true;
+        char text[96];
+        std::snprintf(text, sizeof(text), "startup frame %llu took %.1f ms", static_cast<unsigned long long>(frames), frame);
+        debugLog(text);
+        for (const Entry& entry : entries) {
+            if (entry.frameTotal >= 1.0) {
+                std::snprintf(text, sizeof(text), "startup frame %llu: %s %.1f ms", static_cast<unsigned long long>(frames), entry.name, entry.frameTotal);
+                debugLog(text);
+            }
+        }
+    }
     ++frames;
     for (Entry& entry : entries) {
         entry.sum += entry.frameTotal;

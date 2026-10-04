@@ -987,6 +987,30 @@ void Menu::settingsPage(Context& ui, const Rect& area)
         y += 6.0f;
         break;
     }
+    case SettingsPage::Accessibility: {
+        settingsHeading(ui, x, y, w, tr("menu.accessibility.tab.title", "Accessibility"), {});
+        struct GlintSlider {
+            const char* id;
+            const char* key;
+            const char* label;
+            int* value;
+        };
+        GlintSlider sliders[] = {
+            { "accessibility:glintStrength", "options.glintStrength", "Glint Strength", &glintStrengthPercent },
+            { "accessibility:glintSpeed", "options.glintSpeed", "Glint Speed", &glintSpeedPercent },
+        };
+        for (GlintSlider& entry : sliders) {
+            float rowY = y;
+            settingsRow(ui, x, y, w, tr(entry.key, entry.label), {}, 44.0f);
+            std::string percent = std::to_string(*entry.value) + "%";
+            ui.text(percent, TextStyle::Ui, x + w - 12.0f - ui.measure(percent, TextStyle::Ui), rowY + 7.0f, White);
+            float fraction = float(*entry.value) / 100.0f;
+            if (slider(ui, entry.id, { x + 12.0f, rowY + 26.0f, w - 24.0f, 14.0f }, fraction)) {
+                *entry.value = int(std::lround(fraction * 100.0f));
+            }
+        }
+        break;
+    }
     case SettingsPage::Mods:
         modsPage(ui, x, y, w);
         break;

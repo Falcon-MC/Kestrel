@@ -354,7 +354,14 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextur
             float x = cube.size[0];
             float y = cube.size[1];
             float z = cube.size[2];
+            int flatAxis = -1;
+            int flatAxes = 0;
+            for (int axis = 0; axis < 3; ++axis) if (max[axis] == min[axis]) { flatAxis = axis; ++flatAxes; }
+            if (flatAxes > 1) continue;
             for (int face = 0; face < 6; ++face) {
+                if (flatAxis >= 0 && FaceNormals[face][flatAxis] == 0.0f) continue;
+                // Box-UV planes share one rectangle on both sides; per-face planes retain both maps.
+                if (flatAxis >= 0 && cube.boxUv && FaceNormals[face][flatAxis] > 0.0f) continue;
                 std::array<float, 4> region {};
                 if (cube.boxUv) {
                     float u = cube.uv[0];
@@ -415,6 +422,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextur
                     quad.uvs[corner] = { static_cast<uint16_t>(std::clamp(uv[0], 0.0f, 15.0f) * 4096.0f), static_cast<uint16_t>(std::clamp(uv[1], 0.0f, 15.0f) * 4096.0f) };
                 }
                 quad.flags = FaceIds[face] | QuadTwoSided;
+                if (flatAxis >= 0 && !cube.boxUv) quad.flags = FaceIds[face];
                 if (inverted) {
                     // A cube with a negative size is drawn inside out and only shows its far
                     // walls, which packs use as a backdrop; wind it to face the middle.

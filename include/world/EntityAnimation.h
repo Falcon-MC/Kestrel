@@ -164,6 +164,10 @@ struct AnimationInput {
     bool onGround = true;
     float swimAmount = 0.0f;
     std::optional<bool> inWater;
+    std::optional<std::array<double, 3>> tickPositionDelta;
+    std::optional<float> frameAlpha;
+    float shakeTime = 0.0f;
+    bool attachedToEntity = false;
     double cameraX = 0.0;
     double cameraY = 0.0;
     double cameraZ = 0.0;
@@ -192,6 +196,7 @@ bool targetRotationIsAbsolute(const std::string& identifier);
  * animation, placed in the camera basis rather than by its body yaw.
  */
 bool cameraFacingSprite(const std::string& identifier);
+bool projectileEntity(const std::string& identifier);
 
 /**
  * The animation state of one entity: its Molang variables, controller states

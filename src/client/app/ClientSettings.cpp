@@ -54,6 +54,10 @@ void Client::loadSettings()
             if (end != value.c_str() && *end == '\0') {
                 menu.setBrightness(static_cast<int>(std::clamp<long>(parsed, menu::MinBrightness, menu::MaxBrightness)));
             }
+        } else if (key == "glintStrength") {
+            menu.setGlintStrength(std::atoi(value.c_str()));
+        } else if (key == "glintSpeed") {
+            menu.setGlintSpeed(std::atoi(value.c_str()));
         } else if (key == "language") {
             menu.setLanguage(value);
         } else if (key.rfind("volume.", 0) == 0) {
@@ -98,6 +102,8 @@ void Client::loadSettings()
     savedGameplayFov = menu.gameplayFov();
     savedSafeArea = menu.safeArea();
     savedBrightness = menu.brightness();
+    savedGlintStrength = menu.glintStrength();
+    savedGlintSpeed = menu.glintSpeed();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }
@@ -138,6 +144,8 @@ void Client::saveSettings()
     file << "gameplayFov=" << (menu.gameplayFov() ? 1 : 0) << '\n';
     file << "safeArea=" << menu.safeArea() << '\n';
     file << "brightness=" << menu.brightness() << '\n';
+    file << "glintStrength=" << menu.glintStrength() << '\n';
+    file << "glintSpeed=" << menu.glintSpeed() << '\n';
     file << "language=" << menu.language() << '\n';
     for (size_t i = 0; i < menu::VolumeChannelCount; ++i) {
         file << "volume." << i << '=' << menu.soundVolumes()[i] << '\n';
@@ -166,6 +174,8 @@ void Client::saveSettings()
     savedGameplayFov = menu.gameplayFov();
     savedSafeArea = menu.safeArea();
     savedBrightness = menu.brightness();
+    savedGlintStrength = menu.glintStrength();
+    savedGlintSpeed = menu.glintSpeed();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
     if (mods) {

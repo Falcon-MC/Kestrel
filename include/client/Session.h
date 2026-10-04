@@ -170,6 +170,14 @@ struct ActorView {
     // Blocks per tick as the server last set it, and a count of launch turns to show at once.
     std::array<float, 3> velocity {};
     uint64_t launchTurns = 0;
+    std::array<double, 3> projectilePrevious {}, projectileTarget {};
+    std::array<double, 3> projectilePositionDelta {};
+    std::array<float, 3> projectilePreviousTurn {}, projectileTargetTurn {};
+    std::array<float, 3> projectileCurrentTurn {};
+    double projectileTickTime = 0.0;
+    uint8_t projectileTicksRemaining = 0;
+    uint8_t projectileShakeTicks = 0;
+    int64_t fireworkShooterId = -1;
     // A dropped item: the stack it shows, and once picked up who took it and when.
     HudItem item;
     uint64_t pickedUpBy = 0;
@@ -256,6 +264,7 @@ struct BossBarView {
     std::string title;
     float progress = 1.0f;
     int32_t color = 0;
+    int32_t overlay = 0;
 };
 
 struct HudState {
@@ -638,6 +647,7 @@ public:
     void answerResourcePacks(bool download);
     void setRenderDistance(int chunks);
     void setGlobalPacks(std::vector<std::shared_ptr<const world::PackFiles>> packs, uint64_t revision);
+    void acknowledgeResourceReload(uint64_t serial, const world::BlockAssets* expectedAssets);
     void selectHotbarSlot(int slot);
     void requestRespawn();
     void setMotionInput(const MotionInput& input);
@@ -769,6 +779,7 @@ private:
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition = false);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
+    void tickProjectiles(double tickTime);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);
@@ -860,6 +871,7 @@ private:
     world::IdMapping ids;
     std::unique_ptr<world::MeshScheduler> mesher;
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
+    uint64_t nextMeshGeneration = 0;
     std::map<world::SubChunkKey, std::shared_ptr<const world::ChunkMesh>> meshes;
     size_t meshQuads = 0;
     std::deque<MeshUpdate> pendingUpdates;

@@ -68,6 +68,18 @@ public:
         float width = 0.0f;
     };
     TextLayout layout(std::string_view text, TextStyle style, float width) const;
+
+    /**
+     * How a label breaks its text, the way the game's text measure strategy
+     * does: a word wider than the line is chopped so its start plus a hyphen
+     * fits, the hyphen drawn unless hidden, and past maxLines (when not 0)
+     * the last kept line ends in "...".
+     */
+    struct WrapOptions {
+        bool hideHyphen = false;
+        size_t maxLines = 0;
+    };
+    TextLayout layout(std::string_view text, TextStyle style, float width, const WrapOptions& options) const;
     uint64_t revision() const { return changes; }
     float rasterScale() const { return scale; }
     void drawLine(DrawList& list, const TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow = false) const;

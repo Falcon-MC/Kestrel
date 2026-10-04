@@ -16,6 +16,25 @@ int32_t floorCell(double value)
     return static_cast<int32_t>(std::floor(value));
 }
 
+bool matchesArea(const NearbyBlocks& area, const std::array<int32_t, 3>& base,
+    int32_t dimension, const std::shared_ptr<const world::BlockAssets>& assets,
+    const world::IdMapping& ids, const world::ChunkStore& store, bool biomes)
+{
+    constexpr size_t count = size_t(NearbyBlocks::Span) * NearbyBlocks::Span * NearbyBlocks::Span;
+    if (area.base != base || area.dimension != dimension || area.assets != assets
+        || area.ids.hashed != ids.hashed || area.ids.sequential != ids.sequential || area.ids.hidden != ids.hidden
+        || area.subChunks.size() != count || (biomes && area.biomes.size() != count)) return false;
+    for (int32_t sx = 0; sx < NearbyBlocks::Span; ++sx)
+        for (int32_t sy = 0; sy < NearbyBlocks::Span; ++sy)
+            for (int32_t sz = 0; sz < NearbyBlocks::Span; ++sz) {
+                world::SubChunkKey key { dimension, base[0] + sx, base[1] + sy, base[2] + sz };
+                size_t index = size_t((sx * NearbyBlocks::Span + sy) * NearbyBlocks::Span + sz);
+                if (area.subChunks[index] != store.subChunk(key)
+                    || (biomes && area.biomes[index] != store.biomes(key))) return false;
+            }
+    return true;
+}
+
 /**
  * How the block with the given value collides: its state in the collision
  * table, a full cube for a state the table does not know unless it is air or
@@ -143,14 +162,18 @@ void NearbyBlocks::find(const std::array<double, 3>& center, int32_t radius, con
  */
 void Session::publishNearby()
 {
-    auto area = std::make_shared<NearbyBlocks>();
     MotionVector feet = motion.position();
-    area->dimension = motionDimension;
-    area->base = {
+    std::array<int32_t, 3> base {
         (floorCell(feet.x) >> 4) - NearbyBlocks::Radius,
         (floorCell(feet.y) >> 4) - NearbyBlocks::Radius,
         (floorCell(feet.z) >> 4) - NearbyBlocks::Radius,
     };
+    std::shared_ptr<const NearbyBlocks> previous;
+    { std::lock_guard<std::mutex> guard(mutex); previous = current.nearby; }
+    if (previous && matchesArea(*previous, base, motionDimension, assets, ids, world.store(), false)) return;
+    auto area = std::make_shared<NearbyBlocks>();
+    area->dimension = motionDimension;
+    area->base = base;
     area->assets = assets;
     area->ids = ids;
     area->subChunks.resize(size_t(NearbyBlocks::Span) * NearbyBlocks::Span * NearbyBlocks::Span);
@@ -168,11 +191,15 @@ void Session::publishNearby()
 
 void Session::publishCameraBlocks()
 {
-    auto area = std::make_shared<NearbyBlocks>();
-    area->dimension = motionDimension;
-    area->base = { (floorCell(renderedCamera[0]) >> 4) - NearbyBlocks::Radius,
+    std::array<int32_t, 3> base { (floorCell(renderedCamera[0]) >> 4) - NearbyBlocks::Radius,
         (floorCell(renderedCamera[1]) >> 4) - NearbyBlocks::Radius,
         (floorCell(renderedCamera[2]) >> 4) - NearbyBlocks::Radius };
+    std::shared_ptr<const NearbyBlocks> previous;
+    { std::lock_guard<std::mutex> guard(mutex); previous = current.cameraBlocks; }
+    if (previous && matchesArea(*previous, base, motionDimension, assets, ids, world.store(), true)) return;
+    auto area = std::make_shared<NearbyBlocks>();
+    area->dimension = motionDimension;
+    area->base = base;
     area->assets = assets;
     area->ids = ids;
     size_t count = size_t(NearbyBlocks::Span) * NearbyBlocks::Span * NearbyBlocks::Span;

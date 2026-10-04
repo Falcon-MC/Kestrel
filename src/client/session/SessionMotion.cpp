@@ -301,6 +301,7 @@ void Session::tickMotion()
         ++due;
     }
     for (int32_t index = 0; index < std::min(due, MaxCatchUpTicks); ++index) {
+        tickProjectiles(nextMotionTick - TickSeconds * (due - index));
         runMotionTick(now);
     }
 }

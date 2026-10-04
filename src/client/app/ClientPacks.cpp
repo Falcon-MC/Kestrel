@@ -35,6 +35,7 @@ void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::Pac
     if (jsonUiLoaded && packs == artPacks) {
         return;
     }
+    StartupTimer timer;
     artPacks = packs;
     assets.setResourcePacks(packs);
     skin.reloadPackImages();
@@ -43,8 +44,11 @@ void Client::applyServerPacks(const std::vector<std::shared_ptr<const world::Pac
         skin.clearDynamic(name);
     }
     packSprites.clear();
+    timer.mark("packs: resource packs and images");
     loadPackGlyphs(packs);
+    timer.mark("packs: glyph sheets");
     loadJsonUi(packs);
+    timer.mark("packs: json ui");
 }
 
 /**
@@ -141,6 +145,7 @@ std::vector<std::string> listedUiFiles(const std::string& defs)
  */
 void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles>>& packs)
 {
+    StartupTimer timer;
     auto definitions = std::make_shared<ui::JsonUi>();
     auto readVanilla = [&](const std::string& path, std::string& text) {
         size_t slash = path.rfind('/');
@@ -177,10 +182,14 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
         }
     }
 
-    for (const std::string& texture : definitions->texturePaths()) {
+    std::vector<std::string> textures = definitions->texturePaths();
+    timer.mark("json ui: definitions read");
+    for (const std::string& texture : textures) {
         loadPackTexture(texture);
     }
+    timer.mark("json ui: " + std::to_string(textures.size()) + " textures");
     menu.setJsonUi(std::move(definitions));
+    timer.mark("json ui: menu screens");
 }
 
 /**

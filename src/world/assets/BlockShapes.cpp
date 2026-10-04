@@ -53,7 +53,7 @@ uint32_t cardinalTurns(const Tag& states)
 
 bool isShapeName(const std::string& name)
 {
-    return name == "enchanting_table" || name == "hopper" || name == "brewing_stand" || name == "campfire" || name == "soul_campfire"
+    return name == "enchanting_table" || name == "end_portal" || name == "hopper" || name == "brewing_stand" || name == "campfire" || name == "soul_campfire"
         || name == "lectern" || name == "frame" || name == "glow_frame" || name == "lever" || name == "cocoa" || name == "dragon_egg"
         || name == "decorated_pot" || contains(name, "copper_golem_statue") || isShelfName(name) || name == "leaf_litter"
         || name == "pink_petals" || name == "wildflowers" || name == "frog_spawn" || name == "flower_pot" || name == "end_rod"
@@ -63,7 +63,7 @@ bool isShapeName(const std::string& name)
 BlockShape blockShape(const std::string& name, const Tag& states)
 {
     BlockShape shape;
-    if (name == "enchanting_table") {
+    if (name == "enchanting_table" || name == "end_portal") {
         shape.boxes = { part({ 0, 0, 0 }, { 16, 12, 16 }) };
     } else if (name == "hopper") {
         shape.boxes = {

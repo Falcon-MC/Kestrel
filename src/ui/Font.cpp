@@ -1044,6 +1044,113 @@ Font::TextLayout Font::layout(std::string_view text, TextStyle style, float widt
     return result;
 }
 
+namespace {
+
+/**
+ * The byte offsets where each visible glyph of text starts, formatting codes
+ * skipped.
+ */
+std::vector<size_t> glyphStarts(std::string_view text)
+{
+    std::vector<size_t> starts;
+    size_t position = 0;
+    while (position < text.size()) {
+        size_t begin = position;
+        char32_t cp = nextCodepoint(text, position);
+        if (cp == FormatSign) {
+            if (position < text.size()) {
+                nextCodepoint(text, position);
+            }
+            continue;
+        }
+        if (cp != U'\n') {
+            starts.push_back(begin);
+        }
+    }
+    return starts;
+}
+
+}
+
+Font::TextLayout Font::layout(std::string_view text, TextStyle style, float width, const WrapOptions& options) const
+{
+    bool bounded = std::isfinite(width) && width > 0.0f;
+    if (!bounded) {
+        return layout(text, style, width);
+    }
+    std::vector<std::string> kept;
+    std::string_view rest = text;
+    std::string carried;
+    std::vector<std::string_view> parts;
+    bool more = false;
+    while (!rest.empty() || kept.empty()) {
+        if (options.maxLines > 0 && kept.size() >= options.maxLines) {
+            more = true;
+            break;
+        }
+        wrap(rest, style, width, parts);
+        if (parts.empty()) {
+            kept.emplace_back();
+            break;
+        }
+        std::string_view first = parts.front();
+        size_t consumed = static_cast<size_t>(first.data() + first.size() - rest.data());
+        std::string line(first);
+        bool newline = consumed < rest.size() && rest[consumed] == '\n';
+        bool chopped = parts.size() > 1 && !newline && consumed < rest.size() && rest[consumed] != ' '
+            && !first.empty() && first.find(' ') == std::string_view::npos;
+        if (chopped) {
+            std::vector<size_t> starts = glyphStarts(line);
+            while (starts.size() >= 2 && measure(carried + line + "-", style) > width) {
+                consumed -= line.size() - starts.back();
+                line.erase(starts.back());
+                starts.pop_back();
+            }
+            if (!options.hideHyphen) {
+                line += "-";
+            }
+        }
+        if (newline) {
+            ++consumed;
+        } else if (parts.size() > 1 && consumed < rest.size() && rest[consumed] == ' ') {
+            ++consumed;
+        }
+        if (consumed == 0) {
+            consumed = 1;
+        }
+        kept.push_back(line);
+        carried = formattingAt(carried + line);
+        rest.remove_prefix(std::min(consumed, rest.size()));
+        if (parts.size() == 1 && !newline) {
+            break;
+        }
+    }
+    if (more && !kept.empty()) {
+        std::string& last = kept.back();
+        std::string before = kept.size() > 1 ? formattingAt([&] {
+            std::string joined;
+            for (size_t i = 0; i + 1 < kept.size(); ++i) {
+                joined += kept[i];
+            }
+            return joined;
+        }()) : std::string();
+        std::vector<size_t> starts = glyphStarts(last);
+        while (!starts.empty() && measure(before + last + "...", style) > width) {
+            last.erase(starts.back());
+            starts.pop_back();
+        }
+        last += "...";
+    }
+    std::string joined;
+    for (size_t i = 0; i < kept.size(); ++i) {
+        if (i > 0) {
+            joined.push_back('\n');
+        }
+        joined += kept[i];
+    }
+    return layout(joined, style, std::numeric_limits<float>::infinity());
+}
+
 void Font::drawLine(DrawList& list, const TextLine& line, TextStyle style, float x, float y, float magnify, Color color, bool shadow) const
 {
     emit(list, line.text, style, x, y, color, shadow, magnify, &line);

@@ -198,6 +198,9 @@ HudItem hudItemOf(const ItemStack& stack)
 void Session::handleBossEvent(const BossEventPacket& event)
 {
     using Action = BossEventPacket::Action;
+    if (!std::isfinite(event.mHealthPercentage)) {
+        return;
+    }
     std::lock_guard<std::mutex> guard(mutex);
     std::vector<BossBarView>& bars = current.hud.bossBars;
     auto bar = std::find_if(bars.begin(), bars.end(), [&](const BossBarView& view) {
@@ -209,9 +212,10 @@ void Session::handleBossEvent(const BossEventPacket& event)
             bars.push_back({ event.mBossUniqueActorId });
             bar = bars.end() - 1;
         }
-        bar->title = event.mFilteredTitle.empty() ? event.mTitle : event.mFilteredTitle;
+        bar->title = event.mTitle;
         bar->progress = std::clamp(event.mHealthPercentage, 0.0f, 1.0f);
         bar->color = event.mColor;
+        bar->overlay = event.mOverlay;
         break;
     case Action::Remove:
         if (bar != bars.end()) {
@@ -225,13 +229,14 @@ void Session::handleBossEvent(const BossEventPacket& event)
         break;
     case Action::UpdateName:
         if (bar != bars.end()) {
-            bar->title = event.mFilteredTitle.empty() ? event.mTitle : event.mFilteredTitle;
+            bar->title = event.mTitle;
         }
         break;
     case Action::UpdateProperties:
     case Action::UpdateStyle:
         if (bar != bars.end()) {
             bar->color = event.mColor;
+            bar->overlay = event.mOverlay;
         }
         break;
     default:

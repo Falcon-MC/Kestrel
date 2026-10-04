@@ -2,8 +2,6 @@
 
 #include "JsonUiInternal.h"
 
-#include "util/JsonText.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -117,86 +115,299 @@ void renameKey(json::Value& object, const std::string& from, const std::string& 
     std::replace(object.mKeys.begin(), object.mKeys.end(), from, to);
 }
 
-bool matchesWhere(const json::Value& item, const json::Value* where)
+bool sameValue(const json::Value& a, const json::Value& b)
 {
-    if (!where || !where->isObject() || !item.isObject()) {
+    if (a.mType != b.mType) {
         return false;
     }
-    for (const std::string& key : where->mKeys) {
-        const json::Value* expected = where->get(key);
-        const json::Value* actual = item.get(key);
-        if (!actual || actual->mType != expected->mType || actual->mString != expected->mString || actual->mNumber != expected->mNumber || actual->mBoolean != expected->mBoolean) {
+    switch (a.mType) {
+    case json::Value::Type::Null:
+        return true;
+    case json::Value::Type::Boolean:
+        return a.mBoolean == b.mBoolean;
+    case json::Value::Type::Number:
+        return a.mNumber == b.mNumber;
+    case json::Value::Type::String:
+        return a.mString == b.mString;
+    case json::Value::Type::Array:
+        if (a.mArray.size() != b.mArray.size()) {
             return false;
         }
+        for (size_t i = 0; i < a.mArray.size(); ++i) {
+            if (!sameValue(*a.mArray[i], *b.mArray[i])) {
+                return false;
+            }
+        }
+        return true;
+    case json::Value::Type::Object:
+        if (a.mObject.size() != b.mObject.size()) {
+            return false;
+        }
+        for (const auto& [key, value] : a.mObject) {
+            const json::Value* other = b.get(key);
+            if (!other || !sameValue(*value, *other)) {
+                return false;
+            }
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 /**
- * The index of the array item a modification points at: a control by name
- * (controls hold one key each) or any item matching the "where" object.
+ * jsoncpp's asString: text as is, flags and numbers spelled out, anything
+ * else empty.
  */
-std::optional<size_t> findItem(const json::Value& array, const json::Value& modification)
+std::string nativeString(const json::Value* value)
 {
-    const json::Value* name = modification.get("control_name");
-    const json::Value* where = modification.get("where");
-    for (size_t i = 0; i < array.mArray.size(); ++i) {
-        const json::Value& item = *array.mArray[i];
-        if (name && item.isObject() && !item.mKeys.empty() && controlName(item.mKeys.front()) == controlName(name->string())) {
-            return i;
-        }
-        if (where && matchesWhere(item, where)) {
-            return i;
-        }
+    if (!value) {
+        return {};
     }
-    return std::nullopt;
+    switch (value->mType) {
+    case json::Value::Type::String:
+        return value->mString;
+    case json::Value::Type::Boolean:
+        return value->mBoolean ? "true" : "false";
+    case json::Value::Type::Number:
+        if (value->mInteger || (value->mNumber == std::floor(value->mNumber) && std::abs(value->mNumber) < 1e15)) {
+            return std::to_string(static_cast<long long>(value->mNumber));
+        }
+        return std::to_string(value->mNumber);
+    default:
+        return {};
+    }
 }
 
+/**
+ * The element of a modified array a condition names, among the elements it
+ * held before any modification: by control_name the object whose first key,
+ * before its '@', is that name; by an object the element sharing any member
+ * with it; by an array the element it contains; anything else, or nothing,
+ * the first element.
+ */
+std::optional<size_t> findOriginal(const std::vector<const json::Value*>& original, const json::Value* name, const json::Value* condition)
+{
+    if (name && name->isString() && !name->mString.empty()) {
+        for (size_t i = 0; i < original.size(); ++i) {
+            const json::Value& element = *original[i];
+            if (element.isObject() && !element.mKeys.empty() && controlName(element.mKeys.front()) == name->mString) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+    if (condition && condition->isArray()) {
+        for (size_t i = 0; i < original.size(); ++i) {
+            if (original[i]->mType == json::Value::Type::Null) {
+                continue;
+            }
+            for (const std::unique_ptr<json::Value>& candidate : condition->mArray) {
+                if (sameValue(*candidate, *original[i])) {
+                    return i;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+    if (condition && condition->isObject()) {
+        for (size_t i = 0; i < original.size(); ++i) {
+            const json::Value& element = *original[i];
+            if (!element.isObject()) {
+                continue;
+            }
+            for (const std::string& key : condition->mKeys) {
+                const json::Value* actual = element.get(key);
+                if (actual && sameValue(*actual, *condition->get(key))) {
+                    return i;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+    if (original.empty()) {
+        return std::nullopt;
+    }
+    return 0;
+}
+
+/**
+ * One array the modifications of a control edit: its elements before any of
+ * them ran, and the current order of the originals still kept and the values
+ * inserted, so every later modification still finds elements by what the
+ * array held at first.
+ */
+struct ModifiedArray {
+    std::string name;
+    std::unique_ptr<json::Value> before;
+    std::vector<const json::Value*> original;
+    std::vector<std::pair<std::optional<size_t>, const json::Value*>> slots;
+
+    std::optional<size_t> slotOf(const json::Value* name, const json::Value* condition) const
+    {
+        std::optional<size_t> index = findOriginal(original, name, condition);
+        if (!index) {
+            return std::nullopt;
+        }
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slots[i].first == index) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+};
+
+void applyModification(ModifiedArray& target, const std::string& operation, const json::Value& modification)
+{
+    const json::Value* value = modification.get("value");
+    if (value && value->mType == json::Value::Type::Null) {
+        value = nullptr;
+    }
+    std::vector<std::pair<std::optional<size_t>, const json::Value*>> added;
+    if (value && value->isArray()) {
+        for (const std::unique_ptr<json::Value>& item : value->mArray) {
+            added.emplace_back(std::nullopt, item.get());
+        }
+    } else if (value) {
+        added.emplace_back(std::nullopt, value);
+    }
+    const json::Value* name = modification.get("control_name");
+    const json::Value* where = modification.get("where");
+    auto& slots = target.slots;
+    auto insert = [&](size_t at) {
+        slots.insert(slots.begin() + static_cast<std::ptrdiff_t>(at), added.begin(), added.end());
+    };
+    bool needsValue = operation.rfind("insert_", 0) == 0 || operation == "replace";
+    if (needsValue && !value) {
+        return;
+    }
+    if (operation == "insert_back") {
+        insert(slots.size());
+        return;
+    }
+    if (operation == "insert_front") {
+        insert(0);
+        return;
+    }
+    std::optional<size_t> at = target.slotOf(name, where);
+    if (!at) {
+        return;
+    }
+    if (operation == "replace") {
+        slots.erase(slots.begin() + static_cast<std::ptrdiff_t>(*at));
+        insert(*at);
+    } else if (operation == "insert_after") {
+        insert(*at + 1);
+    } else if (operation == "insert_before") {
+        insert(*at);
+    } else if (operation == "remove") {
+        slots.erase(slots.begin() + static_cast<std::ptrdiff_t>(*at));
+    } else if (operation == "move_front" || operation == "move_back") {
+        auto moved = slots[*at];
+        slots.erase(slots.begin() + static_cast<std::ptrdiff_t>(*at));
+        slots.insert(operation == "move_front" ? slots.begin() : slots.end(), moved);
+    } else if (operation == "move_after" || operation == "move_before" || operation == "swap") {
+        const json::Value* targetName = modification.get("target_control");
+        std::optional<size_t> other = targetName && targetName->isString()
+            ? target.slotOf(targetName, nullptr)
+            : target.slotOf(nullptr, modification.get("target"));
+        if (!other || *other == *at) {
+            return;
+        }
+        if (operation == "swap") {
+            std::swap(slots[*at], slots[*other]);
+            return;
+        }
+        auto moved = slots[*at];
+        slots.erase(slots.begin() + static_cast<std::ptrdiff_t>(*at));
+        size_t to = (*other > *at ? *other - 1 : *other) + (operation == "move_after" ? 1 : 0);
+        slots.insert(slots.begin() + static_cast<std::ptrdiff_t>(to), moved);
+    }
+}
+
+bool knownOperation(const std::string& operation)
+{
+    static const char* const Operations[] = {
+        "insert_back", "insert_front", "insert_after", "insert_before", "move_back", "move_front",
+        "move_after", "move_before", "swap", "remove", "replace",
+    };
+    for (const char* known : Operations) {
+        if (operation == known) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Runs a control's modifications the way the game's UIModification does:
+ * each one names its array (controls when it names a control), finds its
+ * element among the ones the array held before the first modification, and
+ * the arrays are written back once all ran, an emptied one other than
+ * controls becoming null.
+ */
 void applyModifications(json::Value& control, const json::Value& modifications)
 {
+    if (!modifications.isArray()) {
+        return;
+    }
+    std::vector<ModifiedArray> targets;
     for (const std::unique_ptr<json::Value>& modification : modifications.mArray) {
         if (!modification->isObject()) {
             continue;
         }
-        std::string arrayName = modification->get("array_name") ? modification->get("array_name")->string() : "controls";
-        std::string operation = modification->get("operation") ? modification->get("operation")->string() : "";
-        if (!control.get(arrayName)) {
-            setKey(control, arrayName, json::Value::ofArray());
+        std::string arrayName = nativeString(modification->get("array_name"));
+        if (arrayName.empty() && modification->get("control_name") && modification->get("control_name")->isString()) {
+            arrayName = "controls";
         }
-        json::Value& array = *control.mObject[arrayName];
-        if (!array.isArray()) {
+        std::string operation = nativeString(modification->get("operation"));
+        if (arrayName.empty() || !knownOperation(operation)) {
             continue;
         }
-        const json::Value* value = modification->get("value");
-        std::vector<std::unique_ptr<json::Value>> items;
-        if (value && value->isArray()) {
-            for (const std::unique_ptr<json::Value>& item : value->mArray) {
-                items.push_back(item->clone());
+        auto found = std::find_if(targets.begin(), targets.end(), [&](const ModifiedArray& target) {
+            return target.name == arrayName;
+        });
+        if (found == targets.end()) {
+            ModifiedArray target;
+            target.name = arrayName;
+            const json::Value* current = control.get(arrayName);
+            target.before = current && current->isArray() ? current->clone() : json::Value::ofArray();
+            for (size_t i = 0; i < target.before->mArray.size(); ++i) {
+                target.original.push_back(target.before->mArray[i].get());
+                target.slots.emplace_back(i, target.before->mArray[i].get());
             }
-        } else if (value) {
-            items.push_back(value->clone());
+            targets.push_back(std::move(target));
+            found = targets.end() - 1;
         }
-        auto insertAt = [&](size_t index) {
-            for (std::unique_ptr<json::Value>& item : items) {
-                array.mArray.insert(array.mArray.begin() + static_cast<std::ptrdiff_t>(index++), std::move(item));
-            }
-        };
-        std::optional<size_t> target = findItem(array, *modification);
-        if (operation == "insert_back") {
-            insertAt(array.mArray.size());
-        } else if (operation == "insert_front") {
-            insertAt(0);
-        } else if (operation == "insert_after" && target) {
-            insertAt(*target + 1);
-        } else if (operation == "insert_before" && target) {
-            insertAt(*target);
-        } else if (operation == "remove" && target) {
-            array.mArray.erase(array.mArray.begin() + static_cast<std::ptrdiff_t>(*target));
-        } else if (operation == "replace" && target) {
-            array.mArray.erase(array.mArray.begin() + static_cast<std::ptrdiff_t>(*target));
-            insertAt(*target);
+        applyModification(*found, operation, *modification);
+    }
+    for (ModifiedArray& target : targets) {
+        std::unique_ptr<json::Value> values = json::Value::ofArray();
+        for (const auto& [index, value] : target.slots) {
+            values->push(value->clone());
+        }
+        if (values->mArray.empty() && target.name != "controls") {
+            setKey(control, target.name, json::Value::ofNull());
+        } else {
+            setKey(control, target.name, std::move(values));
         }
     }
+}
+
+/**
+ * A pack layer's value over the one below: objects merge member by member,
+ * anything else replaces.
+ */
+void mergeValue(json::Value& object, const std::string& key, const json::Value& value)
+{
+    json::Value* old = object.isObject() ? const_cast<json::Value*>(object.get(key)) : nullptr;
+    if (old && old->isObject() && value.isObject()) {
+        for (const std::string& member : value.mKeys) {
+            mergeValue(*old, member, *value.get(member));
+        }
+        return;
+    }
+    setKey(object, key, value.clone());
 }
 
 /**
@@ -234,14 +445,136 @@ json::Value* findPath(json::Value& base, const std::string& path)
     return current && current->isObject() ? current : nullptr;
 }
 
+/**
+ * The variables a retail, full game, desktop build of the game sets in code
+ * before any definition is read, the false ones included, since a variable
+ * nothing sets reads as its own name.
+ */
+std::unique_ptr<json::Value> platformVariables()
+{
+#ifdef __APPLE__
+    constexpr bool Mac = true;
+#else
+    constexpr bool Mac = false;
+#endif
+    static const std::pair<const char*, bool> Flags[] = {
+        { "desktop_screen", true },
+        { "pocket_screen", false },
+        { "touch", false },
+        { "is_pc", true },
+        { "win10_edition", !Mac },
+        { "microsoft_os", !Mac },
+        { "ms_platform", !Mac },
+        { "osx_edition", Mac },
+        { "apple_os", Mac },
+        { "is_desktop", true },
+        { "mouse", true },
+        { "is_publish", true },
+        { "test_infrastructure_disabled", true },
+        { "new_video_settings", true },
+        { "is_improve_input_response_platform_supported", true },
+        { "is_xboxlive_enabled", true },
+        { "is_realms_enabled", true },
+        { "is_seeds_enabled", true },
+        { "is_creative_enabled", true },
+        { "is_multiplayer_enabled", true },
+        { "is_packs_enabled", true },
+        { "is_server_enabled", true },
+        { "is_store_enabled", true },
+        { "file_picking_supported", true },
+        { "supports_clipboard_set", true },
+        { "supports_add_friend", true },
+        { "supports_xbl_achievements", true },
+        { "pre_release", false },
+        { "beta_build", false },
+        { "is_preview_app", false },
+        { "trial", false },
+        { "education_edition", false },
+        { "store_disabled", false },
+        { "creator_build", false },
+        { "pocket_edition", false },
+        { "console_edition", false },
+        { "is_console", false },
+        { "game_pad", false },
+        { "can_splitscreen", false },
+        { "is_secondary_client", false },
+        { "requires_xbl_signin_to_play", false },
+        { "is_editor_mode_enabled", false },
+        { "can_quit", true },
+        { "world_archive_support", true },
+        { "is_dynamic_textures_platform_supported", true },
+        { "is_pregame", false },
+        { "screen_transitions_enabled", false },
+        { "use_normalized_font_size", false },
+        { "image_picking_not_supported", false },
+        { "vibration_supported", false },
+        { "supports_share", false },
+        { "hide_xbox_live_icon", false },
+        { "disable_gamertag_controls", false },
+        { "multiplayer_requires_live_gold", false },
+        { "device_must_be_removed_for_xbl_signin", false },
+        { "is_low_memory_device", false },
+        { "ignore_3rd_party_servers", false },
+        { "ignore_add_servers", false },
+        { "is_on_3p_server", false },
+        { "is_editor_playtest_roundtrip", false },
+        { "edu_save_to_cloud_on", false },
+        { "edu_save_to_cloud_general_toggle_on", false },
+        { "built_with_ore_ui_docs_and_tests", false },
+        { "build_platform_UWP", false },
+        { "google_os", false },
+        { "is_ios", false },
+        { "is_android", false },
+        { "is_chromebook", false },
+        { "fire_tv", false },
+        { "nx_os", false },
+        { "is_ps4", false },
+        { "is_ps5", false },
+        { "xbox_one", false },
+        { "thirdpartyconsole", false },
+        { "is_settopbox", false },
+        { "is_win10_arm", false },
+        { "is_windows_10_mobile", false },
+        { "is_mobile_vr", false },
+        { "gear_vr", false },
+        { "oculus_rift", false },
+        { "psvr", false },
+        { "is_holographic", false },
+        { "supports_hand_controllers", false },
+        { "is_living_room_mode", false },
+        { "is_reality_mode", false },
+    };
+    auto values = json::Value::ofObject();
+    for (const auto& [name, value] : Flags) {
+        values->set(std::string("$") + name, json::Value::ofBoolean(value));
+    }
+    auto size = [](bool vertical) {
+        auto pair = json::Value::ofArray();
+        pair->push(vertical ? json::Value::ofString("100%") : json::Value::ofInteger(0));
+        pair->push(vertical ? json::Value::ofInteger(0) : json::Value::ofString("100%"));
+        return pair;
+    };
+    values->set("$top_vertical_safezone_size", size(true));
+    values->set("$bottom_vertical_safezone_size", size(true));
+    values->set("$left_horizontal_safezone_size", size(false));
+    values->set("$right_horizontal_safezone_size", size(false));
+    return values;
+}
+
 void mergeControl(json::Value& target, const json::Value& value)
 {
     for (const std::string& property : value.mKeys) {
         if (property == "modifications") {
-            applyModifications(target, *value.get(property));
-        } else {
-            setKey(target, property, value.get(property)->clone());
+            continue;
         }
+        if (property == "controls") {
+            setKey(target, property, value.get(property)->clone());
+            continue;
+        }
+        mergeValue(target, property, *value.get(property));
+    }
+    if (const json::Value* modifications = value.get("modifications")) {
+        applyModifications(target, *modifications);
     }
 }
 
@@ -255,10 +588,8 @@ void JsonUi::clear()
 
 void JsonUi::addFile(const std::string& path, const std::string& text)
 {
-    // Packs saved from Windows editors often start with a byte order mark.
-    constexpr std::string_view Bom = "\xEF\xBB\xBF";
-    std::unique_ptr<json::Value> incoming = util::parseJsonObject(text.compare(0, Bom.size(), Bom) == 0 ? text.substr(Bom.size()) : text);
-    if (!incoming) {
+    std::unique_ptr<json::Value> incoming = jsonui::readUiJson(text);
+    if (!incoming || !incoming->isObject()) {
         return;
     }
     indexed = false;
@@ -296,8 +627,11 @@ void JsonUi::addFile(const std::string& path, const std::string& text)
                 break;
             }
         }
-        if (match.empty() || !value->isObject() || !base.get(match)->isObject()) {
+        if (match.empty() || !base.get(match)->isObject()) {
             setKey(base, key, std::move(value));
+            continue;
+        }
+        if (!value->isObject()) {
             continue;
         }
         if (key.find('@') != std::string::npos) {
@@ -343,16 +677,7 @@ void JsonUi::index() const
     }
     indexed = true;
     if (!platform) {
-        // What a retail build of the game sets for a Windows desktop with mouse and keyboard; anything else
-        // it checks, like $touch or $education_edition, reads as false.
-        auto values = json::Value::ofObject();
-        values->set("$desktop_screen", json::Value::ofBoolean(true));
-        values->set("$win10_edition", json::Value::ofBoolean(true));
-        values->set("$is_pc", json::Value::ofBoolean(true));
-        values->set("$is_publish", json::Value::ofBoolean(true));
-        values->set("$pocket_screen", json::Value::ofBoolean(false));
-        values->set("$touch", json::Value::ofBoolean(false));
-        platform = std::move(values);
+        platform = platformVariables();
     }
     controls.clear();
     globals.clear();
@@ -400,12 +725,15 @@ bool JsonUi::has(std::string_view reference) const
 const json::Value* JsonUi::globalVariable(const std::string& name) const
 {
     index();
+    if (const json::Value* value = platform->get(name)) {
+        return value;
+    }
     for (auto it = globals.rbegin(); it != globals.rend(); ++it) {
         if (const json::Value* value = (*it)->get(name)) {
             return value;
         }
     }
-    return platform->get(name);
+    return nullptr;
 }
 
 }

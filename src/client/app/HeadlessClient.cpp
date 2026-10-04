@@ -106,6 +106,7 @@ void HeadlessClient::steer(const SessionSnapshot& snapshot)
 
 void HeadlessClient::drainSession(const SessionSnapshot& snapshot)
 {
+    if (snapshot.reloadedMeshes) session.acknowledgeResourceReload(snapshot.resourceReloadSerial, snapshot.assets.get());
     session.takeMeshUpdates();
     session.takeSkinUploads();
     session.takeSounds();

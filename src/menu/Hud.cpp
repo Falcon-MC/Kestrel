@@ -335,9 +335,9 @@ ui::UiData hudData(const HudView& view)
     g["#number_of_days_played_visible"] = flag(false);
     g["#hud_text_background_alpha"] = number(TextBackgroundOpacity);
     static constexpr const char* BossBarColors[8] = {
-        "0.925,0.282,0.8", "0.216,0.675,0.933", "0.918,0.243,0.235", "0.282,0.839,0.267",
-        "0.933,0.847,0.204", "0.588,0.251,0.871", "0.4,0.2,0.6", "1,1,1",
+        "#ff69b4", "#5555ff", "#ff5555", "#55ff55", "#ffff55", "#aa00aa", "#663399", "#ffffff",
     };
+    static constexpr int BossBarNotches[5] = { 0, 6, 10, 12, 20 };
     g["#boss_grid_dimension"] = text("1," + std::to_string(view.bossBars.size()));
     std::vector<ui::UiRow>& bossBars = data.collections["boss_bars"];
     bossBars.reserve(view.bossBars.size());
@@ -347,6 +347,7 @@ ui::UiData hudData(const HudView& view)
             { "#bar_visible", flag(true) },
             { "#progress_percentage", number(1.0 - std::clamp(static_cast<double>(bar.progress), 0.0, 1.0)) },
             { "#bar_color", text(BossBarColors[std::clamp(bar.color, 0, 7)]) },
+            { "#bar_notches", number(BossBarNotches[std::clamp(bar.overlay, 0, 4)]) },
         });
     }
     g["#boss_hud_padding"] = flag(false);

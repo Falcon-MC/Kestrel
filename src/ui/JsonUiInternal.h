@@ -38,6 +38,12 @@ UiValue evaluate(std::string_view source, const UiLookup& lookup);
 UiValue toValue(const json::Value* value);
 
 /**
+ * Reads a ui/*.json file to the rules of the game's jsoncpp reader; null when
+ * it does not parse.
+ */
+std::unique_ptr<json::Value> readUiJson(std::string_view source);
+
+/**
  * A property value and the namespace of the file it was written in, which is
  * where the control names it holds are looked up.
  */
@@ -159,9 +165,11 @@ struct Node {
         uint64_t revision = 0;
         TextStyle style = TextStyle::Pixel;
         float width = 0.0f;
+        size_t maxLines = 0;
+        bool hideHyphen = false;
         Font::TextLayout layout;
     };
-    std::array<LabelLayout, 2> labelLayouts;
+    std::array<LabelLayout, 3> labelLayouts;
     std::string texture;
     Node* scroller = nullptr;
     std::optional<std::array<float, 2>> offsetOverride;
@@ -186,9 +194,11 @@ struct Node {
     bool hover = false;
     float scroll = 0.0f;
     float scrolledContent = -1.0f;
+    float scrollRange = 0.0f;
     float value = 0.0f;
     std::string edit;
     bool caret = false;
+    bool selected = false;
     std::unordered_map<const Node*, bool> states;
 };
 
@@ -228,6 +238,7 @@ struct JsonUiRuntime {
     bool navigation = false;
     uint64_t keyFocus = 0;
     bool listeningCaret = false;
+    bool listeningSelected = false;
     float grab = 0.0f;
 
     // The last laid out frame, drawn again as is while nothing it depends on changes.
@@ -266,6 +277,9 @@ struct JsonUiRuntime {
     UiValue bindingLookup(const Node& node, const std::string& key, const UiLookup& binding) const;
     UiValue valueOf(const Node& node, std::string_view name) const;
     bool condition(const Node& node, const json::Value* value) const;
+    UiValue conditionValue(const Node& node, const json::Value* value) const;
+    bool ignores(const Node& node, const json::Value* value) const;
+    bool selects(const Node& node, const json::Value* value) const;
     void addChildren(Node& node, int depth);
     void addAnim(Node& node, const std::string& target, std::string_view reference, const std::string* space);
     std::string factoryKey(const Node& node, const json::Value* ids, const std::string& id, const json::Value* fallback) const;
@@ -292,7 +306,7 @@ struct JsonUiRuntime {
     float natural(Node& node, int axis);
     TextStyle labelStyle(const Node& node) const;
     float labelScale(const Node& node) const;
-    const Font::TextLayout& labelLayout(Node& node, float width);
+    const Font::TextLayout& labelLayout(Node& node, float width, size_t maxLines = 0);
     std::array<int, 2> gridCells(Node& node);
     float intrinsic(Node& node, int axis);
 
@@ -316,6 +330,18 @@ struct JsonUiRuntime {
     // JsonUiScreen.cpp
     void gather(Node& node);
     Node* find(Node& from, const std::string& name) const;
+
+    /**
+     * The control of that name nearest below from, breadth first, the way a
+     * scroll view finds its viewport, content, track, box and bar panel.
+     */
+    Node* nearest(Node& from, const std::string& name) const;
+
+    /**
+     * The wheel sensitivity, fixed by the scroll_speed of the first scroll
+     * view the wheel moves, as the game reads it once.
+     */
+    std::optional<float> wheelSensitivity;
     Node* ancestor(Node& node, const std::string& type) const;
     void input();
     bool pressMapped(const Node& node) const;

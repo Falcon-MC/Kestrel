@@ -5,6 +5,14 @@
 
 namespace kestrel {
 
+void Session::acknowledgeResourceReload(uint64_t serial, const world::BlockAssets* expectedAssets)
+{
+    std::lock_guard<std::mutex> guard(mutex);
+    if (current.resourceReloadSerial != serial || current.assets.get() != expectedAssets || !current.reloadedMeshes) return;
+    current.reloadedMeshes.reset();
+    publishSnapshotLocked();
+}
+
 void Session::setGlobalPacks(std::vector<std::shared_ptr<const world::PackFiles>> packs, uint64_t revision)
 {
     std::lock_guard<std::mutex> guard(mutex);

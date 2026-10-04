@@ -28,6 +28,7 @@ struct HudBossBar {
     std::string title;
     float progress = 1.0f;
     int32_t color = 0;
+    int32_t overlay = 0;
 };
 
 struct HudEffectView {

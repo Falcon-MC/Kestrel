@@ -3,6 +3,7 @@
 #include "ui/Context.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <limits>
 
@@ -60,103 +61,216 @@ Rect intersect(const Rect& a, const Rect& b)
     return { x, y, std::max(0.0f, right - x), std::max(0.0f, bottom - y) };
 }
 
+constexpr float SinScale = 10430.378f;
+constexpr float SinQuarter = 16384.0f;
+constexpr float Tau = 6.2831855f;
+constexpr float Pi = 3.14159265f;
+constexpr float HalfPi = 1.57079633f;
+constexpr float Back = 1.70158f;
+constexpr float BackPlusOne = 2.70158f;
+constexpr float BackInOut = 2.5949094f;
+constexpr float BackInOutPlusOne = 3.5949094f;
+
+/**
+ * The game's sine, read from its 65536 entry table by a pre-scaled angle.
+ */
+float sinAt(float scaled)
+{
+    static const std::vector<float> table = [] {
+        std::vector<float> values(65536);
+        for (size_t i = 0; i < values.size(); ++i) {
+            values[i] = static_cast<float>(std::sin(static_cast<double>(i) * 3.14159265358979323846 * 2.0 / 65536.0));
+        }
+        return values;
+    }();
+    return table[static_cast<size_t>(static_cast<int32_t>(scaled) & 0xffff)];
+}
+
+float bounce(float x)
+{
+    constexpr float K = 7.5625f;
+    if (x < 0.36363637f) {
+        return K * x * x;
+    }
+    if (x < 0.72727275f) {
+        x += -0.54545456f;
+        return K * x * x + 0.75f;
+    }
+    if (x < 0.90909094f) {
+        x += -0.8181818f;
+        return K * x * x + 0.9375f;
+    }
+    x += -0.95454544f;
+    return K * x * x + 0.984375f;
+}
+
+float elasticSin(float x)
+{
+    return sinAt((((x + -0.075f) * Tau) / 0.3f) * SinScale);
+}
+
+float inOutPower(float t, int power)
+{
+    float x = t + t;
+    auto raise = [&](float value) {
+        float product = 1.0f;
+        for (int i = 0; i < power; ++i) {
+            product *= value;
+        }
+        return product;
+    };
+    return x < 1.0f ? 0.5f * raise(x) : 0.5f * (raise(x + -2.0f) + 2.0f);
+}
+
+/**
+ * How far along an animation is after easing, by the 32 curves the game
+ * names, worked in single precision with its own sine table; an unknown
+ * name is linear.
+ */
 float easing(std::string_view name, float t)
 {
-    constexpr float Pi = 3.14159265f;
     t = std::clamp(t, 0.0f, 1.0f);
-    auto bounceOut = [](float x) {
-        if (x < 1.0f / 2.75f) {
-            return 7.5625f * x * x;
-        }
-        if (x < 2.0f / 2.75f) {
-            x -= 1.5f / 2.75f;
-            return 7.5625f * x * x + 0.75f;
-        }
-        if (x < 2.5f / 2.75f) {
-            x -= 2.25f / 2.75f;
-            return 7.5625f * x * x + 0.9375f;
-        }
-        x -= 2.625f / 2.75f;
-        return 7.5625f * x * x + 0.984375f;
-    };
-    auto power = [&](float exponent, std::string_view kind) {
-        if (kind == "in") {
-            return std::pow(t, exponent);
-        }
-        if (kind == "out") {
-            return 1.0f - std::pow(1.0f - t, exponent);
-        }
-        return t < 0.5f ? std::pow(2.0f * t, exponent) * 0.5f : 1.0f - std::pow(-2.0f * t + 2.0f, exponent) * 0.5f;
-    };
-    size_t split = name.find('_');
-    std::string_view kind = split == std::string_view::npos ? name : name.substr(0, split);
-    std::string_view curve = split == std::string_view::npos ? std::string_view() : name.substr(split + 1);
-    if (kind == "in" && curve.substr(0, 4) == "out_") {
-        kind = "in_out";
-        curve = curve.substr(4);
+    std::string lower(name);
+    for (char& c : lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    if (curve == "quad") {
-        return power(2.0f, kind);
+    if (lower == "spring") {
+        float phase = (2.5f * t * t * t + 0.2f) * Pi * t * SinScale;
+        float rest = 1.0f - t;
+        return (std::pow(rest, 2.2f) * sinAt(phase) + t) * (rest * 1.2f + 1.0f);
     }
-    if (curve == "cubic") {
-        return power(3.0f, kind);
+    if (lower == "in_quad") {
+        return t * t;
     }
-    if (curve == "quart") {
-        return power(4.0f, kind);
+    if (lower == "out_quad") {
+        return -(t + -2.0f) * t;
     }
-    if (curve == "quint") {
-        return power(5.0f, kind);
+    if (lower == "in_out_quad") {
+        float x = t + t;
+        return x < 1.0f ? 0.5f * x * x : -0.5f * ((-2.0f + x + -1.0f) * (x + -1.0f) + -1.0f);
     }
-    if (curve == "sine") {
-        return kind == "in" ? 1.0f - std::cos(t * Pi * 0.5f) : kind == "out" ? std::sin(t * Pi * 0.5f) : -(std::cos(Pi * t) - 1.0f) * 0.5f;
+    if (lower == "in_cubic") {
+        return t * t * t;
     }
-    if (curve == "expo") {
-        if (kind == "in") {
-            return t <= 0.0f ? 0.0f : std::pow(2.0f, 10.0f * t - 10.0f);
+    if (lower == "out_cubic") {
+        float x = t + -1.0f;
+        return x * x * x + 1.0f;
+    }
+    if (lower == "in_out_cubic") {
+        return inOutPower(t, 3);
+    }
+    if (lower == "in_quart") {
+        return t * t * t * t;
+    }
+    if (lower == "out_quart") {
+        float x = t + -1.0f;
+        return -(x * x * x * x + -1.0f);
+    }
+    if (lower == "in_out_quart") {
+        float x = t + t;
+        if (x < 1.0f) {
+            return 0.5f * x * x * x * x;
         }
-        if (kind == "out") {
-            return t >= 1.0f ? 1.0f : 1.0f - std::pow(2.0f, -10.0f * t);
-        }
-        return t <= 0.0f ? 0.0f : t >= 1.0f ? 1.0f : t < 0.5f ? std::pow(2.0f, 20.0f * t - 10.0f) * 0.5f : (2.0f - std::pow(2.0f, -20.0f * t + 10.0f)) * 0.5f;
+        x += -2.0f;
+        return -0.5f * (x * x * x * x + -2.0f);
     }
-    if (curve == "circ") {
-        return kind == "in" ? 1.0f - std::sqrt(1.0f - t * t) : kind == "out" ? std::sqrt(1.0f - (t - 1.0f) * (t - 1.0f))
-            : t < 0.5f ? (1.0f - std::sqrt(1.0f - 4.0f * t * t)) * 0.5f : (std::sqrt(1.0f - std::pow(-2.0f * t + 2.0f, 2.0f)) + 1.0f) * 0.5f;
+    if (lower == "in_quint") {
+        return t * t * t * t * t;
     }
-    if (curve == "back") {
-        constexpr float C1 = 1.70158f;
-        constexpr float C3 = C1 + 1.0f;
-        constexpr float C2 = C1 * 1.525f;
-        if (kind == "in") {
-            return C3 * t * t * t - C1 * t * t;
-        }
-        if (kind == "out") {
-            return 1.0f + C3 * std::pow(t - 1.0f, 3.0f) + C1 * std::pow(t - 1.0f, 2.0f);
-        }
-        return t < 0.5f ? (std::pow(2.0f * t, 2.0f) * ((C2 + 1.0f) * 2.0f * t - C2)) * 0.5f : (std::pow(2.0f * t - 2.0f, 2.0f) * ((C2 + 1.0f) * (t * 2.0f - 2.0f) + C2) + 2.0f) * 0.5f;
+    if (lower == "out_quint") {
+        float x = t + -1.0f;
+        return x * x * x * x * x + 1.0f;
     }
-    if (curve == "elastic") {
-        constexpr float C4 = 2.0f * Pi / 3.0f;
-        if (t <= 0.0f || t >= 1.0f) {
+    if (lower == "in_out_quint") {
+        return inOutPower(t, 5);
+    }
+    if (lower == "in_sine") {
+        return 1.0f - sinAt(t * HalfPi * SinScale + SinQuarter);
+    }
+    if (lower == "out_sine") {
+        return sinAt(t * HalfPi * SinScale);
+    }
+    if (lower == "in_out_sine") {
+        return (sinAt(t * Pi * SinScale + SinQuarter) + -1.0f) * -0.5f;
+    }
+    if (lower == "in_expo") {
+        return std::exp2((t + -1.0f) * 10.0f);
+    }
+    if (lower == "out_expo") {
+        return 1.0f - std::exp2(t * -10.0f);
+    }
+    if (lower == "in_out_expo") {
+        float x = t + t;
+        float curve = 1.0f <= x ? 2.0f - std::exp2((x + -1.0f) * -10.0f) : std::exp2((x + -1.0f) * 10.0f);
+        return curve * 0.5f;
+    }
+    if (lower == "in_circ") {
+        return -(std::sqrt(1.0f - t * t) + -1.0f);
+    }
+    if (lower == "out_circ") {
+        return std::sqrt(1.0f - (t + -1.0f) * (t + -1.0f));
+    }
+    if (lower == "in_out_circ") {
+        float x = t + t;
+        if (1.0f <= x) {
+            return (std::sqrt(1.0f - (x + -2.0f) * (x + -2.0f)) + 1.0f) * 0.5f;
+        }
+        return (std::sqrt(1.0f - x * x) + -1.0f) * -0.5f;
+    }
+    if (lower == "in_bounce") {
+        return 1.0f - bounce(1.0f - t);
+    }
+    if (lower == "out_bounce") {
+        return bounce(t);
+    }
+    if (lower == "in_out_bounce") {
+        return t < 0.5f ? (1.0f - bounce(1.0f - (t + t))) * 0.5f : 0.5f + bounce(t + t + -1.0f) * 0.5f;
+    }
+    if (lower == "in_back") {
+        return (t * BackPlusOne + -Back) * t * t;
+    }
+    if (lower == "out_back") {
+        float x = t + -1.0f;
+        return x * x * (x * BackPlusOne + Back) + 1.0f;
+    }
+    if (lower == "in_out_back") {
+        float x = t + t;
+        float curve;
+        if (1.0f <= x) {
+            x += -2.0f;
+            curve = (x * BackInOutPlusOne + BackInOut) * x * x + 2.0f;
+        } else {
+            curve = (x * BackInOutPlusOne + -BackInOut) * x * x;
+        }
+        return curve * 0.5f;
+    }
+    if (lower == "in_elastic") {
+        if (t == 0.0f || t == 1.0f) {
             return t;
         }
-        if (kind == "in") {
-            return -std::pow(2.0f, 10.0f * t - 10.0f) * std::sin((t * 10.0f - 10.75f) * C4);
-        }
-        if (kind == "out") {
-            return std::pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * C4) + 1.0f;
-        }
-        constexpr float C5 = 2.0f * Pi / 4.5f;
-        return t < 0.5f ? -(std::pow(2.0f, 20.0f * t - 10.0f) * std::sin((20.0f * t - 11.125f) * C5)) * 0.5f : std::pow(2.0f, -20.0f * t + 10.0f) * std::sin((20.0f * t - 11.125f) * C5) * 0.5f + 1.0f;
+        float x = t + -1.0f;
+        return -std::exp2(10.0f * x) * elasticSin(x);
     }
-    if (curve == "bounce") {
-        if (kind == "in") {
-            return 1.0f - bounceOut(1.0f - t);
+    if (lower == "out_elastic") {
+        if (t == 0.0f || t == 1.0f) {
+            return t;
         }
-        if (kind == "out") {
-            return bounceOut(t);
+        return std::exp2(-10.0f * t) * elasticSin(t) + 1.0f;
+    }
+    if (lower == "in_out_elastic") {
+        if (t == 0.0f) {
+            return 0.0f;
         }
-        return t < 0.5f ? (1.0f - bounceOut(1.0f - 2.0f * t)) * 0.5f : (1.0f + bounceOut(2.0f * t - 1.0f)) * 0.5f;
+        float x = t + t;
+        if (x == 2.0f) {
+            return 1.0f;
+        }
+        x += -1.0f;
+        float wave = elasticSin(x);
+        if (1.0f <= x + 1.0f) {
+            return std::exp2(x * -10.0f) * wave * 0.5f + 1.0f;
+        }
+        return std::exp2(x * 10.0f) * wave * -0.5f;
     }
     return t;
 }
@@ -211,7 +325,7 @@ std::optional<float> JsonUiRuntime::animated(const Node& node, const std::string
         }
         return from();
     }
-    double duration = std::max(0.0, number(probe, "duration", 0.0));
+    double duration = std::max(0.0, number(probe, "duration", 1.0));
     float t = duration > 0.0 ? static_cast<float>((now - track.start) / duration) : 1.0f;
     t = easing(text(probe, "easing"), t);
     float to = pick(probe.props.count("to") ? probe.props.at("to").value : nullptr);
@@ -329,21 +443,28 @@ std::array<int, 2> JsonUiRuntime::gridCells(Node& node)
     return { 1, std::max(1, items) };
 }
 
-const Font::TextLayout& JsonUiRuntime::labelLayout(Node& node, float width)
+const Font::TextLayout& JsonUiRuntime::labelLayout(Node& node, float width, size_t maxLines)
 {
     if (!(width > 0.0f)) {
         width = std::numeric_limits<float>::infinity();
     }
-    Node::LabelLayout& cached = node.labelLayouts[std::isfinite(width) ? 1 : 0];
+    Node::LabelLayout& cached = node.labelLayouts[maxLines > 0 ? 2 : std::isfinite(width) ? 1 : 0];
     const Font& font = ui->textFont();
     TextStyle style = labelStyle(node);
-    if (cached.font != &font || cached.revision != font.revision() || cached.source != node.text || cached.style != style || cached.width != width) {
-        cached.layout = font.layout(node.text, style, width);
+    bool hideHyphen = flag(node, "hide_hyphen", false);
+    if (cached.font != &font || cached.revision != font.revision() || cached.source != node.text || cached.style != style || cached.width != width
+        || cached.maxLines != maxLines || cached.hideHyphen != hideHyphen) {
+        Font::WrapOptions options;
+        options.hideHyphen = hideHyphen;
+        options.maxLines = maxLines;
+        cached.layout = font.layout(node.text, style, width, options);
         cached.source = node.text;
         cached.font = &font;
         cached.revision = font.revision();
         cached.style = style;
         cached.width = width;
+        cached.maxLines = maxLines;
+        cached.hideHyphen = hideHyphen;
     }
     return cached.layout;
 }
@@ -712,7 +833,10 @@ void JsonUiRuntime::place(Node& node, float x, float y, float z, const Rect& cli
             cy += from[1] * node.h - to[1] * child.h;
         }
         if (child.scroller) {
-            cy -= child.scroller->scroll;
+            cy -= std::trunc(child.scroller->scroll * 8.0f) * 0.125f;
+            if (anchorPoint(text(child, "anchor_from"))[1] == 1.0f) {
+                cy += child.scroller->scrollRange;
+            }
         }
         if (grid) {
             if (child.index >= 0) {

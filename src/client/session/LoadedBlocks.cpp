@@ -91,11 +91,26 @@ bool LoadedBlocks::selectable(int32_t x, int32_t y, int32_t z) const
  */
 void Session::publishLoaded()
 {
+    auto chunks = world.store().allSubChunks();
+    std::shared_ptr<const LoadedBlocks> previous;
+    { std::lock_guard<std::mutex> guard(mutex); previous = current.loaded; }
+    if (previous && previous->dimension == motionDimension && previous->assets == assets
+        && previous->ids.hashed == ids.hashed && previous->ids.sequential == ids.sequential && previous->ids.hidden == ids.hidden) {
+        size_t count = 0;
+        bool unchanged = true;
+        for (const auto& [key, subChunk] : chunks) {
+            if (key.dimension != motionDimension) continue;
+            ++count;
+            auto found = previous->subChunks.find(key);
+            if (found == previous->subChunks.end() || found->second != subChunk) { unchanged = false; break; }
+        }
+        if (unchanged && count == previous->subChunks.size()) return;
+    }
     auto area = std::make_shared<LoadedBlocks>();
     area->dimension = motionDimension;
     area->assets = assets;
     area->ids = ids;
-    for (auto& [key, subChunk] : world.store().allSubChunks()) {
+    for (auto& [key, subChunk] : chunks) {
         if (key.dimension == motionDimension) {
             area->subChunks.emplace(key, std::move(subChunk));
         }

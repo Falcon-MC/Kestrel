@@ -55,6 +55,7 @@ private:
     double frameWorst = 0.0;
     uint64_t frames = 0;
     bool started = false;
+    bool firstLogged = false;
     std::vector<std::string> published;
 };
 

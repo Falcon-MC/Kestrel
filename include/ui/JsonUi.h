@@ -233,9 +233,21 @@ public:
     void showListeningCaret(bool shown);
 
     /**
+     * Shows the whole text of the always listening edit boxes as selected,
+     * inverted over a light block, for screens that select it from outside.
+     */
+    void showListeningSelection(bool selected);
+
+    /**
      * Something under the mouse takes clicks, like a button or a slider.
      */
     bool hovering() const;
+
+    /**
+     * How far down the drawn controls reach from the top of the screen, for
+     * a screen laid into a taller area than it fills, like a settings section.
+     */
+    float contentHeight() const;
 
     UiEvent pointerTarget() const;
     bool pointerInsideContent(float x, float y) const;

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -39,6 +40,13 @@ public:
     {
         return overlays;
     }
+
+    /**
+     * Starts listing the files of every layer on another thread, so the
+     * first texture read finds the index ready instead of walking the whole
+     * pack itself.
+     */
+    void indexInBackground();
 
     bool readText(const std::string& relative, std::string& out) const;
     std::vector<std::string> readTextLayers(const std::string& relative) const;
@@ -85,6 +93,7 @@ private:
     std::vector<std::shared_ptr<const PackFiles>> overlays;
     std::unordered_map<std::string, std::unique_ptr<Archive>> archives;
     std::vector<std::optional<LooseFiles>> looseIndex;
+    std::future<std::vector<std::optional<LooseFiles>>> pendingIndex;
     std::unordered_map<std::string, std::vector<size_t>> folderLayers;
 };
 

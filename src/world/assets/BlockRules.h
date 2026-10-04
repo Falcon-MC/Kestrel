@@ -97,6 +97,12 @@ bool isCrossName(const std::string& name);
 bool isShelfName(const std::string& name);
 
 /**
+ * Blocks whose surface is the end starfield rather than a texture: the end
+ * portal and the end gateway.
+ */
+bool isEndPortalName(const std::string& name);
+
+/**
  * Blocks whose look comes from a block entity model with an entity texture:
  * chests, beds, banners, shulker boxes and skulls.
  */

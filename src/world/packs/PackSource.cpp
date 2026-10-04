@@ -283,16 +283,11 @@ std::vector<std::string> PackSource::readArchivedLayers(const std::string& archi
  * each of the dozens of versioned vanilla layers on disk for every texture
  * used to cost more than decoding the textures themselves.
  */
-const PackSource::LooseFiles& PackSource::looseFiles(size_t layer)
+namespace {
+
+void listLoose(const fs::path& root, std::unordered_set<std::string>& files, std::unordered_set<std::string>& folders)
 {
-    looseIndex.resize(stack.size());
-    std::optional<LooseFiles>& index = looseIndex[layer];
-    if (index) {
-        return *index;
-    }
-    index.emplace();
     std::error_code error;
-    const fs::path& root = stack[layer];
     for (fs::recursive_directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {
         if (it->path().filename() == "__brarchive") {
             it.disable_recursion_pending();
@@ -301,10 +296,44 @@ const PackSource::LooseFiles& PackSource::looseFiles(size_t layer)
         std::error_code status;
         if (it->is_regular_file(status)) {
             fs::path relative = it->path().lexically_relative(root);
-            index->files.insert(relative.generic_string());
-            index->folders.insert(relative.parent_path().generic_string());
+            files.insert(relative.generic_string());
+            folders.insert(relative.parent_path().generic_string());
         }
     }
+}
+
+}
+
+void PackSource::indexInBackground()
+{
+    if (pendingIndex.valid()) {
+        return;
+    }
+    pendingIndex = std::async(std::launch::async, [layers = stack] {
+        std::vector<std::optional<LooseFiles>> index(layers.size());
+        for (size_t layer = 0; layer < layers.size(); ++layer) {
+            index[layer].emplace();
+            listLoose(layers[layer], index[layer]->files, index[layer]->folders);
+        }
+        return index;
+    });
+}
+
+const PackSource::LooseFiles& PackSource::looseFiles(size_t layer)
+{
+    if (pendingIndex.valid()) {
+        std::vector<std::optional<LooseFiles>> ready = pendingIndex.get();
+        if (ready.size() == stack.size()) {
+            looseIndex = std::move(ready);
+        }
+    }
+    looseIndex.resize(stack.size());
+    std::optional<LooseFiles>& index = looseIndex[layer];
+    if (index) {
+        return *index;
+    }
+    index.emplace();
+    listLoose(stack[layer], index->files, index->folders);
     return *index;
 }
 

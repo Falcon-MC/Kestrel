@@ -173,6 +173,17 @@ Prop JsonUiRuntime::resolveProp(const Node& node, Prop prop) const
             return {};
         }
         prop = { next.value, next.space ? next.space : prop.space };
+        if (const json::Value* wrapped = prop.value->isObject() ? prop.value->get("__string") : nullptr; wrapped && wrapped->boolean(false)) {
+            const json::Value* raw = prop.value->get("__rawtext");
+            const json::Value* text = prop.value->get("value");
+            if (!text || text->mType == json::Value::Type::Null) {
+                return {};
+            }
+            prop.value = text;
+            if (raw && raw->boolean(false)) {
+                return prop;
+            }
+        }
     }
     return prop;
 }
@@ -275,6 +286,67 @@ UiValue JsonUiRuntime::valueOf(const Node& node, std::string_view name) const
     return toValue(value);
 }
 
+/**
+ * A condition value as the game's UIResolvedDef evaluates it: a variable is
+ * read (staying its own name when nothing sets it), and an expression gives
+ * its result.
+ */
+UiValue JsonUiRuntime::conditionValue(const Node& node, const json::Value* value) const
+{
+    if (!value) {
+        return {};
+    }
+    if (isVariable(value)) {
+        const json::Value* resolved = resolve(node, value);
+        if (!resolved) {
+            return UiValue::of(value->mString);
+        }
+        value = resolved;
+    }
+    if (value->isString() && !value->mString.empty() && value->mString.front() == '(') {
+        return evaluate(node, value->mString);
+    }
+    if (value->isArray() || value->isObject()) {
+        return UiValue::of(value->isArray() ? !value->mArray.empty() : !value->mObject.empty());
+    }
+    return toValue(value);
+}
+
+/**
+ * Whether "ignored" drops a control: only a flag or a whole number decides,
+ * text of any kind keeps it.
+ */
+bool JsonUiRuntime::ignores(const Node& node, const json::Value* value) const
+{
+    UiValue result = conditionValue(node, value);
+    if (result.kind == UiValue::Kind::Bool) {
+        return result.flag;
+    }
+    if (result.kind == UiValue::Kind::Number) {
+        return result.number == std::floor(result.number) && result.number != 0.0;
+    }
+    return false;
+}
+
+/**
+ * Whether "requires" selects a variables block: a true flag, a nonzero
+ * number, nonempty text, array or object; never a missing condition.
+ */
+bool JsonUiRuntime::selects(const Node& node, const json::Value* value) const
+{
+    UiValue result = conditionValue(node, value);
+    switch (result.kind) {
+    case UiValue::Kind::Bool:
+        return result.flag;
+    case UiValue::Kind::Number:
+        return result.number != 0.0;
+    case UiValue::Kind::String:
+        return !result.text.empty();
+    default:
+        return false;
+    }
+}
+
 bool JsonUiRuntime::condition(const Node& node, const json::Value* value) const
 {
     value = resolve(node, value);
@@ -363,9 +435,22 @@ void JsonUiRuntime::applyVariables(Node& node, const UiRow* variables)
     for (const auto& [name, prop] : passed) {
         scope->own[name] = prop;
     }
+    if (isVariable(entries)) {
+        Node probe;
+        probe.vars = inherited;
+        entries = resolve(probe, entries);
+    }
+    std::vector<const json::Value*> blocks;
     if (entries && entries->isArray()) {
         for (const std::unique_ptr<json::Value>& entry : entries->mArray) {
-            if (!entry->isObject() || !condition(node, entry->get("requires"))) {
+            blocks.push_back(entry.get());
+        }
+    } else if (entries && entries->isObject()) {
+        blocks.push_back(entries);
+    }
+    if (!blocks.empty()) {
+        for (const json::Value* entry : blocks) {
+            if (!entry->isObject() || !selects(node, entry->get("requires"))) {
                 continue;
             }
             for (const std::string& key : entry->mKeys) {
@@ -444,11 +529,24 @@ std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, co
             inheritProp(node->props, property, instance->get(property), space);
         }
     }
-    applyVariables(*node, variables);
-
-    if (auto ignored = node->props.find("ignored"); ignored != node->props.end() && condition(*node, ignored->second.value)) {
-        return nullptr;
+    if (auto ignored = node->props.find("ignored"); ignored != node->props.end()) {
+        Node enclosing;
+        enclosing.parent = parent;
+        enclosing.vars = node->vars;
+        if (variables && !variables->empty()) {
+            auto passed = std::make_shared<jsonui::VarScope>();
+            passed->parent = node->vars;
+            for (const auto& [name, value] : *variables) {
+                enclosing.owned.push_back(toJson(value));
+                passed->own[name.front() == '$' ? name : "$" + name] = Prop { enclosing.owned.back().get(), nullptr };
+            }
+            enclosing.vars = passed;
+        }
+        if (ignores(enclosing, ignored->second.value)) {
+            return nullptr;
+        }
     }
+    applyVariables(*node, variables);
     const json::Value* type = property(*node, "type");
     node->type = type && type->isString() ? type->mString : "panel";
     if (const json::Value* bag = property(*node, "property_bag"); bag && bag->isObject()) {
@@ -872,7 +970,7 @@ void JsonUiRuntime::bind(Node& node)
         if (!binding->isObject()) {
             continue;
         }
-        if (binding->get("ignored") && condition(node, binding->get("ignored"))) {
+        if (binding->get("ignored") && ignores(node, binding->get("ignored"))) {
             continue;
         }
         const json::Value* typeValue = resolve(node, binding->get("binding_type"));
@@ -1016,7 +1114,7 @@ void JsonUiRuntime::animate(Node& node)
             if (type == "flip_book" || type == "aseprite_flip_book") {
                 break;
             }
-            double duration = std::max(0.0, number(probe, "duration", 0.0));
+            double duration = std::max(0.0, number(probe, "duration", 1.0));
             if (now - track.start < duration) {
                 break;
             }

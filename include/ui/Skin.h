@@ -50,6 +50,12 @@ public:
 
     const Sprite& sprite(std::string_view name);
     const Bitmap* bitmap(std::string_view name);
+
+    /**
+     * Loads several ui/ images at once, decoding them on as many threads, for
+     * big images first shown together like the panorama faces.
+     */
+    void preload(const std::vector<std::string>& names);
     std::string_view themeValue(std::string_view name) const;
     float themeLength(std::string_view name, float fallback = 0.0f) const;
     const BorderImage& border(std::string_view component, std::string_view state);

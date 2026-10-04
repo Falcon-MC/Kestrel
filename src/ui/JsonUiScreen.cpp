@@ -54,9 +54,7 @@ bool animating(const Node& node)
     return false;
 }
 
-constexpr float MinScrollBox = 8.0f;
 constexpr float CaretHeight = 7.0f;
-constexpr float WheelStep = 1.6f;
 constexpr size_t DefaultMaxLength = 256;
 constexpr const char* ToggleStates[] = {
     "unchecked_control",
@@ -110,6 +108,23 @@ Node* JsonUiRuntime::find(Node& from, const std::string& name) const
     for (std::unique_ptr<Node>& child : from.children) {
         if (Node* found = find(*child, name)) {
             return found;
+        }
+    }
+    return nullptr;
+}
+
+Node* JsonUiRuntime::nearest(Node& from, const std::string& name) const
+{
+    if (name.empty()) {
+        return nullptr;
+    }
+    std::vector<Node*> queue { &from };
+    for (size_t i = 0; i < queue.size(); ++i) {
+        if (queue[i]->name == name) {
+            return queue[i];
+        }
+        for (std::unique_ptr<Node>& child : queue[i]->children) {
+            queue.push_back(child.get());
         }
     }
     return nullptr;
@@ -245,7 +260,9 @@ void JsonUiRuntime::overrideState(Node& control, Node& node)
 {
     if (control.type == "edit_box" && node.name == text(control, "text_control")) {
         bool typing = focused == control.id;
-        node.caret = typing || (listeningCaret && flag(control, "always_listening", false));
+        bool listening = flag(control, "always_listening", false);
+        node.selected = !typing && listeningSelected && listening;
+        node.caret = !node.selected && (typing || (listeningCaret && listening));
         if (typing) {
             node.bound["#item_name"] = UiValue::of(control.edit);
         }
@@ -295,8 +312,8 @@ static void prepareTree(JsonUiRuntime& runtime, Node& node, bool shown)
             value = bound->second;
         }
         node.text = value.toText();
-        if (runtime.flag(node, "localize", true) && !node.text.empty() && Localization::shared().has(node.text)) {
-            node.text = tr(node.text, node.text);
+        if (runtime.flag(node, "localize", true) && !node.text.empty()) {
+            node.text = Localization::shared().label(node.text);
         }
     } else if (node.type == "image") {
         if (auto bound = node.bound.find("#texture"); bound != node.bound.end()) {
@@ -369,7 +386,7 @@ static void prepareTree(JsonUiRuntime& runtime, Node& node, bool shown)
     node.height = extent(1);
 
     if (node.type == "scroll_view") {
-        if (Node* content = runtime.find(node, runtime.text(node, "scroll_content")); content && content != &node) {
+        if (Node* content = runtime.nearest(node, runtime.text(node, "scroll_content")); content && content != &node) {
             content->scroller = &node;
         }
     }
@@ -556,7 +573,7 @@ bool JsonUiRuntime::mapButton(Node& node, const std::string& from, const std::st
         return false;
     }
     for (const auto& mapping : mappings->mArray) {
-        if (!mapping->isObject() || (mapping->get("ignored") && condition(node, mapping->get("ignored")))) {
+        if (!mapping->isObject() || (mapping->get("ignored") && ignores(node, mapping->get("ignored")))) {
             continue;
         }
         const auto* source = resolve(node, mapping->get("from_button_id"));
@@ -726,6 +743,16 @@ void JsonUiRuntime::input()
             if (Node* view = ancestor(*target, "scroll_view")) {
                 fire(*view, "scrollbar.active");
             }
+        } else if (Node* view = target ? ancestor(*target, "scroll_view") : nullptr) {
+            Node* track = nearest(*view, text(*view, "scrollbar_track"));
+            std::string button = text(*view, "scrollbar_track_button");
+            bool onTrack = track && (target == track || (!button.empty() && target->name == button));
+            Node* content = nearest(*view, text(*view, "scroll_content"));
+            Node* port = nearest(*view, text(*view, "scroll_view_port"));
+            if (onTrack && content && port && track->h > 0.0f) {
+                float fraction = std::clamp((my - track->y) / track->h, 0.0f, 1.0f);
+                view->scroll = std::clamp(port->h * -0.5f + fraction * content->h, 0.0f, view->scrollRange);
+            }
         }
     }
 
@@ -745,8 +772,8 @@ void JsonUiRuntime::input()
         }
         if (in.mouseDown && dragged->type == "scrollbar_box") {
             if (Node* view = ancestor(*dragged, "scroll_view"); view && dragged->parent) {
-                Node* content = find(*view, text(*view, "scroll_content"));
-                Node* port = find(*view, text(*view, "scroll_view_port"));
+                Node* content = nearest(*view, text(*view, "scroll_content"));
+                Node* port = nearest(*view, text(*view, "scroll_view_port"));
                 float travel = dragged->parent->h - dragged->h;
                 if (content && port && travel > 0.0f) {
                     float range = std::max(0.0f, content->h - port->h);
@@ -779,14 +806,29 @@ void JsonUiRuntime::input()
         active = 0;
     }
 
-    if (in.wheel != 0.0f) {
+    if (in.wheel != 0.0f && !blocked) {
+        auto inside = [&](const Node* control) {
+            return control && control->shown && mx >= control->x && mx <= control->x + control->w && my >= control->y && my <= control->y + control->h;
+        };
         for (auto it = sorted.rbegin(); it != sorted.rend(); ++it) {
-            if ((*it)->type == "scroll_view" && under(**it)) {
-                (*it)->scroll -= in.wheel * static_cast<float>(number(**it, "scroll_speed", 15.0)) * WheelStep;
-                fire(**it, "scrollbar.active");
-                fire(**it, "scrollbar.released");
-                break;
+            Node& view = **it;
+            if (view.type != "scroll_view") {
+                continue;
             }
+            bool takes = flag(view, "always_handle_scrolling", false)
+                || inside(nearest(view, text(view, "scroll_view_port")))
+                || inside(nearest(view, text(view, "scrollbar_track")));
+            if (!takes) {
+                continue;
+            }
+            if (!wheelSensitivity) {
+                wheelSensitivity = static_cast<float>(number(view, "scroll_speed", 1.0));
+            }
+            float step = in.wheel > 0.0f ? 120.0f / 127.0f : 120.0f / 128.0f;
+            view.scroll = std::clamp(view.scroll - *wheelSensitivity * in.wheel * step, 0.0f, view.scrollRange);
+            fire(view, "scrollbar.active");
+            fire(view, "scrollbar.released");
+            break;
         }
     }
 
@@ -899,6 +941,16 @@ void JsonUiRuntime::paint(Node& node)
             if (auto bound = node.bound.find(key); bound != node.bound.end() && bound->second.kind == UiValue::Kind::String) {
                 const std::string& channels = bound->second.text;
                 size_t start = 0;
+                if (channels.size() == 7 && channels.front() == '#') {
+                    char* parsed = nullptr;
+                    unsigned long rgb = std::strtoul(channels.c_str() + 1, &parsed, 16);
+                    if (parsed == channels.c_str() + 7) {
+                        rgba[0] = static_cast<float>((rgb >> 16) & 0xff) / 255.0f;
+                        rgba[1] = static_cast<float>((rgb >> 8) & 0xff) / 255.0f;
+                        rgba[2] = static_cast<float>(rgb & 0xff) / 255.0f;
+                    }
+                    start = channels.size() + 1;
+                }
                 for (size_t i = 0; i < 4 && start <= channels.size(); ++i) {
                     size_t end = channels.find(',', start);
                     rgba[i] = std::strtof(channels.substr(start, end == std::string::npos ? std::string::npos : end - start).c_str(), nullptr);
@@ -910,6 +962,12 @@ void JsonUiRuntime::paint(Node& node)
             }
         }
         if (!node.enabled) {
+            if (const json::Value* locked = node.type == "label" ? property(node, "locked_color") : nullptr; locked && locked->isArray()) {
+                for (size_t i = 0; i < std::min<size_t>(4, locked->mArray.size()); ++i) {
+                    const json::Value* channel = resolve(node, locked->mArray[i].get());
+                    rgba[i] = channel ? static_cast<float>(channel->number(1.0)) : 1.0f;
+                }
+            }
             if (node.props.count("locked_alpha")) {
                 rgba[3] *= static_cast<float>(number(node, "locked_alpha", 1.0));
             }
@@ -936,31 +994,41 @@ void JsonUiRuntime::paint(Node& node)
             ratio = number(node, "clip_ratio", 0.0);
         }
         ratio = std::clamp(ratio, 0.0, 1.0);
-        if (ratio >= 1.0) {
-            return;
-        }
-        if (ratio > 0.0) {
-            // clip_ratio is the part cut away; clip_direction is the side the rest stays on.
-            std::string direction = text(node, "clip_direction");
-            float keep = static_cast<float>(1.0 - ratio);
-            Rect visible = rect;
-            if (direction == "right") {
-                visible.x = rect.right() - rect.w * keep;
-                visible.w = rect.w * keep;
-            } else if (direction == "up") {
-                visible.h = rect.h * keep;
-            } else if (direction == "down") {
-                visible.y = rect.bottom() - rect.h * keep;
-                visible.h = rect.h * keep;
-            } else if (direction == "center") {
-                visible = { rect.x + rect.w * (1.0f - keep) * 0.5f, rect.y + rect.h * (1.0f - keep) * 0.5f, rect.w * keep, rect.h * keep };
-            } else {
-                visible.w = rect.w * keep;
-            }
-            ui->setClip(node.clipped ? intersect(node.clip, visible) : visible);
-        }
         const json::Value* uv = property(node, "uv");
         const json::Value* uvSize = property(node, "uv_size");
+        std::array<float, 2> sourceSize { sprite.width, sprite.height };
+        if (uvSize && uvSize->isArray() && uvSize->mArray.size() == 2) {
+            std::array<float, 2> given { term(node, uvSize->mArray[0].get(), 0.0f), term(node, uvSize->mArray[1].get(), 0.0f) };
+            if (given[0] != 0.0f || given[1] != 0.0f) {
+                sourceSize = given;
+            }
+        }
+        std::string direction = text(node, "clip_direction");
+        Rect clipVisible = rect;
+        bool clipping = ratio > 0.0 && (direction == "left" || direction == "right" || direction == "up" || direction == "down" || direction == "center");
+        if (clipping) {
+            bool perfect = flag(node, "clip_pixelperfect", true);
+            auto snap = [&](float pixels) {
+                return perfect && pixels > 0.0f ? std::floor(static_cast<float>(ratio) * pixels) / pixels : static_cast<float>(ratio);
+            };
+            float cutX = direction == "up" || direction == "down" ? 0.0f : snap(sourceSize[0]);
+            float cutY = direction == "left" || direction == "right" ? 0.0f : snap(sourceSize[1]);
+            float w = rect.w * (1.0f - cutX);
+            float h = rect.h * (1.0f - cutY);
+            Rect visible { rect.x, rect.y, w, h };
+            if (direction == "right" || direction == "down") {
+                visible.x = rect.x + rect.w * cutX;
+                visible.y = rect.y + rect.h * cutY;
+            } else if (direction == "center") {
+                visible.x = rect.x + rect.w * cutX * 0.5f;
+                visible.y = rect.y + rect.h * cutY * 0.5f;
+            }
+            if (visible.w <= 0.0f || visible.h <= 0.0f) {
+                return;
+            }
+            clipVisible = visible;
+            ui->setClip(node.clipped ? intersect(node.clip, visible) : visible);
+        }
         std::array<float, 2> origin { 0.0f, 0.0f };
         bool region = false;
         std::array<float, 2> frameSize { 0.0f, 0.0f };
@@ -1028,53 +1096,76 @@ void JsonUiRuntime::paint(Node& node)
             ui->spriteRegion({ rect.x, rect.y, frameSize[0] * scale, rect.h }, node.texture, { origin[0], origin[1], frameSize[0], frameSize[1] }, color);
             return;
         }
-        const json::Value* tiled = property(node, "tiled");
-        bool tileX = tiled && (tiled->boolean(false) || tiled->string() == "x");
-        bool tileY = tiled && (tiled->boolean(false) || tiled->string() == "y");
-        if (region || (uvSize && uvSize->isArray())) {
-            float uw = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[0].get(), 0.0f) : sprite.width;
-            float uh = uvSize && uvSize->isArray() && uvSize->mArray.size() == 2 ? term(node, uvSize->mArray[1].get(), 0.0f) : sprite.height;
-            Rect source { origin[0], origin[1], uw, uh };
-            if ((tileX || tileY) && uw > 0.0f && uh > 0.0f) {
-                float tw = tileX ? uw : rect.w;
-                float th = tileY ? uh : rect.h;
-                ui->setClip(node.clipped ? intersect(node.clip, rect) : rect);
-                for (float ty = rect.y; ty < rect.bottom(); ty += th) {
-                    for (float tx = rect.x; tx < rect.right(); tx += tw) {
-                        ui->spriteRegion({ tx, ty, tw, th }, node.texture, source, color);
-                    }
-                }
-                return;
+        Rect source { origin[0], origin[1], sourceSize[0], sourceSize[1] };
+        bool whole = origin[0] == 0.0f && origin[1] == 0.0f && sourceSize[0] == sprite.width && sourceSize[1] == sprite.height;
+        auto draw = [&](const Rect& dest, const Rect& texels) {
+            if (whole && texels.x == source.x && texels.y == source.y && texels.w == source.w && texels.h == source.h) {
+                ui->sprite(dest, node.texture, color);
+            } else {
+                ui->spriteRegion(dest, node.texture, texels, color);
             }
-            ui->spriteRegion(rect, node.texture, source, color);
-            return;
-        }
-        if ((tileX || tileY) && sprite.width > 0.0f && sprite.height > 0.0f) {
-            float tw = tileX ? sprite.width : rect.w;
-            float th = tileY ? sprite.height : rect.h;
-            if (const json::Value* scale = property(node, "tiled_scale"); scale && scale->isArray() && scale->mArray.size() == 2) {
-                tw *= tileX ? static_cast<float>(scale->mArray[0]->number(1.0)) : 1.0f;
-                th *= tileY ? static_cast<float>(scale->mArray[1]->number(1.0)) : 1.0f;
-            }
-            Rect bounds = node.clipped ? intersect(node.clip, rect) : rect;
-            ui->setClip(bounds);
-            for (float ty = rect.y; ty < rect.bottom() && th > 0.0f; ty += th) {
-                for (float tx = rect.x; tx < rect.right() && tw > 0.0f; tx += tw) {
-                    ui->sprite({ tx, ty, tw, th }, node.texture, color);
-                }
-            }
-            return;
-        }
+        };
         if (sprite.slice.left > 0.0f || sprite.slice.top > 0.0f || sprite.slice.right > 0.0f || sprite.slice.bottom > 0.0f) {
             ui->nineSlice(rect, node.texture, color);
-        } else if (flag(node, "keep_ratio", false) && sprite.width > 0.0f && sprite.height > 0.0f) {
-            float fit = std::min(rect.w / sprite.width, rect.h / sprite.height);
-            float w = sprite.width * fit;
-            float h = sprite.height * fit;
-            ui->sprite({ rect.x + (rect.w - w) * 0.5f, rect.y + (rect.h - h) * 0.5f, w, h }, node.texture, color);
-        } else {
-            ui->sprite(rect, node.texture, color);
+            return;
         }
+        const json::Value* tiled = resolve(node, property(node, "tiled"));
+        std::string axes = tiled && tiled->isString() ? tiled->mString : std::string();
+        bool both = (tiled && tiled->boolean(false)) || axes == "xy" || axes == "yx";
+        bool tileX = both || axes == "x";
+        bool tileY = both || axes == "y";
+        if ((tileX || tileY) && sourceSize[0] > 0.0f && sourceSize[1] > 0.0f) {
+            std::array<float, 2> scale { 1.0f, 1.0f };
+            if (const json::Value* given = property(node, "tiled_scale"); given && given->isArray() && given->mArray.size() == 2) {
+                float sx = term(node, given->mArray[0].get(), 0.0f);
+                float sy = term(node, given->mArray[1].get(), 0.0f);
+                if (sx > 1e-6f && sy > 1e-6f) {
+                    scale = { sx, sy };
+                }
+            }
+            float tw = tileX ? sourceSize[0] * scale[0] : rect.w;
+            float th = tileY ? sourceSize[1] * scale[1] : rect.h;
+            Rect bounds = node.clipped ? intersect(node.clip, rect) : rect;
+            if (clipping) {
+                bounds = intersect(bounds, clipVisible);
+            }
+            ui->setClip(bounds);
+            size_t tiles = 0;
+            for (float ty = rect.y; ty < rect.bottom() && th > 0.0f && tiles < 4096; ty += th) {
+                for (float tx = rect.x; tx < rect.right() && tw > 0.0f && tiles < 4096; tx += tw, ++tiles) {
+                    draw({ tx, ty, tw, th }, source);
+                }
+            }
+            return;
+        }
+        if (clipping) {
+            draw(rect, source);
+            return;
+        }
+        if (flag(node, "fill", false) && rect.w > 0.0f && rect.h > 0.0f && source.h > 0.0f) {
+            Rect cropped = source;
+            if (source.w / source.h <= rect.w / rect.h) {
+                cropped.h = rect.h / rect.w * source.w;
+                cropped.y = source.y + (source.h - cropped.h) * 0.5f;
+            } else {
+                cropped.w = rect.w / rect.h * source.h;
+                cropped.x = source.x + (source.w - cropped.w) * 0.5f;
+            }
+            draw(rect, cropped);
+            return;
+        }
+        Rect dest = rect;
+        if (flag(node, "keep_ratio", true) && sourceSize[0] > 0.0f && sourceSize[1] > 0.0f) {
+            float sx = rect.w / sourceSize[0];
+            float sy = rect.h / sourceSize[1];
+            if (std::abs(sx - sy) > std::numeric_limits<float>::epsilon()) {
+                float fit = std::min(sx, sy);
+                float w = sourceSize[0] * fit;
+                float h = sourceSize[1] * fit;
+                dest = { rect.x + (rect.w - w) * 0.5f, rect.y + (rect.h - h) * 0.5f, w, h };
+            }
+        }
+        draw(dest, source);
         return;
     }
 
@@ -1096,7 +1187,12 @@ void JsonUiRuntime::paint(Node& node)
         float lineY = rect.y;
         float caretX = rect.x;
         float caretY = rect.y;
-        const Font::TextLayout& layout = labelLayout(node, rect.w / scale + 0.01f);
+        size_t room = 0;
+        if (!node.caret && !node.selected) {
+            float pitch = std::max(1e-3f, (LabelLineHeight + padding) * scale);
+            room = static_cast<size_t>(std::max(1.0f, std::floor((rect.h + padding * scale) / pitch + 0.01f)));
+        }
+        const Font::TextLayout& layout = labelLayout(node, rect.w / scale + 0.01f, room);
         for (const Font::TextLine& line : layout.lines) {
             if (lineY + LabelLineHeight * scale > bottom) {
                 return;
@@ -1115,6 +1211,12 @@ void JsonUiRuntime::paint(Node& node)
                     line.ink.w * scale + margin * 2.0f, line.ink.h * scale + margin * 2.0f };
                 Rect clipped = intersect(ink, node.clip);
                 visible = clipped.w > 0.0f && clipped.h > 0.0f;
+            }
+            if (visible && node.selected) {
+                ui->fill({ lineX, lineY - scale, width + scale, (LabelLineHeight + 1.0f) * scale }, { 255, 255, 255, color.a });
+                ui->textLayoutLine(line, style, lineX, lineY, scale, { 0, 0, 0, color.a });
+                lineY += (LabelLineHeight + padding) * scale;
+                continue;
             }
             if (visible && shadow) {
                 ui->textLayoutLine(line, style, lineX + scale, lineY + scale, scale, color, true);
@@ -1290,7 +1392,7 @@ UiEvent JsonUiScreen::pointerTarget() const
         : runtime->ui && runtime->ui->input().rightMousePressed ? "button.menu_secondary_select" : "button.menu_select";
     if (mappings && mappings->isArray()) {
         for (const auto& mapping : mappings->mArray) {
-            if (!mapping->isObject() || (mapping->get("ignored") && runtime->condition(target, mapping->get("ignored")))) {
+            if (!mapping->isObject() || (mapping->get("ignored") && runtime->ignores(target, mapping->get("ignored")))) {
                 continue;
             }
             const auto* from = runtime->resolve(target, mapping->get("from_button_id"));
@@ -1428,38 +1530,55 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::
         r.heightsKnown = false;
     }
 
-    // Scrolling is clamped once the content is sized, and the scroll box takes the share of
-    // its track the view does of the content.
+    // A scroll view scrolls only once its content, viewport, track and box all exist: the
+    // offset is clamped to the content less the viewport, the box takes
+    // clamp(viewport / content, 0.1, 1) of the track and travels it, and the bar panel hides
+    // while the content fits.
     std::function<void(Node&)> scrolls = [&](Node& node) {
         if (!node.shown) {
             return;
         }
         if (node.type == "scroll_view") {
-            Node* content = r.find(node, r.text(node, "scroll_content"));
-            Node* port = r.find(node, r.text(node, "scroll_view_port"));
-            Node* box = r.find(node, r.text(node, "scrollbar_box"));
-            if (content && port) {
+            Node* content = r.nearest(node, r.text(node, "scroll_content"));
+            Node* port = r.nearest(node, r.text(node, "scroll_view_port"));
+            Node* track = r.nearest(node, r.text(node, "scrollbar_track"));
+            Node* box = r.nearest(node, r.text(node, "scrollbar_box"));
+            Node* panel = r.nearest(node, r.text(node, "scroll_box_and_track_panel"));
+            node.scrollRange = 0.0f;
+            if (content && port && track && box) {
                 float range = std::max(0.0f, content->h - port->h);
-                bool grew = r.flag(node, "jump_to_bottom_on_update", false) && content->h != node.scrolledContent;
+                bool jump = r.flag(node, "jump_to_bottom_on_update", false);
+                bool grew = jump && (node.scrolledContent < 0.0f || range != node.scrolledContent);
                 if (grew || r.lookup(node, "#force_scroll_to_end").truthy()) {
                     node.scroll = range;
                 }
-                node.scrolledContent = content->h;
+                node.scrolledContent = range;
                 node.scroll = std::clamp(node.scroll, 0.0f, range);
-                if (box && box->parent) {
-                    bool always = r.flag(node, "scrollbar_always_visible", false);
-                    if (range <= 0.0f && !always) {
-                        box->shown = false;
-                        if (Node* track = r.find(node, r.text(node, "scrollbar_track"))) {
-                            track->shown = false;
-                        }
-                    } else {
-                        float track = box->parent->h;
-                        float height = content->h > 0.0f ? std::max(MinScrollBox, std::round(track * port->h / content->h)) : track;
-                        height = std::min(height, track);
-                        r.size(*box, 1, track, height);
-                        box->offsetOverride = std::array<float, 2> { 0.0f, range > 0.0f ? std::round((track - height) * node.scroll / range) : 0.0f };
+                node.scrollRange = range;
+                float shown = std::trunc(node.scroll * 8.0f) * 0.125f;
+                bool fits = content->h <= 0.0f || port->h / content->h >= 1.0f;
+                bool always = r.flag(node, "scrollbar_always_visible", false);
+                std::string draggable = r.text(*box, "draggable");
+                bool axis = draggable == "vertical" || draggable == "horizontal";
+                bool hidden = axis && panel && fits && !always;
+                if (hidden) {
+                    panel->shown = false;
+                } else if (box->parent) {
+                    float length = track->h;
+                    float height = box->h;
+                    if (axis && panel) {
+                        float ratio = content->h > 0.0f ? std::clamp(port->h / content->h, 0.1f, 1.0f) : 1.0f;
+                        height = std::ceil(ratio * length);
+                        r.size(*box, 1, box->parent->h, height);
                     }
+                    float fraction = range > 0.5f ? shown / range : 1.0f;
+                    box->offsetOverride = std::array<float, 2> { 0.0f, (length - height) * fraction };
+                }
+                bool hitBottom = hidden || (axis && panel && fits) || std::abs(shown - range) < 0.1f || (shown != 0.0f && range <= shown);
+                node.bound["#scrollbar_hit_bottom"] = UiValue::of(hitBottom);
+                node.bound["#scrolled_to_end"] = UiValue::of(range <= node.scroll);
+                if (panel) {
+                    node.bound["#scroll_bar_visible"] = UiValue::of(!hidden);
                 }
             }
         }
@@ -1536,9 +1655,39 @@ void JsonUiScreen::showListeningCaret(bool shown)
     }
 }
 
+void JsonUiScreen::showListeningSelection(bool selected)
+{
+    if (runtime->listeningSelected != selected) {
+        runtime->listeningSelected = selected;
+        runtime->laidOut = false;
+    }
+}
+
 bool JsonUiScreen::editing() const
 {
     return runtime->focused != 0;
+}
+
+float JsonUiScreen::contentHeight() const
+{
+    if (!runtime->root) {
+        return 0.0f;
+    }
+    float top = runtime->root->y;
+    float bottom = top;
+    std::function<void(const JsonUiRuntime::Node&)> walk = [&](const JsonUiRuntime::Node& node) {
+        if (!node.shown) {
+            return;
+        }
+        if (node.type != "panel" && node.type != "stack_panel" && node.type != "factory" && node.type != "grid") {
+            bottom = std::max(bottom, node.y + node.h);
+        }
+        for (const auto& child : node.children) {
+            walk(*child);
+        }
+    };
+    walk(*runtime->root);
+    return bottom - top;
 }
 
 bool JsonUiScreen::hovering() const

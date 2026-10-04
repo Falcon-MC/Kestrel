@@ -100,14 +100,18 @@ Client::Client(LaunchOptions options)
     , settingsFile(platform::dataDirectory() / "settings.txt")
     , globalResources(platform::dataDirectory() / "resource_packs")
 {
+    StartupTimer timer;
     store.load();
     loadSettings();
     account.restore();
+    timer.mark("servers, settings and account");
     featured = std::make_unique<FeaturedServers>(menu.language());
     menu.formPanel().imageSprite = [this](const menu::FormImage& image) { return formImage(image); };
+    timer.mark("featured servers");
     if (!font.load(assets, skin)) {
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
+    timer.mark("fonts");
     launch = std::move(options);
     if (launch.connect) {
         pendingConnect = menu::ConnectRequest { *launch.connect, *launch.connect };
@@ -116,10 +120,15 @@ Client::Client(LaunchOptions options)
     if (savedFullscreen && !launch.hidden) {
         window->toggleFullscreen();
     }
+    timer.mark("window");
     renderer = Renderer::create(*window);
+    timer.mark("renderer");
     startSeconds = secondsNow();
-    soundEngine = std::make_unique<audio::SoundEngine>();
-    debugLog(std::string("sound engine ") + (soundEngine->ready() ? "ready" : "failed to open the output device"));
+    pendingSoundEngine = std::async(std::launch::async, [] {
+        auto engine = std::make_unique<audio::SoundEngine>();
+        debugLog(std::string("sound engine ") + (engine->ready() ? "ready" : "failed to open the output device"));
+        return engine;
+    });
     std::filesystem::path vanilla = world::PackSource::locateVanilla();
     if (!vanilla.empty()) {
         vanillaSounds = std::make_shared<world::PackSource>(vanilla);
@@ -128,12 +137,15 @@ Client::Client(LaunchOptions options)
             musicSounds = std::make_shared<world::PackSource>(vanilla.parent_path() / "vanilla_music");
         }
     }
+    timer.mark("vanilla pack");
     ui::Localization::shared().load(vanillaSounds, menu.language());
     std::error_code oreuiError;
     if (!vanilla.empty() && std::filesystem::is_directory(vanilla.parent_path() / "oreui", oreuiError)) {
         ui::Localization::shared().setInterfacePack(std::make_shared<world::PackSource>(vanilla.parent_path() / "oreui"));
     }
+    timer.mark("localization");
     startMods();
+    timer.mark("mods");
     if (launch.agent) {
         startAgent();
     }
@@ -154,6 +166,7 @@ int Client::run()
 {
     DiscordPresence discord;
     float bakedScale = 0.0f;
+    bool firstFrameLogged = false;
     constexpr ui::Color canvas = ui::theme::Black;
     auto lastFrame = std::chrono::steady_clock::now();
 
@@ -379,6 +392,13 @@ int Client::run()
             context.endFrame();
         }
 
+        if (!firstFrameLogged) {
+            firstFrameLogged = true;
+            char at[48];
+            std::snprintf(at, sizeof(at), "startup first menu frame at %.1f ms", processMilliseconds());
+            debugLog(at);
+        }
+
         WindowChrome chrome;
         float caption = menu.captionHeight();
         chrome.captionHeight = caption * scale;
@@ -447,7 +467,7 @@ int Client::run()
             saveSettings();
         }
         renderer->setVsync(menu.vsync());
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.glintStrength() != savedGlintStrength || menu.glintSpeed() != savedGlintSpeed || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -1241,6 +1261,7 @@ void Client::syncSession()
         blockAssets = assets;
         if (snapshot.reloadedMeshes) {
             for (const auto& update : *snapshot.reloadedMeshes) applyMeshUpdate(update);
+            session.acknowledgeResourceReload(snapshot.resourceReloadSerial, snapshot.assets.get());
         }
     }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {

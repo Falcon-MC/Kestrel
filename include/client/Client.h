@@ -4,6 +4,9 @@
 #include "agent/EventLog.h"
 #include "agent/SessionControl.h"
 #include "audio/SoundEngine.h"
+#include "audio/SoundLibrary.h"
+
+#include <future>
 #include "client/Account.h"
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
@@ -276,6 +279,8 @@ private:
     bool savedGameplayFov = true;
     float savedSafeArea = menu::MaxSafeArea;
     int savedBrightness = menu::DefaultBrightness;
+    int savedGlintStrength = 100;
+    int savedGlintSpeed = 100;
     menu::ChatSettings savedChat;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";
@@ -294,6 +299,8 @@ private:
     std::shared_ptr<const SessionSnapshot> seenSessionSnapshot;
     PlayerView playerView;
     std::unique_ptr<audio::SoundEngine> soundEngine;
+    std::future<std::unique_ptr<audio::SoundEngine>> pendingSoundEngine;
+    std::future<std::shared_ptr<audio::SoundLibrary>> pendingSoundLibrary;
     std::shared_ptr<world::PackSource> vanillaSounds;
     std::shared_ptr<world::PackSource> musicSounds;
     std::vector<std::shared_ptr<const world::PackFiles>> soundPacks;

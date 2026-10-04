@@ -526,6 +526,14 @@ bool cameraFacingSprite(const std::string& identifier)
     });
 }
 
+bool projectileEntity(const std::string& identifier)
+{
+    return targetRotationIsAbsolute(identifier) || (cameraFacingSprite(identifier) && identifier != "minecraft:xp_orb")
+        || identifier == "minecraft:thrown_trident" || identifier == "minecraft:fishing_hook"
+        || identifier == "minecraft:wind_charge_projectile" || identifier == "minecraft:breeze_wind_charge_projectile"
+        || identifier == "minecraft:shulker_bullet";
+}
+
 void EntityAnimator::runScripts(const std::vector<molang::Script>& scripts)
 {
     for (const molang::Script& script : scripts) {
@@ -920,6 +928,9 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
         lastPosition = { input.x, input.y, input.z };
     }
     yawSpeed = deltaTime > 0.0 ? wrapDegrees(input.yaw - lastYaw) / deltaTime : 0.0;
+    if (input.tickPositionDelta) {
+        for (size_t axis = 0; axis < 3; ++axis) velocity[axis] = (*input.tickPositionDelta)[axis] / TickSeconds;
+    }
     lastYaw = input.yaw;
 
     scope.variables = &variables;
@@ -1023,8 +1034,10 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     }
     double partialTick = tickClock / TickSeconds;
     if (name == "frame_alpha") {
-        return partialTick;
+        return current.frameAlpha.value_or(float(partialTick));
     }
+    if (name == "shake_time") return current.shakeTime;
+    if (name == "is_attached_to_entity") return current.attachedToEntity ? 1.0 : 0.0;
     // The game counts a used item's duration down from its maximum.
     if (name == "main_hand_item_max_duration") {
         return itemMaxUseTicks(current.mainHandItem);
@@ -1089,6 +1102,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         {"can_swim", 20},
         {"can_fly", 21},
         {"can_walk", 22},
+        {"can_damage_nearby_mobs", 56},
         {"is_resting", 23},
         {"is_sitting", 24},
         {"is_angry", 25},
@@ -1187,7 +1201,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "is_alive" || name == "has_collision" || name == "has_gravity") {
         return 1.0;
     }
-    if (name == "target_x_rotation" || name == "head_x_rotation" || name == "eye_target_x_rotation") {
+    if (name == "body_x_rotation" || name == "target_x_rotation" || name == "head_x_rotation" || name == "eye_target_x_rotation") {
         return current.pitch;
     }
     if (name == "target_y_rotation" && targetRotationIsAbsolute(current.identifier)) {
