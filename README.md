@@ -44,11 +44,15 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
-When `Falcon-NBT`, `Falcon-Protocol`, `Falcon-Network` and `Falcon-BedrockData` sit next to this directory they are used
-directly, otherwise they are fetched from GitHub. Set `KESTREL_FALCON_ROOT` to point at another directory.
+On Windows, install [MSYS2](https://www.msys2.org) with the UCRT64 toolchain (g++, cmake, ninja) and add it to
+`PATH`, then run `build.bat`. On Linux and macOS, `build.sh` does the same. Both write the build log to `build.txt`.
 
-The block textures are read from the installed game. Set `KESTREL_VANILLA_PACK` to use another vanilla
-resource pack.
+When `Falcon-NBT`, `Falcon-Protocol`, `Falcon-Network`, `Falcon-BedrockData` and `Falcon-BlockStateUpdater` sit
+next to this directory they are used directly, otherwise they are fetched from GitHub. Set `KESTREL_FALCON_ROOT` to
+point at another directory.
+
+The block textures are read from the installed game. Set `KESTREL_VANILLA_PACK` to use another copy of the vanilla
+resource pack you are entitled to use.
 
 ## Command line and agents
 
@@ -61,7 +65,7 @@ Kestrel --headless --connect <address>     no window and no rendering, chat prin
 `--agent` (or `--agent-port <port>`) opens a JSON control port on 127.0.0.1 for automation. The port and its
 token are written to `agent.json` in the data directory; set `KESTREL_AGENT_TOKEN` to choose the token. The
 [kestrel-mcp](https://github.com/Falcon-MC/kestrel-mcp) server uses it to let AI agents drive Kestrel: screenshots,
-menus, input, forms, inventory and packet logs. Screenshots need the Vulkan renderer for now.
+menus, input, forms, inventory and packet logs.
 
 ## Mods
 
@@ -98,13 +102,15 @@ key bindings, a scheduler, per mod settings, packet filters and custom shaders. 
 - [Network](https://github.com/Falcon-MC/Network) - RakNet and NetherNet transport
 - [NBT](https://github.com/Falcon-MC/NBT) - NBT tags and binary streams
 - [BedrockData](https://github.com/Falcon-MC/BedrockData) - game data files, versioned by protocol
+- [BlockStateUpdater](https://github.com/Falcon-MC/BlockStateUpdater) - upgrades old block states to the current version
 
 ## Licensing information
 
 Kestrel is licensed under the [GNU Lesser General Public License v3.0](LICENSE), which supplements
 the [GNU General Public License v3.0](COPYING).
 
-Kestrel ships no game assets. Textures, UI files and fonts are read from a Minecraft installation you own.
+Kestrel ships no game assets. Textures, UI files and fonts are read from a Minecraft installation you own, or from
+a vanilla resource pack you are entitled to use.
 
 Signing in goes through the same Xbox Live and PlayFab services the game itself talks to. Using an unofficial
 client with them is at your own risk.
