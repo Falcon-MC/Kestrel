@@ -25,6 +25,11 @@ struct HudItem {
     std::vector<std::pair<int, int>> enchantments;
     bool enchanted = false;
     bool handEquipped = false;
+
+    /**
+     * The map a filled map shows, from its map_uuid; 0 for any other item.
+     */
+    int64_t mapId = 0;
     int32_t useTicks = 0;
     bool empty() const { return identifier.empty() || count <= 0; }
     bool operator==(const HudItem&) const = default;

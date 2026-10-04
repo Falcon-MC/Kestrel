@@ -1260,7 +1260,11 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "get_equipped_item_name") {
         bool offHand = argument(0) == molang::internString("off_hand") || argument(0) == 1.0;
         const std::string& item = offHand ? current.offHandItem : current.mainHandItem;
-        return molang::internString(item.substr(item.find(':') == std::string::npos ? 0 : item.find(':') + 1));
+        std::string shortName = item.substr(item.find(':') == std::string::npos ? 0 : item.find(':') + 1);
+        if (shortName == "filled_map") {
+            shortName = "map";
+        }
+        return molang::internString(shortName);
     }
     if (name == "get_actor_info_id" || name == "owner_identifier" || name == "identifier" || name == "entity_identifier") {
         return molang::internString(current.identifier);

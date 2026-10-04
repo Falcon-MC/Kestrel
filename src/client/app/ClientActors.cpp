@@ -1122,6 +1122,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
         lightQuads(out, firstWorn, light);
     }
+    appendFrameItems(origin, out);
     for (auto it = animators.begin(); it != animators.end();) {
         if (present.count(it->first)) {
             ++it;

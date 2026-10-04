@@ -394,6 +394,10 @@ private:
     std::optional<BlockSelection> selectionView;
     std::vector<BlockCrack> crackViews;
     std::vector<ChestLidView> chestLidViews;
+    std::vector<FrameItemView> frameItemViews;
+    std::vector<uint8_t> mapIcons;
+    uint32_t mapIconsWidth = 0;
+    uint32_t mapIconsHeight = 0;
     std::map<std::array<int32_t, 3>, float> chestLidShown;
     BlockParticles blockParticles;
     world::ParticleLibrary particleLibrary;
@@ -477,9 +481,11 @@ private:
     struct HeldItemMesh {
         std::vector<HeldItemFace> faces;
         bool block = false;
+        bool map = false;
         uint32_t slot = 0;
         uint64_t used = 0;
     };
+    HeldItemMesh* heldMesh(const HudItem& held);
     std::unordered_map<std::string, HeldItemMesh> heldMeshes;
     std::vector<ActorDraw> actorDraws;
     struct ActorGeometry {
@@ -507,6 +513,13 @@ private:
     uint32_t nextDroppedIcon = 0;
     const DroppedItemMesh* droppedItemMesh(const HudItem& item);
     void appendDroppedItem(const ActorView& actor, const std::array<int32_t, 3>& origin, double now, std::vector<world::ModelQuadGpu>& out);
+    uint32_t mapBackgroundLayer() const;
+    void loadMapArt(const std::vector<std::shared_ptr<const world::PackFiles>>& packs, uint8_t* backgroundLayer);
+    std::vector<uint8_t> composeMap(const MapView& map) const;
+    std::string mapMeshKey(const HudItem& item);
+    bool buildMapMesh(const HudItem& item, uint32_t layer, std::vector<HeldItemFace>& faces);
+    void appendFrameItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, std::vector<world::ModelQuadGpu>& out);
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;

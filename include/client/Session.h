@@ -32,6 +32,7 @@
 
 class BedrockConnection;
 class BossEventPacket;
+class ClientboundMapItemDataPacket;
 class LevelEventPacket;
 class MinecraftAuthentication;
 class Packet;
@@ -73,6 +74,30 @@ struct BlockHit {
  * The box outlined around the block under the crosshair, in world
  * coordinates.
  */
+/**
+ * One marker the server draws on a map: its icon in the map icon sheet,
+ * turned in sixteenths of a turn, at a position from -128 to 127 across the
+ * map, in a color given as ABGR.
+ */
+struct MapMarker {
+    int32_t image = 0;
+    int32_t rotation = 0;
+    int32_t x = 0;
+    int32_t y = 0;
+    uint32_t color = 0xFFFFFFFFu;
+};
+
+/**
+ * What a filled map shows: its 128 by 128 pixels as RGBA, transparent where
+ * nothing is drawn yet, its markers, and a revision that changes with them.
+ */
+struct MapView {
+    static constexpr int Size = 128;
+    std::vector<uint8_t> pixels = std::vector<uint8_t>(size_t(Size) * Size * 4, 0);
+    std::vector<MapMarker> markers;
+    uint64_t revision = 0;
+};
+
 struct BlockSelection {
     std::array<int32_t, 3> cell {};
     std::array<double, 3> min {};
@@ -101,6 +126,18 @@ struct ChestLidView {
     world::ChestLid lid;
     bool open = false;
     float openness = 0.0f;
+};
+
+/**
+ * The item an item frame holds: the frame's cell, the side it faces as a
+ * facing_direction (0 down, 1 up, 2 north, 3 south, 4 west, 5 east), the
+ * item, and how far it is turned in degrees.
+ */
+struct FrameItemView {
+    std::array<int32_t, 3> cell {};
+    int32_t facing = 2;
+    HudItem item;
+    float rotation = 0.0f;
 };
 
 /**
@@ -576,6 +613,7 @@ struct SessionSnapshot {
     std::string riding;
     std::vector<BlockCrack> cracks;
     std::vector<ChestLidView> chestLids;
+    std::vector<FrameItemView> frameItems;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -701,6 +739,17 @@ public:
      * dimension.
      */
     std::vector<world::ParticleSpawn> takeParticles();
+
+    /**
+     * The revision of a map the server described, 0 while it has sent
+     * nothing for it; asks the server for it the first time it is unknown.
+     */
+    uint64_t mapRevision(int64_t mapId);
+
+    /**
+     * Copies a map the server described; false while it has sent nothing.
+     */
+    bool copyMap(int64_t mapId, MapView& out);
 
     /**
      * Draws every block of the given names as air, or with visibleOnly every
@@ -843,6 +892,8 @@ private:
     bool locallyBroken(const std::array<int32_t, 3>& cell) const;
     void tickCracks();
     void tickChestLids();
+    void tickFrameItems();
+    uint32_t frameScanTicks = 0;
     void markChestLid(const std::array<int32_t, 3>& cell, bool moving);
     void publishBreaking();
     double boomFraction();
@@ -1014,6 +1065,12 @@ private:
     std::vector<PredictedBreak> predictedBreaks;
     std::vector<ParticleBurst> pendingBursts;
     std::vector<world::ParticleSpawn> pendingParticles;
+    std::unordered_map<int64_t, MapView> maps;
+    std::set<int64_t> requestedMaps;
+    std::vector<int64_t> pendingMapRequests;
+    uint64_t mapRevisions = 0;
+    void handleMapPacket(const ClientboundMapItemDataPacket& packet);
+    void sendMapRequests();
     std::optional<std::pair<std::set<std::string>, bool>> pendingHidden;
     std::set<std::string> hiddenNames;
     bool hiddenInverted = false;

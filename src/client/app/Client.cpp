@@ -1259,8 +1259,10 @@ void Client::syncSession()
         upload.mipLevels = world::TextureMipLevels;
         renderer->uploadBlockTextures(upload);
         std::vector<uint8_t> entityPixels = assets->entityTexturePixels();
-        entityPixels.resize(entityPixels.size() + size_t(world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
-        uint32_t particleBase = assets->entityTextureLayers() + world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots;
+        entityPixels.resize(entityPixels.size() + size_t(world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots + 1) * world::EntityTextureSize * world::EntityTextureSize * 4, 0);
+        uint32_t mapBackground = assets->entityTextureLayers() + world::SkinPoolLayers + HeldItemTextureSlots + world::DroppedIconSlots;
+        loadMapArt(snapshot.packs, entityPixels.data() + size_t(mapBackground) * world::EntityTextureSize * world::EntityTextureSize * 4);
+        uint32_t particleBase = mapBackground + 1;
         uint32_t particleLayers = loadParticles(snapshot.packs, particleBase, entityPixels);
         renderer->uploadEntityTextures(entityPixels.data(), world::EntityTextureSize, particleBase + particleLayers);
         heldMeshes.clear();
@@ -1357,6 +1359,7 @@ void Client::syncSession()
         selectionView = snapshot.selection;
         crackViews = snapshot.cracks;
         chestLidViews = snapshot.chestLids;
+        frameItemViews = snapshot.frameItems;
     }
     ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
     targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();

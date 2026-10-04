@@ -176,6 +176,9 @@ HudItem hudItemOf(const ItemStack& stack)
             }
         }
     }
+    if (const Tag* map = stack.mTag.get("map_uuid"); map && map->getType() == Tag::Type::Long) {
+        item.mapId = map->asLong();
+    }
     if (const Tag* patterns = stack.mTag.get("Patterns"); patterns && patterns->isList()) {
         for (const auto& pattern : patterns->getList()) {
             if (pattern.isCompound() && item.bannerPatterns.size() < 16) {

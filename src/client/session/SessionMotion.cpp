@@ -304,6 +304,9 @@ void Session::tickMotion()
         tickProjectiles(nextMotionTick - TickSeconds * (due - index));
         runMotionTick(now);
     }
+    if (due > 0) {
+        sendMapRequests();
+    }
 }
 
 /**
@@ -568,6 +571,7 @@ void Session::runMotionTick(double now)
     tickItemUse(packet);
     tickCracks();
     tickChestLids();
+    tickFrameItems();
     transmit(packet);
     connection->flush();
     lastMotionInput = input;

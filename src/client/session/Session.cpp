@@ -57,6 +57,7 @@
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
 #include "Protocol/Packets/SetTimePacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
+#include "Protocol/Packets/ClientboundMapItemDataPacket.h"
 #include "Protocol/Packets/MovePlayerPacket.h"
 #include "Protocol/Packets/NetworkChunkPublisherUpdatePacket.h"
 #include "Protocol/Packets/StartGamePacket.h"
@@ -987,6 +988,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
     case MinecraftPacketIds::SpawnParticleEffect:
+    case MinecraftPacketIds::ClientboundMapItemData:
         break;
     default:
         return;
@@ -1291,6 +1293,8 @@ void Session::handleWorldPacket(std::string& payload)
             initializeLocalPlayer(*connection, localRuntimeId);
             dimensionSpawnReceived = true;
         }
+    } else if (auto map = std::dynamic_pointer_cast<ClientboundMapItemDataPacket>(packet)) {
+        handleMapPacket(*map);
     } else if (auto effect = std::dynamic_pointer_cast<SpawnParticleEffectPacket>(packet)) {
         if (effect->mDimensionId != motionDimension || effect->mIdentifier.empty()) {
             return;
@@ -1846,7 +1850,13 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     pendingInventoryRequest = 0;
     inventoryRequestId = -1;
     inventoryClosing = false;
-    { std::lock_guard<std::mutex> guard(mutex); inventoryCommands.clear(); }
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        inventoryCommands.clear();
+        maps.clear();
+        requestedMaps.clear();
+        pendingMapRequests.clear();
+    }
     requestedSlot = -1;
     spawnInitialized = false;
     motion = PlayerMotion {};

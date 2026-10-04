@@ -420,6 +420,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     int32_t itemBone = -1;
     int32_t bodyBone = -1;
     std::vector<uint8_t> shown(rig.bones.size(), 0);
+    HeldItemMesh* mapMesh = held.identifier == "minecraft:filled_map" ? heldMesh(held) : nullptr;
+    bool holdingMap = mapMesh && mapMesh->map;
     for (size_t bone = 0; bone < rig.bones.size(); ++bone) {
         std::string name = lowercase(rig.bones[bone].name);
         if (name == "rightitem") {
@@ -428,7 +430,10 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         if (name == "body") {
             bodyBone = static_cast<int32_t>(bone);
         }
-        if (heldName.empty() && (name == "rightarm" || name == "rightsleeve")) {
+        if ((heldName.empty() || holdingMap) && (name == "rightarm" || name == "rightsleeve")) {
+            shown[bone] = 1;
+        }
+        if (holdingMap && hudState.offhand.empty() && (name == "leftarm" || name == "leftsleeve")) {
             shown[bone] = 1;
         }
     }
@@ -505,6 +510,9 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
     }
     appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown);
+    if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, out)) {
+        return;
+    }
     if (heldName.empty() || itemBone < 0) {
         return;
     }
@@ -786,17 +794,18 @@ float Client::swingProgress()
 }
 
 /**
- * The selected hotbar item as the hand holds it: a block as a cube and any
- * other item as its texture extruded one pixel deep. place maps a point of
- * the item, in blocks around its center, to 1/256 block around the draw
- * origin; it is told whether the item is a cube so it can pose it.
+ * The mesh an item is held with, built once per look and kept in one of the
+ * held texture layers; when they run out the least recently drawn look gives
+ * its layer up. A filled map whose content arrived is a flat map showing it,
+ * rebuilt whenever the map changes.
  */
-void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite)
+Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
 {
     if (held.empty() || !blockAssets) {
-        return;
+        return nullptr;
     }
-    std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
+    std::string mapKey = mapMeshKey(held);
+    std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon + mapKey;
     auto found = heldMeshes.find(meshKey);
     if (found == heldMeshes.end()) {
         uint32_t slot = static_cast<uint32_t>(heldMeshes.size());
@@ -806,17 +815,36 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
                 if (it->second.used == heldItemFrame) continue;
                 if (oldest == heldMeshes.end() || it->second.used < oldest->second.used) oldest = it;
             }
-            if (oldest == heldMeshes.end()) return;
+            if (oldest == heldMeshes.end()) return nullptr;
             slot = oldest->second.slot;
             heldMeshes.erase(oldest);
         }
         HeldItemMesh cached;
         cached.slot = slot;
-        cached.faces = buildItemMesh(held, heldItemLayer() + slot, cached.block);
+        if (!mapKey.empty() && buildMapMesh(held, heldItemLayer() + slot, cached.faces)) {
+            cached.map = true;
+        } else {
+            cached.faces = buildItemMesh(held, heldItemLayer() + slot, cached.block);
+        }
         found = heldMeshes.emplace(std::move(meshKey), std::move(cached)).first;
     }
-    HeldItemMesh& mesh = found->second;
-    mesh.used = heldItemFrame;
+    found->second.used = heldItemFrame;
+    return &found->second;
+}
+
+/**
+ * The selected hotbar item as the hand holds it: a block as a cube and any
+ * other item as its texture extruded one pixel deep. place maps a point of
+ * the item, in blocks around its center, to 1/256 block around the draw
+ * origin; it is told whether the item is a cube so it can pose it.
+ */
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite)
+{
+    HeldItemMesh* cached = heldMesh(held);
+    if (!cached) {
+        return;
+    }
+    HeldItemMesh& mesh = *cached;
     for (const HeldItemFace& face : mesh.faces) {
         std::array<Vec3, 4> corners;
         for (size_t i = 0; i < 4; ++i) {
@@ -955,6 +983,116 @@ std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uin
         }
     }
     return mesh;
+}
+
+/**
+ * A filled map as it is held or framed, in blocks around its center like a
+ * flat item: the map's pixels in front over the map background, which is a
+ * little larger and also covers the back. False until the server has sent
+ * the map, so the item shows its icon meanwhile.
+ */
+bool Client::buildMapMesh(const HudItem& item, uint32_t layer, std::vector<HeldItemFace>& faces)
+{
+    MapView map;
+    if (!renderer || !session.copyMap(item.mapId, map)) {
+        return false;
+    }
+    std::vector<uint8_t> pixels = composeMap(map);
+    renderer->updateEntityTexture(layer, pixels.data());
+    float h = HeldItemSize * 0.5f;
+    float edge = h * 142.0f / 128.0f;
+    float depth = HeldItemSize / 64.0f;
+    uint32_t shade = EntityQuadFlag | (1u << 8);
+    const std::array<std::array<uint16_t, 2>, 4> fullUv { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
+    faces.clear();
+    faces.push_back({ { { { -h, h, depth }, { h, h, depth }, { h, -h, depth }, { -h, -h, depth } } }, fullUv, layer, shade | 6 });
+    faces.push_back({ { { { -edge, edge, 0.0f }, { edge, edge, 0.0f }, { edge, -edge, 0.0f }, { -edge, -edge, 0.0f } } }, fullUv, mapBackgroundLayer(), shade | 6 });
+    faces.push_back({ { { { -edge, edge, -depth }, { edge, edge, -depth }, { edge, -edge, -depth }, { -edge, -edge, -depth } } }, fullUv, mapBackgroundLayer(), shade | 5 });
+    return true;
+}
+
+/**
+ * The items hanging in item frames: laid flat against the frame's plate,
+ * turned by the frame's rotation, half a block wide, a block as a small cube
+ * standing out of it, and a map filling the whole frame.
+ */
+void Client::appendFrameItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    static constexpr std::array<Vec3, 6> Normals { {
+        { 0.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f },
+        { 0.0f, 0.0f, 1.0f }, { -1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f },
+    } };
+    constexpr float PlateDepth = 1.0f / 16.0f;
+    constexpr float FrameItemSize = 0.5f;
+    for (const FrameItemView& frame : frameItemViews) {
+        HeldItemMesh* mesh = heldMesh(frame.item);
+        if (!mesh || mesh->faces.empty()) {
+            continue;
+        }
+        Vec3 normal = Normals[size_t(std::clamp(frame.facing, 0, 5))];
+        Vec3 up = frame.facing == 1 ? Vec3 { 0.0f, 0.0f, -1.0f } : frame.facing == 0 ? Vec3 { 0.0f, 0.0f, 1.0f } : Vec3 { 0.0f, 1.0f, 0.0f };
+        Vec3 back = scaled(normal, -1.0f);
+        Vec3 right {
+            back[1] * up[2] - back[2] * up[1],
+            back[2] * up[0] - back[0] * up[2],
+            back[0] * up[1] - back[1] * up[0],
+        };
+        float turn = -frame.rotation * Pi / 180.0f;
+        Vec3 turnedRight = add(scaled(right, std::cos(turn)), scaled(up, std::sin(turn)));
+        Vec3 turnedUp = add(scaled(up, std::cos(turn)), scaled(right, -std::sin(turn)));
+        float scale = mesh->map ? 1.0f / HeldItemSize * 128.0f / 142.0f : mesh->block ? 1.0f : FrameItemSize / HeldItemSize;
+        float lift = mesh->block ? HeldCubeSize * 0.5f : 0.01f;
+        Vec3 center {
+            float(frame.cell[0] - origin[0]) + 0.5f,
+            float(frame.cell[1] - origin[1]) + 0.5f,
+            float(frame.cell[2] - origin[2]) + 0.5f,
+        };
+        center = add(center, scaled(normal, -0.5f + PlateDepth + lift));
+        auto place = [&](const Vec3& local, bool) {
+            Vec3 point = add(add(add(center, scaled(turnedRight, local[0] * scale)), scaled(turnedUp, local[1] * scale)), scaled(normal, local[2] * scale));
+            return scaled(point, 256.0f);
+        };
+        size_t first = out.size();
+        appendHeldItem(frame.item, place, out);
+        lightQuads(out, first, lightCorners(frame.cell[0] + 0.5 + normal[0] * 0.5, frame.cell[1] + 0.5 + normal[1] * 0.5, frame.cell[2] + 0.5 + normal[2] * 0.5));
+    }
+}
+
+/**
+ * A filled map held in first person the way the game shows it: in front of
+ * the view, raised toward the eye as the player looks down and lowered while
+ * the hand comes up, following the swing. The arms are posed by the pack's
+ * map animations. False while the map content has not arrived.
+ */
+bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, std::vector<world::ModelQuadGpu>& out)
+{
+    HeldItemMesh* mesh = heldMesh(held);
+    if (!mesh || !mesh->map) {
+        return false;
+    }
+    float pitch = camera.minecraftPitch();
+    float root = std::sqrt(std::max(attackTime, 0.0f));
+    float lift = -0.2f * std::sin(attackTime * Pi);
+    float push = -0.4f * std::sin(root * Pi);
+    float tilt = std::clamp(1.0f - pitch / 45.0f + 0.1f, 0.0f, 1.0f);
+    tilt = -std::cos(tilt * Pi) * 0.5f + 0.5f;
+    Mat4 placement = translation(0.0f, -lift / 2.0f, push) * translation(0.0f, 0.04f + (1.0f - handEquip) * -1.2f + tilt * -0.5f, -0.72f)
+        * rotationX(tilt * -85.0f) * rotationX(std::sin(root * Pi) * 20.0f) * uniformScale(2.0f * 0.38f);
+    uint32_t contentLayer = heldItemLayer() + mesh->slot;
+    uint32_t shade = EntityQuadFlag | (1u << 8) | 6;
+    auto corner = [&](float u, float v, float z) {
+        Vec3 view = transformed(placement, { u / 128.0f - 0.5f, -(v / 128.0f - 0.5f), z });
+        Vec3 world = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
+        return add(eyePoint, scaled(world, 256.0f));
+    };
+    auto quad = [&](float low, float high, float z, uint32_t layer) {
+        std::array<Vec3, 4> corners { corner(low, low, z), corner(high, low, z), corner(high, high, z), corner(low, high, z) };
+        std::array<std::array<uint16_t, 2>, 4> uvs { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
+        out.push_back(packQuad(corners, uvs, layer, shade));
+    };
+    quad(-7.0f, 135.0f, 0.0f, mapBackgroundLayer());
+    quad(0.0f, 128.0f, 0.004f, contentLayer);
+    return true;
 }
 
 }
