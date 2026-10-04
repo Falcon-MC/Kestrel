@@ -3,6 +3,7 @@
 #include "Protocol/PacketCodecContext.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/HealthFeedback.h"
 #include "client/Inventory.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
@@ -286,7 +287,7 @@ struct HudState {
     int32_t level = 0;
     int32_t air = 300;
     int32_t maxAir = 300;
-    double lastHealthDrop = 0.0;
+    HealthFeedback healthFeedback;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     // When the selected item started being held in use, like a drawn bow, 0 while it is not.

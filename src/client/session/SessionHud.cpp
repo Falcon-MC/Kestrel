@@ -292,9 +292,8 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
                 continue;
             }
             if (attribute.mName == "minecraft:health") {
-                if (hud.statsKnown && attribute.mValue < hud.health) {
-                    hud.lastHealthDrop = now;
-                    if (now - hud.lastHurt > 0.1) hud.lastHurt = now;
+                if (hud.healthFeedback.change(hud.health, attribute.mValue, now, hud.statsKnown)) {
+                    hud.lastHurt = now;
                 }
                 hud.health = attribute.mValue;
                 hud.maxHealth = std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f ? attribute.mMaximum : 20.0f;
@@ -314,9 +313,8 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
         }
     } else if (auto health = std::dynamic_pointer_cast<SetHealthPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
-        if (float(health->mHealth) < current.hud.health) {
-            current.hud.lastHealthDrop = now;
-            if (now - current.hud.lastHurt > 0.1) current.hud.lastHurt = now;
+        if (current.hud.healthFeedback.change(current.hud.health, float(health->mHealth), now, current.hud.statsKnown, true)) {
+            current.hud.lastHurt = now;
         }
         current.hud.health = float(health->mHealth);
         current.hud.statsKnown = true;

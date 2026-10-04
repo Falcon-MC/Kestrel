@@ -148,18 +148,23 @@ void drawHearts(ui::Context& ui, const HudView& view, float left, float top, ui:
     int32_t absorptionHearts = 0;
     int32_t rows = heartRows(view, healthHearts, absorptionHearts);
     float rowHeight = static_cast<float>(std::max(10 - std::max(rows - 2, 0), 3));
-    int32_t current = static_cast<int32_t>(std::ceil(std::max(view.health, 0.0f)));
+    int32_t current = static_cast<int32_t>(std::floor(std::max(view.health, 0.0f)));
     int32_t absorption = static_cast<int32_t>(std::ceil(std::max(view.absorption, 0.0f)));
     int32_t total = std::max(healthHearts + absorptionHearts, 1);
     for (int32_t index = 0; index < total; ++index) {
         ui::Rect cell { left + static_cast<float>(index % 10) * IconStep, top - static_cast<float>(index / 10) * rowHeight, IconSize, IconSize };
-        ui.sprite(cell, "ui/heart_background", tint);
+        ui.sprite(cell, view.heartFlash ? "ui/heart_blink" : "ui/heart_background", tint);
         if (index < healthHearts) {
+            if (view.heartFlash) {
+                int32_t previous = view.previousHealth - index * 2;
+                if (previous >= 2) ui.sprite(cell, heartSprite(view.heartKind, true, false), tint);
+                else if (previous == 1) ui.sprite(cell, heartSprite(view.heartKind, true, true), tint);
+            }
             int32_t filled = current - index * 2;
             if (filled >= 2) {
-                ui.sprite(cell, heartSprite(view.heartKind, view.heartFlash, false), tint);
+                ui.sprite(cell, heartSprite(view.heartKind, false, false), tint);
             } else if (filled == 1) {
-                ui.sprite(cell, heartSprite(view.heartKind, view.heartFlash, true), tint);
+                ui.sprite(cell, heartSprite(view.heartKind, false, true), tint);
             }
         } else {
             int32_t filled = absorption - (index - healthHearts) * 2;

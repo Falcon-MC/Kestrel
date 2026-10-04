@@ -160,6 +160,7 @@ struct HudView {
     std::vector<HudChatLine> chat;
     ChatStyle chatStyle;
     float health = 20.0f;
+    int32_t previousHealth = 20;
     float maxHealth = 20.0f;
     float absorption = 0.0f;
     float hunger = 20.0f;

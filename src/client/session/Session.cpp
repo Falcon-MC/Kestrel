@@ -1036,10 +1036,6 @@ void Session::handleWorldPacket(std::string& payload)
         if (auto actor = actors.find(event->mRuntimeActorId); actor != actors.end()) {
             actor->second.lastHurt = now;
         }
-        if (event->mRuntimeActorId == localRuntimeId) {
-            std::lock_guard<std::mutex> guard(mutex);
-            if (now - current.hud.lastHurt > 0.1) current.hud.lastHurt = now;
-        }
     }
 
     if (auto animation = std::dynamic_pointer_cast<AnimatePacket>(packet); animation && animation->mAction == AnimatePacket::Action::SwingArm) {

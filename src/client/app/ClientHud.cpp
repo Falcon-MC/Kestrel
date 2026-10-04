@@ -210,8 +210,8 @@ menu::HudView Client::buildHudView()
             view.armor += world::itemArmorPoints(piece.identifier);
         }
     }
-    double sinceDrop = now - state.lastHealthDrop;
-    view.heartFlash = state.lastHealthDrop > 0.0 && sinceDrop < 1.0 && static_cast<int>(sinceDrop / 0.15) % 2 == 0;
+    view.previousHealth = state.healthFeedback.previousHealth;
+    view.heartFlash = state.healthFeedback.flashing(now);
     for (const HudEffect& effect : state.effects) {
         double remaining = effect.expires < 0.0 ? 1.0e9 : effect.expires - now;
         if (remaining <= 0.0) {
