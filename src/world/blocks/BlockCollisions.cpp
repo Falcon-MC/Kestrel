@@ -332,6 +332,12 @@ void BlockCollisions::boxes(const CollisionState& state, int32_t x, int32_t y, i
     };
 
     switch (state.shape) {
+    case ShapeCustom:
+        for (uint16_t i = 0; state.box && i < state.boxCount; ++i) {
+            const CollisionBox& box = state.box[i];
+            out.push_back({ fx + box.minX, fy + box.minY, fz + box.minZ, fx + box.maxX, fy + box.maxY, fz + box.maxZ });
+        }
+        return;
     case ShapeFence: {
         bool north = fenceConnects(state, neighbour(FaceNorth), FaceNorth);
         bool south = fenceConnects(state, neighbour(FaceSouth), FaceSouth);

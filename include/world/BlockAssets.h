@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/BiomeTints.h"
+#include "world/BlockCollisions.h"
 #include "world/BlockRegistry.h"
 #include "world/EntityAnimation.h"
 #include "world/ServerPack.h"
@@ -411,6 +412,19 @@ public:
     uint32_t blockEntityTemplate(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
     ChestLid chestLid(const BlockVisual& visual, const Tag* data, const std::array<int32_t, 3>& position) const;
 
+    /**
+     * How a server defined block collides, from its minecraft:collision_box:
+     * false when the value is not such a block, else state is its shape or
+     * null when it lets the player through.
+     */
+    bool customCollision(uint32_t networkValue, bool hashed, const SequentialMap* sequential, const CollisionState*& state) const;
+
+    /**
+     * The box a server defined block is aimed at and outlined by, from its
+     * minecraft:selection_box; nothing when it keeps its collision bounds.
+     */
+    std::optional<CollisionBox> customSelection(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+
     size_t customBlockCount() const
     {
         return customs.size();
@@ -602,6 +616,10 @@ private:
     struct CustomState {
         size_t block = 0;
         Tag states;
+        CollisionState collision;
+        bool collides = true;
+        size_t boxIndex = 0;
+        std::optional<CollisionBox> selection;
     };
 
     bool build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error);
@@ -623,6 +641,8 @@ private:
     BlockRegistry registry;
     std::vector<CustomBlock> customs;
     std::vector<CustomState> customStates;
+    // Collision boxes of the custom states, which their collision states point into.
+    std::vector<CollisionBox> customBoxes;
     std::unordered_map<uint32_t, uint32_t> customByHash;
     std::vector<BlockVisual> visuals;
     std::vector<Material> materialTable;

@@ -105,6 +105,12 @@ std::vector<world::CollisionBox> Session::shapeBoxes(uint32_t value, int32_t x, 
     }
     const world::BlockCollisions& table = world::BlockCollisions::shared();
     const world::CollisionState* state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()));
+    if (const world::CollisionState* custom = nullptr; !state && assets->customCollision(value, ids.hashed, ids.sequential.get(), custom)) {
+        if (!custom) {
+            return boxes;
+        }
+        state = custom;
+    }
     if (!state) {
         const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
         if ((visual.flags & world::FlagAir) || visual.hasModel()) {
@@ -135,6 +141,9 @@ std::vector<world::CollisionBox> Session::shapeBoxes(uint32_t value, int32_t x, 
 world::CollisionBox Session::selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z)
 {
     world::CollisionBox bounds = unitBox();
+    if (std::optional<world::CollisionBox> custom = assets->customSelection(value, ids.hashed, ids.sequential.get())) {
+        return *custom;
+    }
     std::vector<world::CollisionBox> boxes = shapeBoxes(value, x, y, z);
     const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
     if (!boxes.empty()) {
