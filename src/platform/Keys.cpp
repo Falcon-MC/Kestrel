@@ -35,19 +35,19 @@ Key keyFromName(const std::string& name)
 
 const char* KeyBindings::label(size_t index)
 {
-    static constexpr const char* labels[Count] = { "Move forward", "Move back", "Strafe left", "Strafe right", "Fly up", "Fly down", "Toggle perspective", "Chat", "Inventory", "Drop item" };
+    static constexpr const char* labels[Count] = { "Move forward", "Move back", "Strafe left", "Strafe right", "Fly up", "Fly down", "Toggle perspective", "Chat", "Inventory", "Drop item", "Emote" };
     return index < Count ? labels[index] : "";
 }
 
 const char* KeyBindings::translationKey(size_t index)
 {
-    static constexpr const char* keys[Count] = { "key.forward", "key.back", "key.left", "key.right", "key.jump", "key.sneak", "key.togglePerspective", "key.chat", "key.inventory", "key.drop" };
+    static constexpr const char* keys[Count] = { "key.forward", "key.back", "key.left", "key.right", "key.jump", "key.sneak", "key.togglePerspective", "key.chat", "key.inventory", "key.drop", "key.emote" };
     return index < Count ? keys[index] : "";
 }
 
 const char* KeyBindings::id(size_t index)
 {
-    static constexpr const char* ids[Count] = { "forward", "back", "left", "right", "up", "down", "perspective", "chat", "inventory", "drop" };
+    static constexpr const char* ids[Count] = { "forward", "back", "left", "right", "up", "down", "perspective", "chat", "inventory", "drop", "emote" };
     return index < Count ? ids[index] : "";
 }
 
