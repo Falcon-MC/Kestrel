@@ -364,6 +364,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "hud");
             handleHotbarInput();
+            updateEmotes(secondsNow());
             updateGameTips();
             menu.setHud(buildHudView());
             if (!worldShown) {

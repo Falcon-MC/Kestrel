@@ -694,6 +694,15 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 { "is_holding_right", held.empty() ? 0.0 : 1.0 },
                 { "is_first_person", 0.0 },
             };
+            if (activeEmote) {
+                // Leaving the clip out for a frame starts it over when the same emote is picked again.
+                if (activeEmote->restartFrames > 0) {
+                    --activeEmote->restartFrames;
+                } else {
+                    input.extraAnimations.push_back(activeEmote->clip);
+                    input.extraLibrary = &emoteAnimations;
+                }
+            }
         } else {
             input.mainHandItem = actor.held.empty() ? std::string() : actor.held.identifier;
             input.engineVariables.push_back({ "is_holding_right", actor.held.empty() ? 0.0 : 1.0 });

@@ -183,6 +183,8 @@ struct AnimationInput {
     std::vector<std::pair<std::string, double>> contextVariables;
     // Animation aliases the engine plays besides the entity's own list, like the persona blink for animated faces.
     std::vector<std::string> extraAnimations;
+    // Clips found nowhere in the packs are looked up here, like the emotes mods add.
+    const AnimationLibrary* extraLibrary = nullptr;
 };
 
 /**
@@ -224,6 +226,12 @@ public:
      * its last update.
      */
     double evaluate(const molang::Script& script);
+
+    /**
+     * The rotation, in degrees, the clip gives each of its bones at that
+     * time on its own, for posing a still preview.
+     */
+    std::unordered_map<std::string, std::array<float, 3>> rotationsAt(const AnimationClip& clip, double time);
 
 private:
     struct ClipState {

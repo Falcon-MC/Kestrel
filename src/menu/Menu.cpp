@@ -139,6 +139,7 @@ Transition transitionOf(Dialog dialog)
     case Dialog::ConnectionError:
         return Transition::Slide;
     case Dialog::Death:
+    case Dialog::Emotes:
     case Dialog::ProfileOptions:
     case Dialog::ConfirmDelete:
         return Transition::None;
@@ -310,6 +311,9 @@ void Menu::prepareInventoryInput(const InputState& input)
         inventoryInputHandled = true;
         // Opening is the only command sent before the server identifies a window.
         inventory.requestOpen();
+    } else if (capturesMouse() && input.pressedKey == bindings.emote()) {
+        emoteUi.reset();
+        dialog = Dialog::Emotes;
     }
 }
 
@@ -635,6 +639,9 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
     case Dialog::SafeArea:
         safeAreaDialog(ui);
         break;
+    case Dialog::Emotes:
+        emoteWheel(ui, width, height);
+        break;
     case Dialog::Connecting:
     case Dialog::SignIn:
         progressDialog(ui, width, height);
@@ -911,7 +918,35 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         float s = std::sin(angle);
         return { p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c };
     };
-    auto transform = [&](Vec p, bool head) -> Vec {
+    auto roll = [](const Vec& p, float angle) -> Vec {
+        float c = std::cos(angle);
+        float s = std::sin(angle);
+        return { p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2] };
+    };
+    // A pose turns each part about its joint the way the player geometry does, the head and
+    // arms following the body; Bedrock's Y and Z turn the other way round from this view.
+    constexpr std::array<Vec, 6> Joints { { { 0.0f, 24.0f, 0.0f }, { 0.0f, 24.0f, 0.0f }, { -5.0f, 22.0f, 0.0f }, { 5.0f, 22.0f, 0.0f }, { -2.0f, 12.0f, 0.0f }, { 2.0f, 12.0f, 0.0f } } };
+    auto turn = [&](Vec p, size_t index) -> Vec {
+        const std::array<float, 3>& rotation = (*modelPose)[index];
+        const Vec& joint = Joints[index];
+        for (size_t axis = 0; axis < 3; ++axis) {
+            p[axis] -= joint[axis];
+        }
+        p = roll(yaw(pitch(p, rotation[0] * Degrees), -rotation[1] * Degrees), -rotation[2] * Degrees);
+        for (size_t axis = 0; axis < 3; ++axis) {
+            p[axis] += joint[axis];
+        }
+        return p;
+    };
+    auto transform = [&](Vec p, const Part& part) -> Vec {
+        bool head = part.head;
+        size_t index = static_cast<size_t>(&part - Parts);
+        if (modelPose && index < Joints.size()) {
+            p = turn(p, index);
+            if (index == 0 || index == 2 || index == 3) {
+                p = turn(p, 1);
+            }
+        }
         if (head) {
             p[1] -= NeckY;
             p = yaw(pitch(p, headPitch), headYaw - bodyYaw);
@@ -961,8 +996,8 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             }
         }
         for (const Side& side : sides) {
-            Vec normal = transform(side.normal, part.head);
-            Vec origin = transform({ 0.0f, 0.0f, 0.0f }, part.head);
+            Vec normal = transform(side.normal, part);
+            Vec origin = transform({ 0.0f, 0.0f, 0.0f }, part);
             Vec facing { normal[0] - origin[0], normal[1] - origin[1], normal[2] - origin[2] };
             if (facing[2] <= 0.0f) {
                 continue;
@@ -970,7 +1005,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             Face face;
             float depth = 0.0f;
             for (size_t corner = 0; corner < 4; ++corner) {
-                Vec p = transform(side.corners[corner], part.head);
+                Vec p = transform(side.corners[corner], part);
                 face.points[corner] = { centerX + p[0] * pixel, top + (32.0f - p[1]) * pixel };
                 depth += p[2];
             }
@@ -1775,7 +1810,7 @@ void Menu::handleKeys(Context& ui)
         socialOpen = false;
     } else if (dialog == Dialog::Chat) {
         closeChat();
-    } else if (dialog == Dialog::Pause) {
+    } else if (dialog == Dialog::Pause || dialog == Dialog::Emotes) {
         dialog = Dialog::None;
     } else if (dialog == Dialog::Death) {
         dialog = Dialog::Pause;
