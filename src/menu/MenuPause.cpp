@@ -193,6 +193,8 @@ void Menu::pauseButton(const std::string& id)
         dialog = Dialog::None;
         disconnectRequested = true;
         // Leaving the world drops the pause screen at once instead of playing its exit over the departing world.
+        shownDialog = Dialog::None;
+        leavingDialog = Dialog::None;
         pauseUi.reset();
         pauseOpen = false;
     } else if (id == "button.friends_drawer" || id == "button.menu_friends" || id == "button.menu_invite_players") {
