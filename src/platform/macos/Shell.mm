@@ -6,7 +6,15 @@ namespace kestrel::platform {
 
 void openUrl(const std::string& url)
 {
-    NSURL* target = [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+    NSString* value = [NSString stringWithUTF8String:url.c_str()];
+    if (!value) {
+        return;
+    }
+
+    NSURL* target = [NSURL URLWithString:value];
+    if (!target || !target.scheme.length) {
+        target = [NSURL fileURLWithPath:value];
+    }
     if (target) {
         [[NSWorkspace sharedWorkspace] openURL:target];
     }
