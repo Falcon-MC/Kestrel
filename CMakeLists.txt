@@ -155,23 +155,23 @@ else()
 
     find_package(Vulkan REQUIRED)
 
-    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    # SDL3 gives us Wayland window icons and fullscreen on the window's own output out of the box.
+    # Audio, rendering and the GPU API stay off, Kestrel brings its own.
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
+    set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+    set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+    set(SDL_GPU OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
-        glfw
-        GIT_REPOSITORY https://github.com/glfw/glfw.git
-        GIT_TAG 3.4
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.18
         GIT_SHALLOW TRUE
-        PATCH_COMMAND ${CMAKE_COMMAND}
-            -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw-wayland-fullscreen-output.patch
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ApplyPatch.cmake
-        COMMAND ${CMAKE_COMMAND}
-            -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw-wayland-window-icon.patch
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ApplyPatch.cmake
     )
-    FetchContent_MakeAvailable(glfw)
+    FetchContent_MakeAvailable(SDL3)
 endif()
 
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
@@ -267,5 +267,5 @@ elseif(APPLE)
     )
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 else()
-    target_link_libraries(Kestrel PRIVATE glfw Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)
+    target_link_libraries(Kestrel PRIVATE SDL3::SDL3-static Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)
 endif()

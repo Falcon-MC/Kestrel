@@ -2,138 +2,74 @@
 
 #include "AppIconPng.h"
 #include "ui/Image.h"
+#include "ui/Utf8.h"
 
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 
-#include <algorithm>
 #include <array>
+#include <cstring>
 #include <stdexcept>
+#include <string_view>
 
 namespace kestrel {
 
 namespace {
 
-class GlfwWindow final : public Window {
+class SdlWindow final : public Window {
 public:
-    GlfwWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
+    SdlWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
         : shown(shown)
     {
-        if (!glfwInit()) {
-            throw std::runtime_error("glfwInit failed");
+        // a fullscreen window should stay up when another app takes focus
+        SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+            throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
-        glfwWindowHint(GLFW_VISIBLE, shown ? GLFW_TRUE : GLFW_FALSE);
-        glfwWindowHint(GLFW_FOCUS_ON_SHOW, shown ? GLFW_TRUE : GLFW_FALSE);
-        window = glfwCreateWindow(static_cast<int>(w), static_cast<int>(h), title.c_str(), nullptr, nullptr);
+        // X11 sizes windows in pixels, so scale the requested size the way Wayland already does
+        if (shown && std::strcmp(SDL_GetCurrentVideoDriver(), "x11") == 0) {
+            float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+            if (scale > 0.0f) {
+                w = static_cast<uint32_t>(w * scale);
+                h = static_cast<uint32_t>(h * scale);
+            }
+        }
+        SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+        // a hidden window is drawn offscreen at exactly the size asked for, so agents get the pixels they expect
+        flags |= shown ? SDL_WINDOW_HIGH_PIXEL_DENSITY : SDL_WINDOW_HIDDEN;
+        window = SDL_CreateWindow(title.c_str(), static_cast<int>(w), static_cast<int>(h), flags);
         if (!window) {
-            glfwTerminate();
-            throw std::runtime_error("glfwCreateWindow failed");
+            std::string error = SDL_GetError();
+            SDL_Quit();
+            throw std::runtime_error("SDL_CreateWindow failed: " + error);
         }
-        glfwSetWindowSizeLimits(window, 760, 520, GLFW_DONT_CARE, GLFW_DONT_CARE);
-        glfwSetWindowAttrib(window, GLFW_AUTO_ICONIFY, GLFW_FALSE);
+        SDL_SetWindowMinimumSize(window, 760, 520);
         setIcon();
-        glfwSetWindowUserPointer(window, this);
+        SDL_StartTextInput(window);
 
-        glfwSetFramebufferSizeCallback(window, [](GLFWwindow* handle, int, int) {
-            self(handle)->resized = true;
-        });
-        glfwSetWindowContentScaleCallback(window, [](GLFWwindow* handle, float, float) {
-            self(handle)->resized = true;
-        });
-        glfwSetWindowFocusCallback(window, [](GLFWwindow* handle, int focused) {
-            self(handle)->focusLost |= focused == GLFW_FALSE;
-        });
-        glfwSetCursorPosCallback(window, [](GLFWwindow* handle, double x, double y) {
-            self(handle)->mouse(x, y);
-        });
-        glfwSetCursorEnterCallback(window, [](GLFWwindow* handle, int entered) {
-            GlfwWindow* owner = self(handle);
-            if (!entered && !owner->state.mouseDown) {
-                owner->state.mouseX = -1.0f;
-                owner->state.mouseY = -1.0f;
-            }
-        });
-        glfwSetMouseButtonCallback(window, [](GLFWwindow* handle, int button, int action, int) {
-            InputState& input = self(handle)->state;
-            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                input.rightMouseDown = action != GLFW_RELEASE;
-                input.rightMousePressed |= action == GLFW_PRESS;
-                input.rightMouseReleased |= action == GLFW_RELEASE;
-                return;
-            }
-            if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
-                input.middleMousePressed |= action == GLFW_PRESS;
-                input.middleMouseReleased |= action == GLFW_RELEASE;
-                return;
-            }
-            if (button != GLFW_MOUSE_BUTTON_LEFT) {
-                return;
-            }
-            if (action == GLFW_PRESS) {
-                input.mouseDown = true;
-                input.mousePressed = true;
-            } else if (action == GLFW_RELEASE) {
-                input.mouseDown = false;
-                input.mouseReleased = true;
-            }
-        });
-        glfwSetScrollCallback(window, [](GLFWwindow* handle, double, double y) {
-            self(handle)->state.wheel += static_cast<float>(y);
-        });
-        glfwSetCharCallback(window, [](GLFWwindow* handle, unsigned int codepoint) {
-            if (codepoint >= 32 && codepoint != 127) {
-                self(handle)->state.text.push_back(static_cast<char32_t>(codepoint));
-            }
-        });
-        glfwSetKeyCallback(window, [](GLFWwindow* handle, int key, int, int action, int) {
-            InputState& input = self(handle)->state;
-            if (action != GLFW_REPEAT) {
-                input.setKey(translateKey(key), action == GLFW_PRESS);
-            }
-            if (action == GLFW_RELEASE) {
-                return;
-            }
-            switch (key) {
-            case GLFW_KEY_BACKSPACE:
-                input.backspace = true;
-                break;
-            case GLFW_KEY_ENTER:
-            case GLFW_KEY_KP_ENTER:
-                input.enter = true;
-                break;
-            case GLFW_KEY_ESCAPE:
-                input.escape = true;
-                break;
-            case GLFW_KEY_TAB:
-                input.tab = true;
-                break;
-            default:
-                break;
-            }
-        });
-
-        cursors[0] = glfwCreateStandardCursor(GLFW_ARROW_CURSOR);
-        cursors[1] = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
-        cursors[2] = glfwCreateStandardCursor(GLFW_IBEAM_CURSOR);
+        cursors[0] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+        cursors[1] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+        cursors[2] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
     }
 
-    ~GlfwWindow() override
+    ~SdlWindow() override
     {
-        for (GLFWcursor* cursor : cursors) {
+        for (SDL_Cursor* cursor : cursors) {
             if (cursor) {
-                glfwDestroyCursor(cursor);
+                SDL_DestroyCursor(cursor);
             }
         }
-        glfwDestroyWindow(window);
-        glfwTerminate();
+        SDL_DestroyWindow(window);
+        SDL_Quit();
     }
 
     bool pump() override
     {
         state.beginFrame();
-        glfwPollEvents();
-        return !glfwWindowShouldClose(window);
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            handle(event);
+        }
+        return !shouldClose;
     }
 
     void* nativeHandle() const override
@@ -145,7 +81,7 @@ public:
     {
         int w = 0;
         int h = 0;
-        glfwGetFramebufferSize(window, &w, &h);
+        SDL_GetWindowSizeInPixels(window, &w, &h);
         return static_cast<uint32_t>(w);
     }
 
@@ -153,16 +89,14 @@ public:
     {
         int w = 0;
         int h = 0;
-        glfwGetFramebufferSize(window, &w, &h);
+        SDL_GetWindowSizeInPixels(window, &w, &h);
         return static_cast<uint32_t>(h);
     }
 
     float contentScale() const override
     {
-        float x = 1.0f;
-        float y = 1.0f;
-        glfwGetWindowContentScale(window, &x, &y);
-        return x > 0.0f ? x : 1.0f;
+        float scale = SDL_GetWindowDisplayScale(window);
+        return scale > 0.0f ? scale : 1.0f;
     }
 
     bool consumeResize() override
@@ -194,7 +128,7 @@ public:
             return;
         }
         cursor = value;
-        glfwSetCursor(window, cursors[static_cast<size_t>(value)]);
+        SDL_SetCursor(cursors[static_cast<size_t>(value)]);
     }
 
     void setMouseCaptured(bool value) override
@@ -203,11 +137,7 @@ public:
             return;
         }
         captured = value;
-        glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-        if (glfwRawMouseMotionSupported()) {
-            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE);
-        }
-        hasLastCursor = false;
+        SDL_SetWindowRelativeMouseMode(window, captured);
     }
 
     bool drawsCaptionButtons() const override
@@ -222,47 +152,38 @@ public:
 
     bool maximized() const override
     {
-        return glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+        return (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0;
     }
 
     void minimize() override
     {
-        glfwIconifyWindow(window);
+        SDL_MinimizeWindow(window);
     }
 
     void toggleMaximize() override
     {
         if (maximized()) {
-            glfwRestoreWindow(window);
+            SDL_RestoreWindow(window);
         } else {
-            glfwMaximizeWindow(window);
+            SDL_MaximizeWindow(window);
         }
     }
 
     bool fullscreen() const override
     {
-        return glfwGetWindowMonitor(window) != nullptr;
+        return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     }
 
+    // Desktop fullscreen, so on Wayland the compositor keeps the window on the output it's already on.
     void toggleFullscreen() override
     {
-        if (fullscreen()) {
-            glfwSetWindowMonitor(window, nullptr, windowedX, windowedY, windowedWidth, windowedHeight, GLFW_DONT_CARE);
-            return;
-        }
-        glfwGetWindowPos(window, &windowedX, &windowedY);
-        glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
-        GLFWmonitor* monitor = currentMonitor();
-        const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
-        if (!mode) {
-            return;
-        }
-        glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+        SDL_SetWindowFullscreenMode(window, nullptr);
+        SDL_SetWindowFullscreen(window, !fullscreen());
     }
 
     void close() override
     {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
+        shouldClose = true;
     }
 
     bool visible() const override
@@ -271,138 +192,211 @@ public:
     }
 
 private:
-    // Wayland hides window positions, so our GLFW patch lets the compositor pick the output there.
-    GLFWmonitor* currentMonitor() const
+    void handle(const SDL_Event& event)
     {
-        if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
-            return glfwGetPrimaryMonitor();
+        switch (event.type) {
+        case SDL_EVENT_QUIT:
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            shouldClose = true;
+            break;
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+            resized = true;
+            break;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            focusLost = true;
+            break;
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+            if (!state.mouseDown) {
+                state.mouseX = -1.0f;
+                state.mouseY = -1.0f;
+            }
+            break;
+        case SDL_EVENT_MOUSE_MOTION:
+            mouse(event.motion);
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            mouseButton(event.button.button, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            state.wheel += event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            break;
+        case SDL_EVENT_TEXT_INPUT:
+            text(event.text.text);
+            break;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+            key(event.key);
+            break;
+        default:
+            break;
         }
-        int count = 0;
-        GLFWmonitor** monitors = glfwGetMonitors(&count);
-        GLFWmonitor* best = glfwGetPrimaryMonitor();
-        long long bestArea = 0;
-        for (int i = 0; i < count; ++i) {
-            const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
-            if (!mode) {
-                continue;
-            }
-            int x = 0;
-            int y = 0;
-            glfwGetMonitorPos(monitors[i], &x, &y);
-            int overlapWidth = std::min(windowedX + windowedWidth, x + mode->width) - std::max(windowedX, x);
-            int overlapHeight = std::min(windowedY + windowedHeight, y + mode->height) - std::max(windowedY, y);
-            if (overlapWidth <= 0 || overlapHeight <= 0) {
-                continue;
-            }
-            long long area = static_cast<long long>(overlapWidth) * overlapHeight;
-            if (area > bestArea) {
-                bestArea = area;
-                best = monitors[i];
-            }
-        }
-        return best;
     }
 
-    static Key translateKey(int key)
+    void mouse(const SDL_MouseMotionEvent& motion)
     {
-        if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) {
-            return letterKey(static_cast<uint32_t>(key - GLFW_KEY_A));
+        if (captured) {
+            state.mouseDeltaX += motion.xrel;
+            state.mouseDeltaY += motion.yrel;
+            return;
         }
-        if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9) {
-            return digitKey(static_cast<uint32_t>(key - GLFW_KEY_0));
+        int windowWidth = 0;
+        int windowHeight = 0;
+        SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+        float ratioX = windowWidth > 0 ? static_cast<float>(width()) / windowWidth : 1.0f;
+        float ratioY = windowHeight > 0 ? static_cast<float>(height()) / windowHeight : 1.0f;
+        state.mouseX = motion.x * ratioX;
+        state.mouseY = motion.y * ratioY;
+    }
+
+    void mouseButton(uint8_t button, bool down)
+    {
+        if (button == SDL_BUTTON_RIGHT) {
+            state.rightMouseDown = down;
+            state.rightMousePressed |= down;
+            state.rightMouseReleased |= !down;
+            return;
         }
-        if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F12) {
-            return functionKey(static_cast<uint32_t>(key - GLFW_KEY_F1));
+        if (button == SDL_BUTTON_MIDDLE) {
+            state.middleMousePressed |= down;
+            state.middleMouseReleased |= !down;
+            return;
+        }
+        if (button != SDL_BUTTON_LEFT) {
+            return;
+        }
+        if (down) {
+            state.mouseDown = true;
+            state.mousePressed = true;
+        } else {
+            state.mouseDown = false;
+            state.mouseReleased = true;
+        }
+    }
+
+    void text(std::string_view utf8)
+    {
+        size_t i = 0;
+        while (i < utf8.size()) {
+            char32_t codepoint = ui::nextCodepoint(utf8, i);
+            if (codepoint >= 32 && codepoint != 127) {
+                state.text.push_back(codepoint);
+            }
+        }
+    }
+
+    void key(const SDL_KeyboardEvent& event)
+    {
+        if (!event.repeat) {
+            state.setKey(translateKey(event.scancode), event.down);
+        }
+        if (!event.down) {
+            return;
+        }
+        switch (event.scancode) {
+        case SDL_SCANCODE_BACKSPACE:
+            state.backspace = true;
+            break;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER:
+            state.enter = true;
+            break;
+        case SDL_SCANCODE_ESCAPE:
+            state.escape = true;
+            break;
+        case SDL_SCANCODE_TAB:
+            state.tab = true;
+            break;
+        default:
+            break;
+        }
+    }
+
+    // Scancodes, not keycodes, so WASD stays where it is on any keyboard layout.
+    static Key translateKey(SDL_Scancode key)
+    {
+        if (key >= SDL_SCANCODE_A && key <= SDL_SCANCODE_Z) {
+            return letterKey(static_cast<uint32_t>(key - SDL_SCANCODE_A));
+        }
+        // SDL orders the digit row 1 to 9 and then 0
+        if (key >= SDL_SCANCODE_1 && key <= SDL_SCANCODE_9) {
+            return digitKey(static_cast<uint32_t>(key - SDL_SCANCODE_1 + 1));
+        }
+        if (key == SDL_SCANCODE_0) {
+            return digitKey(0);
+        }
+        if (key >= SDL_SCANCODE_F1 && key <= SDL_SCANCODE_F12) {
+            return functionKey(static_cast<uint32_t>(key - SDL_SCANCODE_F1));
         }
         switch (key) {
-        case GLFW_KEY_SPACE:
+        case SDL_SCANCODE_SPACE:
             return Key::Space;
-        case GLFW_KEY_LEFT_SHIFT:
-        case GLFW_KEY_RIGHT_SHIFT:
+        case SDL_SCANCODE_LSHIFT:
+        case SDL_SCANCODE_RSHIFT:
             return Key::Shift;
-        case GLFW_KEY_LEFT_CONTROL:
-        case GLFW_KEY_RIGHT_CONTROL:
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL:
             return Key::Control;
-        case GLFW_KEY_LEFT_ALT:
-        case GLFW_KEY_RIGHT_ALT:
+        case SDL_SCANCODE_LALT:
+        case SDL_SCANCODE_RALT:
             return Key::Alt;
-        case GLFW_KEY_TAB:
+        case SDL_SCANCODE_TAB:
             return Key::Tab;
-        case GLFW_KEY_ENTER:
-        case GLFW_KEY_KP_ENTER:
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER:
             return Key::Enter;
-        case GLFW_KEY_BACKSPACE:
+        case SDL_SCANCODE_BACKSPACE:
             return Key::Backspace;
-        case GLFW_KEY_ESCAPE:
+        case SDL_SCANCODE_ESCAPE:
             return Key::Escape;
-        case GLFW_KEY_UP:
+        case SDL_SCANCODE_UP:
             return Key::Up;
-        case GLFW_KEY_DOWN:
+        case SDL_SCANCODE_DOWN:
             return Key::Down;
-        case GLFW_KEY_LEFT:
+        case SDL_SCANCODE_LEFT:
             return Key::Left;
-        case GLFW_KEY_RIGHT:
+        case SDL_SCANCODE_RIGHT:
             return Key::Right;
         default:
             return Key::None;
         }
     }
 
+    // The largest size is the icon, the smaller ones ride along as alternates for taskbars and title bars.
     void setIcon()
     {
         std::string encoded(reinterpret_cast<const char*>(KestrelAppIconData::kAppIconPng), KestrelAppIconData::kAppIconPngSize);
-        constexpr std::array<uint32_t, 4> Sizes { 16, 32, 64, 256 };
+        constexpr std::array<int, 4> Sizes { 256, 64, 32, 16 };
         std::array<std::vector<uint8_t>, Sizes.size()> pixels;
-        std::array<GLFWimage, Sizes.size()> images {};
-        for (size_t i = 0; i < Sizes.size(); ++i) {
-            if (!ui::decodeSquareImage(encoded, Sizes[i], pixels[i])) {
-                return;
+        std::array<SDL_Surface*, Sizes.size()> surfaces {};
+        bool ok = true;
+        for (size_t i = 0; i < Sizes.size() && ok; ++i) {
+            ok = ui::decodeSquareImage(encoded, static_cast<uint32_t>(Sizes[i]), pixels[i]);
+            if (ok) {
+                surfaces[i] = SDL_CreateSurfaceFrom(Sizes[i], Sizes[i], SDL_PIXELFORMAT_RGBA32, pixels[i].data(), Sizes[i] * 4);
+                ok = surfaces[i] != nullptr;
             }
-            images[i] = { static_cast<int>(Sizes[i]), static_cast<int>(Sizes[i]), pixels[i].data() };
         }
-        glfwSetWindowIcon(window, static_cast<int>(images.size()), images.data());
-    }
-
-    static GlfwWindow* self(GLFWwindow* handle)
-    {
-        return static_cast<GlfwWindow*>(glfwGetWindowUserPointer(handle));
-    }
-
-    void mouse(double x, double y)
-    {
-        if (captured) {
-            if (hasLastCursor) {
-                state.mouseDeltaX += static_cast<float>(x - lastCursorX);
-                state.mouseDeltaY += static_cast<float>(y - lastCursorY);
+        if (ok) {
+            for (size_t i = 1; i < Sizes.size(); ++i) {
+                SDL_AddSurfaceAlternateImage(surfaces[0], surfaces[i]);
             }
-            lastCursorX = x;
-            lastCursorY = y;
-            hasLastCursor = true;
-            return;
+            SDL_SetWindowIcon(window, surfaces[0]);
         }
-        int windowWidth = 0;
-        int windowHeight = 0;
-        glfwGetWindowSize(window, &windowWidth, &windowHeight);
-        float ratioX = windowWidth > 0 ? static_cast<float>(width()) / windowWidth : 1.0f;
-        float ratioY = windowHeight > 0 ? static_cast<float>(height()) / windowHeight : 1.0f;
-        state.mouseX = static_cast<float>(x) * ratioX;
-        state.mouseY = static_cast<float>(y) * ratioY;
+        for (SDL_Surface* surface : surfaces) {
+            SDL_DestroySurface(surface);
+        }
     }
 
     bool shown = true;
-    GLFWwindow* window = nullptr;
-    GLFWcursor* cursors[3] {};
+    SDL_Window* window = nullptr;
+    SDL_Cursor* cursors[3] {};
     Cursor cursor = Cursor::Arrow;
     bool resized = false;
     bool focusLost = false;
     bool captured = false;
-    bool hasLastCursor = false;
-    double lastCursorX = 0.0;
-    double lastCursorY = 0.0;
-    int windowedX = 0;
-    int windowedY = 0;
-    int windowedWidth = 0;
-    int windowedHeight = 0;
+    bool shouldClose = false;
     InputState state;
 };
 
@@ -410,7 +404,7 @@ private:
 
 std::unique_ptr<Window> Window::create(const std::string& title, uint32_t width, uint32_t height, bool visible)
 {
-    return std::make_unique<GlfwWindow>(title, width, height, visible);
+    return std::make_unique<SdlWindow>(title, width, height, visible);
 }
 
 }

@@ -1,6 +1,6 @@
 #include "platform/Shell.h"
 
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 
 #include <cstdio>
 #include <sys/wait.h>
@@ -25,14 +25,15 @@ void openUrl(const std::string& url)
 
 bool copyText(const std::string& text)
 {
-    glfwSetClipboardString(nullptr, text.c_str());
-    return true;
+    return SDL_SetClipboardText(text.c_str());
 }
 
 std::string pasteText()
 {
-    const char* text = glfwGetClipboardString(nullptr);
-    return text ? std::string(text) : std::string();
+    char* text = SDL_GetClipboardText();
+    std::string result = text ? std::string(text) : std::string();
+    SDL_free(text);
+    return result;
 }
 
 std::string pickPngFile()

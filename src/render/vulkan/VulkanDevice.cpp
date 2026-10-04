@@ -4,8 +4,9 @@
 #include "platform/Window.h"
 #include "render/vulkan/UiShaders.h"
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#include <vulkan/vulkan.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -260,13 +261,15 @@ public:
 class VulkanDevice final : public Device {
 public:
     explicit VulkanDevice(Window& window)
-        : glfwWindow(static_cast<GLFWwindow*>(window.nativeHandle()))
+        : sdlWindow(static_cast<SDL_Window*>(window.nativeHandle()))
         , requestedWidth(window.width())
         , requestedHeight(window.height())
         , offscreen(!window.visible())
     {
         createInstance();
-        check(glfwCreateWindowSurface(instance, glfwWindow, nullptr, &surface), "glfwCreateWindowSurface");
+        if (!SDL_Vulkan_CreateSurface(sdlWindow, instance, nullptr, &surface)) {
+            throw std::runtime_error(std::string("SDL_Vulkan_CreateSurface failed: ") + SDL_GetError());
+        }
         pickDevice();
         createDevice();
         createCommands();
@@ -1300,7 +1303,7 @@ private:
     void createInstance()
     {
         uint32_t extensionCount = 0;
-        const char** extensions = glfwGetRequiredInstanceExtensions(&extensionCount);
+        const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
         if (!extensions) {
             throw std::runtime_error("Vulkan is not available on this system");
         }
@@ -1655,7 +1658,7 @@ private:
         swapchainDirty = false;
     }
 
-    GLFWwindow* glfwWindow;
+    SDL_Window* sdlWindow;
     uint32_t requestedWidth;
     uint32_t requestedHeight;
     bool offscreen = false;
