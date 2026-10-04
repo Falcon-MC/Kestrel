@@ -14,12 +14,35 @@
 	<img src="https://img.shields.io/badge/protocol-2193-blue" alt="Protocol">
 	<img src="https://img.shields.io/badge/language-C%2B%2B20-00599C" alt="C++20">
 	<img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="Platform">
+	<br>
+	<a href="https://github.com/Falcon-MC/Kestrel/actions/workflows/ci.yml"><img src="https://github.com/Falcon-MC/Kestrel/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+	<a href="https://github.com/Falcon-MC/Kestrel/releases/latest"><img src="https://img.shields.io/github/v/release/Falcon-MC/Kestrel?label=release" alt="Release"></a>
+	<a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-green" alt="License"></a>
+</p>
+
+<p align="center">
+	<img src="docs/screenshots/title-screen.jpg" alt="Kestrel's title screen" width="900">
 </p>
 
 ## What is this?
 
 Kestrel is a native Minecraft: Bedrock Edition client. It connects to servers and Realms with a Microsoft
 account and renders the world with the textures of the installed game.
+
+<table>
+	<tr>
+		<td><img src="docs/screenshots/shaderx-off.jpg" alt="A Survival Games map on The Hive, plain rendering"></td>
+		<td><img src="docs/screenshots/shaderx-on.jpg" alt="The same view with a post processing shader mod"></td>
+	</tr>
+	<tr>
+		<td align="center">Survival Games on The Hive</td>
+		<td align="center">The same view with the ShaderX post processing mod</td>
+	</tr>
+</table>
+
+<p align="center">
+	<img src="docs/screenshots/survival-games-courtyard.jpg" alt="A courtyard on The Hive with shaders" width="900">
+</p>
 
 - **Rendering** - Direct3D 12 on Windows, Metal on macOS, Vulkan on Linux
 - **World** - chunk streaming, multithreaded greedy meshing, block models, animated textures and
@@ -32,6 +55,13 @@ account and renders the world with the textures of the installed game.
 - **JSON UI** - the HUD and server forms drawn from the game's hud_screen.json and server_form.json, restyled
   by whatever UI the server's packs ship
 - **Server packs** - the packs' UI files, textures and glyph sheets
+
+## Downloads
+
+Builds for Windows, Linux and macOS are on the [releases page](https://github.com/Falcon-MC/Kestrel/releases).
+A [nightly](https://github.com/Falcon-MC/Kestrel/releases/tag/nightly) is built from `main` every night when
+something changed. Kestrel reads its textures from an installed copy of Minecraft: Bedrock Edition, or from a
+vanilla resource pack you are entitled to use.
 
 ## Building
 
@@ -95,6 +125,11 @@ KESTREL_MOD(Greeter)
 Mods get events (chat, titles, forms, keys, movement, packets, HUD and world drawing), client side `.commands`,
 key bindings, a scheduler, per mod settings, packet filters and custom shaders. See
 [examples/mods](examples/mods) for the details and two working mods.
+
+## Contributing
+
+Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Related repositories
 
