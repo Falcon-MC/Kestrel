@@ -1122,7 +1122,7 @@ void Menu::title(Context& ui, float width, float height)
     backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), std::floor(dressingY - 97.67f));
     playerModel(ui, dressingX + 41.0f, dressingY - 81.67f, 2.23f);
 
-    backedLabel(ui, "Mojang AB, Kestrel \xC2\xA9", CornerMargin, labelY);
+    backedLabel(ui, "Kestrel, not affiliated with Mojang", CornerMargin, labelY);
     constexpr std::string_view Version = "v1.26.51";
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
 }
