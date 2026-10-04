@@ -1124,3 +1124,12 @@ std::string ModManager::modName(size_t owner) const
 }
 
 }
+
+namespace kestrel::modding {
+
+EmoteRegistry& ModManager::emotes()
+{
+    return host->emotes;
+}
+
+}

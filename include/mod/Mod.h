@@ -61,6 +61,12 @@ protected:
     Scheduler& scheduler() const { return context().scheduler(); }
     Shaders& shaders() const { return context().shaders(); }
     Camera& camera() const { return context().camera(); }
+    Emotes& emotes() const { return context().emotes(); }
+
+    Subscription emote(EmoteSpec spec)
+    {
+        return emotes().add(std::move(spec));
+    }
 
     /**
      * Listens with a lambda: on<ChatReceivedEvent>([](ChatReceivedEvent& event) { ... }).
