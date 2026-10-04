@@ -101,5 +101,13 @@ key bindings, a scheduler, per mod settings, packet filters and custom shaders. 
 
 ## Licensing information
 
-Kestrel is an independent, unofficial client. It is not approved by or associated with Mojang or Microsoft.
+Kestrel is licensed under the [GNU Lesser General Public License v3.0](LICENSE), which supplements
+the [GNU General Public License v3.0](COPYING).
+
+Kestrel ships no game assets. Textures, UI files and fonts are read from a Minecraft installation you own.
+
+Signing in goes through the same Xbox Live and PlayFab services the game itself talks to. Using an unofficial
+client with them is at your own risk.
+
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
 All brands and trademarks belong to their respective owners.
