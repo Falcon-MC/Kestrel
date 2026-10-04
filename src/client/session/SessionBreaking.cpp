@@ -531,14 +531,21 @@ void Session::publishBreaking()
     std::optional<BlockSelection> selection;
     int32_t gameType = 0;
     bool dead = false;
+    int32_t slot = 0;
     {
         std::lock_guard<std::mutex> guard(mutex);
         gameType = current.hud.gameType;
         dead = current.dead;
+        slot = std::clamp(current.hud.selectedSlot, 0, 8);
     }
     constexpr int32_t SpectatorMode = 6;
     if (!dead && gameType != SpectatorMode) {
-        if (std::optional<BlockHit> hit = traceBlock(BreakReach)) {
+        std::optional<BlockHit> hit = traceBlock(BreakReach);
+        // With nothing under the crosshair, the block a held block would bridge from is outlined like the game does.
+        if (!hit && holdsBlock(inventoryModel.slots[size_t(slot)])) {
+            hit = bridgeHit();
+        }
+        if (hit) {
             double distance = 0.0;
             std::array<double, 3> direction { lookDirection[0], lookDirection[1], lookDirection[2] };
             if (!traceActor(lookOrigin, direction, hit->distance, distance)) {
