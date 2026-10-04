@@ -13,6 +13,7 @@
 #include "ui/Image.h"
 #include "ui/Types.h"
 
+#include <array>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -199,6 +200,7 @@ enum class Dialog {
     RealmInvites,
     JoinRealm,
     ConfirmRemoveFriend,
+    Emotes,
 };
 
 enum class Field {
@@ -306,6 +308,23 @@ struct ProfileAchievement {
  * What the profile page shows: achievement and gamerscore totals, suggested
  * and recently earned achievements, and play statistics.
  */
+/**
+ * An emote the wheel can hold: its id, the name shown and an optional icon
+ * texture.
+ */
+// Degrees per part, in the order head, body, right arm, left arm, right leg, left leg.
+using ModelPose = std::array<std::array<float, 3>, 6>;
+
+struct EmoteOption {
+    std::string id;
+    std::string name;
+    std::string icon;
+    // The emote halfway through, for the wheel's preview of the player.
+    ModelPose pose {};
+};
+
+inline constexpr size_t EmoteSlotCount = 4;
+
 /**
  * A piece of a dressing room page as the grid shows it: its offer, title,
  * rarity, creator, price, whether it is owned, and its thumbnail sprite.
@@ -849,6 +868,30 @@ public:
         return requested;
     }
 
+    /**
+     * The emotes the wheel offers, and the ids the player put in its slots;
+     * an empty or unknown slot shows the next emote not already placed.
+     */
+    void setEmotes(std::vector<EmoteOption> options);
+    void setEmoteSlots(const std::array<std::string, EmoteSlotCount>& slots);
+    const std::array<std::string, EmoteSlotCount>& emoteSlots() const
+    {
+        return emoteSlotIds;
+    }
+
+    /**
+     * The emote the player picked on the wheel since the last call.
+     */
+    std::optional<std::string> takeEmoteRequest()
+    {
+        return std::exchange(emoteRequest, std::nullopt);
+    }
+
+    bool takeEmoteSlotsChanged()
+    {
+        return std::exchange(emoteSlotsChanged, false);
+    }
+
     bool takeDisconnectRequest()
     {
         bool requested = disconnectRequested;
@@ -1070,6 +1113,10 @@ private:
     void titlePromo(ui::Context& ui, float left, float bottom);
     void pause(ui::Context& ui, float width, float height);
     bool pauseScreen(ui::Context& ui, float width, float height);
+    void emoteWheel(ui::Context& ui, float width, float height);
+    std::array<const EmoteOption*, EmoteSlotCount> filledEmoteSlots() const;
+    void pickEmoteSlot(size_t slot);
+    void beginEmoteEquip();
     ui::UiData pauseData() const;
     void pauseRenderer(ui::Context& ui, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup);
     void pauseButton(const std::string& id);
@@ -1303,6 +1350,16 @@ private:
     float sidebarScroll = 0.0f;
     float pageContent = 0.0f;
     bool disconnectRequested = false;
+    std::unique_ptr<ui::JsonUiScreen> emoteUi;
+    std::vector<EmoteOption> emoteOptions;
+    std::array<std::string, EmoteSlotCount> emoteSlotIds {};
+    std::optional<std::string> emoteRequest;
+    bool emoteSlotsChanged = false;
+    std::string emoteEquipping;
+    std::string emoteRoot;
+    const ModelPose* modelPose = nullptr;
+    std::string lastEmoteOffered;
+    int emoteHovered = -1;
     bool respawnRequested = false;
     std::chrono::steady_clock::time_point respawnClicked {};
     std::optional<bool> packAnswer;

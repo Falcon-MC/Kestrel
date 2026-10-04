@@ -562,6 +562,19 @@ std::array<float, 3> EntityAnimator::evaluateKey(const std::array<molang::Script
     return out;
 }
 
+std::unordered_map<std::string, std::array<float, 3>> EntityAnimator::rotationsAt(const AnimationClip& clip, double time)
+{
+    scope.queries = this;
+    animTime = time;
+    std::unordered_map<std::string, std::array<float, 3>> rotations;
+    for (const AnimationBone& bone : clip.bones) {
+        if (bone.rotation.present()) {
+            rotations[bone.bone] = sample(bone.rotation, time, { 0.0f, 0.0f, 0.0f });
+        }
+    }
+    return rotations;
+}
+
 std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, double time, const std::array<float, 3>& current)
 {
     const std::vector<AnimationKey>& keys = channel.keys;
@@ -872,7 +885,11 @@ void EntityAnimator::play(const std::string& alias, double weight, int depth, bo
         }
         return;
     }
-    if (const AnimationClip* clip = activeLibrary->clip(name)) {
+    const AnimationClip* clip = activeLibrary->clip(name);
+    if (!clip && current.extraLibrary) {
+        clip = current.extraLibrary->clip(name);
+    }
+    if (clip) {
         bool done = playClip(alias, *clip, weight);
         if (finished) {
             *finished = done;

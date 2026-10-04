@@ -242,6 +242,25 @@ private:
     void countFrame(std::chrono::steady_clock::time_point now);
     menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
     void handleHotbarInput();
+
+    /**
+     * An emote playing on the local player: the clip on its body, when it
+     * started and how long a clip that plays once lasts.
+     */
+    struct ActiveEmote {
+        std::string id;
+        std::string clip;
+        double started = 0.0;
+        double length = 0.0;
+        bool once = false;
+        int restartFrames = 0;
+    };
+    void updateEmotes(double now);
+    void startEmote(const std::string& id, double now);
+    menu::ModelPose emotePose(const std::string& clipName);
+    std::optional<ActiveEmote> activeEmote;
+    world::AnimationLibrary emoteAnimations;
+    uint64_t emoteRevision = ~uint64_t(0);
     void driveGamepad();
     std::array<Key, PadButtonCount> padKeys {};
     bool padAttack = false;

@@ -15,6 +15,7 @@ void Client::loadSettings()
     std::ifstream file(settingsFile);
     KeyBindings bindings;
     menu::ChatSettings chat;
+    std::array<std::string, menu::EmoteSlotCount> emoteSlots {};
     std::string line;
     while (std::getline(file, line)) {
         size_t separator = line.find('=');
@@ -83,6 +84,11 @@ void Client::loadSettings()
             chat.chatColor = std::atoi(value.c_str());
         } else if (key == "chat.mentionsColor") {
             chat.mentionsColor = std::atoi(value.c_str());
+        } else if (key.rfind("emote.", 0) == 0) {
+            size_t slot = static_cast<size_t>(std::atoi(key.c_str() + 6));
+            if (slot < menu::EmoteSlotCount) {
+                emoteSlots[slot] = value;
+            }
         }
         for (size_t i = 0; i < KeyBindings::Count; ++i) {
             if (key == std::string("key.") + KeyBindings::id(i)) {
@@ -95,6 +101,7 @@ void Client::loadSettings()
     }
     menu.setKeyBindings(bindings);
     menu.setChatSettings(chat);
+    menu.setEmoteSlots(emoteSlots);
     savedChat = menu.chatSettings();
     savedScale = menu.interfaceScale();
     savedBindings = bindings;
@@ -172,6 +179,11 @@ void Client::saveSettings()
     const KeyBindings& current = menu.keyBindings();
     for (size_t i = 0; i < KeyBindings::Count; ++i) {
         file << "key." << KeyBindings::id(i) << '=' << keyName(current.keys[i]) << '\n';
+    }
+    for (size_t slot = 0; slot < menu::EmoteSlotCount; ++slot) {
+        if (!menu.emoteSlots()[slot].empty()) {
+            file << "emote." << slot << '=' << menu.emoteSlots()[slot] << '\n';
+        }
     }
     savedChat = chat;
     savedScale = menu.interfaceScale();
