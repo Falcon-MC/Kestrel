@@ -559,6 +559,10 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             platform::openUrl(event.text);
             continue;
         }
+        if (event.name == "setup_safe_zone_button") {
+            dialog = Dialog::SafeArea;
+            continue;
+        }
         if (event.name == "change_gamertag_button") {
             platform::openUrl("https://social.xbox.com/changegamertag");
             continue;
