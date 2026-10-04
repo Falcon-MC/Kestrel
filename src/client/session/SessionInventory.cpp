@@ -20,6 +20,7 @@
 #include "Protocol/Packets/PlayerToggleCrafterSlotRequestPacket.h"
 #include "Protocol/Packets/TrimDataPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
+#include "Protocol/Packets/UpdateTradePacket.h"
 
 #include <algorithm>
 #include <limits>
@@ -156,6 +157,8 @@ void Session::publishInventory()
     } else if (inventoryModel.type == ContainerType::Anvil || inventoryModel.type == ContainerType::Grindstone || inventoryModel.type == ContainerType::Loom) {
         inventoryModel.bookDefinition = itemDefinitions.getDefinition("minecraft:book");
         view.slots[Output] = hudItemOf(inventoryModel.stationPreview(nullptr, &view.stationCost));
+    } else if (inventoryModel.type == ContainerType::Trade) {
+        view.slots[Output] = hudItemOf(inventoryModel.tradePreview());
     } else if (inventoryModel.type == ContainerType::Crafter) {
         InventoryModel preview = inventoryModel;
         preview.type = ContainerType::Workbench;
@@ -182,6 +185,41 @@ void Session::publishInventory()
                 option.networkId = recipe.recipe.mRecipeNetId;
                 view.stationOptions.push_back(std::move(option));
             }
+        }
+    }
+    view.trades.clear();
+    view.tradeTier = inventoryModel.tradeTier;
+    view.selectedTrade = inventoryModel.selectedTrade;
+    if (inventoryModel.type == ContainerType::Trade) {
+        auto owned = [&](const ItemStack& price) {
+            int total = 0;
+            for (int slot = 0; slot < 36; ++slot) {
+                const ItemStack& item = inventoryModel.slots[slot];
+                if (!InventoryModel::empty(item) && item.mDefinition->getIdentifier() == price.mDefinition->getIdentifier() && item.mDamage == price.mDamage) {
+                    total += item.mCount;
+                }
+            }
+            for (int slot : { Ui + 4, Ui + 5 }) {
+                const ItemStack& item = inventoryModel.slots[slot];
+                if (!InventoryModel::empty(item) && item.mDefinition->getIdentifier() == price.mDefinition->getIdentifier() && item.mDamage == price.mDamage) {
+                    total += item.mCount;
+                }
+            }
+            return total;
+        };
+        for (const auto& offer : inventoryModel.trades) {
+            TradeOfferView entry;
+            entry.buyA = hudItemOf(offer.buyA);
+            entry.buyB = hudItemOf(offer.buyB);
+            entry.sell = hudItemOf(offer.sell);
+            entry.countA = offer.countA;
+            entry.countB = offer.countB;
+            entry.originalCountA = offer.buyA.mCount;
+            entry.originalCountB = InventoryModel::empty(offer.buyB) ? 0 : offer.buyB.mCount;
+            entry.tier = offer.tier;
+            entry.soldOut = offer.maxUses > 0 && offer.uses >= offer.maxUses;
+            entry.affordable = owned(offer.buyA) >= offer.countA && (InventoryModel::empty(offer.buyB) || owned(offer.buyB) >= offer.countB);
+            view.trades.push_back(std::move(entry));
         }
     }
     view.windowId = inventoryModel.windowId;
@@ -297,6 +335,9 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
             if (inventoryBefore) (*inventoryBefore)[slot] = single->mItem;
             publishInventory();
         }
+    } else if (auto trade = std::dynamic_pointer_cast<UpdateTradePacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        openTrade(*trade);
     } else if (auto open = std::dynamic_pointer_cast<ContainerOpenPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         // Opening a block container confirms a successful use even on servers
@@ -741,6 +782,112 @@ void Session::flushInventory()
     ItemStackRequestPacket packet;
     packet.mRequests.push_back(std::move(request));
     transmit(packet);
+    publishInventory();
+}
+
+/**
+ * An item stack described the way trades and block entities store one: its
+ * name, count, data value and tag. Air when the name is unknown.
+ */
+ItemStack Session::nbtItem(const Tag& item) const
+{
+    ItemStack stack = ItemStack::air();
+    if (!item.isCompound()) {
+        return stack;
+    }
+    std::string name = item.getString("Name", "");
+    if (name.empty()) {
+        return stack;
+    }
+    stack.mDefinition = itemDefinitions.getDefinition(name);
+    if (!stack.mDefinition) {
+        return ItemStack::air();
+    }
+    stack.mCount = std::max(1, integerTag(item, "Count", 1));
+    stack.mDamage = integerTag(item, "Damage", 0);
+    if (const Tag* tag = item.get("tag"); tag && tag->isCompound()) {
+        stack.mTag = *tag;
+    }
+    return stack;
+}
+
+/**
+ * Opens a trader's screen from its offers: each recipe's price at the
+ * current discount, its result, tier and uses, and the experience each tier
+ * needs, the way the game's trade screen reads UpdateTrade.
+ */
+void Session::openTrade(const UpdateTradePacket& trade)
+{
+    bool refresh = inventoryModel.type == ContainerType::Trade && inventoryModel.windowId == uint8_t(trade.mContainerId);
+    int keptTrade = refresh ? inventoryModel.selectedTrade : -1;
+    inventoryModel.windowId = uint8_t(trade.mContainerId);
+    inventoryModel.type = ContainerType::Trade;
+    inventoryModel.containerSize = 0;
+    inventoryModel.trades.clear();
+    inventoryModel.selectedTrade = -1;
+    inventoryModel.tradeTier = trade.mTradeTier;
+    auto& view = current.hud.container;
+    view.screen.clear();
+    view.customName = trade.mDisplayName;
+    view.tradeTierExperience.clear();
+    view.traderExperience = 0;
+    if (trade.mOffers.isCompound()) {
+        if (const Tag* recipes = trade.mOffers.get("Recipes"); recipes && recipes->isList()) {
+            for (const Tag& recipe : recipes->getList()) {
+                if (!recipe.isCompound()) {
+                    continue;
+                }
+                InventoryModel::TradeOffer offer;
+                offer.netId = integerTag(recipe, "netId", 0);
+                if (const Tag* buyA = recipe.get("buyA")) {
+                    offer.buyA = nbtItem(*buyA);
+                }
+                if (const Tag* buyB = recipe.get("buyB")) {
+                    offer.buyB = nbtItem(*buyB);
+                }
+                if (const Tag* sell = recipe.get("sell")) {
+                    offer.sell = nbtItem(*sell);
+                }
+                if (InventoryModel::empty(offer.buyA) || InventoryModel::empty(offer.sell)) {
+                    continue;
+                }
+                offer.countA = integerTag(recipe, "buyCountA", 0);
+                if (offer.countA <= 0) {
+                    offer.countA = offer.buyA.mCount;
+                }
+                offer.countB = InventoryModel::empty(offer.buyB) ? 0 : integerTag(recipe, "buyCountB", 0);
+                if (!InventoryModel::empty(offer.buyB) && offer.countB <= 0) {
+                    offer.countB = offer.buyB.mCount;
+                }
+                offer.tier = integerTag(recipe, "tier", 0);
+                offer.uses = integerTag(recipe, "uses", 0);
+                offer.maxUses = integerTag(recipe, "maxUses", 0);
+                inventoryModel.trades.push_back(std::move(offer));
+            }
+        }
+        if (const Tag* tiers = trade.mOffers.get("TierExpRequirements"); tiers && tiers->isList()) {
+            for (const Tag& tier : tiers->getList()) {
+                if (tier.isCompound()) {
+                    for (const std::string& key : tier.getKeys()) {
+                        view.tradeTierExperience.push_back(integerTag(tier, key, 0));
+                    }
+                }
+            }
+        }
+    }
+    if (auto runtime = runtimeByUnique.find(trade.mTraderUniqueActorId); runtime != runtimeByUnique.end()) {
+        view.mountRuntimeId = runtime->second;
+    }
+    if (refresh) {
+        inventoryModel.selectedTrade = keptTrade >= 0 && keptTrade < int(inventoryModel.trades.size()) ? keptTrade : -1;
+        publishInventory();
+        return;
+    }
+    for (int i = Container; i < SlotCount; ++i) {
+        inventoryModel.slots[i] = ItemStack::air();
+    }
+    inventoryModel.slots[Output] = ItemStack::air();
+    ++view.openRevision;
     publishInventory();
 }
 }

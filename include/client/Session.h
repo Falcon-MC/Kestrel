@@ -32,6 +32,7 @@
 
 class BedrockConnection;
 class BossEventPacket;
+class UpdateTradePacket;
 class ClientboundMapItemDataPacket;
 class LevelEventPacket;
 class MinecraftAuthentication;
@@ -819,6 +820,8 @@ private:
     void handleInventoryPacket(const std::shared_ptr<Packet>& packet);
     void flushInventory();
     void publishInventory();
+    void openTrade(const UpdateTradePacket& trade);
+    ItemStack nbtItem(const Tag& item) const;
     void sendSelectedSlot(int slot);
     void sendRespawnRequest();
     void run(std::string target, MinecraftAuthentication* authentication, std::string offlineName);

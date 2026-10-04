@@ -720,8 +720,19 @@ const UiRow* JsonUiRuntime::row(const Node& node, const std::string& collection)
     const std::vector<UiRow>* rows = nullptr;
     for (const Node* outer = item->parent; outer; outer = outer->parent) {
         if (outer->index >= 0) {
-            if (auto found = data->collections.find(name + ":" + std::to_string(outer->index)); found != data->collections.end()) {
-                rows = &found->second;
+            std::string nested = name + ":" + std::to_string(outer->index);
+            for (const Node* further = outer->parent; further; further = further->parent) {
+                if (further->index >= 0) {
+                    if (auto found = data->collections.find(nested + ":" + std::to_string(further->index)); found != data->collections.end()) {
+                        rows = &found->second;
+                    }
+                    break;
+                }
+            }
+            if (!rows) {
+                if (auto found = data->collections.find(nested); found != data->collections.end()) {
+                    rows = &found->second;
+                }
             }
             break;
         }
@@ -1071,6 +1082,19 @@ void JsonUiRuntime::bind(Node& node)
     if (!bindings || !bindings->isArray()) {
         return;
     }
+    bool detailsGiven = false;
+    std::string detailsCollection;
+    for (const std::unique_ptr<json::Value>& binding : bindings->mArray) {
+        if (!binding->isObject()) {
+            continue;
+        }
+        const json::Value* typeValue = resolve(node, binding->get("binding_type"));
+        if (typeValue && typeValue->isString() && typeValue->mString == "collection_details") {
+            detailsGiven = true;
+            const json::Value* named = resolve(node, binding->get("binding_collection_name"));
+            detailsCollection = named && named->isString() ? named->mString : std::string();
+        }
+    }
     for (const std::unique_ptr<json::Value>& binding : bindings->mArray) {
         if (!binding->isObject()) {
             continue;
@@ -1079,7 +1103,7 @@ void JsonUiRuntime::bind(Node& node)
             continue;
         }
         const json::Value* typeValue = resolve(node, binding->get("binding_type"));
-        std::string type = typeValue && typeValue->isString() ? typeValue->mString : "global";
+        std::string type = typeValue && typeValue->isString() ? typeValue->mString : detailsGiven ? "collection" : "global";
         if (type == "view") {
             const json::Value* source = resolve(node, binding->get("source_property_name"));
             const json::Value* target = resolve(node, binding->get("target_property_name"));
@@ -1134,7 +1158,7 @@ void JsonUiRuntime::bind(Node& node)
         std::string target = overrideValue && overrideValue->isString() && !overrideValue->mString.empty() ? overrideValue->mString : name;
         UiValue value;
         const json::Value* collectionValue = resolve(node, binding->get("binding_collection_name"));
-        std::string collection = collectionValue && collectionValue->isString() ? collectionValue->mString : std::string();
+        std::string collection = collectionValue && collectionValue->isString() ? collectionValue->mString : !typeValue && detailsGiven ? detailsCollection : std::string();
         auto read = [&](const std::string& key) -> UiValue {
             if (type == "collection") {
                 if (const UiRow* values = row(node, collection)) {
@@ -1307,16 +1331,29 @@ void JsonUiRuntime::update(Node& node, int depth, Node* control)
         }
         if (auto selected = data->globals.find("#radio:" + group); selected != data->globals.end()) {
             double index = number(node, "toggle_group_forced_index", -1.0);
-            if (index < 0.0) {
-                for (const Node* at = &node; at; at = at->parent) {
-                    if (at->index >= 0) {
-                        index = at->index;
-                        break;
+            double itemIndex = -1.0;
+            double outerIndex = -1.0;
+            for (const Node* at = &node; at; at = at->parent) {
+                if (at->index >= 0) {
+                    itemIndex = at->index;
+                    for (const Node* outer = at->parent; outer; outer = outer->parent) {
+                        if (outer->index >= 0) {
+                            outerIndex = outer->index;
+                            break;
+                        }
                     }
+                    break;
                 }
             }
+            if (index < 0.0) {
+                index = itemIndex;
+            }
             node.dataToggle = true;
-            node.bound["#toggle_state"] = UiValue::of(index == selected->second.toNumber());
+            if (selected->second.kind == UiValue::Kind::String) {
+                node.bound["#toggle_state"] = UiValue::of(selected->second.toText() == std::to_string(int(itemIndex)) + ":" + std::to_string(int(outerIndex)));
+            } else {
+                node.bound["#toggle_state"] = UiValue::of(index == selected->second.toNumber());
+            }
         }
     }
     if ((node.type == "toggle" || node.type == "dropdown") && !node.dataToggle) {

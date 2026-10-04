@@ -87,7 +87,9 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
     if (!definitions || layout.screen.empty() || !definitions->has(layout.screen)) {
         return false;
     }
-    std::string title = state.customName.empty() ? ui::tr(layout.title, layout.title) : state.customName;
+    bool customKey = !state.customName.empty() && state.customName.find(' ') == std::string::npos && state.customName.find('.') != std::string::npos;
+    std::string customName = customKey ? ui::tr(state.customName, state.customName) : state.customName;
+    std::string title = customName.empty() ? ui::tr(layout.title, layout.title) : customName;
     if (!jsonScreen || jsonRoot != layout.screen || jsonTitle != title) {
         jsonRoot = layout.screen;
         jsonTitle = title;
@@ -365,6 +367,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             result["#empty_bottle_image_visible"] = ui::UiValue::of(value.empty());
             result["#empty_fuel_image_visible"] = ui::UiValue::of(value.empty());
             result["#empty_image_visible"] = ui::UiValue::of(value.empty());
+            result["#item_valid"] = ui::UiValue::of(true);
             int maximum = value.empty() ? 0 : world::itemMaxDurability(value.identifier);
             double durability = maximum > 0 ? std::clamp(double(maximum - value.damage) / maximum, 0.0, 1.0) : 0.0;
             result["#item_durability_visible"] = ui::UiValue::of(maximum > 0 && value.damage > 0);
@@ -396,6 +399,74 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             data.collections["patterns"].push_back(std::move(option));
         }
         number("#pattern_selector_total_items", double(state.loomPatterns.size()));
+        if (state.type == ContainerType::Trade) {
+            int lastTier = state.tradeTier;
+            for (const TradeOfferView& offer : state.trades) {
+                lastTier = std::max(lastTier, offer.tier);
+            }
+            std::string level = ui::tr("trade.level." + std::to_string(state.tradeTier + 1), std::to_string(state.tradeTier + 1));
+            std::string name = customName.empty() ? ui::tr("entity.villager.name", "Villager") : customName;
+            std::string label = ui::tr("trade.nameAndLevel", "%s - %s");
+            for (const std::string& part : { name, level }) {
+                if (size_t at = label.find("%s"); at != std::string::npos) {
+                    label.replace(at, 2, part);
+                }
+            }
+            text("#name_label", label);
+            boolean("#show_level", true);
+            bool experience = !state.tradeTierExperience.empty();
+            boolean("#exp_bar_visible", experience);
+            number("#exp_progress", 0.0);
+            number("#exp_possible_progress", 0.0);
+            boolean("#trade_details_button_1_visible", false);
+            boolean("#trade_details_button_2_visible", false);
+            boolean("#enchantment_details_button_visible", false);
+            boolean("#gamepad_helper_x_visible", false);
+            boolean("#gamepad_helper_y_visible", false);
+            boolean("#single_slash_visible", false);
+            boolean("#double_slash_visible", false);
+            boolean("#trade_button_enabled", !state.slots[inventory::Output].empty());
+            number("#trade_tier_total", double(lastTier + 1));
+            std::vector<int> perTier(size_t(lastTier + 1), 0);
+            for (size_t index = 0; index < state.trades.size(); ++index) {
+                const TradeOfferView& offer = state.trades[index];
+                int tier = std::clamp(offer.tier, 0, lastTier);
+                int local = perTier[size_t(tier)]++;
+                bool unlocked = tier <= state.tradeTier;
+                std::string key = std::to_string(local) + ":" + std::to_string(tier);
+                if (int(index) == state.selectedTrade) {
+                    data.globals["#radio:trade_toggle"] = ui::UiValue::of(key);
+                }
+                ui::UiRow trade;
+                trade["#trade_toggle_enabled"] = ui::UiValue::of(unlocked);
+                trade["#trade_cross_out_visible"] = ui::UiValue::of(offer.soldOut);
+                trade["#trade_possible"] = ui::UiValue::of(unlocked && !offer.soldOut && offer.affordable);
+                trade["#padding_around_sell_item"] = ui::UiValue::of(offer.buyB.empty());
+                trade["#hover_text"] = ui::UiValue::of(std::string());
+                data.collections["trades:" + std::to_string(tier)].push_back(std::move(trade));
+                auto cell = [&](const std::string& collection, const HudItem& item, int count, int original) {
+                    int itemIndex = int(items.size());
+                    items.push_back(item);
+                    auto values = row(itemIndex);
+                    values["#trade_item_count"] = ui::UiValue::of(item.empty() || count <= 1 ? std::string() : std::to_string(count));
+                    values["#trade_price_different"] = ui::UiValue::of(!item.empty() && original != count);
+                    values["#second_trade_item_count"] = ui::UiValue::of(std::to_string(original));
+                    data.collections[collection + ":" + key].push_back(std::move(values));
+                };
+                cell("trade_item_1", offer.buyA, offer.countA, offer.originalCountA);
+                cell("trade_item_2", offer.buyB, offer.countB, offer.originalCountB);
+                cell("sell_item", offer.sell, offer.sell.count, offer.sell.count);
+            }
+            for (int tier = 0; tier <= lastTier; ++tier) {
+                ui::UiRow values;
+                values["#tier_name"] = ui::UiValue::of(ui::tr("trade.level." + std::to_string(tier + 1), std::to_string(tier + 1)));
+                values["#is_tier_unlocked"] = ui::UiValue::of(tier <= state.tradeTier);
+                values["#tier_visible"] = ui::UiValue::of(perTier[size_t(tier)] > 0);
+                values["#trade_tier_total"] = ui::UiValue::of(double(perTier[size_t(tier)]));
+                values["#trade_cell_background_texture"] = ui::UiValue::of(std::string("textures/ui/cell_image_normal"));
+                data.collections["trade_tiers"].push_back(std::move(values));
+            }
+        }
         if (shown && catalog) {
             std::string query = search;
             std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) {
@@ -535,6 +606,10 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             break;
         }
     }
+    if (hoveredSlot < 0 && state.type == ContainerType::Trade && target.collection.empty()
+        && (target.name.starts_with("button.trade_take") || target.name == "button.trade_coalesce_stack")) {
+        hoveredSlot = inventory::Output;
+    }
     const InputState& input = ui.input();
     if (active && !ui.isBlocked() && !jsonScreen->editing()) {
         if (hoveredSlot >= 0) {
@@ -628,6 +703,20 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             }
         } else if (event.name == "button.pattern_select" && event.index >= 0 && event.index < int(state.loomPatterns.size())) {
             send(InventoryAction::StationRecipe, -1, event.index);
+        } else if (state.type == ContainerType::Trade && event.kind == ui::UiEvent::Kind::Toggle && event.name.find("trade_toggle") != std::string::npos && event.index >= 0) {
+            int tier = std::max(event.outerIndex, 0);
+            int local = 0;
+            for (size_t index = 0; index < state.trades.size(); ++index) {
+                if (std::max(state.trades[index].tier, 0) != tier) {
+                    continue;
+                }
+                if (local++ == event.index) {
+                    send(InventoryAction::StationRecipe, -1, int(index));
+                    break;
+                }
+            }
+        } else if (state.type == ContainerType::Trade && event.name == "button.trade") {
+            send(InventoryAction::Craft, inventory::Output, 0);
         } else if (event.name == "button.stone_select" && event.index >= 0 && event.index < int(state.stationOptions.size())) {
             send(InventoryAction::StationRecipe, -1, state.stationOptions[event.index].networkId);
         } else if (event.name == "button.student_button" && event.index >= 0) {

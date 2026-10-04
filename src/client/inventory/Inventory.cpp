@@ -136,6 +136,9 @@ int InventoryModel::packetSlot(int container, int slot) const
     if (container == 124) {
         return personalUiSlot(slot, type);
     }
+    if (windowId != 0 && container == windowId && type == ContainerType::Trade) {
+        return slot == 4 || slot == 5 ? Ui + slot : -1;
+    }
     if (windowId != 0 && container == windowId && slot < 54) return Container + slot;
     return -1;
 }
@@ -153,7 +156,8 @@ int InventoryModel::responseSlot(ContainerSlotType container, int slot) const
     case ContainerSlotType::GrindstoneResult:
     case ContainerSlotType::LoomResult:
     case ContainerSlotType::StonecutterResult:
-    case ContainerSlotType::CartographyResult: return Output;
+    case ContainerSlotType::CartographyResult:
+    case ContainerSlotType::Trade2Result: return Output;
     case ContainerSlotType::BrewingInput: return Container;
     case ContainerSlotType::BrewingResult: return slot >= 1 && slot <= 3 ? Container + slot : -1;
     case ContainerSlotType::BrewingFuel: return Container + 4;
@@ -564,6 +568,10 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     ItemStackRequest request;
     request.mRequestId = requestId;
     int slot = command.slot;
+    if (command.action == InventoryAction::StationRecipe && type == ContainerType::Trade) {
+        selectTrade(request, command.value);
+        return request;
+    }
     if (command.action == InventoryAction::StationRecipe) {
         if (type == ContainerType::Loom) {
             auto patterns = availableLoomPatterns();
@@ -648,6 +656,10 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
             auto one = ingredient; one.mCount = 1;
             for (int i = 0; i < 36 && remaining > 0; ++i) if (ingredientMatches(one, slots[i])) remaining -= move(request, i, dest, remaining);
         }
+        return request;
+    }
+    if ((slot == Output || command.action == InventoryAction::Craft) && type == ContainerType::Trade) {
+        takeTrade(request, command.all || command.action == InventoryAction::QuickMove);
         return request;
     }
     if (slot == Output || command.action == InventoryAction::Craft) {

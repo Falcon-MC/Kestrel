@@ -65,12 +65,34 @@ struct InventoryCatalogItem {
     std::string groupName;
 };
 
+/**
+ * One offer of a trader as the trade screen shows it: what it costs, what it
+ * gives, the tier it belongs to, and whether it is sold out or still locked.
+ */
+struct TradeOfferView {
+    HudItem buyA;
+    HudItem buyB;
+    HudItem sell;
+    int countA = 0;
+    int countB = 0;
+    int originalCountA = 0;
+    int originalCountB = 0;
+    int tier = 0;
+    bool soldOut = false;
+    bool affordable = false;
+};
+
 struct InventoryState {
     std::array<HudItem, inventory::SlotCount> slots {};
     std::shared_ptr<const std::vector<InventoryCatalogItem>> creative;
     std::shared_ptr<const std::vector<InventoryCatalogItem>> recipes;
     std::vector<int> craftable;
     std::vector<InventoryCatalogItem> stationOptions;
+    std::vector<TradeOfferView> trades;
+    std::vector<int> tradeTierExperience;
+    int tradeTier = 0;
+    int traderExperience = 0;
+    int selectedTrade = -1;
     std::vector<std::string> loomPatterns;
     int selectedStationRecipe = -1;
     std::string stationName;
@@ -141,6 +163,29 @@ public:
     std::string loomPattern;
     std::vector<std::string> availableLoomPatterns() const;
     int stationRecipe = -1;
+
+    /**
+     * A trader's offer: the network id the server knows it by, the items it
+     * asks for at the current price and the one it gives, its tier and how
+     * often it can still be used.
+     */
+    struct TradeOffer {
+        int netId = 0;
+        ItemStack buyA = ItemStack::air();
+        ItemStack buyB = ItemStack::air();
+        ItemStack sell = ItemStack::air();
+        int countA = 0;
+        int countB = 0;
+        int tier = 0;
+        int uses = 0;
+        int maxUses = 0;
+    };
+    std::vector<TradeOffer> trades;
+    int selectedTrade = -1;
+    int tradeTier = 0;
+    ItemStack tradePreview(std::vector<std::pair<int, int>>* consumption = nullptr) const;
+    void selectTrade(ItemStackRequest& request, int index);
+    void takeTrade(ItemStackRequest& request, bool toInventory);
     int repairRecipe = -1;
     int disabledSlots = 0;
 

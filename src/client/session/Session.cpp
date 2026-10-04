@@ -989,6 +989,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::SetHud:
     case MinecraftPacketIds::SpawnParticleEffect:
     case MinecraftPacketIds::ClientboundMapItemData:
+    case MinecraftPacketIds::UpdateTrade:
         break;
     default:
         return;

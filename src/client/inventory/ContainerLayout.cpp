@@ -58,6 +58,8 @@ ContainerSlotType personalSlotType(int index, ContainerType type)
     case 1: return ContainerSlotType::AnvilInput;
     case 2: return ContainerSlotType::AnvilMaterial;
     case 3: return ContainerSlotType::StonecutterInput;
+    case 4: return type == ContainerType::Trade ? ContainerSlotType::Trade2Ingredient1 : ContainerSlotType::Unknown;
+    case 5: return type == ContainerType::Trade ? ContainerSlotType::Trade2Ingredient2 : ContainerSlotType::Unknown;
     case 9: return ContainerSlotType::LoomInput;
     case 10: return ContainerSlotType::LoomDye;
     case 11: return ContainerSlotType::LoomMaterial;
@@ -188,6 +190,13 @@ ContainerLayout containerLayout(const InventoryState& state)
         result.title = "container.stonecutter";
         cell("stonecutter_input_items", 3);
         cell("stonecutter_result_items", 50);
+        break;
+    case ContainerType::Trade:
+        result.screen = "trade2.trade_screen";
+        result.title = state.customName.empty() ? "entity.villager.name" : state.customName;
+        cell("trade2_ingredient1_item", 4);
+        cell("trade2_ingredient2_item", 5);
+        cell("trade2_result_item", 50);
         break;
     case ContainerType::Beacon:
         result.screen = "beacon.beacon_screen";
