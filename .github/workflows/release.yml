@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.26.51)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the release as a prerelease"
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: "Create the release as a draft"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Resolve version and changelog
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      draft: ${{ steps.resolve.outputs.draft }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and tag
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            PRERELEASE=false
+            DRAFT=false
+          else
+            VERSION="$INPUT_VERSION"
+            TAG="v${VERSION}"
+            PRERELEASE="$INPUT_PRERELEASE"
+            DRAFT="$INPUT_DRAFT"
+          fi
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.]+)?$'; then
+            echo "Version must look like X.Y.Z, X.Y.Z.W or X.Y.Z-rc.1, got '$VERSION'" >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "prerelease=$PRERELEASE"
+            echo "draft=$DRAFT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build changelog
+        id: changelog
+        env:
+          COMMIT_BASE: ${{ github.server_url }}/${{ github.repository }}/commit
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          PREVIOUS="$(git tag --list 'v*' --sort=-creatordate | grep -vx "$TAG" | head -n 1 || true)"
+
+          if [ -n "$PREVIOUS" ]; then
+            RANGE="${PREVIOUS}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          {
+            echo "changelog<<CHANGELOG_EOF"
+
+            if [ -n "$PREVIOUS" ]; then
+              echo "### Changes since [\`$PREVIOUS\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/$PREVIOUS)"
+            else
+              echo "### Changes"
+            fi
+
+            echo ""
+            git log --no-merges --reverse --pretty=format:"- [\`%h\`](${COMMIT_BASE}/%H) %s" "$RANGE"
+            echo ""
+            echo ""
+
+            if [ -n "$PREVIOUS" ]; then
+              echo "**Full diff:** [\`${PREVIOUS}...${TAG}\`](${{ github.server_url }}/${{ github.repository }}/compare/${PREVIOUS}...${TAG})"
+            fi
+
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+      version: ${{ needs.prepare.outputs.version }}
+
+  release:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List the release assets
+        run: ls -lh artifacts
+
+      - name: Create the release
+        uses: ncipollo/release-action@v1.15.0
+        with:
+          artifacts: "artifacts/*"
+          tag: ${{ needs.prepare.outputs.tag }}
+          commit: ${{ github.sha }}
+          name: Kestrel ${{ needs.prepare.outputs.version }}
+          draft: ${{ needs.prepare.outputs.draft }}
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            **Kestrel ${{ needs.prepare.outputs.version }}**
+
+            | Platform | Download |
+            | --- | --- |
+            | Windows x64 | `Kestrel-${{ needs.prepare.outputs.version }}-windows-x64.zip` |
+            | Linux x64 | `Kestrel-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz` |
+            | macOS arm64 | `Kestrel-${{ needs.prepare.outputs.version }}-macos-arm64.tar.gz` |
+
+            Each package ships with a `.sha256` checksum file. Kestrel reads its textures from an installed copy of
+            Minecraft: Bedrock Edition. The Linux build needs a Vulkan driver, the macOS build needs `openssl@3` from Homebrew.
+
+            ${{ needs.prepare.outputs.changelog }}

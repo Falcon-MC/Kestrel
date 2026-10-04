@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - upstream-updated
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  upstream:
+    name: Report the upstream change
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Rebuilding after ${{ github.event.client_payload.repository }}@${{ github.event.client_payload.sha }}"
+
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      tests: true

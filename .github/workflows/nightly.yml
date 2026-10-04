@@ -1,0 +1,91 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even when main has not changed since the last nightly"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Look for new commits
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare main with the last nightly
+        id: check
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          LAST="$(git rev-parse -q --verify 'refs/tags/nightly^{commit}' || true)"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$LAST" = "$HEAD_SHA" ] && [ "$FORCE" != "true" ]; then
+            echo "Nothing new since the last nightly ($HEAD_SHA)"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=nightly-$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+      version: ${{ needs.check.outputs.version }}
+
+  publish:
+    name: Publish nightly
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # The nightly is one rolling prerelease, so drop the old one and its tag before recreating both.
+      - name: Replace the nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release delete nightly --cleanup-tag --yes || true
+          cat > notes.md <<EOF
+          Automated build of [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${GITHUB_SHA}) from \`main\`.
+
+          Nightlies are untested snapshots and can break at any time. Use a [release](${{ github.server_url }}/${{ github.repository }}/releases/latest) for regular play.
+          EOF
+          gh release create nightly artifacts/* \
+            --target "$GITHUB_SHA" \
+            --title "Kestrel $VERSION" \
+            --notes-file notes.md \
+            --prerelease
