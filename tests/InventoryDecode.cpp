@@ -19,8 +19,9 @@ int main()
         items.registerDefinition(std::make_shared<ItemDefinition>("minecraft:stone", 1, false, Tag {}));
         PacketCodecContext context(blocks, items);
 
-        // A proxy destination can send a plain stack with a zero-length extra
-        // data string. The following slots must still be read at their boundaries.
+        // A plain stack sends its user data directly instead of as a sized string:
+        // a 0 where the length would be means "no tag", then the empty can place and
+        // can break lists. The following slots must still be read at their boundaries.
         BinaryStream wire;
         wire.putUnsignedVarInt(0);
         wire.putUnsignedVarInt(36);
@@ -30,7 +31,9 @@ int main()
         wire.putBool(true);
         wire.putVarInt(123);
         wire.putUnsignedVarInt(0);
-        wire.putString("");
+        wire.putUnsignedVarInt(0);
+        wire.putLInt(0);
+        wire.putLInt(0);
         for (int i = 1; i < 36; ++i) ItemCodec::writeNetworkItemStackDescriptor(wire, context, ItemStack::air());
         InventoryCodec::writeFullContainerName(wire, FullContainerName {});
         ItemCodec::writeNetworkItemStackDescriptor(wire, context, ItemStack::air());
