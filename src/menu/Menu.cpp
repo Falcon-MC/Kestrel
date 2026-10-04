@@ -1689,7 +1689,8 @@ void Menu::handleKeys(Context& ui)
     if (field != selectedField) {
         selectedField = Field::None;
     }
-    if (std::string* target = focusedText(); target && input.isHeld(Key::Control)) {
+    // AltGr arrives as Control plus Alt on Windows, and it types characters such as @ on AZERTY.
+    if (std::string* target = focusedText(); target && input.isHeld(Key::Control) && !input.isHeld(Key::Alt)) {
         bool selected = selectedField == field;
         if (input.pressedKey == Key::A) {
             selectedField = field;
