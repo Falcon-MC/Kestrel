@@ -386,6 +386,12 @@ bool WorldStream::cohortLoaded() const
     return settled();
 }
 
+bool WorldStream::columnPending(const ChunkKey& key) const
+{
+    auto found = pending.find(key);
+    return found != pending.end() && !found->second.empty();
+}
+
 bool WorldStream::settled() const
 {
     return pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime;

@@ -611,6 +611,20 @@ public:
     }
 
     /**
+     * The values of the options the game's settings screen shows that no
+     * other setting holds, by option name, kept between launches.
+     */
+    const std::map<std::string, int>& extraOptions() const
+    {
+        return extraOptionValues;
+    }
+
+    void setExtraOption(const std::string& name, int value)
+    {
+        extraOptionValues[name] = value;
+    }
+
+    /**
      * The accessibility glint strength and speed in percent, 0 to 100.
      */
     int glintStrength() const
@@ -1237,6 +1251,8 @@ private:
     bool globalSelectedExpanded = true;
     bool globalAvailableExpanded = true;
     bool vanillaGlobalResourcesPage(ui::Context& ui, float x, float& y, float w);
+    void bindGlobalResources(ui::UiData& data);
+    bool globalResourcesEvent(const ui::UiEvent& event);
     std::string openedMod;
     std::string removingMod;
     std::string editModFile;
@@ -1262,6 +1278,13 @@ private:
     std::vector<std::string> chatOutgoing;
     bool chatToBottom = false;
     std::unique_ptr<ui::JsonUiScreen> chatUi;
+    std::unique_ptr<ui::JsonUiScreen> settingsUi;
+    int vanillaSettingsSection = 0;
+    bool advancedGraphicsShown = false;
+    std::map<std::string, int> extraOptionValues;
+    bool vanillaSettings(ui::Context& ui, float width, float height);
+    int optionValue(std::string_view name, int fallback) const;
+    void setOptionValue(std::string_view name, int value);
     std::unique_ptr<ui::JsonUiScreen> chatSettingsUi;
     std::unique_ptr<ui::JsonUiScreen> pauseUi;
     // Whether the pause screen was open when last drawn, so opening it starts its entrance and

@@ -113,6 +113,24 @@ Node* JsonUiRuntime::find(Node& from, const std::string& name) const
     return nullptr;
 }
 
+Node* JsonUiRuntime::named(const std::string& name)
+{
+    if (!root) {
+        return nullptr;
+    }
+    if (namedCacheId != nextId || namedCacheDestroyed != jsonui::destroyedNodes) {
+        namedCache.clear();
+        namedCacheId = nextId;
+        namedCacheDestroyed = jsonui::destroyedNodes;
+    }
+    if (auto found = namedCache.find(name); found != namedCache.end()) {
+        return found->second;
+    }
+    Node* found = find(*root, name);
+    namedCache.emplace(name, found);
+    return found;
+}
+
 Node* JsonUiRuntime::nearest(Node& from, const std::string& name) const
 {
     if (name.empty()) {

@@ -126,7 +126,22 @@ struct AnimTrack {
     bool holding = false;
 };
 
+/**
+ * How many controls were destroyed on this thread, so a lookup cached by
+ * name knows when a control it points at may be gone.
+ */
+inline thread_local uint64_t destroyedNodes = 0;
+
 struct Node {
+    Node() = default;
+    Node(const Node&) = delete;
+    Node& operator=(const Node&) = delete;
+
+    ~Node()
+    {
+        ++destroyedNodes;
+    }
+
     uint64_t id = 0;
     std::string name;
     std::string type;
@@ -309,6 +324,8 @@ struct JsonUiRuntime {
     const Font::TextLayout& labelLayout(Node& node, float width, size_t maxLines = 0);
     std::array<int, 2> gridCells(Node& node);
     float intrinsic(Node& node, int axis);
+    float measure(Node& node, int axis);
+    bool inheritsSiblingMax(const Node& node, int axis) const;
 
     /**
      * Set once a sizing pass has given every node its height, so a width
@@ -336,6 +353,15 @@ struct JsonUiRuntime {
      * scroll view finds its viewport, content, track, box and bar panel.
      */
     Node* nearest(Node& from, const std::string& name) const;
+
+    /**
+     * The first control of that name anywhere on the screen, the scope of a
+     * view binding that names neither its siblings nor its ancestors.
+     */
+    Node* named(const std::string& name);
+    std::unordered_map<std::string, Node*> namedCache;
+    uint64_t namedCacheId = 0;
+    uint64_t namedCacheDestroyed = 0;
 
     /**
      * The wheel sensitivity, fixed by the scroll_speed of the first scroll

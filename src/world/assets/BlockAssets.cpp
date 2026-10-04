@@ -1,5 +1,6 @@
 #include "world/BlockAssets.h"
 #include "BlockRules.h"
+#include "client/DebugLog.h"
 #include "TextureTools.h"
 
 #include "Core/Json/Json.h"
@@ -242,9 +243,11 @@ std::optional<uint32_t> BlockAssets::networkValueForState(uint32_t hash, bool ha
 
 bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& packs, std::string& error)
 {
+    StartupTimer timer;
     if (!registry.load(error)) {
         return false;
     }
+    timer.mark("assets: block registry");
 
     std::filesystem::path root = PackSource::locateVanilla();
     if (root.empty()) {
@@ -256,9 +259,11 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
 
     // Entity models touch nothing the block atlas does, so they load alongside it.
     std::jthread entities([this, &root, &packs] {
+        StartupTimer entityTimer;
         PackSource entityPack(root);
         entityPack.setOverlays(packs);
         buildEntityModels(entityPack, packs);
+        entityTimer.mark("assets: entity models (parallel)");
     });
 
     std::vector<std::unique_ptr<json::Value>> documents;
@@ -559,6 +564,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         carriedVisuals.emplace(record.name, look);
     };
 
+    timer.mark("assets: blocks.json, terrain and flipbooks");
     visuals.resize(registry.records().size());
     for (size_t i = 0; i < registry.records().size(); ++i) {
         const BlockRecord& record = registry.records()[i];
@@ -1347,13 +1353,17 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         }
     }
 
+    timer.mark("assets: block visuals, textures and models");
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
+    timer.mark("assets: block entity templates");
     buildInterfaceAssets(pack, packs);
+    timer.mark("assets: interface assets");
 
     std::filesystem::path behaviorRoot = root.parent_path().parent_path() / "behavior_packs" / root.filename();
     PackSource behaviors(behaviorRoot);
     biomes.load(pack, behaviors);
     loadItemUseDurations(behaviors);
+    timer.mark("assets: biomes and item durations");
 
     overlayLayers.resize(layers.size(), false);
     std::vector<bool> cutoutLayers(layers.size(), false);
@@ -1379,7 +1389,9 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
     for (size_t layer = 0; layer < layers.size(); ++layer) cutoutLayers[layer] = cutoutLayers[layer] && !blendedLayers[layer];
     buildMips(textureArray, layers, overlayLayers, cutoutLayers);
+    timer.mark("assets: mipmaps");
     entities.join();
+    timer.mark("assets: waiting for entity models");
     return true;
 }
 

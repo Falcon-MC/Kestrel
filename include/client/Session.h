@@ -593,6 +593,14 @@ struct SessionSnapshot {
     float thunderLevel = 0.0f;
     uint8_t cameraMedium = 0;
     bool cohortComplete = false;
+
+    /**
+     * The 3x3 columns around the player are loaded, none of their sub-chunks
+     * is still on its way, and every one of them has its current mesh handed
+     * to the renderer: what the game waits for before it closes the loading
+     * screen, the rest of the view loading behind it.
+     */
+    bool localTerrainReady = false;
     bool updatesPending = false;
     std::vector<ActorView> actors;
     std::shared_ptr<const NearbyBlocks> nearby;
@@ -776,6 +784,7 @@ private:
     void scheduleMeshes();
     void finishDimensionChange();
     void collectMeshes();
+    bool localTerrainReady();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition = false);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
@@ -871,6 +880,7 @@ private:
     world::IdMapping ids;
     std::unique_ptr<world::MeshScheduler> mesher;
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
+    std::map<world::SubChunkKey, uint64_t> meshedGenerations;
     uint64_t nextMeshGeneration = 0;
     std::map<world::SubChunkKey, std::shared_ptr<const world::ChunkMesh>> meshes;
     size_t meshQuads = 0;

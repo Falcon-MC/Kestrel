@@ -45,6 +45,7 @@ void Session::pollGlobalPacks()
                 configurePaletteResolver();
                 mesher->clear();
                 meshGenerations.clear();
+                meshedGenerations.clear();
                 meshes.clear();
                 meshQuads = 0;
                 std::vector<MeshUpdate> replacement;

@@ -1475,6 +1475,7 @@ void Session::scheduleMeshes()
         if (!center) {
             mesher->cancel(key);
             meshGenerations.erase(key);
+            meshedGenerations.erase(key);
             auto existing = meshes.find(key);
             if (existing != meshes.end()) {
                 meshQuads -= existing->second->quadCount();
@@ -1541,6 +1542,7 @@ void Session::collectMeshes()
         if (generation == meshGenerations.end() || generation->second != result.generation) {
             continue;
         }
+        meshedGenerations.insert_or_assign(result.key, result.generation);
         auto existing = meshes.find(result.key);
         bool hadMesh = existing != meshes.end();
         if (hadMesh) {
@@ -1575,6 +1577,43 @@ void Session::collectMeshes()
             pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit) });
         }
     }
+}
+
+bool Session::localTerrainReady()
+{
+    MotionVector feet = motion.position();
+    int32_t dimension = current.dimension;
+    int32_t centerX = static_cast<int32_t>(std::floor(feet.x)) >> 4;
+    int32_t centerZ = static_cast<int32_t>(std::floor(feet.z)) >> 4;
+    std::vector<world::SubChunkKey> sections;
+    for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            world::ChunkKey column { dimension, centerX + dx, centerZ + dz };
+            if (!world.store().isLoaded(column) || world.columnPending(column)) {
+                return false;
+            }
+            for (const world::SubChunkKey& key : world.store().sectionsOf(column)) {
+                if (world.store().isDirty(key)) {
+                    return false;
+                }
+                auto scheduled = meshGenerations.find(key);
+                if (scheduled != meshGenerations.end()) {
+                    auto meshed = meshedGenerations.find(key);
+                    if (meshed == meshedGenerations.end() || meshed->second != scheduled->second) {
+                        return false;
+                    }
+                }
+                sections.push_back(key);
+            }
+        }
+    }
+    std::lock_guard<std::mutex> guard(mutex);
+    for (const MeshUpdate& update : pendingUpdates) {
+        if (std::find(sections.begin(), sections.end(), update.key) != sections.end()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Session::fail(const std::string& error)
@@ -2017,6 +2056,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     mesher->clear();
     meshGenerations.clear();
+    meshedGenerations.clear();
     meshes.clear();
     meshQuads = 0;
     {
@@ -2123,7 +2163,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
                 ++actor;
             }
         }
+        bool localReady = localTerrainReady();
         std::lock_guard<std::mutex> guard(mutex);
+        current.localTerrainReady = localReady;
         current.packetsReceived += receivedSincePublication;
         receivedSincePublication = 0;
         current.world = world.stats();

@@ -169,6 +169,24 @@ bool ChunkStore::isLoaded(const ChunkKey& key) const
     return columnsByKey.contains(key);
 }
 
+std::vector<SubChunkKey> ChunkStore::sectionsOf(const ChunkKey& key) const
+{
+    std::vector<SubChunkKey> sections;
+    auto found = columnsByKey.find(key);
+    if (found == columnsByKey.end()) {
+        return sections;
+    }
+    for (const auto& [y, subChunk] : found->second.subChunks) {
+        sections.push_back({ key.dimension, key.x, y, key.z });
+    }
+    return sections;
+}
+
+bool ChunkStore::isDirty(const SubChunkKey& key) const
+{
+    return dirty.contains(key);
+}
+
 void ChunkStore::markLoaded(const ChunkKey& key)
 {
     columnsByKey.try_emplace(key);

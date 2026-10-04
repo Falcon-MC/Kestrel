@@ -524,7 +524,36 @@ float JsonUiRuntime::natural(Node& node, int axis)
  * size is a share of the parent. This is what "100%c" adds up, so children
  * sized after their parent never feed back into it.
  */
+bool JsonUiRuntime::inheritsSiblingMax(const Node& node, int axis) const
+{
+    return flag(node, axis == 0 ? "inherit_max_sibling_width" : "inherit_max_sibling_height", false);
+}
+
+/**
+ * A control's measured size, which with inherit_max_sibling_width (or
+ * height) is the biggest one among itself and its shown siblings, each
+ * measured before any takes another's.
+ */
 float JsonUiRuntime::intrinsic(Node& node, int axis)
+{
+    float own = measure(node, axis);
+    if (!node.parent || std::isnan(own) || !inheritsSiblingMax(node, axis)) {
+        return own;
+    }
+    float widest = own;
+    for (std::unique_ptr<Node>& sibling : node.parent->children) {
+        if (sibling.get() == &node || !sibling->shown) {
+            continue;
+        }
+        float size = measure(*sibling, axis);
+        if (!std::isnan(size)) {
+            widest = std::max(widest, size);
+        }
+    }
+    return widest;
+}
+
+float JsonUiRuntime::measure(Node& node, int axis)
 {
     if (node.measured[axis]) {
         return node.intrinsic[axis];
@@ -752,6 +781,21 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
         float share = std::max(0.0f, value - used) / static_cast<float>(fills.size());
         for (Node* child : fills) {
             size(*child, axis, value, share);
+        }
+    }
+    float widest = 0.0f;
+    bool inheriting = false;
+    for (std::unique_ptr<Node>& child : node.children) {
+        if (child->shown) {
+            widest = std::max(widest, axis == 0 ? child->w : child->h);
+            inheriting = inheriting || inheritsSiblingMax(*child, axis);
+        }
+    }
+    if (inheriting) {
+        for (std::unique_ptr<Node>& child : node.children) {
+            if (child->shown && inheritsSiblingMax(*child, axis) && (axis == 0 ? child->w : child->h) < widest) {
+                size(*child, axis, value, widest);
+            }
         }
     }
 }

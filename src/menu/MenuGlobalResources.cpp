@@ -31,6 +31,15 @@ bool Menu::vanillaGlobalResourcesPage(Context& ui, float x, float& y, float w)
         return false;
     }
     using Kind = world::GlobalPackAction::Kind;
+    UiData data;
+    bindGlobalResources(data);
+    globalPacksUi->draw(ui, { x, y, w, 4000.0f }, data);
+    float height = globalPacksUi->contentHeight();
+    for (const UiEvent& event : globalPacksUi->takeEvents()) {
+        globalResourcesEvent(event);
+    }
+    y += height + 6.0f;
+
     std::vector<const world::GlobalPackEntry*> active;
     std::vector<const world::GlobalPackEntry*> available;
     for (const world::GlobalPackEntry& entry : globalPacks) {
@@ -42,8 +51,50 @@ bool Menu::vanillaGlobalResourcesPage(Context& ui, float x, float& y, float w)
             globalPackSelected.reset();
         }
     }
+    if (globalPackSelected) {
+        const auto& list = globalPackSelected->first ? active : available;
+        const world::GlobalPackEntry& pack = *list[globalPackSelected->second];
+        float half = (w - 6.0f) / 2.0f;
+        bool removing = removingGlobalPack == pack.id;
+        if (removing) {
+            y += ui.paragraph(trf("kestrel.globalResources.confirmDescription", "Delete %s permanently?", { pack.name }), TextStyle::Ui, x, y, w, White) + 6;
+        }
+        if (ui.pressableButton("global:remove:" + pack.id, removing ? "pressableElevatedDestructive" : "pressableElevatedSecondary",
+                removing ? tr("kestrel.globalResources.confirm", "Confirm") : tr("kestrel.globalResources.delete", "Delete"), { x, y, removing ? half : w, 20 }, TextStyle::Ui, !globalPacksBusy)) {
+            if (removing) {
+                globalPackActions.push_back({ Kind::Remove, pack.id, {} });
+                removingGlobalPack.clear();
+                globalPackSelected.reset();
+            } else {
+                removingGlobalPack = pack.id;
+            }
+        }
+        if (removing && ui.pressableButton("global:cancel:" + pack.id, "pressableElevatedSecondary", tr("gui.cancel", "Cancel"), { x + half + 6.0f, y, half, 20 })) {
+            removingGlobalPack.clear();
+        }
+        y += 28;
+    }
+    return true;
+}
 
-    UiData data;
+/**
+ * The bindings the game's resource pack controller gives the global pack
+ * lists: the active and available packs, which one is picked, which shows
+ * its whole description, and the lists folded or not.
+ */
+void Menu::bindGlobalResources(UiData& data)
+{
+    std::vector<const world::GlobalPackEntry*> active;
+    std::vector<const world::GlobalPackEntry*> available;
+    for (const world::GlobalPackEntry& entry : globalPacks) {
+        (entry.active ? active : available).push_back(&entry);
+    }
+    if (globalPackSelected) {
+        const auto& list = globalPackSelected->first ? active : available;
+        if (globalPackSelected->second >= list.size()) {
+            globalPackSelected.reset();
+        }
+    }
     UiRow shared;
     shared["#selected_grid_visible"] = UiValue::of(globalSelectedExpanded);
     shared["#available_grid_visible"] = UiValue::of(globalAvailableExpanded);
@@ -80,6 +131,11 @@ bool Menu::vanillaGlobalResourcesPage(Context& ui, float x, float& y, float w)
     }
     data.globals["#no_available_packs_visibility_global"] = UiValue::of(available.empty());
     data.globals["#default_item_texture_global"] = UiValue::of(std::string("textures/ui/glyph_resource_pack"));
+    const world::GlobalPackEntry* shown = !active.empty() && active.front()->icon ? active.front() : nullptr;
+    data.globals["#cycling_icon_path_global"] = UiValue::of(shown ? "dynamic/global_pack/" + shown->id : std::string("textures/ui/glyph_resource_pack"));
+    data.globals["#cycling_icon_file_system_global"] = UiValue::of(std::string("RawPath"));
+    data.globals["#cycling_icon_zip_global"] = UiValue::of(std::string());
+    data.globals["#kestrel_pack_status"] = UiValue::of(globalPacksBusy ? tr("kestrel.globalResources.loading", "Loading resource packs...") : globalPacksStatus);
     data.globals["#default_item_file_system_global"] = UiValue::of(std::string("RawPath"));
     data.globals["#default_item_zip_global"] = UiValue::of(std::string());
     data.globals["#addon_stacking_warning_visible_global"] = UiValue::of(false);
@@ -88,14 +144,41 @@ bool Menu::vanillaGlobalResourcesPage(Context& ui, float x, float& y, float w)
     data.globals["#unowned_grid_visible"] = UiValue::of(false);
     data.globals["#realms_visible"] = UiValue::of(false);
     data.globals["#realms_grid_visible"] = UiValue::of(false);
+}
 
-    globalPacksUi->draw(ui, { x, y, w, 4000.0f }, data);
-    float height = globalPacksUi->contentHeight();
-
-    for (const UiEvent& event : globalPacksUi->takeEvents()) {
-        if (event.kind != UiEvent::Kind::Button) {
-            continue;
+/**
+ * What the buttons of the global pack lists do: pick, move, reorder and
+ * switch the sub pack of a pack, show its whole description, fold a list.
+ * True when the event was one of them.
+ */
+bool Menu::globalResourcesEvent(const UiEvent& event)
+{
+    using Kind = world::GlobalPackAction::Kind;
+    if (event.kind != UiEvent::Kind::Button) {
+        return false;
+    }
+    constexpr std::pair<const char*, Kind> Actions[] = {
+        { "button.kestrel_import_pack", Kind::Import },
+        { "button.kestrel_reload_packs", Kind::Reload },
+        { "button.kestrel_open_pack_folder", Kind::OpenFolder },
+    };
+    for (const auto& [name, kind] : Actions) {
+        if (event.name == name) {
+            if (!globalPacksBusy) {
+                globalPackActions.push_back({ kind, {}, {} });
+            }
+            return true;
         }
+    }
+    if (event.name.find("_global") == std::string::npos) {
+        return false;
+    }
+    std::vector<const world::GlobalPackEntry*> active;
+    std::vector<const world::GlobalPackEntry*> available;
+    for (const world::GlobalPackEntry& entry : globalPacks) {
+        (entry.active ? active : available).push_back(&entry);
+    }
+    {
         size_t index = event.index >= 0 ? static_cast<size_t>(event.index) : 0;
         bool inActive = event.collection != "#available_pack_items_global";
         const auto& list = inActive ? active : available;
@@ -138,31 +221,6 @@ bool Menu::vanillaGlobalResourcesPage(Context& ui, float x, float& y, float w)
         } else if (event.name == "button.expand_available_global") {
             globalAvailableExpanded = !globalAvailableExpanded;
         }
-    }
-    y += height + 6.0f;
-
-    if (globalPackSelected) {
-        const auto& list = globalPackSelected->first ? active : available;
-        const world::GlobalPackEntry& pack = *list[globalPackSelected->second];
-        float half = (w - 6.0f) / 2.0f;
-        bool removing = removingGlobalPack == pack.id;
-        if (removing) {
-            y += ui.paragraph(trf("kestrel.globalResources.confirmDescription", "Delete %s permanently?", { pack.name }), TextStyle::Ui, x, y, w, White) + 6;
-        }
-        if (ui.pressableButton("global:remove:" + pack.id, removing ? "pressableElevatedDestructive" : "pressableElevatedSecondary",
-                removing ? tr("kestrel.globalResources.confirm", "Confirm") : tr("kestrel.globalResources.delete", "Delete"), { x, y, removing ? half : w, 20 }, TextStyle::Ui, !globalPacksBusy)) {
-            if (removing) {
-                globalPackActions.push_back({ Kind::Remove, pack.id, {} });
-                removingGlobalPack.clear();
-                globalPackSelected.reset();
-            } else {
-                removingGlobalPack = pack.id;
-            }
-        }
-        if (removing && ui.pressableButton("global:cancel:" + pack.id, "pressableElevatedSecondary", tr("gui.cancel", "Cancel"), { x + half + 6.0f, y, half, 20 })) {
-            removingGlobalPack.clear();
-        }
-        y += 28;
     }
     return true;
 }

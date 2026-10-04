@@ -121,6 +121,10 @@ PackSource::PackSource(fs::path root)
         stack.push_back(std::move(path));
     }
     stack.push_back(base);
+    fs::path underneath = base.parent_path() / (baseName + "_base");
+    if (fs::is_directory(underneath, error)) {
+        stack.push_back(std::move(underneath));
+    }
 }
 
 bool PackSource::readText(const std::string& relative, std::string& out) const
@@ -168,22 +172,33 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
     std::string name = path.filename().string();
     const std::vector<size_t>* candidates = indexed ? &layersWith(parent.generic_string()) : nullptr;
     size_t count = candidates ? candidates->size() : stack.size();
-    for (size_t i = 0; i < count; ++i) {
-        size_t layer = candidates ? (*candidates)[i] : i;
-        for (const char* extension : { ".png", ".tga" }) {
-            std::string relative = texturePath + extension;
-            if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
-                return true;
+    for (bool exact : { true, false }) {
+        for (size_t i = 0; i < count; ++i) {
+            size_t layer = candidates ? (*candidates)[i] : i;
+            if (exact) {
+                for (const char* extension : { ".png", ".tga" }) {
+                    std::string relative = texturePath + extension;
+                    if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
+                        return true;
+                    }
+                }
             }
-        }
-        const Archive* source = archive(layer, folder);
-        if (!source) {
-            continue;
-        }
-        for (const char* extension : { ".png", ".tga" }) {
-            if (const std::pair<size_t, size_t>* found = source->find(name + extension)) {
-                out.assign(source->data, source->dataStart + found->first, found->second);
-                return true;
+            const Archive* source = archive(layer, folder);
+            if (!source) {
+                continue;
+            }
+            for (const char* extension : { ".png", ".tga" }) {
+                const std::pair<size_t, size_t>* found = nullptr;
+                if (exact) {
+                    auto entry = source->entries.find(name + extension);
+                    found = entry != source->entries.end() ? &entry->second : nullptr;
+                } else {
+                    found = source->find(name + extension);
+                }
+                if (found) {
+                    out.assign(source->data, source->dataStart + found->first, found->second);
+                    return true;
+                }
             }
         }
     }

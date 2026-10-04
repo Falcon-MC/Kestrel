@@ -10,14 +10,66 @@ namespace kestrel {
 
 namespace {
 
-// Keeps huge glyphs and textures from filling the UI atlas; glyphs keep their drawn size, see Font.
+// Keeps huge glyphs from filling the UI atlas; glyphs keep their drawn size, see Font.
 constexpr uint32_t MaxGlyphSprite = 256;
-constexpr uint32_t MaxPackTexture = 1024;
 
 // Read before the files _ui_defs.json lists, which it leaves out.
 constexpr const char* GlobalVariablesFile = "ui/_global_variables.json";
 constexpr const char* UiDefsFile = "ui/_ui_defs.json";
 constexpr const char* TextureExtensions[] = { ".png", ".jpg", ".jpeg", ".tga" };
+
+// Kestrel's own row over the game's Global Resources section: importing a pack, reading
+// the folder again and opening it, with the status of the last of them.
+constexpr const char* GlobalResourcesFile = "ui/settings_screen.json";
+constexpr const char* GlobalResourcesActions = R"({
+  "section_content_panels/general_and_controls_sections": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_before",
+        "control_name": "global_texture_pack_section",
+        "value": [
+          { "kestrel_global_pack_actions": {
+            "type": "stack_panel", "orientation": "vertical", "size": ["100%", "100%c"], "visible": false,
+            "bindings": [
+              { "binding_type": "view", "source_control_name": "global_texture_pack_button_toggle", "source_property_name": "#toggle_state", "target_property_name": "#visible" }
+            ],
+            "controls": [
+          { "kestrel_pack_actions": {
+            "type": "stack_panel", "orientation": "horizontal", "size": ["100%", 24],
+            "controls": [
+              { "import@common_buttons.light_text_button": {
+                "size": ["33.3%", 22], "$button_text": "kestrel.globalResources.import", "$pressed_button_name": "button.kestrel_import_pack"
+              } },
+              { "reload@common_buttons.light_text_button": {
+                "size": ["33.3%", 22], "$button_text": "kestrel.globalResources.reload", "$pressed_button_name": "button.kestrel_reload_packs"
+              } },
+              { "folder@common_buttons.light_text_button": {
+                "size": ["33.3%", 22], "$button_text": "kestrel.globalResources.folder", "$pressed_button_name": "button.kestrel_open_pack_folder"
+              } }
+            ]
+          } },
+          { "kestrel_pack_status": {
+            "type": "label", "size": ["100%", "default"], "text": "#kestrel_pack_status",
+            "bindings": [ { "binding_name": "#kestrel_pack_status" } ]
+          } }
+            ]
+          } }
+        ]
+      }
+    ]
+  }
+})";
+
+// Kestrel draws no clouds, so the video section leaves out their toggle.
+constexpr const char* VideoSectionFile = "ui/settings_sections/general_section.json";
+constexpr const char* VideoSectionChanges = R"({
+  "video_section": {
+    "modifications": [
+      { "array_name": "controls", "operation": "remove", "control_name": "render_clouds_toggle" }
+    ]
+  }
+})";
 
 // Not in the game's files, the game fills these bindings from code.
 constexpr double SidebarBackgroundOpacity = 0.3;
@@ -166,6 +218,8 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
             definitions->addFile(path, text);
         }
     }
+    definitions->addFile(GlobalResourcesFile, GlobalResourcesActions);
+    definitions->addFile(VideoSectionFile, VideoSectionChanges);
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
         std::vector<std::string> paths = vanillaPaths;
         if (auto packDefs = (*pack)->find(UiDefsFile)) {
@@ -214,8 +268,8 @@ ui::UiData Client::sidebarData() const
 
 /**
  * Puts the first copy of texture the server's packs have into the skin under
- * its own path, cut to MaxPackTexture wide with its nine slice scaled along.
- * False when no pack has it.
+ * its own path, at its own size so the uv a pack gives in texels still
+ * points into it. False when no pack has it.
  */
 bool Client::loadPackTexture(const std::string& texture)
 {
@@ -240,9 +294,7 @@ bool Client::loadPackTexture(const std::string& texture)
         if (auto sliceJson = pack->find(texture + ".json")) {
             ui::readNineSlice(*sliceJson, slice);
         }
-        float fit = bitmap.width > MaxPackTexture ? static_cast<float>(MaxPackTexture) / static_cast<float>(bitmap.width) : 1.0f;
-        slice = { slice.left * fit, slice.top * fit, slice.right * fit, slice.bottom * fit };
-        skin.setDynamic(texture, ui::shrinkBitmap(bitmap, MaxPackTexture), slice);
+        skin.setDynamic(texture, std::move(bitmap), slice);
         packSprites.push_back(texture);
         debugLog("pack ui texture " + texture);
         return true;

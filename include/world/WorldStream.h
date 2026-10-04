@@ -72,6 +72,11 @@ public:
      */
     bool subChunkPending(const SubChunkKey& key) const;
 
+    /**
+     * Whether some sub-chunk of the column was asked for and has not arrived.
+     */
+    bool columnPending(const ChunkKey& key) const;
+
 private:
     struct PendingSubChunk {
         Clock::time_point deadline {};

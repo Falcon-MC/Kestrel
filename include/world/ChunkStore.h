@@ -61,6 +61,16 @@ public:
     void replaceBlockEntities(const SubChunkKey& key, BlockEntityMap entities);
     bool isLoaded(const ChunkKey& key) const;
 
+    /**
+     * The keys of the sub-chunks a column holds.
+     */
+    std::vector<SubChunkKey> sectionsOf(const ChunkKey& key) const;
+
+    /**
+     * Whether a sub-chunk changed and still waits for its next mesh.
+     */
+    bool isDirty(const SubChunkKey& key) const;
+
     void markLoaded(const ChunkKey& key);
     void setBiomes(const ChunkKey& key, int32_t baseY, std::vector<std::shared_ptr<const PalettedStorage>> storages);
     void commit(const SubChunkKey& key, SubChunk subChunk);

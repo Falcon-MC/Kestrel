@@ -985,8 +985,20 @@ void JsonUiRuntime::bind(Node& node)
             if (const json::Value* control = resolve(node, binding->get("source_control_name")); control && control->isString() && !control->mString.empty()) {
                 std::string name = control->mString.front() == '(' ? evaluate(node, control->mString).toText() : control->mString;
                 const json::Value* sibling = resolve(node, binding->get("resolve_sibling_scope"));
-                Node* scope = sibling && sibling->boolean(false) && node.parent ? node.parent : &node;
-                from = find(*scope, name);
+                const json::Value* ancestor = resolve(node, binding->get("resolve_ancestor_scope"));
+                if (sibling && sibling->boolean(false)) {
+                    from = find(node.parent ? *node.parent : node, name);
+                } else if (ancestor && ancestor->boolean(false)) {
+                    from = nullptr;
+                    for (Node* at = &node; at && !from; at = at->parent) {
+                        from = find(*at, name);
+                    }
+                } else {
+                    from = find(node, name);
+                    if (!from) {
+                        from = named(name);
+                    }
+                }
             }
             if (from) {
                 UiLookup find = [&](const std::string& key) { return bindingLookup(*from, key, [&](const std::string& name) { return lookup(*from, name); }); };
@@ -1183,6 +1195,25 @@ void JsonUiRuntime::sweep(Node& node)
 void JsonUiRuntime::update(Node& node, int depth, Node* control)
 {
     bind(node);
+    if (node.type == "toggle" && data && !node.dataToggle && flag(node, "radio_toggle_group", false)) {
+        std::string group = text(node, "toggle_name");
+        if (!group.empty() && group.front() == '(') {
+            group = evaluate(node, group).toText();
+        }
+        if (auto selected = data->globals.find("#radio:" + group); selected != data->globals.end()) {
+            double index = number(node, "toggle_group_forced_index", -1.0);
+            if (index < 0.0) {
+                for (const Node* at = &node; at; at = at->parent) {
+                    if (at->index >= 0) {
+                        index = at->index;
+                        break;
+                    }
+                }
+            }
+            node.dataToggle = true;
+            node.bound["#toggle_state"] = UiValue::of(index == selected->second.toNumber());
+        }
+    }
     if ((node.type == "toggle" || node.type == "dropdown") && !node.dataToggle) {
         node.bound["#toggle_state"] = UiValue::of(node.toggled);
     }

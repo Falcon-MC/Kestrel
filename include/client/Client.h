@@ -281,6 +281,7 @@ private:
     int savedBrightness = menu::DefaultBrightness;
     int savedGlintStrength = 100;
     int savedGlintSpeed = 100;
+    std::map<std::string, int> savedExtraOptions;
     menu::ChatSettings savedChat;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";

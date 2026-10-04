@@ -467,7 +467,7 @@ int Client::run()
             saveSettings();
         }
         renderer->setVsync(menu.vsync());
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.glintStrength() != savedGlintStrength || menu.glintSpeed() != savedGlintSpeed || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.glintStrength() != savedGlintStrength || menu.glintSpeed() != savedGlintSpeed || menu.extraOptions() != savedExtraOptions || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -1137,9 +1137,10 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
     if (terrainReleased) {
         return true;
     }
+    bool local = snapshot.localTerrainReady;
     bool dense = visibleTerrain() >= MinVisibleTerrain;
     bool bounded = snapshot.cohortComplete && snapshot.world.pendingSubChunks == 0 && snapshot.meshJobs == 0 && !snapshot.updatesPending;
-    if (!dense && !bounded) {
+    if (!local && !dense && !bounded) {
         readinessFrame.reset();
         return false;
     }
@@ -1151,9 +1152,9 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
     if (completed.submission <= *readinessFrame) {
         return false;
     }
-    terrainReleased = (dense && completed.opaqueChunks != 0) || bounded;
+    terrainReleased = local || (dense && completed.opaqueChunks != 0) || bounded;
     if (terrainReleased) {
-        debugLog(std::string("terrain released, ") + (dense ? "dense view" : "bounded view") + ", gpu opaque chunks " + std::to_string(completed.opaqueChunks));
+        debugLog(std::string("terrain released, ") + (local ? "local terrain" : dense ? "dense view" : "bounded view") + ", gpu opaque chunks " + std::to_string(completed.opaqueChunks));
     }
     return terrainReleased;
 }

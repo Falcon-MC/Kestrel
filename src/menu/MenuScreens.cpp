@@ -718,6 +718,9 @@ void Menu::serverForm(Context& ui, float width, float height)
 
 void Menu::settings(Context& ui, float width, float height)
 {
+    if (vanillaSettings(ui, width, height)) {
+        return;
+    }
     header(ui, width, upperCase(tr("menu.settings", "Settings")), false);
     Rect content = column(width, 53.33f, height - 8.0f);
     float sidebarWidth = std::min(196.0f, content.w * 0.31f);
