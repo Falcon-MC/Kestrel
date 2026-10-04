@@ -338,6 +338,11 @@ UiValue JsonUiRuntime::conditionValue(const Node& node, const json::Value* value
  */
 bool JsonUiRuntime::ignores(const Node& node, const json::Value* value) const
 {
+    // Controls are built before any data is bound, so an expression reading a #binding, like the
+    // emote wheel's "(not #visible)", cannot decide yet and keeps the control.
+    if (value && value->isString() && !value->mString.empty() && value->mString.front() == '(' && value->mString.find('#') != std::string::npos) {
+        return false;
+    }
     UiValue result = conditionValue(node, value);
     if (result.kind == UiValue::Kind::Bool) {
         return result.flag;
