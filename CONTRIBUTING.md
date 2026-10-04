@@ -146,6 +146,8 @@ You are welcome to fix the underlying problems and open a new one.
 
 AI tools are allowed. Hiding them, or submitting their output unread, is not.
 
+> If you use a coding agent, point it at [AGENTS.md](AGENTS.md) first.
+
 - **Disclose it.** State which model you used and which part of the work it did: code, research, commit
   messages. Name the model and version, not just the vendor.
 - **Write your own prose.** Pull request descriptions, issues and review replies must be in your own words.
