@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -218,7 +219,34 @@ int JsonUiRuntime::sliderSteps(const Node& node) const
 
 bool JsonUiRuntime::isControl(const Node& node)
 {
-    return node.type == "button" || node.type == "toggle" || node.type == "dropdown" || node.type == "slider" || node.type == "slider_box" || node.type == "edit_box";
+    return node.type == "button" || node.type == "toggle" || node.type == "dropdown" || node.type == "slider" || node.type == "slider_box" || node.type == "edit_box"
+        || node.type == "selection_wheel";
+}
+
+/**
+ * The slice of a selection wheel under a point, counted clockwise from the
+ * top, or -1 inside its inner radius or past its outer one.
+ */
+int JsonUiRuntime::wheelSliceAt(const Node& node, float x, float y) const
+{
+    int slices = static_cast<int>(number(node, "slice_count", 1.0));
+    float radius = std::min(node.w, node.h) * 0.5f;
+    if (slices <= 0 || radius <= 0.0f) {
+        return -1;
+    }
+    float dx = x - (node.x + node.w * 0.5f);
+    float dy = y - (node.y + node.h * 0.5f);
+    float distance = std::sqrt(dx * dx + dy * dy) / radius;
+    if (distance < number(node, "inner_radius", 0.0) || distance > number(node, "outer_radius", 1.0)) {
+        return -1;
+    }
+    constexpr float Turn = 6.28318530718f;
+    float angle = std::atan2(dx, -dy);
+    if (angle < 0.0f) {
+        angle += Turn;
+    }
+    float width = Turn / static_cast<float>(slices);
+    return static_cast<int>(std::floor((angle + width * 0.5f) / width)) % slices;
 }
 
 Node* JsonUiRuntime::find(Node& from, const std::string& name) const
@@ -326,6 +354,32 @@ void JsonUiRuntime::chooseStates(Node& node)
             }
         }
     };
+    if (node.type == "selection_wheel") {
+        // state_controls lists the idle state first, then one per slice; they may sit below the wheel's children.
+        const json::Value* list = resolve(node, property(node, "state_controls"));
+        if (!list || !list->isArray()) {
+            return;
+        }
+        std::function<void(Node&, const std::string&, bool)> mark = [&](Node& at, const std::string& name, bool visible) {
+            for (std::unique_ptr<Node>& child : at.children) {
+                if (child->name == name) {
+                    node.states[child.get()] = visible;
+                }
+                if (!isControl(*child)) {
+                    mark(*child, name, visible);
+                }
+            }
+        };
+        size_t chosen = node.wheelSlice >= 0 ? size_t(node.wheelSlice) + 1 : 0;
+        for (size_t i = 0; i < list->mArray.size(); ++i) {
+            const json::Value* entry = list->mArray[i].get();
+            const json::Value* name = entry && entry->isObject() ? resolve(node, entry->get("control_name")) : nullptr;
+            if (name && name->isString()) {
+                mark(node, name->mString, i == chosen);
+            }
+        }
+        return;
+    }
     if (node.type == "button" || node.type == "edit_box") {
         bool typing = node.type == "edit_box" && focused == node.id;
         std::string lockedName = text(node, "locked_control");
@@ -967,6 +1021,13 @@ void JsonUiRuntime::click(Node& node)
     if (!text(node, "sound_name").empty()) {
         ui->countClick();
     }
+    if (node.type == "selection_wheel") {
+        if (node.wheelSlice >= 0) {
+            emit(UiEvent::Kind::Button, node, text(node, "select_button_name"));
+            events.back().index = node.wheelSlice;
+        }
+        return;
+    }
     if (node.type == "button") {
         bool repeated = lastClickTarget == node.id && now - lastClickTime < 0.3;
         lastClickTarget = node.id;
@@ -1084,6 +1145,17 @@ void JsonUiRuntime::input()
         target = passedPress;
     }
     hot = target ? target->id : 0;
+    for (Node* node : order) {
+        if (node->type != "selection_wheel") {
+            continue;
+        }
+        int slice = hot == node->id ? wheelSliceAt(*node, mx, my) : -1;
+        if (slice >= 0 && slice != node->wheelSlice) {
+            emit(UiEvent::Kind::Button, *node, text(*node, "hover_button_name"));
+            events.back().index = slice;
+        }
+        node->wheelSlice = slice;
+    }
     if (target && in.rightMousePressed) {
         mapButton(*target, "button.menu_secondary_select", "pressed");
     }
@@ -2126,6 +2198,31 @@ std::string JsonUiScreen::describe(size_t maxLines) const
         walk(*runtime->root, 0);
     }
     return out;
+}
+
+}
+
+namespace kestrel::ui {
+
+std::vector<Rect> JsonUiScreen::controlRects(const std::string& name) const
+{
+    std::vector<Rect> found;
+    if (!runtime->root) {
+        return found;
+    }
+    std::function<void(const JsonUiRuntime::Node&)> walk = [&](const JsonUiRuntime::Node& node) {
+        if (!node.shown) {
+            return;
+        }
+        if (node.name == name) {
+            found.push_back({ node.x, node.y, node.w, node.h });
+        }
+        for (const auto& child : node.children) {
+            walk(*child);
+        }
+    };
+    walk(*runtime->root);
+    return found;
 }
 
 }

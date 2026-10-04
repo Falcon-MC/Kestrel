@@ -259,6 +259,11 @@ public:
      */
     std::optional<Rect> controlRect(const std::string& name) const;
 
+    /**
+     * Where every shown control of that name was last laid out, in tree order.
+     */
+    std::vector<Rect> controlRects(const std::string& name) const;
+
     UiEvent pointerTarget() const;
     bool pointerInsideContent(float x, float y) const;
 
