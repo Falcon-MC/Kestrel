@@ -101,6 +101,12 @@ void Client::handleHotbarInput()
     }
     if (input.pressedKey == menu.keyBindings().drop()) {
         session.requestInventory({ InventoryAction::Drop, hudState.selectedSlot, 0, input.isHeld(Key::Control), {} });
+        if (hudState.selectedSlot >= 0 && hudState.selectedSlot < 9 && !hudState.inventory[size_t(hudState.selectedSlot)].identifier.empty()) {
+            SoundRequest sound;
+            sound.name = "drop.slot";
+            sound.position = { camera.x(), camera.y(), camera.z() };
+            playSoundRequest(sound);
+        }
     }
     int selected = hudState.selectedSlot;
     if (input.pressedKey >= Key::Num1 && input.pressedKey <= Key::Num9) {
