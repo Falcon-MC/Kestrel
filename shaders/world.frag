@@ -32,14 +32,20 @@ vec4 sampleLayer(vec2 uv, uint layer)
     return layer >= 2048u ? high : low;
 }
 
+/**
+ * Entity textures read the nearest texel clamped to the layer, never
+ * filtered and never wrapped, so cut-out edges keep a hard border.
+ */
 vec4 sampleEntity(vec2 uv, uint layer)
 {
     uint page = layer >> 11;
     uint index = layer & 2047u;
-    if (page == 0u) return texture(entities, vec3(uv, float(index)));
-    if (page == 1u) return texture(entitiesHigh, vec3(uv, float(index)));
-    if (page == 2u) return texture(entities2, vec3(uv, float(index)));
-    return texture(entities3, vec3(uv, float(index)));
+    ivec2 size = textureSize(entities, 0).xy;
+    ivec3 texel = ivec3(clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1), int(index));
+    if (page == 0u) return texelFetch(entities, texel, 0);
+    if (page == 1u) return texelFetch(entitiesHigh, texel, 0);
+    if (page == 2u) return texelFetch(entities2, texel, 0);
+    return texelFetch(entities3, texel, 0);
 }
 
 vec4 sampleMaterial(uint material, vec2 uv)

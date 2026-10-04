@@ -397,10 +397,14 @@ float4 surfaceTexel(WorldOut input)
         uint page = layer >> 11;
         uint index = layer & 2047u;
         float2 uv = (input.entity & 16) != 0 ? frac(input.uv) : input.uv;
-        float4 texel = page == 0 ? entities.Sample(blockSampler, float3(uv, index))
-            : page == 1 ? entitiesHigh.Sample(blockSampler, float3(uv, index))
-            : page == 2 ? entities2.Sample(blockSampler, float3(uv, index))
-            : entities3.Sample(blockSampler, float3(uv, index));
+        uint width, height, elements, levels;
+        entities.GetDimensions(0, width, height, elements, levels);
+        int2 cell = clamp(int2(floor(uv * float2(width, height))), int2(0, 0), int2(width, height) - 1);
+        int4 at = int4(cell, index, 0);
+        float4 texel = page == 0 ? entities.Load(at)
+            : page == 1 ? entitiesHigh.Load(at)
+            : page == 2 ? entities2.Load(at)
+            : entities3.Load(at);
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
         return applyTint(texel, input.tint);

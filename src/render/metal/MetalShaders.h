@@ -332,10 +332,12 @@ float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> enti
     uint layer = material & 0x1fffu;
     uint page = layer >> 11;
     uint index = layer & 2047u;
-    if (page == 0u) return entities.sample(blockSampler, uv, index);
-    if (page == 1u) return entitiesHigh.sample(blockSampler, uv, index);
-    if (page == 2u) return entities2.sample(blockSampler, uv, index);
-    return entities3.sample(blockSampler, uv, index);
+    int2 size = int2(entities.get_width(), entities.get_height());
+    uint2 cell = uint2(clamp(int2(floor(uv * float2(size))), int2(0), size - 1));
+    if (page == 0u) return entities.read(cell, index, 0);
+    if (page == 1u) return entitiesHigh.read(cell, index, 0);
+    if (page == 2u) return entities2.read(cell, index, 0);
+    return entities3.read(cell, index, 0);
 }
 
 constant uint EndPortalLayer = 0x1fffu;
