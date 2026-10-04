@@ -127,6 +127,7 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , settings(host.root / instance->info().id / "config.txt")
     , inputService(host, owner, settings)
     , cameraService(host, owner)
+    , emoteService(host, owner)
 {
 }
 
@@ -164,6 +165,7 @@ void ModSlot::releaseAll()
 {
     host.events.release(id);
     host.commands.release(id);
+    host.emotes.release(id);
     host.keyBinds.release(id);
     host.scheduler.release(id);
     host.packets->release(id);
@@ -236,6 +238,11 @@ mod::Shaders& ModSlot::shaders()
 mod::Camera& ModSlot::camera()
 {
     return cameraService;
+}
+
+mod::Emotes& ModSlot::emotes()
+{
+    return emoteService;
 }
 
 std::filesystem::path ModSlot::dataDirectory()

@@ -56,6 +56,7 @@ public:
     mod::Scheduler& scheduler() override;
     mod::Shaders& shaders() override;
     mod::Camera& camera() override;
+    mod::Emotes& emotes() override;
     std::filesystem::path dataDirectory() override;
     std::vector<mod::ModInfo> loadedMods() const override;
 
@@ -84,6 +85,7 @@ private:
     ModConfig settings;
     InputService inputService;
     CameraService cameraService;
+    EmoteService emoteService;
 };
 
 /**

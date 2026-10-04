@@ -3,6 +3,7 @@
 #include "client/Session.h"
 #include "menu/Menu.h"
 #include "mod/Types.h"
+#include "modding/EmoteRegistry.h"
 #include "render/Renderer.h"
 
 #include <array>
@@ -102,6 +103,11 @@ public:
      * camera, and the field of view scale all mods asked for together.
      */
     std::optional<CameraRequest> cameraView() const;
+
+    /**
+     * The emotes the mods added and what they asked the player to play.
+     */
+    EmoteRegistry& emotes();
     float fovScale() const;
 
     /**

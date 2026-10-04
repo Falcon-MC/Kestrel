@@ -895,3 +895,33 @@ void CameraService::setFovScale(float scale)
 }
 
 }
+
+namespace kestrel::modding {
+
+EmoteService::EmoteService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+mod::Subscription EmoteService::add(mod::EmoteSpec spec)
+{
+    return host.emotes.add(owner, std::move(spec), host.errors);
+}
+
+void EmoteService::play(std::string_view id)
+{
+    host.emotes.requestPlay(std::string(id));
+}
+
+void EmoteService::stop()
+{
+    host.emotes.requestStop();
+}
+
+std::optional<std::string> EmoteService::playing() const
+{
+    return host.emotes.playing;
+}
+
+}

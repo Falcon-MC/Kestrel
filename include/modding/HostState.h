@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modding/CommandRegistry.h"
+#include "modding/EmoteRegistry.h"
 #include "modding/EventDispatcher.h"
 #include "modding/KeyBindRegistry.h"
 #include "modding/PacketFilters.h"
@@ -56,6 +57,7 @@ struct HostState {
 
     EventDispatcher events;
     CommandRegistry commands;
+    EmoteRegistry emotes;
     KeyBindRegistry keyBinds;
     TaskScheduler scheduler;
     std::shared_ptr<PacketFilters> packets;

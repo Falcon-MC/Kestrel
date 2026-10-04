@@ -4,6 +4,7 @@
 #include "mod/Chat.h"
 #include "mod/Commands.h"
 #include "mod/Config.h"
+#include "mod/Emotes.h"
 #include "mod/Event.h"
 #include "mod/Input.h"
 #include "mod/Logger.h"
@@ -51,6 +52,7 @@ public:
 
     // Added in API 3 and kept last so older mods still find everything above.
     virtual Camera& camera() = 0;
+    virtual Emotes& emotes() = 0;
 };
 
 }

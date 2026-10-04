@@ -128,6 +128,20 @@ private:
     size_t owner;
 };
 
+class EmoteService final : public mod::Emotes {
+public:
+    EmoteService(HostState& host, size_t owner);
+
+    mod::Subscription add(mod::EmoteSpec spec) override;
+    void play(std::string_view id) override;
+    void stop() override;
+    std::optional<std::string> playing() const override;
+
+private:
+    HostState& host;
+    size_t owner;
+};
+
 class NetworkService final : public mod::Network {
 public:
     NetworkService(HostState& host, size_t owner);
