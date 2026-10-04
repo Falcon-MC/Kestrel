@@ -40,9 +40,16 @@ account and renders the world with the textures of the installed game.
 	</tr>
 </table>
 
-<p align="center">
-	<img src="docs/screenshots/survival-games-courtyard.jpg" alt="A courtyard on The Hive with shaders" width="900">
-</p>
+<table>
+	<tr>
+		<td><img src="docs/screenshots/in-game-hud.jpg" alt="Playing Survival Games on The Hive with the HUD, chat and server sidebar"></td>
+		<td><img src="docs/screenshots/survival-games-courtyard.jpg" alt="A courtyard on The Hive with shaders"></td>
+	</tr>
+	<tr>
+		<td align="center">In game, with the HUD, chat and the server's sidebar</td>
+		<td align="center">A courtyard on the same map</td>
+	</tr>
+</table>
 
 - **Rendering** - Direct3D 12 on Windows, Metal on macOS, Vulkan on Linux
 - **World** - chunk streaming, multithreaded greedy meshing, block models, animated textures and
