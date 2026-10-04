@@ -1,0 +1,11 @@
+if(NOT EXISTS "${APP}/Kestrel" OR NOT EXISTS "${APP}/Info.plist")
+    message(FATAL_ERROR "Build Kestrel.app before packaging the IPA")
+endif()
+get_filename_component(directory "${OUTPUT}" DIRECTORY)
+set(staging "${directory}/ipa")
+file(MAKE_DIRECTORY "${staging}/Payload")
+file(REMOVE_RECURSE "${staging}/Payload/Kestrel.app")
+file(COPY "${APP}" DESTINATION "${staging}/Payload")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cf "${OUTPUT}" --format=zip Payload
+    WORKING_DIRECTORY "${staging}" COMMAND_ERROR_IS_FATAL ANY)
+message(STATUS "Unsigned IPA: ${OUTPUT}")

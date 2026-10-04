@@ -64,6 +64,7 @@ public:
     {
         return !forms.empty();
     }
+    bool editing() const { return screen && screen->editing(); }
 
     void setDefinitions(std::shared_ptr<const ui::JsonUi> definitions);
     void open(uint32_t id, const std::string& json);

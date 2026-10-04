@@ -1,4 +1,5 @@
 #include "world/BlockCollisions.h"
+#include "util/Text.h"
 
 #include "BlockCollisionTable.h"
 
@@ -149,14 +150,13 @@ public:
     T number()
     {
         std::string_view text = word();
+        T value {};
         if constexpr (std::is_floating_point_v<T>) {
-            // float from_chars needs macOS 26 in Apple's libc++, strtof reads the same thing here
-            return static_cast<T>(std::strtof(std::string(text).c_str(), nullptr));
+            value = util::parseFloat(text);
         } else {
-            T value {};
             std::from_chars(text.data(), text.data() + text.size(), value);
-            return value;
         }
+        return value;
     }
 
 private:

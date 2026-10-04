@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.24)
 
 project(Kestrel LANGUAGES CXX)
 
+set(KESTREL_IOS OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(KESTREL_IOS ON)
+endif()
+
 if(APPLE)
     enable_language(OBJCXX)
 endif()
@@ -10,6 +15,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
+if(KESTREL_IOS)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KestrelIosOpenSSL.cmake")
+endif()
 
 FetchContent_Declare(
     stb
@@ -134,7 +142,7 @@ file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.mm
 )
-list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux)|render/(d3d12|metal|vulkan))/")
+list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux|ios)|render/(d3d12|metal|vulkan))/")
 
 if(WIN32)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -144,6 +152,17 @@ if(WIN32)
     )
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32/Kestrel.rc
         PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/icon.ico)
+elseif(KESTREL_IOS)
+    list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/main\\.cpp$")
+    file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios/*.mm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/metal/*.mm
+    )
+    list(APPEND KESTREL_PLATFORM_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Gamepad.mm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Library.mm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/System.mm
+    )
 elseif(APPLE)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/*.mm
@@ -490,7 +509,6 @@ if(WIN32)
     endif()
 elseif(APPLE)
     target_link_libraries(Kestrel PRIVATE
-        "-framework Cocoa"
         "-framework Metal"
         "-framework QuartzCore"
         "-framework CoreAudio"
@@ -498,6 +516,25 @@ elseif(APPLE)
         "-framework GameController"
         "-framework CoreFoundation"
     )
+    if(KESTREL_IOS)
+        set_source_files_properties(src/audio/SoundEngine.cpp PROPERTIES LANGUAGE OBJCXX)
+        target_link_libraries(Kestrel PRIVATE "-framework UIKit" "-framework Foundation" "-framework CoreGraphics" "-framework AVFAudio" "-framework AVFoundation")
+        target_compile_definitions(Kestrel PRIVATE KESTREL_IOS=1)
+        set_target_properties(Kestrel PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios/Info.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "org.falconmc.kestrel"
+            MACOSX_BUNDLE_BUNDLE_NAME "Kestrel"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+            MACOSX_BUNDLE_BUNDLE_VERSION "1"
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+            XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
+        )
+        include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KestrelIos.cmake")
+    else()
+        target_link_libraries(Kestrel PRIVATE "-framework Cocoa")
+    endif()
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 else()
     target_link_libraries(Kestrel PRIVATE SDL3::SDL3-static Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)

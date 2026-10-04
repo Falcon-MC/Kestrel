@@ -177,7 +177,7 @@ std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& pat
     if (!file || !file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()))) { error = "cannot read resource pack archive"; return nullptr; }
     return loadServerPackData(std::move(bytes), key, error);
 }
-std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std::string& key, std::string& error)
+std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std::string& key, std::string& error, const std::string& root)
 {
     auto reject = [&](const char* message) -> std::shared_ptr<const PackFiles> { error = message; return nullptr; };
     if (bytes.size() < 22 || bytes.size() > MaxArchive) return reject("invalid resource pack archive size");
@@ -194,7 +194,8 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
     const auto count = readLe16(bytes, end + 10);
     if (directoryEnd != end || readLe16(bytes, end + 8) != count) return reject("invalid ZIP directory bounds");
     std::unordered_map<std::string, PackFiles::Storage::Entry> physical;
-    std::string prefix;
+    std::string prefix = root;
+    if (!root.empty() && (canonical(root) != root || !root.ends_with('/'))) return reject("invalid pack root");
     size_t best = std::string::npos;
     for (uint32_t i = 0; i < count; ++i) {
         if (cursor > directoryEnd || directoryEnd - cursor < 46 || readLe32(bytes, cursor) != 0x02014b50u) return reject("corrupt ZIP directory");
@@ -217,7 +218,7 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
             || canonical(bytes.substr(local + 30, localNameSize)) != name) return reject("ZIP local and directory entries disagree");
         if (offset > directoryStart || compressed > directoryStart - offset || (flags & 1) || (method != 0 && method != 8) || (method == 0 && size != compressed)) return reject("invalid or unsupported ZIP entry");
         const auto folded = util::lowercase(name);
-        if (folded.ends_with("manifest.json") || folded.ends_with("pack_manifest.json")) {
+        if (root.empty() && (folded.ends_with("manifest.json") || folded.ends_with("pack_manifest.json"))) {
             const auto slash = name.find_last_of('/');
             const auto root = slash == std::string::npos ? std::string() : name.substr(0, slash + 1);
             const auto filename = slash == std::string::npos ? folded : folded.substr(slash + 1);

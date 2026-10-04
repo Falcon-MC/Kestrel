@@ -145,4 +145,17 @@ Mat4 FreeCamera::viewProjection(float aspect) const
     return multiply(projection, multiply(tilt, view));
 }
 
+std::array<float, 3> FreeCamera::screenRay(float x, float y, float aspect) const
+{
+    auto direction = forward();
+    float horizontal = (2 * x - 1) * halfVerticalTangent(aspect) * aspect;
+    float vertical = (1 - 2 * y) * halfVerticalTangent(aspect);
+    float rx = std::cos(yaw), rz = -std::sin(yaw);
+    std::array<float, 3> up { -rz * direction[1], rz * direction[0] - rx * direction[2], rx * direction[1] };
+    for (size_t i = 0; i < 3; ++i) direction[i] += horizontal * (i == 0 ? rx : i == 2 ? rz : 0) + vertical * up[i];
+    float length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+    for (float& value : direction) value /= length;
+    return direction;
+}
+
 }

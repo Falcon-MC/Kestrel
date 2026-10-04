@@ -62,6 +62,7 @@ public:
      */
     float halfVerticalTangent(float aspect) const;
     std::array<float, 3> forward() const;
+    std::array<float, 3> screenRay(float x, float y, float aspect) const;
 
     double x() const
     {

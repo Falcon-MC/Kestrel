@@ -532,6 +532,7 @@ public:
 
     InventoryScreen& inventoryPanel() { return inventory; }
     FormScreen& formPanel() { return forms; }
+    bool wantsTextInput();
 
     /**
      * Shows a server form, or answers that the player is busy when another
@@ -1394,6 +1395,8 @@ private:
     bool chatToBottom = false;
     std::unique_ptr<ui::JsonUiScreen> chatUi;
     std::unique_ptr<ui::JsonUiScreen> settingsUi;
+    std::unique_ptr<ui::JsonUiScreen> touchSettingsUi;
+    std::optional<std::string> touchSettingsRoot;
     bool chatFacingCoordinates = false;
     int vanillaSettingsSection = 0;
     bool advancedGraphicsShown = false;

@@ -452,21 +452,26 @@ json::Value* findPath(json::Value& base, const std::string& path)
  */
 std::unique_ptr<json::Value> platformVariables()
 {
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(KESTREL_IOS)
     constexpr bool Mac = true;
 #else
     constexpr bool Mac = false;
 #endif
+#if defined(KESTREL_IOS)
+    constexpr bool Ios = true;
+#else
+    constexpr bool Ios = false;
+#endif
     static const std::pair<const char*, bool> Flags[] = {
         { "desktop_screen", true },
         { "pocket_screen", false },
-        { "touch", false },
+        { "touch", Ios },
         { "is_pc", true },
-        { "win10_edition", !Mac },
-        { "microsoft_os", !Mac },
-        { "ms_platform", !Mac },
+        { "win10_edition", !Mac && !Ios },
+        { "microsoft_os", !Mac && !Ios },
+        { "ms_platform", !Mac && !Ios },
         { "osx_edition", Mac },
-        { "apple_os", Mac },
+        { "apple_os", Mac || Ios },
         { "is_desktop", true },
         { "mouse", true },
         { "is_publish", true },
@@ -481,7 +486,7 @@ std::unique_ptr<json::Value> platformVariables()
         { "is_packs_enabled", true },
         { "is_server_enabled", true },
         { "is_store_enabled", true },
-        { "file_picking_supported", true },
+        { "file_picking_supported", !Ios },
         { "supports_clipboard_set", true },
         { "supports_add_friend", true },
         { "supports_xbl_achievements", true },
@@ -500,13 +505,13 @@ std::unique_ptr<json::Value> platformVariables()
         { "is_secondary_client", false },
         { "requires_xbl_signin_to_play", false },
         { "is_editor_mode_enabled", false },
-        { "can_quit", true },
+        { "can_quit", !Ios },
         { "world_archive_support", true },
         { "is_dynamic_textures_platform_supported", true },
         { "is_pregame", false },
         { "screen_transitions_enabled", false },
         { "use_normalized_font_size", false },
-        { "image_picking_not_supported", false },
+        { "image_picking_not_supported", Ios },
         { "vibration_supported", false },
         { "supports_share", false },
         { "hide_xbox_live_icon", false },
@@ -523,7 +528,7 @@ std::unique_ptr<json::Value> platformVariables()
         { "built_with_ore_ui_docs_and_tests", false },
         { "build_platform_UWP", false },
         { "google_os", false },
-        { "is_ios", false },
+        { "is_ios", Ios },
         { "is_android", false },
         { "is_chromebook", false },
         { "fire_tv", false },

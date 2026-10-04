@@ -30,6 +30,7 @@ public:
     virtual uint32_t width() const = 0;
     virtual uint32_t height() const = 0;
     virtual float contentScale() const = 0;
+    virtual ui::Rect safeArea() const { return { 0, 0, float(width()), float(height()) }; }
     virtual bool consumeResize() = 0;
 
     /**
@@ -41,6 +42,7 @@ public:
     virtual void setChrome(WindowChrome chrome) = 0;
     virtual void setCursor(Cursor cursor) = 0;
     virtual void setMouseCaptured(bool captured) = 0;
+    virtual void setTextInput(bool enabled) { }
     virtual bool drawsCaptionButtons() const = 0;
     virtual float captionInsetLeft() const = 0;
     virtual bool maximized() const = 0;
