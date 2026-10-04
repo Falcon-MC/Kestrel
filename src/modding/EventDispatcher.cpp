@@ -1,4 +1,4 @@
-#include "EventDispatcher.h"
+#include "modding/EventDispatcher.h"
 
 #include <algorithm>
 

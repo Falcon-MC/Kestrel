@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ModSupport.h"
+#include "modding/ModSupport.h"
 
 #include "mod/Scheduler.h"
 

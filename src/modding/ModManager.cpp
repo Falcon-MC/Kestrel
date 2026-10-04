@@ -1,8 +1,8 @@
 #include "modding/ModManager.h"
 
-#include "HostState.h"
-#include "ModSlot.h"
-#include "Painters.h"
+#include "modding/HostState.h"
+#include "modding/ModSlot.h"
+#include "modding/Painters.h"
 
 #include "client/ChatText.h"
 #include "client/DebugLog.h"

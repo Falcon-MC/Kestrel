@@ -1,8 +1,8 @@
 #include "world/BlockAssets.h"
 #include "world/BlockModels.h"
 
-#include "BlockRules.h"
-#include "TextureTools.h"
+#include "world/assets/BlockRules.h"
+#include "world/assets/TextureTools.h"
 #include "Core/Json/Json.h"
 #include "ui/Image.h"
 #include "util/JsonText.h"

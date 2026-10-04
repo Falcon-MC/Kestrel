@@ -1,4 +1,4 @@
-#include "SessionData.h"
+#include "client/session/SessionData.h"
 
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"

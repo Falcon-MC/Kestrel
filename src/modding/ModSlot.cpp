@@ -1,4 +1,4 @@
-#include "ModSlot.h"
+#include "modding/ModSlot.h"
 
 #include "mod/Api.h"
 

@@ -2,7 +2,7 @@
 #include "render/Renderer.h"
 #include "client/DebugLog.h"
 
-#include "D3D12Shaders.h"
+#include "render/d3d12/D3D12Shaders.h"
 #include "platform/Paths.h"
 #include "platform/Window.h"
 

@@ -1,7 +1,7 @@
 #include "world/BlockAssets.h"
-#include "BlockRules.h"
+#include "world/assets/BlockRules.h"
 #include "client/DebugLog.h"
-#include "TextureTools.h"
+#include "world/assets/TextureTools.h"
 
 #include "Core/Json/Json.h"
 #include "Protocol/BlockStateHasher.h"

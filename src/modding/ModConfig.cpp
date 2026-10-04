@@ -1,4 +1,4 @@
-#include "ModConfig.h"
+#include "modding/ModConfig.h"
 
 #include "client/DebugLog.h"
 

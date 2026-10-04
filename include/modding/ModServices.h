@@ -1,6 +1,6 @@
 #pragma once
 
-#include "HostState.h"
+#include "modding/HostState.h"
 
 #include "mod/Context.h"
 

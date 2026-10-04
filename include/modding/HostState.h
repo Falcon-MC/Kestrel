@@ -1,11 +1,11 @@
 #pragma once
 
-#include "CommandRegistry.h"
-#include "EventDispatcher.h"
-#include "KeyBindRegistry.h"
-#include "PacketFilters.h"
-#include "ShaderStore.h"
-#include "TaskScheduler.h"
+#include "modding/CommandRegistry.h"
+#include "modding/EventDispatcher.h"
+#include "modding/KeyBindRegistry.h"
+#include "modding/PacketFilters.h"
+#include "modding/ShaderStore.h"
+#include "modding/TaskScheduler.h"
 
 #include "modding/ModManager.h"
 

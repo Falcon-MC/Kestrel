@@ -1,4 +1,4 @@
-#include "Painters.h"
+#include "modding/Painters.h"
 
 namespace kestrel::modding {
 

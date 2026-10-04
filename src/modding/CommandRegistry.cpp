@@ -1,4 +1,4 @@
-#include "CommandRegistry.h"
+#include "modding/CommandRegistry.h"
 
 #include <algorithm>
 #include <cctype>

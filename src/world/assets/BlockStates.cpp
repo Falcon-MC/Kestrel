@@ -1,4 +1,4 @@
-#include "BlockRules.h"
+#include "world/assets/BlockRules.h"
 
 #include "BlockLightJson.h"
 

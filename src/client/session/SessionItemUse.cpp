@@ -1,4 +1,4 @@
-#include "SessionData.h"
+#include "client/session/SessionData.h"
 
 #include "Protocol/Packets/InventoryTransactionPacket.h"
 #include "Protocol/Packets/PlayerAuthInputPacket.h"

@@ -1,7 +1,7 @@
 #include "render/rhi/Device.h"
 #include "render/Renderer.h"
 
-#include "MetalShaders.h"
+#include "render/metal/MetalShaders.h"
 #include "platform/Window.h"
 
 #import <Metal/Metal.h>

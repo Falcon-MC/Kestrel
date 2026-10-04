@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ModConfig.h"
-#include "ModServices.h"
+#include "modding/ModConfig.h"
+#include "modding/ModServices.h"
 
 #include "mod/Mod.h"
 #include "platform/Library.h"

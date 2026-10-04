@@ -1,4 +1,4 @@
-#include "KeyBindRegistry.h"
+#include "modding/KeyBindRegistry.h"
 
 #include "mod/Config.h"
 #include "platform/Keys.h"

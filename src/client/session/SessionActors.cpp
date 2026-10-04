@@ -1,4 +1,4 @@
-#include "SessionData.h"
+#include "client/session/SessionData.h"
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"

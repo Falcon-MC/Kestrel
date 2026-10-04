@@ -1,4 +1,4 @@
-#include "SessionData.h"
+#include "client/session/SessionData.h"
 
 #include "Protocol/Packets/RemoveObjectivePacket.h"
 #include "Protocol/Packets/SetDisplayObjectivePacket.h"

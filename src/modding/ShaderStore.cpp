@@ -1,4 +1,4 @@
-#include "ShaderStore.h"
+#include "modding/ShaderStore.h"
 
 namespace kestrel::modding {
 

@@ -1,6 +1,6 @@
 #include "ui/JsonUi.h"
 
-#include "JsonUiInternal.h"
+#include "ui/JsonUiInternal.h"
 
 #include <algorithm>
 #include <cmath>

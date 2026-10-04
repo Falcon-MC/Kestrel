@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ShaderStore.h"
+#include "modding/ShaderStore.h"
 
 #include "mod/Canvas.h"
 #include "ui/Context.h"
