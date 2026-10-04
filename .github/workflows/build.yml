@@ -113,14 +113,15 @@ jobs:
             -DKESTREL_BUILD_TESTS=${{ inputs.tests && 'ON' || 'OFF' }}
           cmake --build build --parallel 4
 
+      # particle-effects reads the game's own vanilla pack, which a runner can't have
       - name: Run tests
         if: inputs.tests && runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --exclude-regex particle-effects
 
       - name: Run tests (Windows)
         if: inputs.tests && runner.os == 'Windows'
         shell: msys2 {0}
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --exclude-regex particle-effects
 
       - name: Package
         if: inputs.package
