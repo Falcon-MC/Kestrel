@@ -1,0 +1,61 @@
+name: Crash
+description: Kestrel closed, froze or crashed
+title: "[Crash]: "
+labels: ["bug", "crash"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!CAUTION]
+        > If a server or a resource pack can trigger the crash on purpose, **do not report it here**.
+        > Read the [Security Policy](https://github.com/Falcon-MC/Kestrel/blob/main/SECURITY.md) first.
+
+        > [!TIP]
+        > Do not paste a long log into the issue. Upload `debug.txt` (or `debug.previous.txt` after a restart) to
+        > [GitHub Gist](https://gist.github.com) and link it below.
+
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you were doing when Kestrel crashed or froze, and on which server.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Link to the full debug log
+      placeholder: "https://gist.github.com/..."
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Kestrel version
+      description: The release you downloaded, or the commit you built.
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Can you reproduce it?
+      options:
+        - Every time
+        - Sometimes
+        - It only happened once
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Additional comments
+      description: Mods loaded, GPU, or anything else that might help.

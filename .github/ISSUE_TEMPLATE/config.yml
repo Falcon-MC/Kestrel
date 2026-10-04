@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Falcon-MC/Kestrel/security/advisories/new
+    about: Report vulnerabilities privately. Never open a public issue for them.
+  - name: Roadmap
+    url: https://github.com/orgs/Falcon-MC/projects/1
+    about: See what is planned and what is already being worked on.

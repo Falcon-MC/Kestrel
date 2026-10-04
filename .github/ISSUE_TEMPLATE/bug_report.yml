@@ -1,0 +1,92 @@
+name: Bug report
+description: Something in Kestrel does not work, or looks or behaves differently from the official client
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!CAUTION]
+        > If a server, a resource pack or another program can use this against a player (code execution, a leaked
+        > token, files written outside the data directory), **do not report it here**. Read the
+        > [Security Policy](https://github.com/Falcon-MC/Kestrel/blob/main/SECURITY.md) instead.
+
+        Please [search existing issues](https://github.com/Falcon-MC/Kestrel/issues) first.
+
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, including the server address if it only happens on one server.
+      placeholder: |
+        1. Join play.example.net
+        2. Open the inventory
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      description: What should happen. Describe what the official Bedrock client does in the same situation.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Actual behavior
+      description: What happens instead.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Kestrel version
+      description: The release you downloaded, or the commit you built.
+      placeholder: "1.26.51 (a1b2c3d)"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: GPU and driver
+      placeholder: "NVIDIA RTX 3060, driver 560.35"
+
+  - type: textarea
+    attributes:
+      label: Mods
+      description: List the mods in your `mods` folder, or write "None".
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Debug log
+      description: The relevant part of `debug.txt` from the data directory. It is formatted as code automatically.
+      render: text
+
+  - type: textarea
+    attributes:
+      label: Screenshots or videos
+      description: For rendering and UI bugs, a screenshot from the official client next to Kestrel helps a lot.
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Anything else that might help.

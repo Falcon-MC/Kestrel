@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a missing vanilla feature or an improvement to Kestrel
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    attributes:
+      label: Type of request
+      options:
+        - Missing vanilla feature
+        - Rendering
+        - User interface
+        - Mod API
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Is your request related to a problem?
+      description: A clear and concise description of the problem. Ex. "Mods cannot ..."
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Describe the solution you'd like
+      description: What you want to happen. For vanilla features, describe how the official client behaves.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Describe alternatives you've considered
+      description: Other ways to solve the problem, including a mod.
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Screenshots, links to the Minecraft wiki, or anything else that helps.
