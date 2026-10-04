@@ -48,6 +48,8 @@ enum CollisionShape : int16_t {
     ShapeWall = -2,
     ShapeThin = -3,
     ShapeVine = -4,
+    // A block the server defines, its boxes held by the state.
+    ShapeCustom = -5,
 };
 
 /**
@@ -61,6 +63,8 @@ struct CollisionState {
     int16_t shape = 0;
     uint16_t flags = 0;
     int8_t face = -1;
+    const CollisionBox* box = nullptr;
+    uint16_t boxCount = 0;
 };
 
 /**

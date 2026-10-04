@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -41,6 +42,131 @@ constexpr uint32_t LilyPadColor = 0x208030;
 // Plain water in a cauldron keeps this blue in every biome; only potions and dyes change it.
 constexpr uint32_t CauldronWaterColor = 0x3F76E4;
 
+/**
+ * Whether a collision or selection box component is on: missing, true or a
+ * compound without enabled set to 0.
+ */
+bool componentEnabled(const Tag* component)
+{
+    if (!component) {
+        return true;
+    }
+    if (component->getType() == Tag::Type::Byte) {
+        return component->asByte() != 0;
+    }
+    const Tag* enabled = component->getType() == Tag::Type::Compound ? component->get("enabled") : nullptr;
+    return !enabled || tagNumber(enabled, 1.0f) != 0.0f;
+}
+
+/**
+ * The boxes of a collision or selection box component, in block units kept
+ * inside the block. The server sends them as a list of min and max corners
+ * in sixteenths; a pack writes origin and size, origin measured from the
+ * bottom centre. Malformed or empty boxes are dropped, as the server's data
+ * is never trusted to be well formed.
+ */
+std::optional<CollisionBox> componentBox(const Tag* component);
+
+std::vector<CollisionBox> componentBoxes(const Tag* component)
+{
+    std::vector<CollisionBox> out;
+    if (!component || component->getType() != Tag::Type::Compound) {
+        return out;
+    }
+    const Tag* boxes = component->get("boxes");
+    if (!boxes || boxes->getType() != Tag::Type::List) {
+        if (std::optional<CollisionBox> single = componentBox(component)) {
+            out.push_back(*single);
+        }
+        return out;
+    }
+    constexpr size_t MaxBoxes = 16;
+    for (const Tag& entry : boxes->getList()) {
+        if (out.size() >= MaxBoxes || entry.getType() != Tag::Type::Compound) {
+            continue;
+        }
+        constexpr float Nan = std::numeric_limits<float>::quiet_NaN();
+        std::array<float, 6> v { tagNumber(entry.get("minX"), Nan), tagNumber(entry.get("minY"), Nan), tagNumber(entry.get("minZ"), Nan),
+            tagNumber(entry.get("maxX"), Nan), tagNumber(entry.get("maxY"), Nan), tagNumber(entry.get("maxZ"), Nan) };
+        if (!std::all_of(v.begin(), v.end(), [](float value) { return std::isfinite(value); })) {
+            continue;
+        }
+        for (float& value : v) {
+            value = std::clamp(value / 16.0f, 0.0f, 1.0f);
+        }
+        if (v[3] > v[0] && v[4] > v[1] && v[5] > v[2]) {
+            out.push_back({ v[0], v[1], v[2], v[3], v[4], v[5] });
+        }
+    }
+    return out;
+}
+
+std::optional<CollisionBox> componentBox(const Tag* component)
+{
+    if (!component || component->getType() != Tag::Type::Compound) {
+        return std::nullopt;
+    }
+    auto triple = [&](const char* name) -> std::optional<std::array<float, 3>> {
+        const Tag* list = component->get(name);
+        if (!list || list->getType() != Tag::Type::List || list->getList().size() != 3) {
+            return std::nullopt;
+        }
+        std::array<float, 3> out {};
+        for (size_t axis = 0; axis < 3; ++axis) {
+            out[axis] = tagNumber(&list->getList()[axis], std::numeric_limits<float>::quiet_NaN());
+            if (!std::isfinite(out[axis])) {
+                return std::nullopt;
+            }
+        }
+        return out;
+    };
+    std::optional<std::array<float, 3>> origin = triple("origin");
+    std::optional<std::array<float, 3>> size = triple("size");
+    if (!origin || !size) {
+        return std::nullopt;
+    }
+    constexpr std::array<float, 3> Shift { 8.0f, 0.0f, 8.0f };
+    std::array<float, 3> low {};
+    std::array<float, 3> high {};
+    for (size_t axis = 0; axis < 3; ++axis) {
+        low[axis] = std::clamp(((*origin)[axis] + Shift[axis]) / 16.0f, 0.0f, 1.0f);
+        high[axis] = std::clamp(((*origin)[axis] + Shift[axis] + (*size)[axis]) / 16.0f, 0.0f, 1.0f);
+        if (high[axis] <= low[axis]) {
+            return std::nullopt;
+        }
+    }
+    return CollisionBox { low[0], low[1], low[2], high[0], high[1], high[2] };
+}
+
+}
+
+bool BlockAssets::customCollision(uint32_t networkValue, bool hashed, const SequentialMap* sequential, const CollisionState*& state) const
+{
+    state = nullptr;
+    if (networkValue == 0xFFFFFFFFu) {
+        return false;
+    }
+    int32_t index = indexOf(networkValue, hashed, sequential);
+    size_t vanilla = registry.records().size();
+    if (index < 0 || static_cast<size_t>(index) < vanilla || static_cast<size_t>(index) - vanilla >= customStates.size()) {
+        return false;
+    }
+    const CustomState& custom = customStates[static_cast<size_t>(index) - vanilla];
+    state = custom.collides ? &custom.collision : nullptr;
+    return true;
+}
+
+std::optional<CollisionBox> BlockAssets::customSelection(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    if (networkValue == 0xFFFFFFFFu) {
+        return std::nullopt;
+    }
+    int32_t index = indexOf(networkValue, hashed, sequential);
+    size_t vanilla = registry.records().size();
+    if (index < 0 || static_cast<size_t>(index) < vanilla || static_cast<size_t>(index) - vanilla >= customStates.size()) {
+        return std::nullopt;
+    }
+    return customStates[static_cast<size_t>(index) - vanilla].selection;
 }
 
 std::shared_ptr<const BlockAssets> BlockAssets::shared(std::string& error)
@@ -1310,10 +1436,42 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 visual.lightFilter = static_cast<uint8_t>(std::clamp(static_cast<int32_t>(tagNumber(dampening->get("lightLevel"), 15.0f)), 0, 15));
             }
 
+            CustomState state { block, std::move(states) };
+            const Tag* collision = components.contains("minecraft:collision_box") ? components["minecraft:collision_box"] : nullptr;
+            state.collides = componentEnabled(collision);
+            state.collision.shape = ShapeCustom;
+            state.collision.flags = CollisionSolid;
+            if (state.collides) {
+                std::vector<CollisionBox> boxes = componentBoxes(collision);
+                if (boxes.empty()) {
+                    boxes.push_back({ 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f });
+                }
+                state.boxIndex = customBoxes.size();
+                state.collision.boxCount = static_cast<uint16_t>(boxes.size());
+                customBoxes.insert(customBoxes.end(), boxes.begin(), boxes.end());
+            }
+            const Tag* selection = components.contains("minecraft:selection_box") ? components["minecraft:selection_box"] : nullptr;
+            if (selection && !componentEnabled(selection)) {
+                state.selection = CollisionBox {};
+            } else if (std::vector<CollisionBox> picked = componentBoxes(selection); !picked.empty()) {
+                CollisionBox bounds = picked.front();
+                for (const CollisionBox& box : picked) {
+                    bounds = { std::min(bounds.minX, box.minX), std::min(bounds.minY, box.minY), std::min(bounds.minZ, box.minZ),
+                        std::max(bounds.maxX, box.maxX), std::max(bounds.maxY, box.maxY), std::max(bounds.maxZ, box.maxZ) };
+                }
+                state.selection = bounds;
+            }
             uint32_t index = static_cast<uint32_t>(visuals.size());
-            customByHash.emplace(static_cast<uint32_t>(BlockStateHasher::hash(custom.name, states)), index);
-            customStates.push_back({ block, std::move(states) });
+            customByHash.emplace(static_cast<uint32_t>(BlockStateHasher::hash(custom.name, state.states)), index);
+            customStates.push_back(std::move(state));
             visuals.push_back(visual);
+        }
+    }
+
+    for (CustomState& state : customStates) {
+        // Every box is in place now, so the states can point at them.
+        if (state.collides) {
+            state.collision.box = &customBoxes[state.boxIndex];
         }
     }
 

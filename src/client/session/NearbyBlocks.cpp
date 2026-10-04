@@ -47,6 +47,9 @@ const world::CollisionState* collisionState(const NearbyBlocks& area, uint32_t v
     }
     const world::BlockCollisions& table = world::BlockCollisions::shared();
     const world::CollisionState* state = table.find(area.assets->stateHash(value, area.ids.hashed, area.ids.sequential.get()));
+    if (const world::CollisionState* custom = nullptr; !state && area.assets->customCollision(value, area.ids.hashed, area.ids.sequential.get(), custom)) {
+        return custom;
+    }
     if (!state) {
         const world::BlockVisual& visual = area.assets->visual(value, area.ids.hashed, area.ids.sequential.get());
         if ((visual.flags & world::FlagAir) || visual.hasModel() || visual.liquid) {

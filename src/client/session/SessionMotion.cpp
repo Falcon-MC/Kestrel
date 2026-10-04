@@ -81,6 +81,9 @@ MotionCell Session::motionCell(int32_t x, int32_t y, int32_t z)
         if (const world::CollisionState* state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()))) {
             return state;
         }
+        if (const world::CollisionState* custom = nullptr; assets->customCollision(value, ids.hashed, ids.sequential.get(), custom)) {
+            return custom;
+        }
         const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
         return visual.flags & world::FlagAir ? nullptr : table.fullBlock();
     };
@@ -388,6 +391,7 @@ void Session::runMotionTick(double now)
                 uint32_t value = sub->runtimeId(layer, uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15));
                 if (value == world::ImplicitAir) return nullptr;
                 if (auto state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()))) return state;
+                if (const world::CollisionState* custom = nullptr; assets->customCollision(value, ids.hashed, ids.sequential.get(), custom)) return custom;
                 return assets->visual(value, ids.hashed, ids.sequential.get()).flags & world::FlagAir ? nullptr : table.fullBlock();
             };
             return MotionCell { resolve(0), resolve(1) };
@@ -650,6 +654,7 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
             uint32_t value = sub->runtimeId(layer, uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15));
             if (value == world::ImplicitAir) return nullptr;
             if (auto state = table.find(assets->stateHash(value, ids.hashed, ids.sequential.get()))) return state;
+            if (const world::CollisionState* custom = nullptr; assets->customCollision(value, ids.hashed, ids.sequential.get(), custom)) return custom;
             return assets->visual(value, ids.hashed, ids.sequential.get()).flags & world::FlagAir ? nullptr : table.fullBlock();
         };
         return MotionCell { resolve(0), resolve(1) };
