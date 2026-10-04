@@ -11,3 +11,5 @@ elseif(NOT WIN32 AND NOT APPLE)
         shader_demo/shaders/quad.vert shader_demo/shaders/vignette.frag shader_demo/shaders/glow.frag)
     target_compile_definitions(shader_demo PRIVATE SHADER_DEMO_SPIRV)
 endif()
+
+kestrel_add_mod(emotes_example emotes/EmotesMod.cpp)
