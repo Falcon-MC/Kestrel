@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstdlib>
+#include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace kestrel::world {
 
@@ -146,9 +149,14 @@ public:
     T number()
     {
         std::string_view text = word();
-        T value {};
-        std::from_chars(text.data(), text.data() + text.size(), value);
-        return value;
+        if constexpr (std::is_floating_point_v<T>) {
+            // float from_chars needs macOS 26 in Apple's libc++, strtof reads the same thing here
+            return static_cast<T>(std::strtof(std::string(text).c_str(), nullptr));
+        } else {
+            T value {};
+            std::from_chars(text.data(), text.data() + text.size(), value);
+            return value;
+        }
     }
 
 private:
