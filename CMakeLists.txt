@@ -259,6 +259,7 @@ elseif(APPLE)
         "-framework QuartzCore"
         "-framework CoreAudio"
         "-framework AudioToolbox"
+        "-framework GameController"
         "-framework CoreFoundation"
     )
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)

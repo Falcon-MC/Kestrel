@@ -83,7 +83,8 @@ inline constexpr const char* UiFactoryControl = "@control_id";
 /**
  * Something the player did on a screen, the way button mappings, toggles,
  * sliders and edit boxes report it to the game's screen controllers, or the
- * end_event of an animation.
+ * end_event of an animation. A slider reports a 0..1 fraction, a step slider
+ * (more than one slider step) the step index, as #slider_value binds them.
  */
 struct UiEvent {
     enum class Kind {
@@ -102,6 +103,9 @@ struct UiEvent {
     int outerIndex = -1;
     bool state = false;
     double value = 0.0;
+    /**
+     * What was typed, or for a button the #hyperlink its property bag holds.
+     */
     std::string text;
 };
 
@@ -248,6 +252,12 @@ public:
      * a screen laid into a taller area than it fills, like a settings section.
      */
     float contentHeight() const;
+
+    /**
+     * Where the first shown control of that name was last laid out, for
+     * drawing something of the menu's own inside it.
+     */
+    std::optional<Rect> controlRect(const std::string& name) const;
 
     UiEvent pointerTarget() const;
     bool pointerInsideContent(float x, float y) const;

@@ -853,6 +853,28 @@ const double* find(const Node& node, Scope& scope)
     return found == map->end() ? nullptr : &found->second;
 }
 
+/**
+ * Whether a variable holds a value, or is a struct with a member set, the
+ * way ?? tests it.
+ */
+bool defined(const Node& node, Scope& scope)
+{
+    if (find(node, scope)) {
+        return true;
+    }
+    const std::unordered_map<std::string, double>* map = node.kind == Kind::Variable ? scope.variables : node.kind == Kind::Temp ? &scope.temps : &scope.context;
+    if (!map) {
+        return false;
+    }
+    std::string member = node.name + ".";
+    for (const auto& [name, value] : *map) {
+        if (name.compare(0, member.size(), member) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double evaluate(const Node& node, Scope& scope, Flow& flow);
 
 double evaluateSequence(const Node& node, Scope& scope, Flow& flow)
@@ -937,8 +959,11 @@ double evaluate(const Node& node, Scope& scope, Flow& flow)
     case Kind::Coalesce: {
         const Node& left = *node.children[0];
         if (left.kind == Kind::Variable || left.kind == Kind::Temp || left.kind == Kind::Context) {
+            if (!defined(left, scope)) {
+                return evaluate(*node.children[1], scope, flow);
+            }
             const double* value = find(left, scope);
-            return value ? *value : evaluate(*node.children[1], scope, flow);
+            return value ? *value : 0.0;
         }
         return evaluate(left, scope, flow);
     }

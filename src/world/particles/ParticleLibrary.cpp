@@ -318,23 +318,6 @@ bool parseHexColor(const std::string& text, std::array<float, 4>& out)
     return true;
 }
 
-bool readColor(const json::Value* value, std::array<float, 4>& out)
-{
-    if (!value) {
-        return false;
-    }
-    if (value->isString()) {
-        return parseHexColor(value->mString, out);
-    }
-    if (value->isArray()) {
-        out = { 1.0f, 1.0f, 1.0f, 1.0f };
-        for (size_t index = 0; index < 4 && index < value->mArray.size(); ++index) {
-            out[index] = (float) value->mArray[index]->number(1.0);
-        }
-        return true;
-    }
-    return false;
-}
 
 void writeJson(const json::Value& value, std::string& out)
 {
@@ -470,6 +453,35 @@ void readBillboard(const json::Value& body, ParticleAppearance& appearance)
     }
 }
 
+/**
+ * One gradient stop: a hex color, or channels that are numbers or Molang
+ * evaluated per particle.
+ */
+bool readStopColor(const json::Value* value, std::array<ParticleExpression, 4>& out)
+{
+    if (!value) {
+        return false;
+    }
+    if (value->isString()) {
+        std::array<float, 4> hex {};
+        if (!parseHexColor(value->mString, hex)) {
+            return false;
+        }
+        for (size_t index = 0; index < 4; ++index) {
+            out[index] = ParticleExpression(hex[index]);
+        }
+        return true;
+    }
+    if (value->isArray()) {
+        readVector(value, out, 1.0);
+        if (value->mArray.size() < 4) {
+            out[3] = ParticleExpression(1.0);
+        }
+        return true;
+    }
+    return false;
+}
+
 void readTinting(const json::Value& body, ParticleAppearance& appearance)
 {
     const json::Value* color = body.get("color");
@@ -486,16 +498,16 @@ void readTinting(const json::Value& body, ParticleAppearance& appearance)
         }
         if (stops->isObject()) {
             for (const std::string& key : stops->mKeys) {
-                std::array<float, 4> value {};
-                if (readColor(stops->mObject.at(key).get(), value)) {
+                std::array<ParticleExpression, 4> value {};
+                if (readStopColor(stops->mObject.at(key).get(), value)) {
                     appearance.gradientStops.emplace_back(std::strtof(key.c_str(), nullptr), value);
                 }
             }
         } else if (stops->isArray()) {
             size_t count = stops->mArray.size();
             for (size_t index = 0; index < count; ++index) {
-                std::array<float, 4> value {};
-                if (readColor(stops->mArray[index].get(), value)) {
+                std::array<ParticleExpression, 4> value {};
+                if (readStopColor(stops->mArray[index].get(), value)) {
                     float time = count > 1 ? (float) index / (float) (count - 1) : 0.0f;
                     appearance.gradientStops.emplace_back(time, value);
                 }
@@ -548,7 +560,7 @@ void readComponent(const std::string& name, const json::Value& body, ParticleEff
         emitter.lifetime = ParticleEmitterRules::Lifetime::Expression;
         emitter.activation = expression(body.get("activation_expression"), 1.0);
         emitter.expiration = expression(body.get("expiration_expression"), 0.0);
-    } else if (name == "minecraft:emitter_shape_point") {
+    } else if (name == "minecraft:emitter_shape_point" || name == "minecraft:emitter_shape_custom") {
         readShape(body, ParticleShape::Kind::Point, effect.shape);
     } else if (name == "minecraft:emitter_shape_sphere") {
         readShape(body, ParticleShape::Kind::Sphere, effect.shape);

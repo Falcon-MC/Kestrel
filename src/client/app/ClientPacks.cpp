@@ -61,12 +61,74 @@ constexpr const char* GlobalResourcesActions = R"({
   }
 })";
 
-// Kestrel draws no clouds, so the video section leaves out their toggle.
+// Kestrel's Mods section in the settings selector, ahead of Global Resources; the menu
+// draws its page in the content area when it is picked.
+constexpr const char* ModsSectionButton = R"({
+  "selector_stack_panel/controls_and_settings_selector_pane": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_before",
+        "control_name": "global_texture_pack_button",
+        "value": [
+          { "kestrel_mods_button@settings_common.section_toggle_base": {
+            "$toggle_group_forced_index": 100,
+            "$toggle_view_binding_name": "kestrel_mods_button_toggle",
+            "$glyph_texture": "hbui/resource-packs-icon",
+            "$glyph_color_texture": "hbui/resource-packs-icon",
+            "$glyph_size": [12, 12],
+            "$button_text": "Mods",
+            "$tts_section_header": "$general_section_header"
+          } }
+        ]
+      }
+    ]
+  }
+})";
+
+// Kestrel has no creator tools, so the settings screen leaves out the Creator section and its button.
+constexpr const char* WithoutCreatorSection = R"({
+  "selector_stack_panel/controls_and_settings_selector_pane": {
+    "modifications": [
+      { "array_name": "controls", "operation": "remove", "control_name": "creator_button" }
+    ]
+  },
+  "section_content_panels/general_and_controls_sections": {
+    "modifications": [
+      { "array_name": "controls", "operation": "remove", "control_name": "creator_section" }
+    ]
+  }
+})";
+
+// Kestrel draws no clouds, so the video section leaves out their toggle, and the general
+// section leaves out the credits, attribution, help center and license links it cannot open.
 constexpr const char* VideoSectionFile = "ui/settings_sections/general_section.json";
 constexpr const char* VideoSectionChanges = R"({
   "video_section": {
     "modifications": [
       { "array_name": "controls", "operation": "remove", "control_name": "render_clouds_toggle" }
+    ]
+  },
+  "general_tab_section": {
+    "modifications": [
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingDividerTermsCreditsAttribution" },
+      { "array_name": "controls", "operation": "remove", "control_name": "dividerTermsCreditsAttribution" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingDividerTermsCreditsAttributionAfter" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingCreditsButton" },
+      { "array_name": "controls", "operation": "remove", "control_name": "credits_button" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingAttribution" },
+      { "array_name": "controls", "operation": "remove", "control_name": "attribution_link_button" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingfeedback" },
+      { "array_name": "controls", "operation": "remove", "control_name": "feedback_link_button" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingLicenses" },
+      { "array_name": "controls", "operation": "remove", "control_name": "dividerLicenses" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingLicensesAfter" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingLicensesHeader" },
+      { "array_name": "controls", "operation": "remove", "control_name": "licenses_label_header" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingLicensedContent" },
+      { "array_name": "controls", "operation": "remove", "control_name": "licensed_content_link_button" },
+      { "array_name": "controls", "operation": "remove", "control_name": "paddingFontLicense" },
+      { "array_name": "controls", "operation": "remove", "control_name": "font_license_popup_button" }
     ]
   }
 })";
@@ -220,6 +282,8 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
     }
     definitions->addFile(GlobalResourcesFile, GlobalResourcesActions);
     definitions->addFile(VideoSectionFile, VideoSectionChanges);
+    definitions->addFile(GlobalResourcesFile, ModsSectionButton);
+    definitions->addFile(GlobalResourcesFile, WithoutCreatorSection);
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
         std::vector<std::string> paths = vanillaPaths;
         if (auto packDefs = (*pack)->find(UiDefsFile)) {

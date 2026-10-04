@@ -46,13 +46,14 @@ void readSlice(const std::string& text, NineSlice& slice, float* baseWidth = nul
     }
     if (size->isNumber()) {
         float value = static_cast<float>(size->number());
-        slice = { value, value, value, value };
+        slice = { value, value, value, value, true };
     } else if (size->isArray() && size->mArray.size() == 4) {
         slice = {
             static_cast<float>(size->mArray[0]->number()),
             static_cast<float>(size->mArray[1]->number()),
             static_cast<float>(size->mArray[2]->number()),
             static_cast<float>(size->mArray[3]->number()),
+            true,
         };
     }
 }
@@ -141,7 +142,7 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
             // nineslice_size counts base_size pixels, so a 2x texture has twice as many texels per slice.
             float sx = baseWidth > 0.0f ? static_cast<float>(out.width) / baseWidth : 1.0f;
             float sy = baseHeight > 0.0f ? static_cast<float>(out.height) / baseHeight : 1.0f;
-            *texels = { slice->left * sx, slice->top * sy, slice->right * sx, slice->bottom * sy };
+            *texels = { slice->left * sx, slice->top * sy, slice->right * sx, slice->bottom * sy, slice->declared };
         }
     }
     return true;

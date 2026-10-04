@@ -15,8 +15,6 @@ using namespace ui::theme;
 namespace {
 
 constexpr const char* PauseRoot = "pause.pause_screen";
-constexpr const char* SocialIcon = "textures/ui/socialbuttonicon/social-default-icon";
-constexpr const char* SocialIconHovered = "textures/ui/socialbuttonicon/social-hover-icon";
 constexpr const char* UnlockFullGameText = "trial.pauseScreen.buyGame";
 constexpr float PaperDollModelPixels = 32.0f;
 constexpr float PaperDollFramePixels = 39.4f;
@@ -125,64 +123,19 @@ bool Menu::pauseScreen(Context& ui, float width, float height)
 }
 
 /**
- * What pause_screen.json binds, as the game's pause screen controller sets
- * it for a player on a server with mouse and keyboard.
+ * What pause_screen.json binds: only the player's name. The screen reads
+ * strictly, so every visibility flag left unbound hides its control and the
+ * screen keeps Resume, Settings and Quit with the paper doll.
  */
 UiData Menu::pauseData() const
 {
     UiData data;
+    data.hideUnboundVisibility = true;
     UiRow& globals = data.globals;
     std::string name = session.displayName.empty() ? displayName : session.displayName;
     globals["#playername"] = UiValue::of(name);
     globals["#playername_visible"] = UiValue::of(true);
-    globals["#can_change_skin"] = UiValue::of(true);
-    globals["#dressing_room_button_visible"] = UiValue::of(true);
-    globals["#dressing_room_controller_button_visible"] = UiValue::of(false);
-    globals["#profile_button_b_visible"] = UiValue::of(false);
-    globals["#profile_button_x_icon_visible"] = UiValue::of(false);
-    globals["#is_signed_in_xbl"] = UiValue::of(signedIn());
-    globals["#achievements_visible"] = UiValue::of(false);
-
-    globals["#friends_drawer_button_visible"] = UiValue::of(true);
-    globals["#social_icon_content"] = UiValue::of(1.0);
-    globals["#social_icon"] = UiValue::of(std::string(SocialIcon));
-    globals["#social_icon_hovered"] = UiValue::of(std::string(SocialIconHovered));
-    globals["#social_button_text"] = UiValue::of(std::to_string(onlineCount(social.friends)));
-    globals["#social_notification_icon_visibility"] = UiValue::of(!social.received.people.empty());
-    globals["#tooltip_visible"] = UiValue::of(false);
-
-    globals["#store_button_visible"] = UiValue::of(true);
-    globals["#store_button_text"] = UiValue::of(serverStoreText());
-    for (const char* hidden : { "#store_button_secondary_visible", "#store_button_secondary_enabled", "#store_button_secondary_disabled", "#store_error_tooltip_visible" }) {
-        globals[hidden] = UiValue::of(false);
-    }
-
-    for (const char* hidden : {
-             "#screenshot_button_visible",
-             "#feedback_button_visible",
-             "#realms_stories_button_primary_visible",
-             "#realms_stories_button_secondary_visible",
-             "#realms_unread_story_count_visible",
-             "#realms_hub_enabled",
-             "#is_trial_version",
-             "#invite_button_visible",
-             "#invite_button_enabled",
-             "#legacy_invite_button_visible",
-             "#legacy_invite_button_enabled",
-             "#pause_annoucement_visible",
-             "#debug_drawer_button_visible",
-             "#edu_keyboard_helper_visible",
-             "#list_has_display_objective",
-             "#disconnected_from_xbox_live_label_visible",
-             "#disconnected_from_third_party_label_visible",
-             "#disconnected_from_adhoc_label_visible",
-             "#disconnected_from_crossplatform_multiplayer",
-             "#disconnected_from_multiplayer",
-         }) {
-        globals[hidden] = UiValue::of(false);
-    }
-    globals["#realms_access_button_text"] = UiValue::of(tr("pauseScreen.realmsStories", "Realms Stories"));
-    globals["#players_list_title"] = UiValue::of(std::string());
+    globals["#unlock_full_game_button_text"] = UiValue::of(std::string(UnlockFullGameText));
     return data;
 }
 

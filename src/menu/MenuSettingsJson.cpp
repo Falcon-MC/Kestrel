@@ -1,4 +1,5 @@
 #include "menu/Menu.h"
+#include "platform/Shell.h"
 #include "ui/Context.h"
 #include "ui/JsonUi.h"
 #include "ui/Localization.h"
@@ -14,6 +15,7 @@ namespace {
 
 constexpr const char* SettingsRoot = "settings.screen_controls_and_settings";
 constexpr int VideoSection = 21;
+constexpr int ModsSection = 100;
 
 /**
  * The section index variables the game's settings screen controller sets,
@@ -258,6 +260,8 @@ std::string sectionTitle(int section)
         return "menu.storageManagement";
     case 27:
         return "options.language";
+    case ModsSection:
+        return "kestrel.settings.mods";
     default:
         return "options.videoTitle";
     }
@@ -346,6 +350,14 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
         }
         variables["$play_button_target"] = UiValue::of(std::string("button.menu_play"));
         settingsUi = std::make_unique<JsonUiScreen>(jsonUi, SettingsRoot, variables);
+        settingsUi->setRenderer([](Context& ui, const std::string& renderer, const Rect& rect, float alpha, const UiLookup&) {
+            if (renderer != "profile_image_renderer") {
+                return;
+            }
+            bool avatar = ui.skin().sprite("dynamic/avatar").valid;
+            uint8_t opacity = static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+            ui.sprite(rect, avatar ? "dynamic/avatar" : "ui/profile_glyph_color", { 255, 255, 255, opacity });
+        });
         settingsUi->fire("screen.entrance_push");
     }
     if (!settingsUi->valid()) {
@@ -368,8 +380,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             globals["#" + name] = UiValue::of(value != 0);
             break;
         case OptionKind::Slider: {
-            double span = std::max(1, option.max - option.min);
-            globals["#" + name] = UiValue::of(static_cast<double>(value - option.min) / span);
+            globals["#" + name] = UiValue::of(static_cast<double>(value - option.min));
             globals["#" + name + "_steps"] = UiValue::of(static_cast<double>(option.max - option.min + 1));
             std::string shown;
             if (name == "field_of_view" || name == "render_distance") {
@@ -411,15 +422,20 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
     globals["#gui_scale_visible"] = UiValue::of(false);
     globals["#full_screen"] = UiValue::of(chrome.fullscreen);
     std::string title = sectionTitle(vanillaSettingsSection);
-    globals["#section_title"] = UiValue::of(tr(title, title));
+    globals["#section_title"] = UiValue::of(vanillaSettingsSection == ModsSection ? std::string("Mods") : tr(title, title));
     globals["#dialog_title"] = UiValue::of(tr("menu.settings", "Settings"));
 
     bool signedIn = this->signedIn();
     globals["#logged_in"] = UiValue::of(signedIn);
     globals["#not_logged_in"] = UiValue::of(!signedIn);
-    globals["#gamertag_label"] = UiValue::of(displayName);
+    globals["#gamertag_label"] = UiValue::of(signedIn ? account.gamertag : std::string());
     globals["#ad_account_name"] = UiValue::of(displayName);
-    globals["#player_name"] = UiValue::of(displayName);
+    globals["#player_name"] = UiValue::of(offlineNameValue);
+    globals["#player_name_enabled"] = UiValue::of(!signedIn);
+    globals["#account_info"] = UiValue::of(signedIn ? tr("options.gamertag", "Gamertag:") + " " + account.gamertag : std::string());
+    globals["#use_remote_connect"] = UiValue::of(false);
+    globals["#ad_edu_remember_me"] = UiValue::of(false);
+    globals["#needs_offline_token_authorization"] = UiValue::of(false);
 
     const std::vector<LanguageInfo>& languages = Localization::shared().languages();
     std::vector<UiRow>& languageRows = data.collections["languages"];
@@ -453,9 +469,38 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
     }
     globals["#keyboard_standard_grid_dimension"] = UiValue::of("1," + std::to_string(keyRows.size()));
 
+    constexpr std::pair<const char*, const char*> GamepadControls[] = {
+        { "key.attack", "RT" }, { "key.use", "LT" }, { "key.jump", "A" }, { "key.sneak", "B" },
+        { "key.sprint", "LS" }, { "key.togglePerspective", "D-Pad Up" }, { "key.cycleItemLeft", "LB" },
+        { "key.cycleItemRight", "RB" }, { "key.inventory", "Y" }, { "key.chat", "D-Pad Right" }, { "key.drop", "D-Pad Down" },
+    };
+    std::vector<UiRow>& padRows = data.collections["gamepad_collection"];
+    for (const auto& [action, button] : GamepadControls) {
+        std::string name = tr(action, action);
+        padRows.push_back({
+            { "#keymapping_name", UiValue::of(name) },
+            { "#audible_keymapping_name", UiValue::of(name) },
+            { "#binding_button_text", UiValue::of(std::string(button)) },
+            { "#binding_icon_sprite", UiValue::of(std::string()) },
+        });
+    }
+    globals["#gamepad_grid_dimension"] = UiValue::of("1," + std::to_string(padRows.size()));
+
     bindGlobalResources(data);
 
     settingsUi->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    if (vanillaSettingsSection == ModsSection) {
+        if (std::optional<Rect> area = settingsUi->controlRect("content_area")) {
+            Rect view { area->x, area->y, area->w + 7.0f, area->h };
+            scrollArea(ui, view, pageScroll, pageContent);
+            ui.setClip(*area);
+            float top = area->y - pageScroll;
+            float y = top;
+            modsPage(ui, area->x, y, area->w);
+            pageContent = y - top;
+            ui.clearClip();
+        }
+    }
 
     for (const UiEvent& event : settingsUi->takeEvents()) {
         if (globalResourcesEvent(event)) {
@@ -496,14 +541,39 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
         if (event.kind == UiEvent::Kind::Slider) {
             for (const Option& option : Options) {
                 if (option.kind == OptionKind::Slider && event.name == option.name) {
-                    int value = option.min + static_cast<int>(std::lround(event.value * (option.max - option.min)));
+                    int value = option.max > option.min ? option.min + static_cast<int>(std::lround(event.value)) : option.min;
                     setOptionValue(option.name, value);
                     break;
                 }
             }
             continue;
         }
+        if (event.kind == UiEvent::Kind::TextDone && event.name == "player_name_text_box" && !signedIn) {
+            setOfflineName(event.text.substr(0, 16));
+            continue;
+        }
         if (event.kind != UiEvent::Kind::Button) {
+            continue;
+        }
+        if (event.name == "button.menu_open_uri" && !event.text.empty()) {
+            platform::openUrl(event.text);
+            continue;
+        }
+        if (event.name == "change_gamertag_button") {
+            platform::openUrl("https://social.xbox.com/changegamertag");
+            continue;
+        }
+        if (event.name == "manage_account_button") {
+            platform::openUrl("https://account.xbox.com/Settings");
+            continue;
+        }
+        if (event.name == "realms_invites_button") {
+            socialOpen = true;
+            continue;
+        }
+        if (event.name == "button.copy_account_info" && signedIn) {
+            platform::copyText(account.gamertag);
+            notify(tr("options.copiedToClipboard", "Copied to clipboard"));
             continue;
         }
         if (event.name == "button.menu_exit" || event.name == "button.menu_cancel") {

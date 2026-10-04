@@ -407,6 +407,33 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
 }
 
 /**
+ * The atlas variant the game draws a potion with for its aux, since potion
+ * atlas entries are ordered by effect rather than by aux. Other items use the
+ * aux directly.
+ */
+static int32_t potionVariant(const std::string& shortName, int32_t aux)
+{
+    static constexpr int8_t Drinkable[] = { 0, 0, 0, 0, 0, 16, 16, 14, 14, 8, 8, 8, 12, 12, 1, 1, 1, 2, 2, 13, 13, 6, 6, 7, 7, 19, 19, 19, 10, 10, 10, 5, 5, 5, 18, 18, 20, 25, 25, 25, 26, 26, 2, 27, 28, 29, 30 };
+    static constexpr int8_t Splash[] = { 0, 0, 0, 0, 0, 16, 16, 14, 14, 8, 8, 8, 12, 12, 1, 1, 1, 2, 2, 13, 13, 6, 6, 7, 7, 19, 19, 19, 10, 10, 10, 5, 5, 5, 18, 18, 20, 24, 24, 24, 25, 25, 2, 26, 27, 28, 29 };
+    static constexpr int8_t Lingering[] = { 0, 0, 0, 0, 0, 11, 11, 10, 10, 6, 6, 6, 8, 8, 1, 1, 1, 2, 2, 9, 9, 4, 4, 5, 5, 13, 13, 13, 7, 7, 7, 3, 3, 3, 12, 12, 14, 15, 15, 15, 16, 16, 2, 17, 18, 19, 20 };
+    const int8_t* table = nullptr;
+    size_t size = 0;
+    if (shortName == "potion") {
+        table = Drinkable;
+        size = std::size(Drinkable);
+    } else if (shortName == "splash_potion") {
+        table = Splash;
+        size = std::size(Splash);
+    } else if (shortName == "lingering_potion") {
+        table = Lingering;
+        size = std::size(Lingering);
+    } else {
+        return aux;
+    }
+    return aux >= 0 && size_t(aux) < size ? table[aux] : 0;
+}
+
+/**
  * The inventory icon of an item: its item texture for the aux variant, or for
  * block items an isometric cube of the block's default state. Empty when the
  * item has neither.
@@ -589,7 +616,8 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         if (found == itemTextures.end() || found->second.empty()) {
             continue;
         }
-        size_t variant = aux >= 0 && size_t(aux) < found->second.size() ? size_t(aux) : 0;
+        int32_t frame = potionVariant(shortName, aux);
+        size_t variant = frame >= 0 && size_t(frame) < found->second.size() ? size_t(frame) : 0;
         if (!found->second[variant].empty()) {
             return found->second[variant];
         }

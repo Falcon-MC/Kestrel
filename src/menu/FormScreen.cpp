@@ -13,6 +13,22 @@ namespace kestrel::menu {
 namespace {
 
 constexpr const char* FormRoot = "server_form.third_party_server_screen";
+constexpr const char* ModalPopupRoot = "popup_dialog.modal_dialog_popup";
+
+/**
+ * The layout the game's popup shows for a modal form: its two buttons, with
+ * the button texts read from the controller's globals.
+ */
+ui::UiRow modalPopupVariables()
+{
+    ui::UiRow variables;
+    for (const char* flag : { "$no_buttons_visible", "$single_button_visible", "$single_button_checkbox_visible", "$two_buttons_checkbox_visible", "$destructive_two_buttons_visible", "$three_buttons_visible", "$destructive_three_buttons_visible", "$show_close_button" }) {
+        variables[flag] = ui::UiValue::of(false);
+    }
+    variables["$two_buttons_visible"] = ui::UiValue::of(true);
+    variables["$button_text_binding_type"] = ui::UiValue::of("global");
+    return variables;
+}
 // $transition_time_pop, how long the screen's exit_pop anims run once the last form closes.
 constexpr float LeaveSeconds = 0.4f;
 
@@ -286,8 +302,18 @@ ui::UiData FormScreen::formData(const Form& form) const
     ui::UiData data;
     ui::UiRow& globals = data.globals;
     globals["#title_text"] = UiValue::of(form.title);
+    globals["#is_using_gamepad"] = UiValue::of(false);
+    globals["#submit_button_visible"] = UiValue::of(true);
     bool custom = form.kind == Kind::Custom;
     data.factories["server_form_factory"].push_back({ custom ? "custom_form" : "long_form", {}, form.id });
+
+    if (form.kind == Kind::Modal) {
+        globals["#modal_title_text"] = UiValue::of(form.title);
+        globals["#modal_label_text"] = UiValue::of(form.content);
+        globals["#modal_left_button_text"] = UiValue::of(form.elements.size() > 0 ? form.elements[0].text : std::string());
+        globals["#modal_middle_button_text"] = UiValue::of(std::string());
+        globals["#modal_rightcancel_button_text"] = UiValue::of(form.elements.size() > 1 ? form.elements[1].text : std::string());
+    }
 
     if (!custom) {
         globals["#form_text"] = UiValue::of(form.content);
@@ -298,8 +324,9 @@ ui::UiData FormScreen::formData(const Form& form) const
             row[ui::UiFactoryControl] = UiValue::of(std::string(control));
             row["#form_button_text"] = UiValue::of(element.text);
             std::string texture = element.image && imageSprite ? imageSprite(*element.image) : std::string();
+            bool downloaded = element.image && element.image->url && !texture.empty() && texture != FormImageLoading;
+            row["#form_button_texture_file_system"] = UiValue::of(downloaded ? element.image->data : std::string());
             row["#form_button_texture"] = UiValue::of(std::move(texture));
-            row["#form_button_texture_file_system"] = UiValue::of(std::string(element.image && element.image->url ? "Internet" : "InUserPackage"));
             rows.push_back(std::move(row));
         }
         globals["#form_button_contents"] = UiValue::of(static_cast<double>(rows.size()));
@@ -308,7 +335,6 @@ ui::UiData FormScreen::formData(const Form& form) const
     }
 
     globals["#submit_text"] = UiValue::of(form.submit);
-    globals["#submit_button_visible"] = UiValue::of(true);
     std::vector<ui::UiRow>& rows = data.collections["custom_form"];
     for (size_t index = 0; index < form.elements.size(); ++index) {
         const Element& element = form.elements[index];
@@ -331,12 +357,16 @@ ui::UiData FormScreen::formData(const Form& form) const
         case ElementType::Toggle:
             control("toggle");
             row["#custom_toggle_state"] = UiValue::of(element.on);
+            row["#custom_toggle_enabled"] = UiValue::of(true);
             break;
         case ElementType::Slider: {
             control("slider");
-            row["#custom_slider_text"] = UiValue::of(element.text + ": " + shortNumber(element.value));
+            std::string shown = element.text + ": " + shortNumber(element.value);
+            row["#custom_slider_text"] = UiValue::of(shown);
+            row["#custom_slider_text_value"] = UiValue::of(shown);
             double range = element.max - element.min;
-            row["#custom_slider_value"] = UiValue::of(range > 0.0 ? (element.value - element.min) / range : 0.0);
+            row["#custom_slider_value"] = UiValue::of(range > 0.0 ? std::clamp((element.value - element.min) / range, 0.0, 1.0) : 0.0);
+            row["#custom_slider_enabled"] = UiValue::of(true);
             break;
         }
         case ElementType::StepSlider: {
@@ -344,14 +374,17 @@ ui::UiData FormScreen::formData(const Form& form) const
             std::string option = element.options.empty() ? std::string() : element.options[static_cast<size_t>(element.selected)];
             row["#custom_slider_step_text"] = UiValue::of(element.text + ": " + option);
             size_t count = element.options.size();
-            row["#custom_slider_steps"] = UiValue::of(static_cast<double>(count));
-            row["#custom_slider_step_value"] = UiValue::of(count > 1 ? static_cast<double>(element.selected) / static_cast<double>(count - 1) : 0.0);
+            row["#custom_slider_step_text_value"] = UiValue::of(element.text + ": " + option);
+            row["#custom_slider_steps"] = UiValue::of(static_cast<double>(std::max<size_t>(count, 1)));
+            row["#custom_slider_step_value"] = UiValue::of(static_cast<double>(element.selected));
+            row["#custom_slider_enabled"] = UiValue::of(true);
             break;
         }
         case ElementType::Dropdown: {
             control("dropdown");
             row["#dropdown_option_text"] = UiValue::of(element.options.empty() ? std::string() : element.options[static_cast<size_t>(element.selected)]);
             row["#custom_dropdown_length"] = UiValue::of(static_cast<double>(element.options.size()));
+            row["#custom_toggle_enabled"] = UiValue::of(true);
             std::vector<ui::UiRow>& options = data.collections["custom_dropdown:" + std::to_string(index)];
             for (size_t option = 0; option < element.options.size(); ++option) {
                 options.push_back({
@@ -365,6 +398,7 @@ ui::UiData FormScreen::formData(const Form& form) const
             control("input");
             row["#custom_placeholder_text"] = UiValue::of(element.placeholder);
             row["#custom_input_text"] = UiValue::of(element.input);
+            row["#custom_input_enabled"] = UiValue::of(true);
             break;
         }
         rows.push_back(std::move(row));
@@ -382,8 +416,12 @@ void FormScreen::handle(Form& form, const ui::UiEvent& event)
 {
     using Kind = ui::UiEvent::Kind;
     if (event.kind == Kind::Button) {
-        if (event.name == "button.menu_exit") {
+        if (event.name == "button.menu_exit" || event.name == "popup_dialog.escape") {
             submit(form, std::nullopt);
+        } else if (form.kind == FormScreen::Kind::Modal && event.name == "popup_dialog.left_button") {
+            submit(form, "true\n");
+        } else if (form.kind == FormScreen::Kind::Modal && event.name == "popup_dialog.rightcancel_button") {
+            submit(form, "false\n");
         } else if (event.name == "button.submit_custom_form" && form.kind == FormScreen::Kind::Custom) {
             submit(form, response(form));
         } else if (event.name == "button.form_button_click" && event.index >= 0 && static_cast<size_t>(event.index) < form.elements.size()) {
@@ -419,7 +457,7 @@ void FormScreen::handle(Form& form, const ui::UiEvent& event)
     } else if (event.kind == Kind::Slider && element.type == ElementType::Slider) {
         element.value = snapSlider(element.min + static_cast<float>(event.value) * (element.max - element.min), element.min, element.max, element.step);
     } else if (event.kind == Kind::Slider && element.type == ElementType::StepSlider && !element.options.empty()) {
-        element.selected = static_cast<int>(std::round(event.value * static_cast<double>(element.options.size() - 1)));
+        element.selected = std::clamp(static_cast<int>(std::round(event.value)), 0, static_cast<int>(element.options.size()) - 1);
     } else if ((event.kind == Kind::Text || event.kind == Kind::TextDone) && element.type == ElementType::Input) {
         element.input = event.text;
     }
@@ -442,7 +480,16 @@ void FormScreen::draw(ui::Context& ui, float width, float height)
     }
     Form& form = forms.back();
     if (!screen || shownForm != form.id || shownDepth != forms.size()) {
-        screen = definitions ? std::make_unique<ui::JsonUiScreen>(definitions, FormRoot) : nullptr;
+        screen.reset();
+        if (definitions && form.kind == Kind::Modal && definitions->has(ModalPopupRoot)) {
+            screen = std::make_unique<ui::JsonUiScreen>(definitions, ModalPopupRoot, modalPopupVariables());
+            if (!screen->valid()) {
+                screen.reset();
+            }
+        }
+        if (!screen && definitions) {
+            screen = std::make_unique<ui::JsonUiScreen>(definitions, FormRoot);
+        }
         if (screen && renderer) {
             screen->setRenderer(renderer);
         }

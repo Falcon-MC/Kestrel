@@ -243,7 +243,7 @@ void Menu::setAccount(AccountInfo info)
     AccountStatus previous = account.status;
     account = std::move(info);
     bool knownAccount = signedIn() || account.status == AccountStatus::Connecting;
-    displayName = knownAccount && !account.gamertag.empty() ? account.gamertag : "Steve";
+    displayName = knownAccount && !account.gamertag.empty() ? account.gamertag : offlineNameValue;
 
     if (previous != AccountStatus::SignedIn && account.status == AccountStatus::SignedIn && dialog == Dialog::SignIn) {
         dialog = Dialog::None;

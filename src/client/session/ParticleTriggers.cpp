@@ -40,106 +40,176 @@ std::optional<EffectMapping> legacyEffect(int32_t type)
     case 3:
         return EffectMapping { "minecraft:basic_crit_particle" };
     case 5:
-    case 11:
+    case 10:
         return EffectMapping { "minecraft:basic_smoke_particle" };
     case 6:
         return EffectMapping { "minecraft:explosion_particle" };
     case 7:
-        return EffectMapping { "minecraft:water_evaporation_manual" };
+        return EffectMapping { "minecraft:water_evaporation_actor_emitter" };
     case 8:
-    case 9:
         return EffectMapping { "minecraft:basic_flame_particle" };
-    case 10:
+    case 9:
         return EffectMapping { "minecraft:lava_particle" };
-    case 12:
+    case 11:
         return EffectMapping { "minecraft:redstone_wire_dust_particle" };
-    case 13:
+    case 12:
         return EffectMapping { "minecraft:rising_border_dust_particle" };
+    case 13:
     case 14:
-        return EffectMapping { "minecraft:breaking_item_icon" };
-    case 16:
-    case 17:
-        return EffectMapping { "minecraft:huge_explosion_emitter" };
-    case 19:
-        return EffectMapping { "minecraft:mobflame_single" };
-    case 20:
-        return EffectMapping { "minecraft:heart_particle" };
-    case 21:
-        return EffectMapping { "minecraft:breaking_item_terrain" };
-    case 22:
-    case 66:
-        return EffectMapping { "minecraft:mycelium_dust_particle" };
-    case 23:
-        return EffectMapping { "minecraft:basic_portal_particle" };
-    case 25:
-        return EffectMapping { "minecraft:water_splash_particle" };
-    case 26:
-        return EffectMapping { "minecraft:water_splash_particle_manual" };
-    case 27:
-        return EffectMapping { "minecraft:water_wake_particle" };
-    case 28:
-        return EffectMapping { "minecraft:water_drip_particle" };
-    case 29:
-        return EffectMapping { "minecraft:lava_drip_particle" };
-    case 33:
-        return EffectMapping { "minecraft:falling_dust", ColorSource::Argb };
-    case 34:
-    case 35:
     case 36:
-        return EffectMapping { "minecraft:mobspell_emitter", ColorSource::Argb };
-    case 37:
-        return EffectMapping { "minecraft:ink_emitter" };
-    case 39:
-        return EffectMapping { "minecraft:rain_splash_particle" };
-    case 40:
-        return EffectMapping { "minecraft:villager_angry" };
-    case 41:
-        return EffectMapping { "minecraft:villager_happy" };
-    case 42:
-        return EffectMapping { "minecraft:enchanting_table_particle" };
-    case 44:
-        return EffectMapping { "minecraft:note_particle", ColorSource::Note, "variable.note_color" };
-    case 45:
-        return EffectMapping { "minecraft:witchspell_emitter" };
-    case 48:
-        return EffectMapping { "minecraft:endrod" };
-    case 49:
-    case 71:
-        return EffectMapping { "minecraft:dragon_breath_trail" };
     case 50:
-        return EffectMapping { "minecraft:llama_spit_smoke" };
-    case 51:
-        return EffectMapping { "minecraft:totem_particle" };
-    case 56:
-        return EffectMapping { "minecraft:balloon_gas_particle" };
-    case 57:
-        return EffectMapping { "minecraft:colored_flame_particle", ColorSource::Argb };
-    case 58:
-        return EffectMapping { "minecraft:sparkler_emitter", ColorSource::Argb };
-    case 59:
-        return EffectMapping { "minecraft:conduit_particle" };
-    case 60:
-        return EffectMapping { "minecraft:bubble_column_up_particle" };
-    case 61:
-        return EffectMapping { "minecraft:bubble_column_down_particle" };
-    case 62:
-        return EffectMapping { "minecraft:sneeze" };
-    case 63:
-        return EffectMapping { "minecraft:shulker_bullet" };
+        return EffectMapping { "minecraft:breaking_item_icon" };
+    case 15:
+        return EffectMapping { "minecraft:large_explosion" };
+    case 16:
+        return EffectMapping { "minecraft:huge_explosion_emitter" };
+    case 17:
+        return EffectMapping { "minecraft:mobflame_single" };
+    case 18:
+        return EffectMapping { "minecraft:heart_particle" };
+    case 19:
+        return EffectMapping { "minecraft:breaking_item_terrain" };
+    case 20:
     case 64:
-        return EffectMapping { "minecraft:bleach" };
-    case 65:
-        return EffectMapping { "minecraft:dragon_destroy_block" };
-    case 67:
-        return EffectMapping { "minecraft:falling_border_dust_particle" };
+        return EffectMapping { "minecraft:mycelium_dust_particle" };
+    case 21:
+        return EffectMapping { "minecraft:basic_portal_particle" };
+    case 22:
+        return EffectMapping { "minecraft:mob_portal" };
+    case 23:
+        return EffectMapping { "minecraft:water_splash_particle" };
+    case 24:
+        return EffectMapping { "minecraft:water_splash_particle_manual" };
+    case 25:
+        return EffectMapping { "minecraft:water_wake_particle" };
+    case 26:
+        return EffectMapping { "minecraft:water_drip_particle" };
+    case 27:
+        return EffectMapping { "minecraft:lava_drip_particle" };
+    case 28:
+        return EffectMapping { "minecraft:honey_drip_particle" };
+    case 29:
+        return EffectMapping { "minecraft:stalactite_water_drip_particle" };
+    case 30:
+        return EffectMapping { "minecraft:stalactite_lava_drip_particle" };
+    case 31:
+        return EffectMapping { "minecraft:falling_dust", ColorSource::Argb };
+    case 32:
+    case 34:
+        return EffectMapping { "minecraft:mobspell_emitter", ColorSource::Argb };
+    case 33:
+        return EffectMapping { "minecraft:mobspell_ambient", ColorSource::Argb };
+    case 35:
+        return EffectMapping { "minecraft:ink_emitter" };
+    case 37:
+        return EffectMapping { "minecraft:rain_splash_particle" };
+    case 38:
+        return EffectMapping { "minecraft:villager_angry" };
+    case 39:
+        return EffectMapping { "minecraft:villager_happy" };
+    case 40:
+        return EffectMapping { "minecraft:enchanting_table_particle" };
+    case 42:
+        return EffectMapping { "minecraft:note_particle", ColorSource::Note, "variable.note_color" };
+    case 43:
+        return EffectMapping { "minecraft:witchspell_emitter" };
+    case 44:
+        return EffectMapping { "minecraft:crop_growth_emitter" };
+    case 46:
+        return EffectMapping { "minecraft:endrod" };
+    case 47:
     case 68:
-        return EffectMapping { "minecraft:campfire_smoke_particle" };
-    case 69:
-        return EffectMapping { "minecraft:campfire_tall_smoke_particle" };
-    case 70:
         return EffectMapping { "minecraft:dragon_breath_fire" };
+    case 48:
+        return EffectMapping { "minecraft:llama_spit_smoke" };
+    case 49:
+        return EffectMapping { "minecraft:totem_particle" };
+    case 54:
+        return EffectMapping { "minecraft:balloon_gas_particle" };
+    case 55:
+        return EffectMapping { "minecraft:colored_flame_particle", ColorSource::Argb };
+    case 56:
+        return EffectMapping { "minecraft:sparkler_emitter", ColorSource::Argb };
+    case 57:
+        return EffectMapping { "minecraft:conduit_particle" };
+    case 58:
+        return EffectMapping { "minecraft:bubble_column_up_particle" };
+    case 59:
+        return EffectMapping { "minecraft:bubble_column_down_particle" };
+    case 60:
+        return EffectMapping { "minecraft:sneeze" };
+    case 61:
+        return EffectMapping { "minecraft:shulker_bullet" };
+    case 62:
+        return EffectMapping { "minecraft:bleach" };
+    case 63:
+        return EffectMapping { "minecraft:dragon_destroy_block" };
+    case 65:
+        return EffectMapping { "minecraft:falling_border_dust_particle" };
+    case 66:
+        return EffectMapping { "minecraft:campfire_smoke_particle" };
+    case 67:
+        return EffectMapping { "minecraft:campfire_tall_smoke_particle" };
+    case 69:
+        return EffectMapping { "minecraft:dragon_breath_trail" };
+    case 70:
+        return EffectMapping { "minecraft:blue_flame_particle" };
+    case 71:
+        return EffectMapping { "minecraft:soul_particle" };
+    case 72:
+        return EffectMapping { "minecraft:obsidian_tear_particle" };
+    case 73:
+        return EffectMapping { "minecraft:portal_reverse_particle" };
     case 74:
-        return EffectMapping { "minecraft:obsidian_glow_dust_particle" };
+        return EffectMapping { "minecraft:snowflake_particle" };
+    case 75:
+        return EffectMapping { "minecraft:vibration_signal" };
+    case 76:
+        return EffectMapping { "minecraft:sculk_sensor_redstone_particle" };
+    case 77:
+        return EffectMapping { "minecraft:spore_blossom_shower_particle" };
+    case 78:
+        return EffectMapping { "minecraft:spore_blossom_ambient_particle" };
+    case 79:
+        return EffectMapping { "minecraft:wax_particle" };
+    case 80:
+        return EffectMapping { "minecraft:electric_spark_particle" };
+    case 81:
+        return EffectMapping { "minecraft:candle_flame_particle" };
+    case 82:
+        return EffectMapping { "minecraft:shriek_particle" };
+    case 83:
+        return EffectMapping { "minecraft:sculk_soul_particle" };
+    case 84:
+        return EffectMapping { "minecraft:sonic_explosion" };
+    case 86:
+        return EffectMapping { "minecraft:cherry_leaves_particle" };
+    case 87:
+        return EffectMapping { "minecraft:dust_plume" };
+    case 88:
+        return EffectMapping { "minecraft:white_smoke_particle" };
+    case 89:
+        return EffectMapping { "minecraft:wind_explosion_emitter" };
+    case 90:
+        return EffectMapping { "minecraft:breeze_wind_explosion_emitter" };
+    case 91:
+        return EffectMapping { "minecraft:vault_connection_particle" };
+    case 94:
+        return EffectMapping { "minecraft:creaking_crumble_body" };
+    case 95:
+        return EffectMapping { "minecraft:pale_oak_leaves_particle" };
+    case 96:
+        return EffectMapping { "minecraft:eyeblossom_open" };
+    case 97:
+        return EffectMapping { "minecraft:eyeblossom_close" };
+    case 98:
+        return EffectMapping { "minecraft:green_flame_particle" };
+    case 99:
+        return EffectMapping { "minecraft:pause_mob_growth" };
+    case 100:
+        return EffectMapping { "minecraft:reset_mob_growth" };
+    case 101:
+        return EffectMapping { "minecraft:sulfur_cube_goo" };
     default:
         return std::nullopt;
     }

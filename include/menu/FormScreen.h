@@ -40,8 +40,9 @@ inline constexpr const char* FormImageLoading = "loading";
 
 /**
  * Server forms drawn from the game's server_form.json, restyled by whatever
- * packs the server sent: the long form for simple and modal forms, the custom
- * form for the rest, fed the way the game's server form screen controller
+ * packs the server sent: the long form for simple forms, the custom form for
+ * custom ones and the game's two-button popup for modal ones (the long form
+ * when no popup is defined), fed the way the game's screen controllers
  * feeds them. The newest form sits on top and the ones under it come back as
  * it closes.
  */

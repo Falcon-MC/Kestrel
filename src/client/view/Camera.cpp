@@ -104,7 +104,7 @@ std::array<float, 3> FreeCamera::forward() const
 
 float FreeCamera::halfVerticalTangent(float aspect) const
 {
-    float vertical = std::min(baseFov * fovScale, 170.0f) * 3.14159265f / 180.0f;
+    float vertical = std::min(baseFov * (fovOverridden ? 1.0f : fovScale), 170.0f) * 3.14159265f / 180.0f;
     return std::tan(vertical * 0.5f);
 }
 

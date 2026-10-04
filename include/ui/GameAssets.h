@@ -25,6 +25,12 @@ struct NineSlice {
     float top = 0.0f;
     float right = 0.0f;
     float bottom = 0.0f;
+
+    /**
+     * Whether the texture's sidecar declares a nineslice_size; a zero one
+     * still stretches the texture over the whole control.
+     */
+    bool declared = false;
 };
 
 /**

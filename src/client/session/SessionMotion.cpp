@@ -356,7 +356,7 @@ void Session::runMotionTick(double now)
 
     bool waitingForWorld = false;
     if (!motionStarted) {
-        if (!world.cohortLoaded() || !motionAreaLoaded(motion.position())) {
+        if (!motionAreaLoaded(motion.position())) {
             waitingForWorld = true;
         } else {
             motionStarted = true;

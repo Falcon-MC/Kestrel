@@ -407,9 +407,10 @@ TextStyle JsonUiRuntime::labelStyle(const Node& node) const
 }
 
 /**
- * How many columns and rows a grid lays its items out in: the ones it is
- * given, or with grid_rescaling_type as many as fit across (or down) its size
- * and as many rows (or columns) as the items need.
+ * How many columns and rows a grid lays its items out in: with
+ * grid_rescaling_type as many as fit across (or down) its size and as many
+ * rows (or columns) as its maximum_grid_items need, with grid_fill_direction
+ * one row (or column) of as many as fit, else the ones it is given.
  */
 std::array<int, 2> JsonUiRuntime::gridCells(Node& node)
 {
@@ -422,23 +423,27 @@ std::array<int, 2> JsonUiRuntime::gridCells(Node& node)
         }
     }
     std::string rescaling = text(node, "grid_rescaling_type");
-    items = std::max(items, int(node.gridItemCount));
-    if (cell && (rescaling == "horizontal" || rescaling == "vertical")) {
-        bool across = rescaling == "horizontal";
+    std::string filling = text(node, "grid_fill_direction");
+    bool rescales = rescaling == "horizontal" || rescaling == "vertical";
+    bool fills = filling == "horizontal" || filling == "vertical";
+    items = rescales ? int(node.gridItemCount) : std::max(items, int(node.gridItemCount));
+    auto fit = [&](bool across) {
         float room = across ? node.w : node.h;
-        float size = across ? cell->w : cell->h;
-        int fit = size > 0.0f ? std::max(1, static_cast<int>(std::floor(room / size + 0.01f))) : 1;
-        int other = std::max(1, (items + fit - 1) / fit);
-        return across ? std::array<int, 2> { fit, other } : std::array<int, 2> { other, fit };
+        float size = cell ? (across ? cell->w : cell->h) : 0.0f;
+        return size > 0.0f ? std::max(1, static_cast<int>(std::floor(room / size + 0.01f))) : 1;
+    };
+    if (rescales) {
+        bool across = rescaling == "horizontal";
+        int fitted = fit(across);
+        int other = std::max(1, (items + fitted - 1) / fitted);
+        return across ? std::array<int, 2> { fitted, other } : std::array<int, 2> { other, fitted };
     }
-    std::string binding = text(node, "grid_dimension_binding");
-    std::string dimensions = binding.empty() ? std::string() : lookup(node, binding).toText();
-    if (!dimensions.empty()) {
-        size_t comma = dimensions.find(',');
-        return { std::max(1, std::atoi(dimensions.c_str())), comma == std::string::npos ? 1 : std::max(1, std::atoi(dimensions.c_str() + comma + 1)) };
+    if (fills) {
+        return filling == "horizontal" ? std::array<int, 2> { fit(true), 1 } : std::array<int, 2> { 1, fit(false) };
     }
-    if (const json::Value* grid = property(node, "grid_dimensions"); grid && grid->isArray() && grid->mArray.size() == 2) {
-        return { std::max(1, static_cast<int>(term(node, grid->mArray[0].get(), 0.0f))), std::max(1, static_cast<int>(term(node, grid->mArray[1].get(), 0.0f))) };
+    std::array<int, 2> given = gridDimensions(node);
+    if (given[0] > 0 || given[1] > 0 || !text(node, "grid_dimension_binding").empty() || property(node, "grid_dimensions")) {
+        return { std::max(1, given[0]), std::max(1, given[1]) };
     }
     return { 1, std::max(1, items) };
 }

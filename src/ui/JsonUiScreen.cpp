@@ -26,7 +26,8 @@ bool quiet(const Context& ui)
 {
     const InputState& in = ui.input();
     return !in.mousePressed && !in.mouseDown && !in.mouseReleased && !in.rightMousePressed && !in.rightMouseDown
-        && in.wheel == 0.0f && in.text.empty() && in.pressedKey == Key::None && !in.backspace && !in.enter && !in.escape && !in.tab;
+        && in.wheel == 0.0f && in.text.empty() && in.pressedKey == Key::None && !in.backspace && !in.enter && !in.escape && !in.tab
+        && std::none_of(in.gamepad.pressed.begin(), in.gamepad.pressed.end(), [](bool pressed) { return pressed; });
 }
 
 /**
@@ -81,6 +82,113 @@ Rect intersect(const Rect& a, const Rect& b)
     return { x, y, std::max(0.0f, right - x), std::max(0.0f, bottom - y) };
 }
 
+/**
+ * Focus directions, in the order the focus_change_* and
+ * focus_navigation_mode_* properties name them.
+ */
+constexpr const char* FocusSides[] = { "up", "down", "left", "right" };
+constexpr const char* FocusOverrideStop = "FOCUS_OVERRIDE_STOP";
+constexpr float FocusSweepCone = 0.02f;
+constexpr float FocusEdgeInset = 2.0f;
+constexpr float FocusDirectionEpsilon = 1.1920929e-7f;
+
+bool anyCornerInside(const Node& node)
+{
+    if (!node.clipped) {
+        return true;
+    }
+    const Rect& clip = node.clip;
+    for (float x : { node.x, node.x + node.w }) {
+        for (float y : { node.y, node.y + node.h }) {
+            if (x >= clip.x && x <= clip.right() && y >= clip.y && y <= clip.bottom()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * The nearest candidate ahead of start toward side, within the cone the
+ * game sweeps (narrowed to the current control's own corner when that is
+ * flatter); clipped drops candidates with no corner inside their clip.
+ */
+Node* focusSweepAt(const std::vector<Node*>& candidates, const Node& current, int side, std::array<float, 2> origin, std::array<float, 2> start, bool clipped)
+{
+    std::array<float, 2> axis = side == 0 ? std::array<float, 2> { 0.0f, -1.0f }
+        : side == 1                       ? std::array<float, 2> { 0.0f, 1.0f }
+        : side == 2                       ? std::array<float, 2> { -1.0f, 0.0f }
+                                          : std::array<float, 2> { 1.0f, 0.0f };
+    std::array<float, 2> corner = side == 0 || side == 2 ? std::array<float, 2> { current.x, current.y } : std::array<float, 2> { current.x + current.w, current.y + current.h };
+    float toX = corner[0] - origin[0];
+    float toY = corner[1] - origin[1];
+    float length = std::sqrt(toX * toX + toY * toY);
+    float reach = length > 1.0e-4f ? (toX * axis[0] + toY * axis[1]) / length : toX * axis[0] + toY * axis[1];
+    float cone = std::min(reach, FocusSweepCone);
+    Node* best = nullptr;
+    float nearest = std::numeric_limits<float>::infinity();
+    for (Node* candidate : candidates) {
+        if (candidate == &current || (clipped && !anyCornerInside(*candidate))) {
+            continue;
+        }
+        float x0 = candidate->x;
+        float x1 = std::max(x0, candidate->x + candidate->w);
+        float y0 = candidate->y;
+        float y1 = std::max(y0, candidate->y + candidate->h);
+        std::array<float, 2> point = side == 0 ? std::array<float, 2> { std::clamp(start[0], x0, x1), y1 }
+            : side == 1                        ? std::array<float, 2> { std::clamp(start[0], x0, x1), y0 }
+            : side == 2                        ? std::array<float, 2> { x1, std::clamp(start[1], y0, y1) }
+                                               : std::array<float, 2> { x0, std::clamp(start[1], y0, y1) };
+        float dx = point[0] - start[0];
+        float dy = point[1] - start[1];
+        float distance = std::sqrt(dx * dx + dy * dy);
+        float cosine = distance > FocusDirectionEpsilon ? (dx * axis[0] + dy * axis[1]) / distance : 1.0f;
+        if (cosine < cone) {
+            continue;
+        }
+        if (distance < nearest) {
+            nearest = distance;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+/**
+ * The game's directional sweep from current's leading edge, retrying from
+ * the far side of bounds when wrap is on.
+ */
+Node* focusSweep(const std::vector<Node*>& candidates, const Node& current, int side, const Rect& bounds, bool wrap, bool clipped)
+{
+    float cx = current.x + current.w * 0.5f;
+    float cy = current.y + current.h * 0.5f;
+    float hw = current.w * 0.5f;
+    float hh = current.h * 0.5f;
+    std::array<float, 2> start = side == 0 ? std::array<float, 2> { cx, cy - (hh - FocusEdgeInset) }
+        : side == 1                        ? std::array<float, 2> { cx, cy + hh - FocusEdgeInset }
+        : side == 2                        ? std::array<float, 2> { cx - (hw - FocusEdgeInset), cy }
+                                           : std::array<float, 2> { cx + hw - FocusEdgeInset, cy };
+    Node* found = focusSweepAt(candidates, current, side, { cx, cy }, start, clipped);
+    if (found || !wrap) {
+        return found;
+    }
+    std::array<float, 2> from = side == 0 ? std::array<float, 2> { cx, bounds.bottom() }
+        : side == 1                       ? std::array<float, 2> { cx, bounds.y }
+        : side == 2                       ? std::array<float, 2> { bounds.right(), cy }
+                                          : std::array<float, 2> { bounds.x, cy };
+    return focusSweepAt(candidates, current, side, from, from, clipped);
+}
+
+bool under(const Node* node, const Node* ancestor)
+{
+    for (const Node* at = node ? node->parent : nullptr; at; at = at->parent) {
+        if (at == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string stripExtension(std::string texture)
 {
     for (const char* extension : { ".png", ".jpg", ".jpeg", ".tga" }) {
@@ -93,6 +201,19 @@ std::string stripExtension(std::string texture)
     return texture;
 }
 
+}
+
+/**
+ * How many steps a slider has: the bound #slider_steps, else its
+ * slider_steps property. More than one makes it a step slider, whose
+ * #slider_value is a step index rather than a 0..1 fraction.
+ */
+int JsonUiRuntime::sliderSteps(const Node& node) const
+{
+    if (auto bound = node.bound.find("#slider_steps"); bound != node.bound.end()) {
+        return std::max(1, static_cast<int>(bound->second.toNumber()));
+    }
+    return std::max(1, static_cast<int>(number(node, "slider_steps", 1.0)));
 }
 
 bool JsonUiRuntime::isControl(const Node& node)
@@ -238,32 +359,37 @@ void JsonUiRuntime::chooseStates(Node& node)
         bool lit = hovered || active == node.id;
         show("default_control", !lit);
         show("hover_control", lit);
+        int steps = sliderSteps(node);
         if (active != node.id) {
             if (auto value = node.bound.find("#slider_value"); value != node.bound.end()) {
-                node.value = static_cast<float>(std::clamp(value->second.toNumber(), 0.0, 1.0));
+                double raw = value->second.toNumber();
+                double fraction = steps > 1 ? raw / static_cast<double>(steps - 1) : raw;
+                node.value = static_cast<float>(std::clamp(fraction, 0.0, 1.0));
             }
         }
-        int steps = static_cast<int>(node.bound.count("#slider_steps") ? node.bound.at("#slider_steps").toNumber() : 1.0);
-        float width = node.w;
+        bool inverted = flag(node, "slider_inverted", false);
+        bool vertical = text(node, "slider_direction") == "vertical";
+        float shown = inverted ? 1.0f - node.value : node.value;
+        float length = vertical ? node.h : node.w;
         if (Node* box = find(node, text(node, "slider_box_control")); box && box != &node) {
-            box->offsetOverride = std::array<float, 2> { std::round(node.value * width - width * 0.5f), 0.0f };
+            float along = std::round(shown * length - length * 0.5f);
+            box->offsetOverride = vertical ? std::array<float, 2> { 0.0f, along } : std::array<float, 2> { along, 0.0f };
         }
-        // The step marks come from slider_step_factory, filled from code in the game.
         std::vector<UiFactoryItem> marks;
-        if (steps > 1) {
-            int selected = static_cast<int>(std::round(node.value * static_cast<float>(steps - 1)));
-            for (int i = 0; i < steps; ++i) {
+        if (steps > 2 && steps - 2 <= static_cast<int>(MaxFactoryItems)) {
+            int current = static_cast<int>(std::round(node.value * static_cast<float>(steps - 1)));
+            for (int step = 1; step < steps - 1; ++step) {
                 UiFactoryItem mark;
-                mark.control = std::string(i <= selected ? "slider_step_progress" : "slider_step") + (lit ? "_hover" : "");
-                mark.serial = static_cast<uint64_t>(i);
+                mark.control = current < step ? "slider_step_progress" : "slider_step";
+                mark.serial = static_cast<uint64_t>(step);
                 marks.push_back(std::move(mark));
             }
         }
         const json::Value* factory = property(node, "factory");
         syncItems(node, marks, factory ? resolve(node, factory->get("control_ids")) : nullptr, nullptr, MaxFactoryItems, 0);
         for (std::unique_ptr<Node>& child : node.children) {
-            if (child->generated && steps > 1) {
-                float x = width * static_cast<float>(child->serial) / static_cast<float>(steps - 1) - width * 0.5f;
+            if (child->generated && steps > 2) {
+                float x = node.w * static_cast<float>(child->serial) / static_cast<float>(steps - 1) - node.w * 0.5f;
                 child->offsetOverride = std::array<float, 2> { std::round(x), 0.0f };
             }
         }
@@ -293,7 +419,8 @@ void JsonUiRuntime::overrideState(Node& control, Node& node)
         std::string progress = text(control, "progress_control");
         std::string progressHover = text(control, "progress_hover_control");
         if (node.name == progress || node.name == progressHover) {
-            node.bound["#clip_ratio"] = UiValue::of(1.0 - static_cast<double>(control.value));
+            double shown = flag(control, "slider_inverted", false) ? 1.0 - static_cast<double>(control.value) : static_cast<double>(control.value);
+            node.bound["#clip_ratio"] = UiValue::of(1.0 - shown);
             node.bound["#visible"] = UiValue::of(node.name == progress ? !lit : lit);
         } else if (node.name == background || node.name == backgroundHover) {
             node.bound["#visible"] = UiValue::of(node.name == background ? !lit : lit);
@@ -461,6 +588,14 @@ void JsonUiRuntime::emit(UiEvent::Kind kind, const Node& node, std::string name)
     UiEvent event;
     event.kind = kind;
     event.name = std::move(name);
+    if (kind == UiEvent::Kind::Button) {
+        for (const Node* at = &node; at; at = at->parent) {
+            if (auto link = at->bound.find("#hyperlink"); link != at->bound.end() && !link->second.toText().empty()) {
+                event.text = link->second.toText();
+                break;
+            }
+        }
+    }
     bool namedCollection = false;
     for (const Node* at = &node; at; at = at->parent) {
         if (at->index >= 0 && !at->collection.empty()) {
@@ -505,20 +640,53 @@ bool JsonUiRuntime::pressMapped(const Node& node) const
 }
 
 /**
- * Moves the keyboard focus: the first arrow key or Tab focuses the button
- * with the highest default_focus_precedence, then the arrows go to the
- * nearest focusable control that way and Tab through them in order. Enter
- * presses the focused control, and moving the mouse hands focus back to it.
+ * Whether a control can take the focus: one of the types with a focus
+ * component, enabled, laid out and with focus_enabled (or a bound
+ * #focus_enabled) set.
+ */
+bool JsonUiRuntime::focusable(const Node& node) const
+{
+    static const char* const types[] = { "button", "toggle", "dropdown", "slider", "edit_box", "input_panel", "scroll_view", "selection_wheel", "custom" };
+    if (std::none_of(std::begin(types), std::end(types), [&](const char* type) { return node.type == type; })) {
+        return false;
+    }
+    if (!node.enabled || !node.shown || node.w <= 0.0f || node.h <= 0.0f) {
+        return false;
+    }
+    if (auto bound = node.bound.find("#focus_enabled"); bound != node.bound.end()) {
+        return bound->second.truthy();
+    }
+    return flag(node, "focus_enabled", false);
+}
+
+/**
+ * Moves the keyboard and gamepad focus the way the game's focus manager
+ * does. With nothing focused, an arrow focuses the control with the highest
+ * whole default_focus_precedence (the first in reading order on a tie) and
+ * Tab the first in order. An arrow then takes the control's
+ * focus_change_* (or the focus_mapping for its focus_identifier), where
+ * FOCUS_OVERRIDE_STOP keeps the focus in place, else sweeps that way inside
+ * the scroll views around it before the whole screen, wrapping with
+ * focus_wrap_enabled, and applies the focus_navigation_mode_* of the focus
+ * containers it leaves and the use_last_focus of the one it enters. Tab goes
+ * through the controls in order. Enter or the gamepad's A presses the
+ * focused control, and moving the mouse hands focus back to it.
  */
 void JsonUiRuntime::navigateFocus(const InputState& in, float mouseX, float mouseY)
 {
     if (laidOut && (mouseX != laidMouseX || mouseY != laidMouseY)) {
         keyFocus = 0;
     }
+    Node* modal = nullptr;
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {
+        if ((*it)->type == "input_panel" && flag(**it, "modal", false)) {
+            modal = *it;
+            break;
+        }
+    }
     std::vector<Node*> candidates;
     for (Node* node : order) {
-        bool focusable = (node->type == "button" || node->type == "toggle") && node->enabled && node->w > 0.0f && node->h > 0.0f;
-        if (focusable && (!node->clipped || (node->clip.w > 0.0f && node->clip.h > 0.0f)) && flag(*node, "focus_enabled", true)) {
+        if (focusable(*node) && (!modal || node == modal || under(node, modal))) {
             candidates.push_back(node);
         }
     }
@@ -526,59 +694,240 @@ void JsonUiRuntime::navigateFocus(const InputState& in, float mouseX, float mous
     if (current == candidates.end()) {
         keyFocus = 0;
     }
-    if (in.enter && keyFocus) {
+    const GamepadState& pad = in.gamepad;
+    if ((in.enter || pad.wasPressed(PadButton::A)) && keyFocus) {
         click(**current);
         return;
     }
     Key key = in.pressedKey;
-    bool arrow = key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right;
-    if ((!arrow && !in.tab) || candidates.empty()) {
+    int side = key == Key::Up || pad.wasPressed(PadButton::DpadUp) ? 0
+        : key == Key::Down || pad.wasPressed(PadButton::DpadDown)  ? 1
+        : key == Key::Left || pad.wasPressed(PadButton::DpadLeft)  ? 2
+        : key == Key::Right || pad.wasPressed(PadButton::DpadRight) ? 3
+                                                                    : -1;
+    if ((side < 0 && !in.tab) || candidates.empty()) {
+        return;
+    }
+    auto focus = [&](Node* node) {
+        if (!node) {
+            return;
+        }
+        for (const Node* at = node->parent; at; at = at->parent) {
+            if (flag(*at, "focus_container", false)) {
+                lastFocus[at->id] = node->id;
+            }
+        }
+        keyFocus = node->id;
+    };
+    if (in.tab) {
+        size_t count = candidates.size();
+        bool backwards = in.isHeld(Key::Shift);
+        size_t index = !keyFocus ? (backwards ? count - 1 : 0) : static_cast<size_t>(current - candidates.begin());
+        if (keyFocus) {
+            index = backwards ? (index + count - 1) % count : (index + 1) % count;
+        }
+        focus(candidates[index]);
         return;
     }
     if (!keyFocus) {
-        Node* first = candidates.front();
+        auto precedence = [&](const Node& node) {
+            double value = number(node, "default_focus_precedence", 0.0);
+            return std::floor(value) == value ? std::max(0.0, value) : 0.0;
+        };
+        double best = 0.0;
         for (Node* node : candidates) {
-            if (number(*node, "default_focus_precedence", 0.0) > number(*first, "default_focus_precedence", 0.0)) {
+            best = std::max(best, precedence(*node));
+        }
+        float width = root ? root->w : 0.0f;
+        Node* first = nullptr;
+        for (Node* node : candidates) {
+            if (precedence(*node) == best && (!first || node->y * width + node->x < first->y * width + first->x)) {
                 first = node;
             }
         }
-        keyFocus = first->id;
+        focus(first);
         return;
     }
-    if (in.tab) {
-        size_t index = static_cast<size_t>(current - candidates.begin());
-        size_t count = candidates.size();
-        index = in.isHeld(Key::Shift) ? (index + count - 1) % count : (index + 1) % count;
-        keyFocus = candidates[index]->id;
+    Node& from = **current;
+    if (flag(from, "always_handle_controller_direction", false)) {
         return;
     }
-    float dx = key == Key::Left ? -1.0f : key == Key::Right ? 1.0f : 0.0f;
-    float dy = key == Key::Up ? -1.0f : key == Key::Down ? 1.0f : 0.0f;
-    const Node& from = **current;
-    float fromX = from.x + from.w * 0.5f;
-    float fromY = from.y + from.h * 0.5f;
-    Node* best = nullptr;
-    float bestScore = std::numeric_limits<float>::infinity();
-    for (Node* node : candidates) {
-        if (node == &from) {
-            continue;
-        }
-        float vx = node->x + node->w * 0.5f - fromX;
-        float vy = node->y + node->h * 0.5f - fromY;
-        float along = vx * dx + vy * dy;
-        if (along <= 0.5f) {
-            continue;
-        }
-        float across = std::abs(vx * dy - vy * dx);
-        float score = along + across * 2.0f;
-        if (score < bestScore) {
-            bestScore = score;
-            best = node;
+    std::string sideName = FocusSides[side];
+    std::string over = text(from, "focus_change_" + sideName);
+    std::string identifier = text(from, "focus_identifier");
+    if (over.empty() && !identifier.empty()) {
+        for (Node* node : order) {
+            const json::Value* mapping = property(*node, "focus_mapping");
+            if (!mapping || !mapping->isArray()) {
+                continue;
+            }
+            for (const std::unique_ptr<json::Value>& entry : mapping->mArray) {
+                const json::Value* id = entry->isObject() ? resolve(*node, entry->get("focus_identifier")) : nullptr;
+                if (id && id->isString() && id->mString == identifier) {
+                    const json::Value* change = resolve(*node, entry->get("focus_change_" + sideName));
+                    over = change && change->isString() ? change->mString : std::string();
+                    break;
+                }
+            }
+            if (!over.empty()) {
+                break;
+            }
         }
     }
-    if (best) {
-        keyFocus = best->id;
+    if (over == FocusOverrideStop) {
+        return;
     }
+    if (!over.empty()) {
+        for (Node* node : candidates) {
+            if (text(*node, "focus_identifier") == over) {
+                focus(node);
+                return;
+            }
+        }
+    }
+    std::vector<Node*> sections;
+    for (Node* at = from.parent; at; at = at->parent) {
+        if (at->type == "scroll_view") {
+            sections.push_back(at);
+        }
+    }
+    Node* target = nullptr;
+    for (Node* view : sections) {
+        std::vector<Node*> inside;
+        for (Node* node : candidates) {
+            if (under(node, view)) {
+                inside.push_back(node);
+            }
+        }
+        Rect bounds { view->x, view->y, view->w, view->h };
+        target = focusSweep(inside, from, side, view->clipped ? intersect(bounds, view->clip) : bounds, false, false);
+        if (target) {
+            break;
+        }
+    }
+    if (!target) {
+        std::vector<Node*> outside;
+        for (Node* node : candidates) {
+            if (sections.empty() || !under(node, sections.front())) {
+                outside.push_back(node);
+            }
+        }
+        Rect screen = root ? Rect { root->x, root->y, root->w, root->h } : Rect {};
+        target = focusSweep(outside, from, side, screen, sections.empty() && flag(from, "focus_wrap_enabled", true), true);
+    }
+    auto holds = [&](const Node* container, const Node* node) {
+        return node && under(node, container);
+    };
+    auto identified = [&](const Node* node) {
+        return text(*node, "focus_identifier");
+    };
+    for (Node* container = from.parent; container; container = container->parent) {
+        if (!flag(*container, "focus_container", false)) {
+            continue;
+        }
+        if (holds(container, target)) {
+            break;
+        }
+        std::string mode = text(*container, "focus_navigation_mode_" + sideName);
+        if (mode == "stop") {
+            return;
+        }
+        if (mode == "contained") {
+            std::vector<Node*> inside;
+            for (Node* node : candidates) {
+                if (holds(container, node)) {
+                    inside.push_back(node);
+                }
+            }
+            focus(focusSweep(inside, from, side, Rect { container->x, container->y, container->w, container->h }, flag(*container, "focus_wrap_enabled", true), true));
+            return;
+        }
+        if (mode == "custom") {
+            const json::Value* routes = property(*container, "focus_container_custom_" + sideName);
+            for (size_t i = 0; routes && routes->isArray() && i < routes->mArray.size(); ++i) {
+                const json::Value* route = routes->mArray[i].get();
+                const json::Value* name = route->isObject() ? resolve(*container, route->get("other_focus_container_name")) : nullptr;
+                if (!name || !name->isString() || name->mString.empty()) {
+                    continue;
+                }
+                const Node* other = nullptr;
+                for (Node* node : candidates) {
+                    for (const Node* at = node->parent; at && !other; at = at->parent) {
+                        if (at->name == name->mString && flag(*at, "focus_container", false)) {
+                            other = at;
+                        }
+                    }
+                    if (other) {
+                        break;
+                    }
+                }
+                if (!other) {
+                    continue;
+                }
+                const json::Value* insideId = resolve(*container, route->get("focus_id_inside"));
+                if (insideId && insideId->isString() && !insideId->mString.empty()) {
+                    for (Node* node : candidates) {
+                        if (holds(other, node) && identified(node) == insideId->mString) {
+                            focus(node);
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                bool nested = holds(container, other) || holds(other, container);
+                if (flag(*other, "use_last_focus", false) && !nested) {
+                    if (auto last = lastFocus.find(other->id); last != lastFocus.end()) {
+                        for (Node* node : candidates) {
+                            if (node->id == last->second && holds(other, node)) {
+                                focus(node);
+                                return;
+                            }
+                        }
+                    }
+                }
+                Node* closest = nullptr;
+                float closestDistance = std::numeric_limits<float>::infinity();
+                float ox = from.x + from.w * 0.5f;
+                float oy = from.y + from.h * 0.5f;
+                for (Node* node : candidates) {
+                    if (!holds(other, node)) {
+                        continue;
+                    }
+                    float dx = node->x + node->w * 0.5f - ox;
+                    float dy = node->y + node->h * 0.5f - oy;
+                    if (dx * dx + dy * dy < closestDistance) {
+                        closestDistance = dx * dx + dy * dy;
+                        closest = node;
+                    }
+                }
+                if (closest) {
+                    focus(closest);
+                    return;
+                }
+            }
+            return;
+        }
+    }
+    if (!target) {
+        return;
+    }
+    const Node* entered = nullptr;
+    for (const Node* at = target->parent; at; at = at->parent) {
+        if (flag(*at, "focus_container", false) && !holds(at, &from)) {
+            entered = at;
+        }
+    }
+    if (entered && flag(*entered, "use_last_focus", false)) {
+        if (auto last = lastFocus.find(entered->id); last != lastFocus.end()) {
+            for (Node* node : candidates) {
+                if (node->id == last->second) {
+                    focus(node);
+                    return;
+                }
+            }
+        }
+    }
+    focus(target);
 }
 
 bool JsonUiRuntime::mapButton(Node& node, const std::string& from, const std::string& mode, int depth)
@@ -631,7 +980,9 @@ void JsonUiRuntime::click(Node& node)
         if (ui->input().isHeld(Key::Shift) && mapButton(node, "button.menu_auto_place", "pressed")) {
             return;
         }
-        mapButton(node, "button.menu_select", "pressed");
+        if (!mapButton(node, "button.menu_select", "pressed")) {
+            mapButton(node, "button.menu_select", "focused");
+        }
         return;
     }
     if (node.type == "toggle" || node.type == "dropdown") {
@@ -776,16 +1127,25 @@ void JsonUiRuntime::input()
 
     auto dragging = byId.find(active);
     if (Node* dragged = active && dragging != byId.end() ? dragging->second : nullptr) {
-        if (in.mouseDown && dragged->type == "slider" && dragged->w > 0.0f) {
-            float fraction = std::clamp((mx - dragged->x) / dragged->w, 0.0f, 1.0f);
-            int steps = static_cast<int>(dragged->bound.count("#slider_steps") ? dragged->bound.at("#slider_steps").toNumber() : 1.0);
+        bool vertical = dragged->type == "slider" && text(*dragged, "slider_direction") == "vertical";
+        float length = vertical ? dragged->h : dragged->w;
+        if (in.mouseDown && dragged->type == "slider" && length > 0.0f) {
+            float along = vertical ? my - dragged->y : mx - dragged->x;
+            float fraction = std::clamp(along / length, 0.0f, 1.0f);
+            if (flag(*dragged, "slider_inverted", false)) {
+                fraction = 1.0f - fraction;
+            }
+            int steps = sliderSteps(*dragged);
+            double reported = fraction;
             if (steps > 1) {
-                fraction = std::round(fraction * static_cast<float>(steps - 1)) / static_cast<float>(steps - 1);
+                int index = std::clamp(static_cast<int>(std::floor(fraction * static_cast<float>(steps - 1) + 0.5f)), 0, steps - 1);
+                fraction = static_cast<float>(index) / static_cast<float>(steps - 1);
+                reported = static_cast<double>(index);
             }
             if (fraction != dragged->value || in.mousePressed) {
                 dragged->value = fraction;
                 emit(UiEvent::Kind::Slider, *dragged, text(*dragged, "slider_name"));
-                events.back().value = fraction;
+                events.back().value = reported;
             }
         }
         if (in.mouseDown && dragged->type == "scrollbar_box") {
@@ -1125,6 +1485,10 @@ void JsonUiRuntime::paint(Node& node)
         };
         if (sprite.slice.left > 0.0f || sprite.slice.top > 0.0f || sprite.slice.right > 0.0f || sprite.slice.bottom > 0.0f) {
             ui->nineSlice(rect, node.texture, color);
+            return;
+        }
+        if (sprite.slice.declared) {
+            draw(rect, source);
             return;
         }
         const json::Value* tiled = resolve(node, property(node, "tiled"));
@@ -1684,6 +2048,27 @@ void JsonUiScreen::showListeningSelection(bool selected)
 bool JsonUiScreen::editing() const
 {
     return runtime->focused != 0;
+}
+
+std::optional<Rect> JsonUiScreen::controlRect(const std::string& name) const
+{
+    if (!runtime->root) {
+        return std::nullopt;
+    }
+    std::vector<const JsonUiRuntime::Node*> queue { runtime->root.get() };
+    for (size_t i = 0; i < queue.size(); ++i) {
+        const JsonUiRuntime::Node* node = queue[i];
+        if (!node->shown) {
+            continue;
+        }
+        if (node->name == name) {
+            return Rect { node->x, node->y, node->w, node->h };
+        }
+        for (const auto& child : node->children) {
+            queue.push_back(child.get());
+        }
+    }
+    return std::nullopt;
 }
 
 float JsonUiScreen::contentHeight() const

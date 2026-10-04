@@ -1,4 +1,5 @@
 #include "menu/Menu.h"
+#include "platform/Shell.h"
 
 #include "ui/Context.h"
 #include "ui/Localization.h"
@@ -515,9 +516,15 @@ void Menu::chatScreen(Context& ui, float width, float height)
     globals["#text_box_enabled"] = UiValue::of(true);
     globals["#send_button_visible"] = UiValue::of(!blank(chatDraft));
     globals["#send_button_accessibility_text"] = UiValue::of(tr("accessibility.chat.tts.sendChatMessage", "Send"));
-    globals["#chat_coordinate_dropdown_visible"] = UiValue::of(false);
-    globals["#copy_button_enabled"] = UiValue::of(false);
-    globals["#coordinates_text"] = UiValue::of(std::string());
+    bool coordinatesShown = inGame() && optionValue("copy_coordinate_ui", 0) != 0;
+    const std::optional<std::array<int, 3>>& picked = chatFacingCoordinates ? session.facingBlock : session.playerBlock;
+    std::string coordinates = picked ? std::to_string((*picked)[0]) + " " + std::to_string((*picked)[1]) + " " + std::to_string((*picked)[2]) : std::string();
+    globals["#chat_coordinate_dropdown_visible"] = UiValue::of(coordinatesShown);
+    globals["#copy_button_enabled"] = UiValue::of(coordinatesShown && !coordinates.empty());
+    globals["#coordinates_text"] = UiValue::of(coordinates);
+    globals["#chat_coordinate_dropdown_label"] = UiValue::of(chatFacingCoordinates ? tr("chat.coordinateTypeFacing", "Facing") : tr("chat.coordinateTypePosition", "My Position"));
+    globals["#coordinate_type_position"] = UiValue::of(!chatFacingCoordinates);
+    globals["#coordinate_type_facing"] = UiValue::of(chatFacingCoordinates);
     globals["#cheats_on"] = UiValue::of(operatorCommands);
     for (const char* panel : { "#host_main_visible", "#host_teleport_main_visible", "#host_teleport_players_visible", "#host_time_visible", "#host_weather_visible" }) {
         globals[panel] = UiValue::of(false);
@@ -570,7 +577,31 @@ void Menu::chatScreen(Context& ui, float width, float height)
     }
 
     for (const ui::UiEvent& event : events) {
+        if (event.kind == ui::UiEvent::Kind::Toggle && event.state) {
+            std::string_view toggle = event.name;
+            if (!toggle.empty() && toggle.front() == '#') {
+                toggle.remove_prefix(1);
+            }
+            if (toggle == "coordinate_type_position" || toggle == "coordinate_type_facing") {
+                chatFacingCoordinates = toggle == "coordinate_type_facing";
+            }
+            continue;
+        }
         if (event.kind != ui::UiEvent::Kind::Button) {
+            continue;
+        }
+        if (event.name == "copy_coordinates_button" && !coordinates.empty()) {
+            platform::copyText(coordinates);
+            continue;
+        }
+        if ((event.name == "paste_button" || event.name == "button.chat_paste_coordinates") && !coordinates.empty()) {
+            if (!chatDraft.empty() && chatDraft.back() != ' ') {
+                chatDraft += ' ';
+            }
+            chatDraft += coordinates;
+            chatCycle.clear();
+            chatRecall.reset();
+            selectedField = Field::None;
             continue;
         }
         if (event.name == "button.send") {
@@ -639,7 +670,7 @@ void Menu::chatSettingsScreen(Context& ui, float width, float height)
     globals["#typeface_radio_notoSans"] = UiValue::of(options.smoothFont);
 
     double sizeRange = static_cast<double>(MaxChatFontSize - MinChatFontSize);
-    globals["#chat_font_size"] = UiValue::of(static_cast<double>(options.fontSize - MinChatFontSize) / sizeRange);
+    globals["#chat_font_size"] = UiValue::of(static_cast<double>(options.fontSize - MinChatFontSize));
     globals["#chat_font_size_enabled"] = UiValue::of(options.smoothFont);
     globals["#chat_font_size_steps"] = UiValue::of(sizeRange + 1.0);
     globals["#chat_font_size_custom_label"] = UiValue::of(options.smoothFont ? trf("chat.settings.fontSize", "Size: %s", { size }) : trf("chat.settings.fontSize.disabled", "Size: Available with %s", { noto }));
@@ -702,7 +733,7 @@ void Menu::chatSettingsScreen(Context& ui, float width, float height)
             }
         } else if (event.kind == ui::UiEvent::Kind::Slider) {
             if (name == "chat_font_size") {
-                changed.fontSize = MinChatFontSize + static_cast<int>(std::round(event.value * sizeRange));
+                changed.fontSize = MinChatFontSize + std::clamp(static_cast<int>(std::round(event.value)), 0, static_cast<int>(sizeRange));
             } else if (name == "chat_line_spacing") {
                 changed.lineSpacing = snapLineSpacing(MinChatLineSpacing + static_cast<float>(event.value * spacingRange));
             }

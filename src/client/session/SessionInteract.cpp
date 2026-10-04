@@ -277,9 +277,12 @@ void Session::interact(bool use)
         BlockUse outcome = localUse(*block, packet.mItemInHand);
         recordUse(false, secondsNow(), outcome);
         useOnBlock(*block, false, outcome);
-        return;
-    } else {
-        if (openBook(slot)) {
+        if (outcome != BlockUse::Nothing || packet.mItemInHand.isAir()) {
+            return;
+        }
+    }
+    if (!target) {
+        if (!block && openBook(slot)) {
             return;
         }
         packet.mTransactionType = InventoryTransactionType::ItemUse;

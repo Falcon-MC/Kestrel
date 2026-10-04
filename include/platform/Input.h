@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/Gamepad.h"
 #include "platform/Keys.h"
 
 #include <array>
@@ -29,6 +30,7 @@ struct InputState {
     std::array<bool, KeyCount> held {};
     Key pressedKey = Key::None;
     Key releasedKey = Key::None;
+    GamepadState gamepad;
 
     bool isHeld(Key key) const
     {

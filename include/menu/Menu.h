@@ -439,6 +439,13 @@ struct SessionInfo {
     std::string levelName;
     std::string gameMode;
     std::string position;
+
+    /**
+     * The block the player stands in and the one they look at, for the
+     * chat's copy coordinates controls.
+     */
+    std::optional<std::array<int, 3>> playerBlock;
+    std::optional<std::array<int, 3>> facingBlock;
     int dimension = 0;
     int chunkRadius = 0;
     uint64_t packetsReceived = 0;
@@ -622,6 +629,34 @@ public:
     void setExtraOption(const std::string& name, int value)
     {
         extraOptionValues[name] = value;
+    }
+
+    /**
+     * An option of the game's settings screen by name, or fallback while it
+     * was never set.
+     */
+    int option(std::string_view name, int fallback) const
+    {
+        return optionValue(name, fallback);
+    }
+
+    /**
+     * The name played under without a Microsoft account, kept between launches.
+     */
+    const std::string& offlineName() const
+    {
+        return offlineNameValue;
+    }
+
+    void setOfflineName(std::string name)
+    {
+        if (name.empty()) {
+            return;
+        }
+        offlineNameValue = std::move(name);
+        if (account.status != AccountStatus::SignedIn && account.status != AccountStatus::Connecting) {
+            displayName = offlineNameValue;
+        }
     }
 
     /**
@@ -1186,6 +1221,7 @@ private:
     std::string lastFieldClick;
     std::chrono::steady_clock::time_point lastFieldClickAt {};
     std::string displayName = "Steve";
+    std::string offlineNameValue = "Steve";
     std::string toastMessage;
     std::chrono::steady_clock::time_point toastUntil;
     std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
@@ -1279,6 +1315,7 @@ private:
     bool chatToBottom = false;
     std::unique_ptr<ui::JsonUiScreen> chatUi;
     std::unique_ptr<ui::JsonUiScreen> settingsUi;
+    bool chatFacingCoordinates = false;
     int vanillaSettingsSection = 0;
     bool advancedGraphicsShown = false;
     std::map<std::string, int> extraOptionValues;

@@ -35,6 +35,15 @@ public:
     }
 
     /**
+     * While a server sets the field of view, it is used as given, without the
+     * sprint, speed or bow widening.
+     */
+    void setFovOverridden(bool overridden)
+    {
+        fovOverridden = overridden;
+    }
+
+    /**
      * Turns the rendered view around to face the player from the front, with
      * the pitch mirrored; the look direction is unchanged.
      */
@@ -77,6 +86,7 @@ private:
     float pitch = 0.0f;
     float fovScale = 1.0f;
     float baseFov = DefaultFovDegrees;
+    bool fovOverridden = false;
     bool facingSubject = false;
     float hurtProgress = 0.0f;
     float serverRoll = 0.0f;

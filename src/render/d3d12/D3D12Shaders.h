@@ -219,6 +219,9 @@ WorldOut placeModel(ModelIn input, float positionScale)
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 15 : 0;
+    if (output.entity != 0) {
+        output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0x80ffffffu) : 0;
+    }
     if (output.entity != 0 && input.d.w != 0) {
         float2 uvOffset = float2(f16tof32(input.d.z), f16tof32(input.d.z >> 16));
         float2 uvScale = float2(f16tof32(input.d.w), f16tof32(input.d.w >> 16));
@@ -400,7 +403,7 @@ float4 surfaceTexel(WorldOut input)
             : entities3.Sample(blockSampler, float3(uv, index));
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
-        return texel;
+        return applyTint(texel, input.tint);
     }
     return applyTint(sampleMaterial(input.material, input.uv), input.tint);
 }

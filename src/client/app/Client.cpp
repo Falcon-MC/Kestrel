@@ -179,6 +179,7 @@ int Client::run()
             }
         }
         discord.update();
+        driveGamepad();
         if (agentServer) {
             Profiler::Section section(profiler, "agent");
             serveAgent();
@@ -241,7 +242,9 @@ int Client::run()
             menu.prepareInventoryInput(window->input());
             bool captured = menu.capturesMouse() && !mods->wantsCursor();
             window->setMouseCaptured(captured);
-            camera.setBaseFov(serverFovDegrees(static_cast<float>(menu.fov()), deltaSeconds) * mods->fovScale());
+            float baseFov = serverFovDegrees(static_cast<float>(menu.fov()), deltaSeconds);
+            camera.setFovOverridden(serverFov.active);
+            camera.setBaseFov(serverFov.active ? baseFov : baseFov * mods->fovScale());
             if (playerView.active) {
                 const InputState& keys = window->input();
                 const KeyBindings& bindings = menu.keyBindings();
@@ -257,13 +260,36 @@ int Client::run()
                     input.jump = keys.isHeld(bindings.up());
                     input.sneak = keys.isHeld(bindings.down());
                     input.sprint = keys.isHeld(Key::Control);
+                    if (padMove[0] != 0.0f || padMove[1] != 0.0f) {
+                        input.forward = padMove[1];
+                        input.sideways = -padMove[0];
+                    }
                 }
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
                 mods->adjustMovement(input);
                 session.setMotionInput(input);
-                float fovTarget = playerView.flying ? 1.1f : 1.0f;
-                fovTarget *= (playerView.movementSpeed / 0.1f + 1.0f) * 0.5f;
+                constexpr int32_t SpeedEffect = 1;
+                constexpr int32_t SlownessEffect = 2;
+                int32_t speedLevels = 0;
+                int32_t slownessLevels = 0;
+                double now = secondsNow();
+                for (const HudEffect& effect : hudState.effects) {
+                    if (effect.expires >= 0.0 && effect.expires < now) {
+                        continue;
+                    }
+                    int32_t levels = std::clamp(effect.amplifier + 1, 0, 255);
+                    if (effect.id == SpeedEffect) {
+                        speedLevels = std::max(speedLevels, levels);
+                    } else if (effect.id == SlownessEffect) {
+                        slownessLevels = std::max(slownessLevels, levels);
+                    }
+                }
+                float speedRatio = 1.0f + (playerView.sprinting ? 0.3f : 0.0f) + 0.2f * float(speedLevels) - 0.15f * float(slownessLevels);
+                float fovTarget = (std::max(speedRatio, 0.0f) + 1.0f) * 0.5f;
+                if (playerView.flying) {
+                    fovTarget *= 1.1f;
+                }
                 if (!menu.gameplayFov()) {
                     fovTarget = 1.0f;
                 }
@@ -274,10 +300,10 @@ int Client::run()
                     float pull = static_cast<float>(std::min(drawn / 20.0, 1.0));
                     fovTarget *= 1.0f - pull * pull * 0.15f;
                 }
-                fovTarget = std::clamp(fovTarget, 0.1f, 1.5f);
                 if (drawn > 0.0 && heldItem.identifier == "minecraft:spyglass") {
                     fovTarget = SpyglassFovScale;
                 }
+                fovTarget = std::clamp(fovTarget, 0.05f, 2.0f);
                 camera.easeFov(fovTarget, deltaSeconds);
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
                 double eye = playerView.eyeHeight();
@@ -379,6 +405,10 @@ int Client::run()
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
+            if (padCursorShown && window->input().gamepad.connected && !menu.capturesMouse()) {
+                const InputState& pointer = window->input();
+                context.sprite({ pointer.mouseX / scale, pointer.mouseY / scale, 16.0f, 16.0f }, "ui/cursor");
+            }
             if (agentServer) {
                 agentWidgets = context.widgets();
             }
@@ -467,7 +497,7 @@ int Client::run()
             saveSettings();
         }
         renderer->setVsync(menu.vsync());
-        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.glintStrength() != savedGlintStrength || menu.glintSpeed() != savedGlintSpeed || menu.extraOptions() != savedExtraOptions || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
+        if (menu.interfaceScale() != savedScale || !(menu.keyBindings() == savedBindings) || menu.renderDistance() != savedRenderDistance || menu.maxFps() != savedMaxFps || menu.fov() != savedFov || window->fullscreen() != savedFullscreen || menu.paperDollHidden() != savedPaperDollHidden || menu.vsync() != savedVsync || menu.gameplayFov() != savedGameplayFov || menu.safeArea() != savedSafeArea || menu.brightness() != savedBrightness || menu.glintStrength() != savedGlintStrength || menu.glintSpeed() != savedGlintSpeed || menu.extraOptions() != savedExtraOptions || menu.offlineName() != savedOfflineName || menu.soundVolumes() != savedVolumes || !(menu.chatSettings() == savedChat)) {
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
@@ -1393,6 +1423,16 @@ void Client::syncSession()
     info.levelName = snapshot.levelName;
     info.gameMode = snapshot.gameMode;
     info.position = snapshot.position;
+    if (playerView.active) {
+        info.playerBlock = std::array<int, 3> {
+            static_cast<int>(std::floor(playerView.current[0])),
+            static_cast<int>(std::floor(playerView.current[1])),
+            static_cast<int>(std::floor(playerView.current[2])),
+        };
+    }
+    if (selectionView) {
+        info.facingBlock = std::array<int, 3> { selectionView->cell[0], selectionView->cell[1], selectionView->cell[2] };
+    }
     info.dimension = snapshot.dimension;
     info.chunkRadius = snapshot.chunkRadius;
     info.packetsReceived = snapshot.packetsReceived;

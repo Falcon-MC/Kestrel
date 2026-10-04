@@ -257,7 +257,17 @@ void ParticleRenderer::build(const std::vector<world::ParticleQuad>& quads, cons
         auto grid = grids.find(quad.texture);
         world::EntityTileGrid tiles = grid == grids.end() ? world::EntityTileGrid {} : grid->second;
         std::vector<world::ModelQuadGpu>& target = quad.material == world::ParticleMaterial::AlphaTest ? opaque : blended;
+        size_t first = target.size();
         appendTiled(corners, found->second, tiles, shadeWord, lightWord, target);
+        auto channel = [](float value) {
+            return static_cast<uint32_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+        };
+        uint32_t tint = 0x80000000u | (channel(quad.color[0]) << 16) | (channel(quad.color[1]) << 8) | channel(quad.color[2]);
+        if ((tint & 0x00ffffffu) != 0x00ffffffu) {
+            for (size_t index = first; index < target.size(); ++index) {
+                target[index].words[14] = tint;
+            }
+        }
     }
 }
 

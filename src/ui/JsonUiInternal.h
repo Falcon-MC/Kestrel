@@ -287,6 +287,7 @@ struct JsonUiRuntime {
     std::string text(const Node& node, std::string_view name) const;
     double number(const Node& node, std::string_view name, double fallback) const;
     bool flag(const Node& node, std::string_view name, bool fallback) const;
+    int sliderSteps(const Node& node) const;
     UiValue lookup(const Node& node, const std::string& name) const;
     UiValue evaluate(const Node& node, std::string_view source) const;
     UiValue bindingLookup(const Node& node, const std::string& key, const UiLookup& binding) const;
@@ -307,6 +308,10 @@ struct JsonUiRuntime {
      */
     void syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth, const std::vector<std::string>& roles = {});
     const UiRow* row(const Node& node, const std::string& collection) const;
+    const std::vector<UiRow>* collectionRows(const Node& node, const std::string& collection) const;
+    bool boundByBinding(const Node& node, std::string_view target) const;
+    std::optional<size_t> gridCapacity(const Node& node) const;
+    std::array<int, 2> gridDimensions(const Node& node) const;
     void bind(Node& node);
     void animate(Node& node);
     void update(Node& node, int depth, Node* control);
@@ -371,7 +376,14 @@ struct JsonUiRuntime {
     Node* ancestor(Node& node, const std::string& type) const;
     void input();
     bool pressMapped(const Node& node) const;
+    bool focusable(const Node& node) const;
     void navigateFocus(const InputState& in, float mouseX, float mouseY);
+
+    /**
+     * The control last focused inside each focus container, by id, for the
+     * containers that bring focus back to it with use_last_focus.
+     */
+    std::unordered_map<uint64_t, uint64_t> lastFocus;
     void click(Node& node);
     bool mapButton(Node& node, const std::string& from, const std::string& mode, int depth = 0);
     void paint(Node& node);

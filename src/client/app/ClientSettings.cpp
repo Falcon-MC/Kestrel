@@ -54,6 +54,8 @@ void Client::loadSettings()
             if (end != value.c_str() && *end == '\0') {
                 menu.setBrightness(static_cast<int>(std::clamp<long>(parsed, menu::MinBrightness, menu::MaxBrightness)));
             }
+        } else if (key == "offlineName") {
+            menu.setOfflineName(value);
         } else if (key.rfind("option.", 0) == 0) {
             menu.setExtraOption(key.substr(7), std::atoi(value.c_str()));
         } else if (key == "glintStrength") {
@@ -107,6 +109,7 @@ void Client::loadSettings()
     savedGlintStrength = menu.glintStrength();
     savedGlintSpeed = menu.glintSpeed();
     savedExtraOptions = menu.extraOptions();
+    savedOfflineName = menu.offlineName();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
 }
@@ -149,6 +152,7 @@ void Client::saveSettings()
     file << "brightness=" << menu.brightness() << '\n';
     file << "glintStrength=" << menu.glintStrength() << '\n';
     file << "glintSpeed=" << menu.glintSpeed() << '\n';
+    file << "offlineName=" << menu.offlineName() << '\n';
     for (const auto& [name, value] : menu.extraOptions()) {
         file << "option." << name << '=' << value << '\n';
     }
@@ -183,6 +187,7 @@ void Client::saveSettings()
     savedGlintStrength = menu.glintStrength();
     savedGlintSpeed = menu.glintSpeed();
     savedExtraOptions = menu.extraOptions();
+    savedOfflineName = menu.offlineName();
     savedVolumes = menu.soundVolumes();
     savedLanguage = menu.language();
     if (mods) {

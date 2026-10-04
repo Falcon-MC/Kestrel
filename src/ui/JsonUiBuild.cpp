@@ -659,25 +659,26 @@ void JsonUiRuntime::addAnim(Node& node, const std::string& target, std::string_v
 }
 
 /**
- * The key to make a factory's control with: control_ids map the id the data
- * asks for to "name@namespace.control", "@namespace.control" or just
- * "namespace.control".
+ * The key to make a factory's control with. A control_name template makes
+ * every control and leaves control_ids unread; otherwise control_ids map the
+ * id the data asks for to "name@namespace.control", "@namespace.control" or
+ * just "namespace.control", an item without an id taking the first entry and
+ * an id the factory lacks making nothing.
  */
 std::string JsonUiRuntime::factoryKey(const Node& node, const json::Value* ids, const std::string& id, const json::Value* fallback) const
 {
-    const json::Value* target = nullptr;
-    if (ids && ids->isObject()) {
-        target = ids->get(id);
-        if (!target && !ids->mKeys.empty() && id.empty()) {
-            target = ids->get(ids->mKeys.front());
-        }
+    const json::Value* named = resolve(node, fallback);
+    bool templated = named && named->isString() && !named->mString.empty();
+    const json::Value* target = templated ? named : nullptr;
+    if (!templated && ids && ids->isObject()) {
+        target = id.empty() ? (ids->mKeys.empty() ? nullptr : ids->get(ids->mKeys.front())) : ids->get(id);
+        target = resolve(node, target);
     }
-    target = resolve(node, target ? target : fallback);
     if (!target || !target->isString() || target->mString.empty()) {
         return {};
     }
     std::string key = target->mString;
-    if (target == fallback || id.empty()) {
+    if (templated || id.empty()) {
         std::string_view reference = key.front() == '@' ? std::string_view(key).substr(1) : std::string_view(key);
         size_t dot = reference.rfind('.');
         std::string name(dot == std::string_view::npos ? reference : reference.substr(dot + 1));
@@ -784,6 +785,116 @@ std::vector<std::unique_ptr<Node>> JsonUiRuntime::takeGenerated(Node& node)
     return generated;
 }
 
+/**
+ * The rows the screen supplies for a collection, the ones nested under the
+ * row of the closest indexed control above node first.
+ */
+const std::vector<UiRow>* JsonUiRuntime::collectionRows(const Node& node, const std::string& collection) const
+{
+    if (!data || collection.empty()) {
+        return nullptr;
+    }
+    for (const Node* outer = &node; outer; outer = outer->parent) {
+        if (outer->index >= 0) {
+            if (auto found = data->collections.find(collection + ":" + std::to_string(outer->index)); found != data->collections.end()) {
+                return &found->second;
+            }
+            break;
+        }
+    }
+    auto found = data->collections.find(collection);
+    return found == data->collections.end() ? nullptr : &found->second;
+}
+
+/**
+ * Whether one of node's bindings writes target, as opposed to its
+ * property_bag holding it as written.
+ */
+bool JsonUiRuntime::boundByBinding(const Node& node, std::string_view target) const
+{
+    const json::Value* bindings = property(node, "bindings");
+    if (!bindings || !bindings->isArray()) {
+        return false;
+    }
+    for (const std::unique_ptr<json::Value>& binding : bindings->mArray) {
+        if (!binding->isObject()) {
+            continue;
+        }
+        for (const char* key : { "target_property_name", "binding_name_override", "binding_name" }) {
+            const json::Value* name = resolve(node, binding->get(key));
+            if (name && name->isString() && !name->mString.empty()) {
+                if (name->mString == target) {
+                    return true;
+                }
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * How many cells a grid holds: with grid_rescaling_type its maximum_grid_items
+ * (a bound #maximum_grid_items first, only a whole number counting), with
+ * grid_fill_direction none until the collection decides, else columns times
+ * rows from grid_dimension_binding or grid_dimensions.
+ */
+std::optional<size_t> JsonUiRuntime::gridCapacity(const Node& node) const
+{
+    auto direction = [&](std::string_view key) {
+        std::string value = text(node, key);
+        return value == "horizontal" || value == "vertical";
+    };
+    auto whole = [](double value) {
+        return std::isfinite(value) && value >= 0.0 && std::floor(value) == value ? std::min(65536.0, value) : 0.0;
+    };
+    if (direction("grid_rescaling_type")) {
+        if (auto bound = node.bound.find("#maximum_grid_items"); bound != node.bound.end()) {
+            return static_cast<size_t>(bound->second.kind == UiValue::Kind::Number ? whole(bound->second.number) : 0.0);
+        }
+        const json::Value* maximum = property(node, "maximum_grid_items");
+        return static_cast<size_t>(maximum && maximum->isNumber() ? whole(maximum->mNumber) : 0.0);
+    }
+    if (direction("grid_fill_direction")) {
+        return std::nullopt;
+    }
+    std::array<int, 2> cells = gridDimensions(node);
+    return static_cast<size_t>(std::max(0, cells[0])) * static_cast<size_t>(std::max(0, cells[1]));
+}
+
+/**
+ * A grid's own columns and rows: the [columns, rows] its
+ * grid_dimension_binding answers ("columns,rows" as text), else
+ * grid_dimensions, zero where neither says.
+ */
+std::array<int, 2> JsonUiRuntime::gridDimensions(const Node& node) const
+{
+    std::string binding = text(node, "grid_dimension_binding");
+    if (!binding.empty()) {
+        UiValue dimensions = lookup(node, binding);
+        if (dimensions.kind != UiValue::Kind::None) {
+            std::string value = dimensions.toText();
+            auto numberAt = [&](size_t from) {
+                size_t start = value.find_first_of("-0123456789", from);
+                return start == std::string::npos ? 0 : std::atoi(value.c_str() + start);
+            };
+            size_t comma = value.find(',');
+            int columns = numberAt(0);
+            int rows = comma == std::string::npos ? 1 : numberAt(comma);
+            return { std::max(0, columns), std::max(0, rows) };
+        }
+    }
+    const json::Value* grid = property(node, "grid_dimensions");
+    if (!grid || !grid->isArray() || grid->mArray.size() < 2) {
+        return { 0, 0 };
+    }
+    auto axis = [&](size_t index) {
+        const json::Value* value = resolve(node, grid->mArray[index].get());
+        return value && value->isNumber() ? std::max(0, static_cast<int>(value->mNumber)) : 0;
+    };
+    return { axis(0), axis(1) };
+}
+
 void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, size_t count, const json::Value* factory, const std::string& templateControl, int depth, const std::vector<std::string>& roles)
 {
     size_t first = 0;
@@ -835,7 +946,10 @@ void JsonUiRuntime::syncCollection(Node& node, const std::string& collection, si
         }
         std::string key;
         if (!templateControl.empty()) {
-            key = "item@" + templateControl;
+            std::string_view reference = templateControl.front() == '@' ? std::string_view(templateControl).substr(1) : std::string_view(templateControl);
+            size_t at = reference.find('@');
+            size_t dot = reference.rfind('.');
+            key = at != std::string_view::npos ? std::string(reference) : std::string(dot == std::string_view::npos ? reference : reference.substr(dot + 1)) + "@" + std::string(reference);
         } else {
             key = factoryKey(node, ids, id, named);
         }
@@ -865,31 +979,13 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
     if (node.type == "grid") {
         std::string collection = text(node, "collection_name");
         std::string templateControl = text(node, "grid_item_template");
-        UiValue dimensions;
-        std::string binding = text(node, "grid_dimension_binding");
-        if (!binding.empty()) {
-            dimensions = lookup(node, binding);
-        }
         size_t count = 0;
-        if (dimensions.kind != UiValue::Kind::None) {
-            std::string value = dimensions.toText();
-            int columns = std::atoi(value.c_str());
-            size_t comma = value.find(',');
-            int rowsCount = comma == std::string::npos ? 1 : std::atoi(value.c_str() + comma + 1);
-            count = static_cast<size_t>(std::max(0, columns) * std::max(0, rowsCount));
-        } else if (const json::Value* grid = property(node, "grid_dimensions"); grid && grid->isArray() && grid->mArray.size() == 2) {
-            count = static_cast<size_t>(std::max(0.0, resolve(node, grid->mArray[0].get()) ? resolve(node, grid->mArray[0].get())->number() : 0.0) * std::max(0.0, resolve(node, grid->mArray[1].get()) ? resolve(node, grid->mArray[1].get())->number() : 0.0));
-        } else if (data) {
-            if (auto found = data->collections.find(collection); found != data->collections.end()) {
-                count = found->second.size();
-            }
+        if (std::optional<size_t> capacity = gridCapacity(node)) {
+            count = *capacity;
+        } else if (const std::vector<UiRow>* rows = collectionRows(node, collection)) {
+            count = rows->size();
         }
-        if (auto length = node.bound.find("#collection_length"); length != node.bound.end()) {
-            count = static_cast<size_t>(std::max(0.0, length->second.toNumber()));
-        }
-        if (auto maximum = node.bound.find("#maximum_grid_items"); maximum != node.bound.end()) {
-            count = static_cast<size_t>(std::max(0.0, maximum->second.toNumber()));
-        }
+        node.bound["#grid_number_size"] = UiValue::of(static_cast<double>(count));
         syncCollection(node, collection, count, nullptr, templateControl, depth);
         return;
     }
@@ -909,33 +1005,43 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
     if (!factory || !factory->isObject()) {
         return;
     }
+    const json::Value* limit = resolve(node, factory->get("max_children_size"));
+    size_t maximum = limit && limit->isNumber() && limit->mNumber >= 1.0 ? std::min(MaxFactoryItems, static_cast<size_t>(limit->mNumber)) : MaxFactoryItems;
     std::string collection = text(node, "collection_name");
-    if (!collection.empty() || node.bound.count("#collection_length")) {
+    if (!collection.empty()) {
         size_t count = 0;
-        bool supplied = false;
-        if (auto length = node.bound.find("#collection_length"); length != node.bound.end() && length->second.kind == UiValue::Kind::Number) {
-            count = static_cast<size_t>(std::max(0.0, length->second.toNumber()));
-            supplied = true;
-        } else if (data) {
-            if (auto found = data->collections.find(collection); found != data->collections.end()) {
-                count = found->second.size();
-                supplied = true;
-            }
-        }
         std::vector<std::string> roles;
-        if (!supplied) {
-            const json::Value* bag = property(node, "property_bag");
-            const json::Value* ids = bag && bag->isObject() ? resolve(node, bag->get("#collection_length")) : nullptr;
-            if (ids && ids->isArray()) {
-                for (const std::unique_ptr<json::Value>& id : ids->mArray) {
-                    if (id && id->isString() && roles.size() < MaxFactoryItems) {
-                        roles.push_back(id->mString);
-                    }
+        const json::Value* bag = property(node, "property_bag");
+        const json::Value* literal = bag && bag->isObject() ? resolve(node, bag->get("#collection_length")) : nullptr;
+        auto length = node.bound.find("#collection_length");
+        bool bound = boundByBinding(node, "#collection_length") && length != node.bound.end() && length->second.kind == UiValue::Kind::Number
+            && length->second.number >= 0.0 && std::floor(length->second.number) == length->second.number;
+        if (bound) {
+            count = std::min(maximum, static_cast<size_t>(length->second.number));
+        } else if (const std::vector<UiRow>* rows = collectionRows(node, collection)) {
+            count = rows->size();
+        } else if (literal && literal->isArray()) {
+            for (const std::unique_ptr<json::Value>& id : literal->mArray) {
+                if (roles.size() >= MaxFactoryItems) {
+                    break;
                 }
-                count = roles.size();
+                roles.push_back(id && id->isString() ? id->mString : std::string());
+            }
+            count = roles.size();
+        } else if (literal && literal->isNumber()) {
+            const json::Value* named = resolve(node, factory->get("control_name"));
+            if (named && named->isString() && !named->mString.empty()) {
+                count = std::min(MaxFactoryItems, static_cast<size_t>(std::max(0.0, literal->mNumber)));
             }
         }
         syncCollection(node, collection, count, factory, {}, depth, roles);
+        if (bound) {
+            size_t made = 0;
+            for (const std::unique_ptr<Node>& child : node.children) {
+                made += child->generated ? 1 : 0;
+            }
+            node.bound["#collection_number_size"] = UiValue::of(static_cast<double>(made));
+        }
         return;
     }
     const json::Value* nameValue = resolve(node, factory->get("name"));
@@ -945,8 +1051,7 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
     }
     auto found = data->factories.find(name);
     static const std::vector<UiFactoryItem> none;
-    const json::Value* limit = resolve(node, factory->get("max_children_size"));
-    syncItems(node, found == data->factories.end() ? none : found->second, resolve(node, factory->get("control_ids")), resolve(node, factory->get("control_name")), limit && limit->isNumber() ? static_cast<size_t>(std::max(0.0, limit->mNumber)) : MaxFactoryItems, depth);
+    syncItems(node, found == data->factories.end() ? none : found->second, resolve(node, factory->get("control_ids")), resolve(node, factory->get("control_name")), maximum, depth);
     for (std::unique_ptr<Node>& child : node.children) {
         if (child->generated) {
             child->collection = name;

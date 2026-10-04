@@ -466,8 +466,8 @@ struct ParticleSystem::State {
         bool emitting = false;
         switch (rules.lifetime) {
         case ParticleEmitterRules::Lifetime::Once:
-            emitting = emitter.age <= emitter.activeTime;
-            if (!emitting) {
+            emitting = emitter.age <= emitter.activeTime || (rules.rate == ParticleEmitterRules::Rate::Instant && !emitter.burstDone);
+            if (emitter.age > emitter.activeTime) {
                 emitter.stopped = true;
             }
             break;
@@ -804,18 +804,27 @@ struct ParticleSystem::State {
         if (appearance.gradient && !appearance.gradientStops.empty()) {
             double t = run(appearance.gradientInterpolant, variables, 0.0);
             const auto& stops = appearance.gradientStops;
-            std::array<float, 4> color = stops.front().second;
-            if (t >= stops.back().first) {
-                color = stops.back().second;
-            } else if (t > stops.front().first) {
+            auto evaluate = [&](const std::array<ParticleExpression, 4>& stop) {
+                std::array<float, 4> color {};
+                for (size_t channel = 0; channel < 4; ++channel) {
+                    color[channel] = static_cast<float>(run(stop[channel], variables, 1.0));
+                }
+                return color;
+            };
+            std::array<float, 4> color {};
+            if (t <= stops.front().first) {
+                color = evaluate(stops.front().second);
+            } else if (t >= stops.back().first) {
+                color = evaluate(stops.back().second);
+            } else {
                 for (size_t index = 1; index < stops.size(); ++index) {
                     if (t <= stops[index].first) {
-                        const auto& low = stops[index - 1];
-                        const auto& high = stops[index];
-                        double span = high.first - low.first;
-                        float blend = span > 0.0 ? static_cast<float>((t - low.first) / span) : 1.0f;
+                        std::array<float, 4> low = evaluate(stops[index - 1].second);
+                        std::array<float, 4> high = evaluate(stops[index].second);
+                        double span = stops[index].first - stops[index - 1].first;
+                        float blend = span > 0.0 ? static_cast<float>((t - stops[index - 1].first) / span) : 1.0f;
                         for (size_t channel = 0; channel < 4; ++channel) {
-                            color[channel] = low.second[channel] + (high.second[channel] - low.second[channel]) * blend;
+                            color[channel] = low[channel] + (high[channel] - low[channel]) * blend;
                         }
                         break;
                     }

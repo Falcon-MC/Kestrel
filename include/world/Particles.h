@@ -208,7 +208,7 @@ struct ParticleAppearance {
     std::array<ParticleExpression, 4> color {};
     bool gradient = false;
     ParticleExpression gradientInterpolant;
-    std::vector<std::pair<float, std::array<float, 4>>> gradientStops;
+    std::vector<std::pair<float, std::array<ParticleExpression, 4>>> gradientStops;
 
     bool lit = false;
 };

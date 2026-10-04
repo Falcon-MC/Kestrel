@@ -242,6 +242,15 @@ private:
     void countFrame(std::chrono::steady_clock::time_point now);
     menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
     void handleHotbarInput();
+    void driveGamepad();
+    std::array<Key, PadButtonCount> padKeys {};
+    bool padAttack = false;
+    bool padUse = false;
+    bool padClick = false;
+    bool padCursorShown = false;
+    double padClock = 0.0;
+    float padScroll = 0.0f;
+    std::array<float, 2> padMove {};
     void loadShownTips();
     void markTipShown(const std::string& id);
     void showGameTip(const std::string& id, const std::string& text, const std::string& animation, double now);
@@ -282,6 +291,7 @@ private:
     int savedGlintStrength = 100;
     int savedGlintSpeed = 100;
     std::map<std::string, int> savedExtraOptions;
+    std::string savedOfflineName;
     menu::ChatSettings savedChat;
     bool savedFullscreen = false;
     std::string savedLanguage = "en_US";

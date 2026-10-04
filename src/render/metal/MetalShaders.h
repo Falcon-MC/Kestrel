@@ -212,6 +212,9 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
     out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
+    if (out.entity != 0u) {
+        out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0x80ffffffu) : 0u;
+    }
     if (out.entity != 0u && in.d.w != 0u) {
         float2 uvOffset = float2(as_type<half2>(in.d.z));
         float2 uvScale = float2(as_type<half2>(in.d.w));
@@ -382,7 +385,7 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
     }
-    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (texel.a < 0.004) {
@@ -457,7 +460,7 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
     }
-    float4 texel = in.entity != 0 ? sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
     if (in.entity != 0) {
