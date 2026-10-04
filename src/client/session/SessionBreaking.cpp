@@ -305,14 +305,13 @@ void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face, cons
     packet.mHasItemUseTransaction = true;
     packet.mInputData.push_back(static_cast<int32_t>(PlayerAuthInputData::PerformItemInteraction));
 
-    uint32_t air = ids.hashed ? assets->airNetworkHash() : assets->airSequentialId();
     uint32_t extra = blockAt(cell[0], cell[1], cell[2], 1);
-    bool keepsLiquid = extra != world::ImplicitAir && extra != air;
+    bool keepsLiquid = extra != world::ImplicitAir && !(assets->visual(extra, ids.hashed, ids.sequential.get()).flags & world::FlagAir);
     world::SubChunkKey key { current.dimension, cell[0] >> 4, cell[1] >> 4, cell[2] >> 4 };
     uint8_t x = uint8_t(cell[0] & 15);
     uint8_t y = uint8_t(cell[1] & 15);
     uint8_t z = uint8_t(cell[2] & 15);
-    world.store().updateBlocks(key, { { x, y, z, 0, keepsLiquid ? extra : air }, { x, y, z, 1, air } });
+    world.store().updateBlocks(key, { { x, y, z, 0, keepsLiquid ? extra : world::ImplicitAir }, { x, y, z, 1, world::ImplicitAir } });
 
     double now = secondsNow();
     std::erase_if(predictedBreaks, [&](const PredictedBreak& entry) {
