@@ -438,8 +438,8 @@ Operand reparse(std::string text)
 
 /**
  * Splits an expression into tokens the way the game's evaluator does; empty
- * past its size, token or nesting bounds or on an unbalanced ')'. Groups left
- * open close at the end.
+ * past its size, token or nesting bounds. A ')' with nothing open is skipped,
+ * and groups left open close at the end.
  */
 std::optional<std::vector<Token>> tokenize(std::string_view source)
 {
@@ -467,8 +467,10 @@ std::optional<std::vector<Token>> tokenize(std::string_view source)
             continue;
         }
         if (c == ')') {
+            // Packs ship stray closers, Lifeboat's form buttons end in "))))" one too many, and the game shows them anyway.
             if (groups.size() < 2) {
-                return std::nullopt;
+                ++i;
+                continue;
             }
             Token group;
             group.kind = Token::Kind::Group;
