@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 1.26.51)"
+        description: "Kestrel version without the game part (e.g. 1.0.1), the Bedrock version is read from the code"
         required: true
         type: string
       prerelease:
@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      kestrel: ${{ steps.resolve.outputs.kestrel }}
+      game: ${{ steps.resolve.outputs.game }}
       tag: ${{ steps.resolve.outputs.tag }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       draft: ${{ steps.resolve.outputs.draft }}
@@ -53,25 +55,49 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Versions look like 1.0.1+1.26.50: Kestrel's own semver, then the Bedrock version it speaks.
+          GAME="$(grep -rhoE 'GameVersion = "[0-9.]+"' src | grep -oE '[0-9]+(\.[0-9]+)+' | sort -u)"
+          if [ -z "$GAME" ] || [ "$(printf '%s\n' "$GAME" | wc -l)" -ne 1 ]; then
+            echo "Expected one GameVersion in src, found: ${GAME:-none}" >&2
+            exit 1
+          fi
+
           if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF_NAME}"
-            VERSION="${TAG#v}"
+            FULL="${TAG#v}"
+            case "$FULL" in
+              *+*) ;;
+              *) echo "Tag '$TAG' needs the Bedrock version after a '+', like v1.0.0+$GAME" >&2; exit 1 ;;
+            esac
+            KESTREL="${FULL%%+*}"
+            TAG_GAME="${FULL#*+}"
+            if [ "$TAG_GAME" != "$GAME" ]; then
+              echo "Tag '$TAG' says Bedrock $TAG_GAME but the code targets $GAME" >&2
+              exit 1
+            fi
             PRERELEASE=false
             DRAFT=false
           else
-            VERSION="$INPUT_VERSION"
-            TAG="v${VERSION}"
+            KESTREL="$INPUT_VERSION"
             PRERELEASE="$INPUT_PRERELEASE"
             DRAFT="$INPUT_DRAFT"
           fi
 
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.]+)?$'; then
-            echo "Version must look like X.Y.Z, X.Y.Z.W or X.Y.Z-rc.1, got '$VERSION'" >&2
+          if ! printf '%s' "$KESTREL" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "Kestrel version must look like X.Y.Z or X.Y.Z-rc.1, got '$KESTREL'" >&2
             exit 1
           fi
+          case "$KESTREL" in
+            *-*) PRERELEASE=true ;;
+          esac
+
+          VERSION="${KESTREL}+${GAME}"
+          TAG="v${VERSION}"
 
           {
             echo "version=$VERSION"
+            echo "kestrel=$KESTREL"
+            echo "game=$GAME"
             echo "tag=$TAG"
             echo "prerelease=$PRERELEASE"
             echo "draft=$DRAFT"
@@ -83,6 +109,8 @@ jobs:
           COMMIT_BASE: ${{ github.server_url }}/${{ github.repository }}/commit
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
+          # '+' in a URL path can turn into a space, so links get it encoded
+          enc() { printf '%s' "$1" | sed 's/+/%2B/g'; }
           set -euo pipefail
 
           PREVIOUS="$(git tag --list 'v*' --sort=-creatordate | grep -vx "$TAG" | head -n 1 || true)"
@@ -97,7 +125,7 @@ jobs:
             echo "changelog<<CHANGELOG_EOF"
 
             if [ -n "$PREVIOUS" ]; then
-              echo "### Changes since [\`$PREVIOUS\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/$PREVIOUS)"
+              echo "### Changes since [\`$PREVIOUS\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/$(enc "$PREVIOUS"))"
             else
               echo "### Changes"
             fi
@@ -108,7 +136,7 @@ jobs:
             echo ""
 
             if [ -n "$PREVIOUS" ]; then
-              echo "**Full diff:** [\`${PREVIOUS}...${TAG}\`](${{ github.server_url }}/${{ github.repository }}/compare/${PREVIOUS}...${TAG})"
+              echo "**Full diff:** [\`${PREVIOUS}...${TAG}\`](${{ github.server_url }}/${{ github.repository }}/compare/$(enc "$PREVIOUS")...$(enc "$TAG"))"
             fi
 
             echo "CHANGELOG_EOF"
@@ -144,13 +172,13 @@ jobs:
           artifacts: "artifacts/*"
           tag: ${{ needs.prepare.outputs.tag }}
           commit: ${{ github.sha }}
-          name: Kestrel ${{ needs.prepare.outputs.version }}
+          name: Kestrel ${{ needs.prepare.outputs.kestrel }} for Bedrock ${{ needs.prepare.outputs.game }}
           draft: ${{ needs.prepare.outputs.draft }}
           prerelease: ${{ needs.prepare.outputs.prerelease }}
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            **Kestrel ${{ needs.prepare.outputs.version }}**
+            **Kestrel ${{ needs.prepare.outputs.kestrel }} for Minecraft: Bedrock Edition ${{ needs.prepare.outputs.game }}**
 
             | Platform | Download |
             | --- | --- |

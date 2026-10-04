@@ -66,6 +66,8 @@ account and renders the world with the textures of the installed game.
 ## Downloads
 
 Builds for Windows, Linux and macOS are on the [releases page](https://github.com/Falcon-MC/Kestrel/releases).
+Versions read as `1.0.1+1.26.50`: Kestrel's own version first, then the Bedrock version it plays. A hotfix bumps
+the first part, a game update changes the second.
 A [nightly](https://github.com/Falcon-MC/Kestrel/releases/tag/nightly) is built from `main` every night when
 something changed. Kestrel reads its textures from an installed copy of Minecraft: Bedrock Edition, or from a
 vanilla resource pack you are entitled to use.
