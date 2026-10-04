@@ -1009,13 +1009,23 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
     }
 
     static constexpr const char* ArmorGeometries[] = {
+        "geometry.player.armor.helmet",
+        "geometry.player.armor.chestplate",
+        "geometry.player.armor.leggings",
+        "geometry.player.armor.boots",
+    };
+    static constexpr const char* LegacyArmorGeometries[] = {
         "geometry.humanoid.armor.helmet",
         "geometry.humanoid.armor.chestplate",
         "geometry.humanoid.armor.leggings",
         "geometry.humanoid.armor.boots",
     };
     for (size_t slot = 0; slot < armorRigs.size(); ++slot) {
-        if (const Geometry* geometry = library.find(ArmorGeometries[slot])) {
+        const Geometry* geometry = library.find(ArmorGeometries[slot]);
+        if (!geometry) {
+            geometry = library.find(LegacyArmorGeometries[slot]);
+        }
+        if (geometry) {
             buildEntityRig(*geometry, armorRigs[slot]);
         }
     }

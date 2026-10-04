@@ -281,14 +281,21 @@ void Skin::preload(const std::vector<std::string>& names)
 void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
 {
     Entry& entry = entries[name];
-    release(entry);
+    bool keepSlot = entry.placed && entry.bitmap.width == bitmap.width && entry.bitmap.height == bitmap.height;
+    if (!keepSlot) {
+        release(entry);
+    }
     entry.bitmap = std::move(bitmap);
-    entry.sprite = {};
+    if (!keepSlot) {
+        entry.sprite = {};
+    }
     entry.sprite.slice = slice;
     entry.sprite.texels = slice;
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
-    entry.placed = false;
+    entry.sprite.frames.clear();
+    entry.placed = keepSlot;
+    entry.pixelsDirty = true;
     entry.downsample = 0;
     entry.lastUse = useClock;
     changed = true;

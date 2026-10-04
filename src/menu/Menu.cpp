@@ -694,9 +694,13 @@ void Menu::inventoryLayer(Context& ui, float width, float height, std::chrono::s
     float shown = inventory.active ? outCubic(progress) : 1.0f - outCubic(progress);
     bool blocked = ui.isBlocked();
     ui.setBlocked(!inventory.active);
-    ui.setLayer(0.0f, 0.0f, inventory.active ? progress : 1.0f - progress);
-    // The dim goes over the whole screen, not just the safe area the panel sits in.
-    ui.fill(screenBounds, InventoryDim);
+    {
+        WholeScreen whole(ui, screenBounds);
+        ui.clearClip();
+        ui.setLayer(0.0f, 0.0f, inventory.active ? progress : 1.0f - progress);
+        ui.fill({ 0.0f, 0.0f, screenBounds.w, screenBounds.h }, InventoryDim);
+        ui.clearLayer();
+    }
     ui.setLayer(0.0f, (1.0f - shown) * ContainerWipe * screenBounds.h, shown);
     inventory.draw(ui, width, height, [&](float x, float y, float pixel) { playerModel(ui, x, y, pixel, true); });
     ui.clearLayer();
