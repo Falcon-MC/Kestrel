@@ -30,6 +30,8 @@ constexpr float TileStep = 64.0f;
 constexpr int TileColumns = 6;
 constexpr float RowHeight = 25.0f;
 constexpr const char* CoinPage = "MultiItemPage_DressingRoomCoinScreen";
+// Emotes the mods add sit in the Emotes grid under ids of their own.
+constexpr std::string_view ModEmotePrefix = "modemote:";
 
 constexpr Color HeaderFill { 198, 198, 198, 255 };
 constexpr Color HeaderShadow { 38, 38, 39, 255 };
@@ -181,7 +183,7 @@ void Menu::openDressingSection(DressingSection section, const std::string& page,
     state.sidebarOpen = false;
     state.search.clear();
     std::string wanted = section == DressingSection::Emotes ? "Emotes" : section == DressingSection::Capes ? "Capes" : section == DressingSection::Coins ? CoinPage : state.page;
-    if ((section == DressingSection::Emotes || section == DressingSection::Capes || section == DressingSection::Category || section == DressingSection::Coins) && !dressing.contains(wanted)) {
+    if ((section == DressingSection::Capes || section == DressingSection::Category || section == DressingSection::Coins) && !dressing.contains(wanted)) {
         dressingRequests.push_back(wanted);
     }
 }
@@ -230,6 +232,7 @@ void Menu::dressingRoom(Context& ui, float width, float height)
             dressingClassicSkins(ui, panel);
         } else if (state.section == DressingSection::Emotes) {
             title = tr("dr.header.animation", "Emotes");
+            addModEmotes();
             std::string noun = tr("dr.categories.emotes", "Emotes");
             dressingPieces(ui, panel, "Emotes", trf("dr.collector_title.owned", "Your %s", { noun }), trf("dr.collector_title.general", "All %s", { noun }), tr("dr.none_emote_button_text", "Clear All"));
         } else if (state.section == DressingSection::Capes) {
@@ -562,6 +565,14 @@ void Menu::dressingPieces(Context& ui, const Rect& panel, const std::string& pag
             ui.fill(cell, rarityColor(piece.rarity));
             if (!piece.sprite.empty()) {
                 ui.sprite(cell, piece.sprite);
+            } else if (piece.id.starts_with(ModEmotePrefix)) {
+                for (const EmoteOption& option : emoteOptions) {
+                    if (piece.id.substr(ModEmotePrefix.size()) == option.id) {
+                        modelPose = &option.pose;
+                    }
+                }
+                playerModel(ui, cell.x + cell.w * 0.5f, cell.y + 3.0f, (cell.h - 8.0f) / 34.0f);
+                modelPose = nullptr;
             }
             if (cellState.hovered) {
                 ui.fill(cell, { 255, 255, 255, 30 });
@@ -638,7 +649,13 @@ void Menu::dressingPreview(Context& ui, const Rect& area, bool colorable)
 {
     DressingState& state = dressingState;
     float infoTop = std::floor(area.y + area.h * 0.72f);
+    for (const EmoteOption& option : emoteOptions) {
+        if (state.selected == std::string(ModEmotePrefix) + option.id) {
+            modelPose = &option.pose;
+        }
+    }
     playerModel(ui, area.x + area.w * 0.5f, area.y + 30.0f, std::min(6.0f, (infoTop - area.y - 40.0f) / 34.0f));
+    modelPose = nullptr;
 
     Rect toggle { area.x + area.w - 23.0f, infoTop - 40.0f, 20.0f, 20.0f };
     if (ui.classicButton("dressing:preview_fullscreen", "", toggle)) {
@@ -708,7 +725,9 @@ void Menu::dressingPreview(Context& ui, const Rect& area, bool colorable)
     }
     Rect equip { info.x + 3.0f, info.y + info.h - 19.0f, std::min(143.0f, info.w - 6.0f), 17.0f };
     if (ui.classicButton("dressing:equip", tr("dr.equip_piece", "Equip"), equip, state.section == DressingSection::Colors || (chosen && chosen->owned))) {
-        if (chosen) {
+        if (chosen && chosen->id.starts_with(ModEmotePrefix)) {
+            openEmoteEquip(chosen->id.substr(ModEmotePrefix.size()));
+        } else if (chosen) {
             state.equipped = chosen->id;
         }
     }
@@ -974,6 +993,32 @@ void Menu::dressingDialog(Context& ui, float width, float height)
     if (ui.classicButton("dressing:differences_ok", tr("gui.ok", "OK"), { box.x + 11.0f, box.y + box.h - 40.0f, box.w - 22.0f, 26.0f })) {
         state.dialog = DressingDialog::None;
     }
+}
+
+}
+
+namespace kestrel::menu {
+
+/**
+ * The Emotes section holds the emotes the mods added, all local, so it shows
+ * them at once as owned pieces without asking the store for anything.
+ */
+void Menu::addModEmotes()
+{
+    DressingPageView& page = dressing["Emotes"];
+    page = DressingPageView {};
+    page.loaded = true;
+    std::vector<DressingPiece> pieces;
+    for (const EmoteOption& option : emoteOptions) {
+        DressingPiece piece;
+        piece.id = std::string(ModEmotePrefix) + option.id;
+        piece.title = option.name;
+        piece.creator = option.id.substr(0, option.id.find(':'));
+        piece.owned = true;
+        piece.sprite = option.icon;
+        pieces.push_back(std::move(piece));
+    }
+    page.owned = std::move(pieces);
 }
 
 }

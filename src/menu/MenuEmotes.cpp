@@ -84,6 +84,9 @@ void Menu::pickEmoteSlot(size_t slot)
     }
     emoteSlotsChanged = true;
     emoteEquipping.clear();
+    if (emoteEquipOnly) {
+        dialog = Dialog::None;
+    }
 }
 
 /**
@@ -131,7 +134,7 @@ void Menu::emoteWheel(Context& ui, float width, float height)
         emoteRoot = root;
         emoteHovered = -1;
     }
-    if (opening) {
+    if (opening && !emoteEquipOnly) {
         emoteEquipping.clear();
     }
     if (!emoteUi->valid()) {
@@ -197,6 +200,9 @@ void Menu::emoteWheel(Context& ui, float width, float height)
             beginEmoteEquip();
         } else if (event.name == "button.close_dialog" || event.name == "button.close_emote_popup") {
             emoteEquipping.clear();
+            if (emoteEquipOnly) {
+                dialog = Dialog::None;
+            }
         } else if (event.name == "button.menu_exit" || event.name == "button.emote_wheel_exit_non_gamepad") {
             dialog = Dialog::None;
         }
@@ -212,7 +218,25 @@ void Menu::emoteWheel(Context& ui, float width, float height)
     if (dialog != Dialog::Emotes) {
         emoteUi.reset();
         emoteEquipping.clear();
+        emoteEquipOnly = false;
     }
+}
+
+}
+
+namespace kestrel::menu {
+
+/**
+ * Opens the equip popup for one emote straight away, the way equipping an
+ * emote from the dressing room asks which slot it goes in; placing it or
+ * closing the popup goes back to where the player was.
+ */
+void Menu::openEmoteEquip(const std::string& id)
+{
+    emoteUi.reset();
+    emoteEquipping = id;
+    emoteEquipOnly = true;
+    dialog = Dialog::Emotes;
 }
 
 }
