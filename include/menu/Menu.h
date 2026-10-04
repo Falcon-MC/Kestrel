@@ -1117,6 +1117,8 @@ private:
     std::array<const EmoteOption*, EmoteSlotCount> filledEmoteSlots() const;
     void pickEmoteSlot(size_t slot);
     void beginEmoteEquip();
+    void openEmoteEquip(const std::string& id);
+    void addModEmotes();
     ui::UiData pauseData() const;
     void pauseRenderer(ui::Context& ui, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup);
     void pauseButton(const std::string& id);
@@ -1359,6 +1361,7 @@ private:
     std::string emoteRoot;
     const ModelPose* modelPose = nullptr;
     std::string lastEmoteOffered;
+    bool emoteEquipOnly = false;
     int emoteHovered = -1;
     bool respawnRequested = false;
     std::chrono::steady_clock::time_point respawnClicked {};
