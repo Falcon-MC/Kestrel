@@ -1858,6 +1858,13 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         return std::nullopt;
     }
 
+    {
+        std::string host = settings.mHost.find(':') != std::string::npos ? "[" + settings.mHost + "]" : settings.mHost;
+        std::lock_guard<std::mutex> guard(mutex);
+        current.endpoint = host + ":" + std::to_string(settings.mPort);
+        publishSnapshotLocked();
+    }
+
     resetDebugLog();
     world::clearServerDimensionHeights();
     debugLog("dial " + settings.mHost + ":" + std::to_string(settings.mPort) + " radius " + std::to_string(settings.mChunkRadius));
