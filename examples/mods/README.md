@@ -55,6 +55,7 @@ Kestrel down, though the handler that threw stops for that call.
 | `scheduler()` | `after`, `every`, `nextFrame` on the main thread, `post` from any thread |
 | `shaders()` | custom shaders for the HUD and the world |
 | `camera()` | where the view is drawn from, `detach(position, rotation)` for a free camera, `setFovScale` to zoom |
+| `hud()` | `setHidden(element, true)` takes the game's crosshair, sidebar, hotbar, hearts and other HUD parts off screen, to draw your own in their place |
 | `log()` | lines in `debug.txt` and the console, prefixed with the mod id |
 
 Helpers on `Mod` shorten the common cases: `on<Event>(lambda)`, `on(&MyMod::method)`, `command(...)`,

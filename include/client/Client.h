@@ -238,6 +238,7 @@ private:
     menu::HudSlot inventoryIcon(const HudItem& item);
     void drawInventoryEntity(ui::Context& ui, const std::string& identifier, const ui::Rect& rect, float alpha);
     menu::HudView buildHudView();
+    uint32_t modHiddenElements() const;
     std::vector<menu::NameTag> buildNameTags() const;
     void countFrame(std::chrono::steady_clock::time_point now);
     menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
