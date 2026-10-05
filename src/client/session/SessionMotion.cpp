@@ -7,7 +7,6 @@
 #include "Protocol/Packets/PlayerAuthInputPacket.h"
 #include "Protocol/Packets/RespawnPacket.h"
 #include "Protocol/Packets/SetActorMotionPacket.h"
-#include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAbilitiesPacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
@@ -276,8 +275,6 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         std::lock_guard<std::mutex> guard(mutex);
         current.player.mayFly = mayFly;
         current.player.operatorCommands = abilities->mAbilities.mCommandPermission > 0;
-    } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
-        motion.setGameType(mode->mGamemode);
     }
 }
 

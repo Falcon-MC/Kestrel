@@ -62,6 +62,7 @@ inline constexpr float RiptideLift = 1.1999999f;
 inline constexpr int32_t SpinAttackTicks = 20;
 inline constexpr int32_t SkyCheckTop = 320;
 inline constexpr float Pi = 3.1415927f;
+inline constexpr int32_t GameCreative = 1;
 inline constexpr int32_t GameSpectator = 6;
 
 /**

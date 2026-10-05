@@ -13,7 +13,6 @@
 #include "Protocol/Packets/PlayerHotbarPacket.h"
 #include "Protocol/Packets/SetHealthPacket.h"
 #include "Protocol/Packets/SetHudPacket.h"
-#include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
 
@@ -348,9 +347,6 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
                 current.hud.hiddenElements &= ~(1u << element);
             }
         }
-    } else if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
-        std::lock_guard<std::mutex> guard(mutex);
-        current.hud.gameType = mode->mGamemode;
     } else if (auto effect = std::dynamic_pointer_cast<MobEffectPacket>(packet)) {
         if (effect->mRuntimeActorId != localRuntimeId) {
             return;
