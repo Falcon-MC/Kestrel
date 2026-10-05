@@ -73,7 +73,8 @@ public:
      * way does nothing.
      */
     void request(const std::string& pageId, MinecraftAuthentication* authentication);
-    std::map<std::string, DressingPage> snapshot() const;
+    /** Returns all pages when a revision changed, otherwise an empty map. */
+    std::map<std::string, DressingPage> snapshot(const std::map<std::string, uint64_t>& seen) const;
 
 private:
     void run();
