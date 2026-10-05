@@ -570,6 +570,9 @@ struct SessionSnapshot {
     uint64_t localRuntimeId = 0;
     std::string name;
     std::string target;
+    // The host and port the target resolved to, once known. Realms and
+    // featured servers only get one after asking an online service.
+    std::string endpoint;
     std::string displayName;
     std::string levelName;
     std::string gameMode;

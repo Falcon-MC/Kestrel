@@ -81,6 +81,12 @@ public:
 
     // Added in API 3 and kept last so older mods still find everything above.
     virtual std::vector<BossBar> bossBars() const = 0;
+    /**
+     * The host:port the connection actually went to. Unlike serverAddress
+     * it is a real address for Realms and featured servers too; empty until
+     * the client has looked it up.
+     */
+    virtual std::string serverEndpoint() const = 0;
 
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {

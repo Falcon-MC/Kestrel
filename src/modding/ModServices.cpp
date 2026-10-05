@@ -405,6 +405,11 @@ mod::Sidebar WorldService::sidebar() const
     return { view.visible && joined(host), view.title, view.lines };
 }
 
+std::string WorldService::serverEndpoint() const
+{
+    return host.snapshot.endpoint;
+}
+
 std::vector<mod::BossBar> WorldService::bossBars() const
 {
     std::vector<mod::BossBar> bars;

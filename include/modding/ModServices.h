@@ -108,6 +108,7 @@ public:
     void setVisibleBlocks(const std::vector<std::string>& names) override;
     std::vector<mod::FoundBlock> findBlocks(const std::vector<std::string>& names, const mod::Vec3& center, double radius, size_t limit) const override;
     std::vector<mod::BossBar> bossBars() const override;
+    std::string serverEndpoint() const override;
 
 private:
     HostState& host;
