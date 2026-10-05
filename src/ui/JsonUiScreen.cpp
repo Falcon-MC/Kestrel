@@ -461,6 +461,7 @@ void JsonUiRuntime::overrideState(Node& control, Node& node)
         bool listening = flag(control, "always_listening", false);
         node.selected = !typing && listeningSelected && listening;
         node.caret = !node.selected && (typing || (listeningCaret && listening));
+        node.caretOffset = !typing && listening ? listeningCaretOffset : std::nullopt;
         if (typing) {
             node.bound["#item_name"] = UiValue::of(control.edit);
         }
@@ -1683,6 +1684,22 @@ void JsonUiRuntime::paint(Node& node)
             lineY += (LabelLineHeight + padding) * scale;
         }
         if (caret) {
+            if (node.caretOffset && *node.caretOffset < node.text.size()) {
+                const Font& font = ui->textFont();
+                std::vector<std::string_view> parts;
+                font.wrap(node.text, style, rect.w / scale + 0.01f, parts);
+                size_t offset = std::min(*node.caretOffset, node.text.size());
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    size_t begin = static_cast<size_t>(parts[i].data() - node.text.data());
+                    if (i + 1 < parts.size() && offset >= static_cast<size_t>(parts[i + 1].data() - node.text.data())) continue;
+                    float width = font.measure(parts[i], style) * scale;
+                    float lineX = alignment == "center" ? rect.x + std::floor((rect.w - width) * 0.5f) : alignment == "right" ? rect.right() - width : rect.x;
+                    size_t length = offset > begin ? std::min(offset - begin, parts[i].size()) : 0;
+                    caretX = lineX + std::max(0.0f, font.measure(parts[i].substr(0, length), style) * scale - (length > 0 ? scale : 0.0f));
+                    caretY = rect.y + static_cast<float>(i) * (LabelLineHeight + padding) * scale;
+                    break;
+                }
+            }
             paintCaret(caretX, caretY, scale, alpha);
         }
         return;
@@ -2103,8 +2120,14 @@ void JsonUiScreen::blur()
 
 void JsonUiScreen::showListeningCaret(bool shown)
 {
-    if (runtime->listeningCaret != shown) {
+    showListeningCaret(shown, std::nullopt);
+}
+
+void JsonUiScreen::showListeningCaret(bool shown, std::optional<size_t> byteOffset)
+{
+    if (runtime->listeningCaret != shown || runtime->listeningCaretOffset != byteOffset) {
         runtime->listeningCaret = shown;
+        runtime->listeningCaretOffset = byteOffset;
         runtime->laidOut = false;
     }
 }
