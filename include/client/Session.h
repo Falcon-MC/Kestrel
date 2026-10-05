@@ -408,6 +408,7 @@ struct ChatMessage {
     std::string message;
     std::vector<std::string> parameters;
     bool translate = false;
+    bool commandError = false;
 };
 
 /**

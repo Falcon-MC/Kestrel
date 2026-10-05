@@ -13,7 +13,8 @@ std::string rawText(const std::string& message)
 
 std::string messageBody(const ChatMessage& message)
 {
-    return message.translate ? ui::Localization::shared().translateMessage(message.message, message.parameters) : message.message;
+    std::string body = message.translate ? ui::Localization::shared().translateMessage(message.message, message.parameters) : message.message;
+    return message.commandError ? std::string("\xC2\xA7" "c") + body : body;
 }
 
 std::string chatLine(const ChatMessage& message, const std::string& body)
