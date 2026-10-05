@@ -437,6 +437,12 @@ bool ModManager::wantsCursor() const
     return !host->cursorOwners.empty();
 }
 
+bool ModManager::hidesHud(mod::HudElement element) const
+{
+    uint32_t bit = 1u << static_cast<uint32_t>(element);
+    return std::any_of(host->hiddenHud.begin(), host->hiddenHud.end(), [bit](const auto& entry) { return (entry.second & bit) != 0; });
+}
+
 std::optional<CameraRequest> ModManager::cameraView() const
 {
     for (const auto& [owner, request] : host->cameras) {

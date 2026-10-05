@@ -129,6 +129,18 @@ private:
     size_t owner;
 };
 
+class HudService final : public mod::Hud {
+public:
+    HudService(HostState& host, size_t owner);
+
+    void setHidden(mod::HudElement element, bool hidden) override;
+    bool hidden(mod::HudElement element) const override;
+
+private:
+    HostState& host;
+    size_t owner;
+};
+
 class EmoteService final : public mod::Emotes {
 public:
     EmoteService(HostState& host, size_t owner);

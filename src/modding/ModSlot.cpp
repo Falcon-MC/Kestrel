@@ -128,6 +128,7 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , inputService(host, owner, settings)
     , cameraService(host, owner)
     , emoteService(host, owner)
+    , hudService(host, owner)
 {
 }
 
@@ -172,6 +173,7 @@ void ModSlot::releaseAll()
     host.shaders.release(id);
     host.cursorOwners.erase(id);
     host.cameras.erase(id);
+    host.hiddenHud.erase(id);
     if (host.hiddenBlocks.erase(id)) {
         host.hiddenChanged = true;
     }
@@ -243,6 +245,11 @@ mod::Camera& ModSlot::camera()
 mod::Emotes& ModSlot::emotes()
 {
     return emoteService;
+}
+
+mod::Hud& ModSlot::hud()
+{
+    return hudService;
 }
 
 std::filesystem::path ModSlot::dataDirectory()

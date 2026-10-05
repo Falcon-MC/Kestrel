@@ -45,6 +45,8 @@ struct HostState {
     float uiScale = 1.0f;
     std::set<size_t> cursorOwners;
     std::map<size_t, CameraRequest> cameras;
+    // HUD elements each mod hides, one bit per mod::HudElement.
+    std::map<size_t, uint32_t> hiddenHud;
     std::map<size_t, std::set<std::string>> hiddenBlocks;
     std::map<size_t, std::set<std::string>> visibleBlocks;
     bool hiddenChanged = false;
