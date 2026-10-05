@@ -734,6 +734,20 @@ void JsonUiRuntime::size(Node& node, int axis, float parent, std::optional<float
             }
             }
         }
+        if (node.type == "grid" && boundByBinding(node, "#get_grid_size")) {
+            std::string direction = text(node, "grid_fill_direction");
+            if ((axis == 1 && direction == "vertical") || (axis == 0 && direction == "horizontal")) {
+                float cellSize = 0.0f;
+                size_t count = 0;
+                for (const std::unique_ptr<Node>& child : node.children) {
+                    if (!child->shown) continue;
+                    if (count == 0) cellSize = intrinsic(*child, axis);
+                    ++count;
+                }
+                // Collection-sized grids must shrink before their bottom/right anchor is applied.
+                if (std::isfinite(cellSize)) value = std::min(value, cellSize * static_cast<float>(count));
+            }
+        }
         auto limit = [&](const char* key, bool upper) {
             const json::Value* bounds = property(node, key);
             if (!bounds || !bounds->isArray() || bounds->mArray.size() != 2) {
