@@ -112,6 +112,7 @@ struct ChatStyle {
     std::string fontType = "default";
     double fontScale = 1.0;
     double linePadding = 0.0;
+    double lifetime = 10.0;
 };
 
 // The game's HudElement ids, as SetHud names them.
