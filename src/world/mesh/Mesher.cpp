@@ -363,24 +363,40 @@ public:
         loadBlocks(assets, ids, input);
         if (input.isCancelled()) return {};
         std::vector<uint8_t> seeds(volume, 0);
+        std::vector<uint8_t> blocked;
+        // Height of the first cell in each column that filters sky light, below the field when none does.
+        std::vector<int32_t> floors(size_t(Extent) * Extent, -Offset - 1);
         if (input.skyLight) {
-            auto blocked = blockedColumns(assets, ids, input);
+            blocked = blockedColumns(assets, ids, input);
             for (int32_t x = -Offset; x < Extent - Offset; ++x) {
                 for (int32_t z = -Offset; z < Extent - Offset; ++z) {
                     if (blocked[size_t(x + Offset) * Extent + size_t(z + Offset)]) continue;
                     for (int32_t y = Extent - Offset - 1; y >= -Offset; --y) {
                         size_t cell = index(x, y, z);
                         seeds[cell] = static_cast<uint8_t>(15 - std::min<uint8_t>(filter[cell], 15));
-                        if (filter[cell]) break;
+                        if (filter[cell]) {
+                            floors[size_t(x + Offset) * Extent + size_t(z + Offset)] = y;
+                            break;
+                        }
                     }
                 }
             }
         }
-        block = previous && previous->block.size() == volume ? previous->block : std::vector<uint8_t>(volume, 0);
-        sky = previous && previous->sky.size() == volume ? previous->sky : std::vector<uint8_t>(volume, 0);
-        relax(block, emission, previous.get(), false);
-        if (input.isCancelled()) return {};
-        relax(sky, seeds, previous.get(), true);
+        if (previous) {
+            block = previous->block.size() == volume ? previous->block : std::vector<uint8_t>(volume, 0);
+            sky = previous->sky.size() == volume ? previous->sky : std::vector<uint8_t>(volume, 0);
+            relax(block, emission, previous.get(), false);
+            if (input.isCancelled()) return {};
+            relax(sky, seeds, previous.get(), true);
+        } else {
+            // Nothing to repair, so a plain flood from the sources lands on the same levels as relax
+            // for a fraction of the work. This is nearly every job while the player moves around.
+            spread(block, emission);
+            if (input.isCancelled()) return {};
+            sky = seeds;
+            std::vector<uint32_t> sources = input.skyLight ? skySources(blocked, floors) : std::vector<uint32_t> {};
+            propagate(sky, sources);
+        }
         if (input.isCancelled()) return {};
         auto result = std::make_shared<ChunkLighting>();
         result->filter = std::move(filter);
@@ -670,6 +686,51 @@ private:
                 }
             }
         }
+    }
+
+    void spread(std::vector<uint8_t>& levels, const std::vector<uint8_t>& seeds) const
+    {
+        levels.assign(seeds.size(), 0);
+        std::vector<uint32_t> queue;
+        for (size_t cell = 0; cell < seeds.size(); ++cell) {
+            if (seeds[cell] > 0) {
+                levels[cell] = std::min<uint8_t>(seeds[cell], 15);
+                queue.push_back(static_cast<uint32_t>(cell));
+            }
+        }
+        propagate(levels, queue);
+    }
+
+    /**
+     * The open sky cells that can light anything. A cell with full sky light only brightens
+     * a neighbour that sits at or under the top filtering cell of its own column, so in each
+     * column that is the stretch from its own floor up to the highest neighbouring floor.
+     * Flooding from every open cell instead lands on the same levels, just several times slower.
+     */
+    std::vector<uint32_t> skySources(const std::vector<uint8_t>& blocked, const std::vector<int32_t>& floors) const
+    {
+        const int32_t top = Extent - Offset - 1;
+        auto reachOf = [&](int32_t x, int32_t z) {
+            if (x < -Offset || z < -Offset || x > top || z > top) return -Offset - 1;
+            size_t column = size_t(x + Offset) * Extent + size_t(z + Offset);
+            return blocked[column] ? top : floors[column];
+        };
+        std::vector<uint32_t> sources;
+        for (int32_t x = -Offset; x <= top; ++x) {
+            for (int32_t z = -Offset; z <= top; ++z) {
+                size_t column = size_t(x + Offset) * Extent + size_t(z + Offset);
+                if (blocked[column]) continue;
+                int32_t floor = floors[column];
+                int32_t reach = std::min(top, std::max({ reachOf(x - 1, z), reachOf(x + 1, z), reachOf(x, z - 1), reachOf(x, z + 1) }));
+                for (int32_t y = std::max(floor, -Offset); y <= reach; ++y) {
+                    sources.push_back(static_cast<uint32_t>(index(x, y, z)));
+                }
+                if (floor >= -Offset && floor > reach) {
+                    sources.push_back(static_cast<uint32_t>(index(x, floor, z)));
+                }
+            }
+        }
+        return sources;
     }
 
     void solveBlock() const
