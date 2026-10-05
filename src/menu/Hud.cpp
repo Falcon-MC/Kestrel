@@ -17,8 +17,6 @@ constexpr float IconSize = 9.0f;
 constexpr float IconStep = 8.0f;
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
 
-// Settings the game passes hud_screen.json from code.
-constexpr double ChatLifetime = 10.0;
 constexpr double GameTipFadeIn = 0.5;
 constexpr const char* ItemNameTextOffset = "0,-11";
 
@@ -436,7 +434,7 @@ ui::UiData hudData(const HudView& view)
     for (const HudChatLine& line : view.chat) {
         chat.push_back({ { "#chat_text", text(line.text) } });
         data.factories["chat_item_factory"].push_back({ "chat_item", {
-            { "$chat_item_lifetime", number(ChatLifetime) },
+            { "$chat_item_lifetime", number(view.chatStyle.lifetime) },
             { "$chat_background_opacity", number(view.chatStyle.backgroundOpacity) },
             { "$chat_font_scale_factor", number(view.chatStyle.fontScale) },
             { "$chat_line_spacing", number(view.chatStyle.linePadding) },

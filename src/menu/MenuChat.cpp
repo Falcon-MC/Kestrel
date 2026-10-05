@@ -25,7 +25,6 @@ namespace {
 constexpr size_t MaxChatLines = 100;
 constexpr size_t MaxFeedLines = 50;
 constexpr size_t MaxChatHistory = 100;
-constexpr float FeedLifetimeSeconds = 10.0f;
 constexpr float FeedFadeSeconds = 1.0f;
 constexpr const char* ChatRoot = "chat.chat_screen";
 // commands_panel is the screen less 50px, and each auto_complete row is 10px tall; the
@@ -254,6 +253,8 @@ std::string Menu::chatLineColor(const ChatLine& line) const
 ChatStyle Menu::chatStyle() const
 {
     ChatStyle style;
+    constexpr std::array<double, 3> durations { 3.0, 10.0, 30.0 };
+    style.lifetime = durations[static_cast<size_t>(std::clamp(option("chat_message_duration", 1), 0, 2))];
     style.backgroundOpacity = std::clamp(option("chat_background_opacity", 50), 0, 100) / 100.0;
     style.fontType = chatOptions.smoothFont ? "smooth" : "default";
     style.fontScale = chatOptions.smoothFont ? static_cast<double>(chatOptions.fontSize) / static_cast<double>(DefaultChatFontSize) : 1.0;
@@ -414,9 +415,10 @@ bool Menu::handleChatKeys(const InputState& input)
 std::vector<HudChatLine> Menu::hudChat() const
 {
     std::vector<HudChatLine> lines;
+    double lifetime = chatStyle().lifetime;
     auto now = std::chrono::steady_clock::now();
     for (auto it = chatLines.rbegin(); it != chatLines.rend() && lines.size() < MaxFeedLines; ++it) {
-        if (std::chrono::duration<float>(now - it->arrived).count() >= FeedLifetimeSeconds + FeedFadeSeconds) {
+        if (std::chrono::duration<float>(now - it->arrived).count() >= lifetime + FeedFadeSeconds) {
             break;
         }
         if (chatLineShown(*it)) {
