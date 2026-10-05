@@ -20,6 +20,8 @@ namespace {
 constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
 constexpr uint32_t WorldTextureCount = BlockTexturePages + EntityTexturePages;
 constexpr uint32_t EntityMipLevels = 5;
+// Blocks the camera may drift before translucent terrain is sorted again.
+constexpr double TransparentResortDistance = 1.0;
 
 /**
  * The smaller levels of one square entity layer, each the average of the four
@@ -484,11 +486,17 @@ public:
         }
 
 
-        auto depth = [&](const std::array<float, 3>& point) {
-            return view.viewProjection[2] * point[0] + view.viewProjection[6] * point[1] + view.viewProjection[10] * point[2];
+        // Distance rather than view depth, so turning the camera never asks for a new sort.
+        auto depth = [](const std::array<float, 3>& point) {
+            return point[0] * point[0] + point[1] * point[1] + point[2] * point[2];
         };
         const std::array<double, 3> camera { view.cameraX, view.cameraY, view.cameraZ };
-        if (!terrainCacheValid || cachedMeshRevision != meshRevision || cachedCamera != camera || cachedProjection != view.viewProjection) {
+        double movedX = camera[0] - cachedCamera[0];
+        double movedY = camera[1] - cachedCamera[1];
+        double movedZ = camera[2] - cachedCamera[2];
+        // a flying camera never sits perfectly still, so resorting on every tiny drift redid the whole sort each frame
+        bool moved = movedX * movedX + movedY * movedY + movedZ * movedZ > TransparentResortDistance * TransparentResortDistance;
+        if (!terrainCacheValid || cachedMeshRevision != meshRevision || moved || cachedVisible != visible) {
             terrainTransparent.clear();
             for (const ChunkBuffer* chunk : visible) {
                 std::array<float, 3> relative {
@@ -507,7 +515,7 @@ public:
             terrainCounts = {};
             for (const auto& quad : terrainTransparent) ++terrainCounts[quad.stream - 2];
             cachedCamera = camera;
-            cachedProjection = view.viewProjection;
+            cachedVisible = visible;
             cachedMeshRevision = meshRevision;
             terrainCacheValid = true;
             ++terrainGeneration;
@@ -914,7 +922,7 @@ private:
     std::array<std::vector<uint8_t>, 2> terrainData;
     std::array<size_t, 2> terrainCounts {};
     std::array<double, 3> cachedCamera {};
-    std::array<float, 16> cachedProjection {};
+    std::vector<const ChunkBuffer*> cachedVisible;
     uint64_t meshRevision = 0;
     uint64_t cachedMeshRevision = 0;
     uint64_t terrainGeneration = 0;
