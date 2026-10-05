@@ -50,6 +50,7 @@
 #include "Protocol/Packets/SetHealthPacket.h"
 #include "Protocol/Packets/ActorEventPacket.h"
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
+#include "Protocol/Packets/UpdatePlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "Protocol/Packets/SetActorDataPacket.h"
 #include "Protocol/Packets/SetActorLinkPacket.h"
@@ -958,6 +959,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::SetHealth:
     case MinecraftPacketIds::ActorEvent:
     case MinecraftPacketIds::SetPlayerGameType:
+    case MinecraftPacketIds::UpdatePlayerGameType:
     case MinecraftPacketIds::MobEffect:
     case MinecraftPacketIds::BossEvent:
     case MinecraftPacketIds::PlayerList:
@@ -1008,6 +1010,18 @@ void Session::handleWorldPacket(std::string& payload)
         }
         connection->disconnect("Bad packet received from server");
         return;
+    }
+    std::optional<GameType> gameType;
+    if (auto mode = std::dynamic_pointer_cast<SetPlayerGameTypePacket>(packet)) {
+        gameType = static_cast<GameType>(mode->mGamemode);
+    } else if (auto mode = std::dynamic_pointer_cast<UpdatePlayerGameTypePacket>(packet); mode && mode->mActorId == localUniqueId) {
+        gameType = mode->mGameType;
+    }
+    if (gameType) {
+        motion.setGameType(static_cast<int32_t>(*gameType));
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.gameType = static_cast<int32_t>(*gameType);
+        current.gameMode = gameModeName(*gameType);
     }
     handleInventoryPacket(packet);
     handleHudPacket(packet);
