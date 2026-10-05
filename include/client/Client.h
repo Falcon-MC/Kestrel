@@ -8,6 +8,7 @@
 
 #include <future>
 #include "client/Account.h"
+#include "client/ActorMotion.h"
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
 #include "client/ServerCamera.h"
@@ -50,30 +51,6 @@ namespace kestrel {
 
 class Window;
 class Renderer;
-
-/**
- * How one entity glides between its network samples: the displayed position
- * and rotation (yaw, head yaw, pitch) move from where they were when the last
- * sample arrived toward that sample over the time samples usually take.
- * Players also keep the body yaw worked out from how they walk.
- */
-struct ActorMotion {
-    uint64_t moves = 0;
-    uint64_t teleports = 0;
-    uint64_t launchTurns = 0;
-    std::array<double, 3> from {};
-    std::array<double, 3> to {};
-    std::array<double, 3> shown {};
-    std::array<float, 3> turnFrom {};
-    std::array<float, 3> turnTo {};
-    std::array<float, 3> turnShown {};
-    double start = 0.0;
-    double duration = 0.0;
-    double lastSample = 0.0;
-    float bodyYaw = 0.0f;
-    double lastFrame = 0.0;
-    std::array<double, 3> lastShown {};
-};
 
 /**
  * Server text the HUD fades out: when it arrived and how long it holds before

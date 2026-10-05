@@ -1514,8 +1514,6 @@ ActorView Client::localActorView(float deltaSeconds)
 
 void Client::interpolateActors(double now)
 {
-    constexpr double MinGlide = 0.05;
-    constexpr double MaxGlide = 0.15;
     constexpr double SnapDistance = 8.0;
     auto& present = actorPresent;
     present.clear();
@@ -1556,13 +1554,7 @@ void Client::interpolateActors(double now)
             motion.lastFrame = now;
             motion.lastShown = target;
         } else if (actor.moves != motion.moves) {
-            motion.from = motion.shown;
-            motion.to = target;
-            motion.turnFrom = motion.turnShown;
-            motion.turnTo = turn;
-            motion.duration = std::clamp(now - motion.lastSample, MinGlide, MaxGlide);
-            motion.start = now;
-            motion.lastSample = now;
+            motion.retarget(target, turn, now);
             motion.moves = actor.moves;
         }
         if (actor.launchTurns != motion.launchTurns) {
@@ -1573,12 +1565,7 @@ void Client::interpolateActors(double now)
                 motion.turnTo = turn;
             }
         }
-        double t = motion.duration > 0.0 ? std::clamp((now - motion.start) / motion.duration, 0.0, 1.0) : 1.0;
-        for (size_t axis = 0; axis < 3; ++axis) {
-            motion.shown[axis] = motion.from[axis] + (motion.to[axis] - motion.from[axis]) * t;
-            float delta = wrapDegrees(motion.turnTo[axis] - motion.turnFrom[axis]);
-            motion.turnShown[axis] = wrapDegrees(motion.turnFrom[axis] + delta * static_cast<float>(t));
-        }
+        motion.advance(now);
         actor.x = motion.shown[0];
         actor.y = motion.shown[1];
         actor.z = motion.shown[2];
