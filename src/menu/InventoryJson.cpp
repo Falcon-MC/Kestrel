@@ -95,6 +95,8 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         jsonTitle = title;
         jsonOpenRevision = state.openRevision;
         ui::UiRow variables;
+        // Menu::inventoryLayer already dims the entire window outside the safe area.
+        variables["$screen_background_alpha"] = ui::UiValue::of(0.0);
         variables["$container_title"] = ui::UiValue::of(title);
         variables["$localize_title"] = ui::UiValue::of(false);
         variables["$use_smithing_table_2_ui"] = ui::UiValue::of(true);
