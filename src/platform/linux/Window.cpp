@@ -138,6 +138,12 @@ public:
         }
         captured = value;
         SDL_SetWindowRelativeMouseMode(window, captured);
+        // An input method left on in game eats held letters, KDE's press and hold accent picker swallows A, S and D.
+        if (captured) {
+            SDL_StopTextInput(window);
+        } else {
+            SDL_StartTextInput(window);
+        }
     }
 
     bool drawsCaptionButtons() const override
