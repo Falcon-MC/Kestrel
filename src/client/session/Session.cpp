@@ -133,6 +133,9 @@ constexpr const char* SessionHandlePrefix = "session_handle/";
 constexpr unsigned int TimeoutMs = 30000;
 // The block outline follows the crosshair, so the loop never sleeps long enough for it to lag behind.
 constexpr int OutlineRefreshMs = 10;
+// How long a sub-chunk at the loading edge waits for its neighbour columns before it is meshed anyway.
+constexpr double FrontierWaitSeconds = 1.0;
+constexpr double FrontierRecheckSeconds = 0.1;
 
 /**
  * Sends the game's Steve texture as the player's skin, so other players and
@@ -1452,6 +1455,37 @@ void Session::scheduleMeshes()
     }
     std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
     std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
+    // Sub-chunks waiting on a neighbour column only come back when a column arrived or now and then, not on every pass.
+    const double now = secondsNow();
+    size_t columns = world.store().columnCount();
+    if (!frontierMeshes.empty() && (columns != frontierColumns || now >= frontierRecheck)) {
+        size_t taken = dirty.size();
+        for (const auto& [key, since] : frontierMeshes) {
+            if (!std::binary_search(dirty.begin(), dirty.begin() + taken, key)) dirty.push_back(key);
+        }
+        frontierRecheck = now + FrontierRecheckSeconds;
+    }
+    frontierColumns = columns;
+    // Every column that lands dirties its whole 3x3 neighbourhood, so a sub-chunk at the loading edge
+    // meshed right away gets meshed again for each neighbour that follows. Hold it until they are in.
+    auto neighboursLoaded = [&](const world::SubChunkKey& key) {
+        for (int32_t dx = -1; dx <= 1; ++dx) {
+            for (int32_t dz = -1; dz <= 1; ++dz) {
+                if (!world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })) return false;
+            }
+        }
+        return true;
+    };
+    auto waitsForNeighbours = [&](const world::SubChunkKey& key) {
+        if (world.settled() || neighboursLoaded(key)) {
+            frontierMeshes.erase(key);
+            return false;
+        }
+        auto [entry, inserted] = frontierMeshes.try_emplace(key, now);
+        if (now - entry->second < FrontierWaitSeconds) return true;
+        frontierMeshes.erase(entry);
+        return false;
+    };
     MotionVector feet = motion.position();
     mesher->setView({ feet.x, feet.y, feet.z });
     auto distance = [&](const world::SubChunkKey& key) {
@@ -1469,11 +1503,15 @@ void Session::scheduleMeshes()
 
     static constexpr int32_t Offsets[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
     for (const world::SubChunkKey& key : dirty) {
+        std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
+        if (center && !urgent.contains(key) && waitsForNeighbours(key)) {
+            continue;
+        }
         uint64_t generation = ++nextMeshGeneration;
         meshGenerations.insert_or_assign(key, generation);
         mesher->invalidate(key, generation);
-        std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
         if (!center) {
+            frontierMeshes.erase(key);
             mesher->cancel(key);
             meshGenerations.erase(key);
             meshedGenerations.erase(key);
