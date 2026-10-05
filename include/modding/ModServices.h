@@ -75,6 +75,7 @@ public:
     void pickBlock(bool withData) override;
     void dropHeld(bool wholeStack) override;
     void respawn() override;
+    int32_t maxDurability(const std::string& identifier) const override;
 
 private:
     HostState& host;

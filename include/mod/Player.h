@@ -66,6 +66,13 @@ public:
     virtual void pickBlock(bool withData = false) = 0;
     virtual void dropHeld(bool wholeStack = false) = 0;
     virtual void respawn() = 0;
+
+    // Added in API 4 and kept last so older mods still find everything above.
+    /**
+     * How much damage an item takes before it breaks, 0 for one that never
+     * wears out. ItemStack::damage counts up toward it.
+     */
+    virtual int32_t maxDurability(const std::string& identifier) const = 0;
 };
 
 }

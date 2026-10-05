@@ -46,7 +46,7 @@ Kestrel down, though the handler that threw stops for that call.
 | --- | --- |
 | `events()` | subscribe to any event by type, post your own events to other mods |
 | `chat()` | send to the server, print locally, toast, title, action bar, chat history |
-| `player()` | position, rotation (and turning), health, food, xp, inventory, effects, attack, use, drop, respawn |
+| `player()` | position, rotation (and turning), health, food, xp, inventory, effects, `maxDurability` of an item, attack, use, drop, respawn |
 | `world()` | server, dimension, time, weather, entities, the targeted block, player list, sidebar, any block of a loaded chunk (`block`, `isLoaded`), `raycast` through blocks and entities, `setBlockHidden` to draw blocks as air |
 | `network()` | connect, disconnect, raw packets, form answers, packet filters |
 | `input()` | held keys, mouse (in Canvas units), `setCursorFree(true)` to show the cursor and pause play while a mod menu is open, whether the player is in game, key bindings (`bind(key)` hidden, `bind({ id, label, defaultKey })` listed in Keyboard & Mouse while the mod is loaded) |
