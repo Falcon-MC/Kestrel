@@ -1579,8 +1579,11 @@ void JsonUiRuntime::paint(Node& node)
                     scale = { sx, sy };
                 }
             }
-            float tw = tileX ? sourceSize[0] * scale[0] : rect.w;
-            float th = tileY ? sourceSize[1] * scale[1] : rect.h;
+            // Repeating a whole single-texel axis equals stretching it, without exhausting the tile budget.
+            bool repeatX = tileX && !(sprite.width == 1.0f && source.x == 0.0f && source.w == 1.0f);
+            bool repeatY = tileY && !(sprite.height == 1.0f && source.y == 0.0f && source.h == 1.0f);
+            float tw = repeatX ? sourceSize[0] * scale[0] : rect.w;
+            float th = repeatY ? sourceSize[1] * scale[1] : rect.h;
             Rect bounds = node.clipped ? intersect(node.clip, rect) : rect;
             if (clipping) {
                 bounds = intersect(bounds, clipVisible);
