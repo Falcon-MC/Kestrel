@@ -32,10 +32,10 @@ bool quiet(const Context& ui)
 }
 
 /**
- * Whether a control or any below it still has an animation running or a
- * control fading out, which change what is drawn from frame to frame.
+ * Whether a control or any below it has an animation requiring layout or
+ * a control fading out. Texture flip books are sampled during paint.
  */
-bool animating(const Node& node)
+bool animating(const JsonUiRuntime& runtime, const Node& node)
 {
     if (!node.shown) {
         return false;
@@ -45,11 +45,21 @@ bool animating(const Node& node)
     }
     for (const AnimTrack& track : node.anims) {
         if (track.start >= 0.0 && !track.finished) {
+            if (track.target == "uv") {
+                Node probe;
+                probe.vars = node.vars;
+                probe.props = track.props;
+                std::string type = runtime.text(probe, "anim_type");
+                // Flip books advance in paint and never change the control's layout.
+                if (type == "flip_book" || type == "aseprite_flip_book") {
+                    continue;
+                }
+            }
             return true;
         }
     }
     for (const std::unique_ptr<Node>& child : node.children) {
-        if (animating(*child)) {
+        if (animating(runtime, *child)) {
             return true;
         }
     }
@@ -1964,7 +1974,7 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::
     bool sameData = generation ? r.laidDataSource == &data && r.laidDataGeneration == generation
         : !r.laidDataGeneration && r.laidData == data;
 
-    bool stable = r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(root)
+    bool stable = r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(r, root)
         && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
         && r.laidMouseX == ui.mouseX() && r.laidMouseY == ui.mouseY() && r.laidBlocked == ui.isBlocked() && r.laidHeld == r.held && sameData
         && r.laidFont == &ui.textFont() && r.laidFontRevision == ui.textFont().revision()
