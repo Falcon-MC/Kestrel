@@ -855,9 +855,10 @@ const std::optional<std::vector<Token>>& compiled(std::string_view source)
 
 class Evaluator {
 public:
-    Evaluator(const UiLookup& lookup, int depth)
+    Evaluator(const UiLookup& lookup, int depth, bool resolveNames = true)
         : lookup(lookup)
         , depth(depth)
+        , resolveNames(resolveNames)
     {
     }
 
@@ -867,7 +868,7 @@ public:
      */
     Operand resolveFinal(Operand operand) const
     {
-        if (operand.kind != Operand::Kind::PropertyText) {
+        if (!resolveNames || operand.kind != Operand::Kind::PropertyText) {
             return operand;
         }
         UiValue found = lookup(operand.text);
@@ -929,8 +930,11 @@ private:
      * A group's result as the JSON value the game turns it into before
      * reading it as a token again: untyped results become integers.
      */
-    static Operand settle(Operand operand)
+    Operand settle(Operand operand) const
     {
+        if (!resolveNames && (operand.kind == Operand::Kind::Str || operand.kind == Operand::Kind::PropertyText)) {
+            return Operand::ofStr(std::move(operand.text));
+        }
         switch (operand.kind) {
         case Operand::Kind::Bool:
         case Operand::Kind::Float:
@@ -954,14 +958,15 @@ private:
         UiValue value = lookup(name);
         if (value.kind == UiValue::Kind::String && !value.text.empty()) {
             if (value.text.front() == '#') {
-                return fromUi(lookup(value.text));
+                return resolveNames ? fromUi(lookup(value.text)) : Operand::ofStr(value.text);
             }
             if (value.text.front() == '(' && depth < MaxVariableDepth) {
                 const std::optional<std::vector<Token>>& tokens = compiled(value.text);
                 if (!tokens) {
                     return {};
                 }
-                return Evaluator(lookup, depth + 1).resolveFinal(Evaluator(lookup, depth + 1).run(*tokens));
+                Evaluator nested(lookup, depth + 1, resolveNames);
+                return nested.resolveFinal(nested.run(*tokens));
             }
         }
         return fromUi(value);
@@ -969,6 +974,7 @@ private:
 
     const UiLookup& lookup;
     int depth = 0;
+    bool resolveNames = true;
 };
 
 }
@@ -981,6 +987,14 @@ UiValue evaluate(std::string_view source, const UiLookup& lookup)
     }
     Evaluator evaluator(lookup, 0);
     return toUi(evaluator.resolveFinal(evaluator.run(*tokens)));
+}
+
+UiValue evaluateName(std::string_view source, const UiLookup& lookup)
+{
+    const std::optional<std::vector<Token>>& tokens = compiled(source);
+    if (!tokens) return {};
+    Evaluator evaluator(lookup, 0, false);
+    return toUi(evaluator.run(*tokens));
 }
 
 namespace {

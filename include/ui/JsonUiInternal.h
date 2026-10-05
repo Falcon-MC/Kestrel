@@ -34,6 +34,7 @@ std::string_view controlBase(std::string_view key);
  * 'strings' and numbers.
  */
 UiValue evaluate(std::string_view source, const UiLookup& lookup);
+UiValue evaluateName(std::string_view source, const UiLookup& lookup);
 
 UiValue toValue(const json::Value* value);
 

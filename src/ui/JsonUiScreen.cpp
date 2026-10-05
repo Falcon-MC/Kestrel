@@ -1054,7 +1054,8 @@ void JsonUiRuntime::click(Node& node)
         node.bound["#toggle_state"] = UiValue::of(next);
         std::string name = text(node, "toggle_name");
         if (!name.empty() && name.front() == '(') {
-            name = evaluate(node, name).toText();
+            UiLookup find = [&](const std::string& key) { return lookup(node, key); };
+            name = jsonui::evaluateName(name, find).toText();
         }
         emit(UiEvent::Kind::Toggle, node, std::move(name));
         events.back().state = next;
