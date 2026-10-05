@@ -937,6 +937,9 @@ private:
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
     std::map<world::SubChunkKey, uint64_t> meshedGenerations;
     uint64_t nextMeshGeneration = 0;
+    std::map<world::SubChunkKey, double> frontierMeshes;
+    size_t frontierColumns = 0;
+    double frontierRecheck = 0.0;
     std::map<world::SubChunkKey, std::shared_ptr<const world::ChunkMesh>> meshes;
     size_t meshQuads = 0;
     std::deque<MeshUpdate> pendingUpdates;
