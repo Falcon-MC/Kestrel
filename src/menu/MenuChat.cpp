@@ -254,6 +254,7 @@ std::string Menu::chatLineColor(const ChatLine& line) const
 ChatStyle Menu::chatStyle() const
 {
     ChatStyle style;
+    style.backgroundOpacity = std::clamp(option("chat_background_opacity", 50), 0, 100) / 100.0;
     style.fontType = chatOptions.smoothFont ? "smooth" : "default";
     style.fontScale = chatOptions.smoothFont ? static_cast<double>(chatOptions.fontSize) / static_cast<double>(DefaultChatFontSize) : 1.0;
     style.linePadding = (static_cast<double>(chatOptions.lineSpacing) - 1.0) * ChatLineHeight * style.fontScale;

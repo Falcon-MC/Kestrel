@@ -17,6 +17,11 @@ constexpr const char* SettingsRoot = "settings.screen_controls_and_settings";
 constexpr int VideoSection = 21;
 constexpr int ModsSection = 100;
 
+bool opacityOption(std::string_view name)
+{
+    return name == "hud_text_background_opacity" || name == "chat_background_opacity" || name == "actionbar_text_background_opacity";
+}
+
 /**
  * The section index variables the game's settings screen controller sets,
  * which the section toggles of the navigation_tab radio group carry.
@@ -325,6 +330,9 @@ void Menu::setOptionValue(std::string_view name, int value)
     } else {
         extraOptionValues[std::string(name)] = value;
     }
+    if (opacityOption(name)) {
+        hudScreen.reset();
+    }
 }
 
 /**
@@ -380,7 +388,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             globals["#" + name] = UiValue::of(value != 0);
             break;
         case OptionKind::Slider: {
-            globals["#" + name] = UiValue::of(static_cast<double>(value - option.min));
+            globals["#" + name] = UiValue::of(opacityOption(name) ? value / 100.0 : static_cast<double>(value - option.min));
             globals["#" + name + "_steps"] = UiValue::of(static_cast<double>(option.max - option.min + 1));
             std::string shown;
             if (name == "field_of_view" || name == "render_distance") {
@@ -541,7 +549,8 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
         if (event.kind == UiEvent::Kind::Slider) {
             for (const Option& option : Options) {
                 if (option.kind == OptionKind::Slider && event.name == option.name) {
-                    int value = option.max > option.min ? option.min + static_cast<int>(std::lround(event.value)) : option.min;
+                    int value = opacityOption(option.name) ? static_cast<int>(std::lround(event.value * 100.0))
+                        : option.max > option.min ? option.min + static_cast<int>(std::lround(event.value)) : option.min;
                     setOptionValue(option.name, value);
                     break;
                 }
