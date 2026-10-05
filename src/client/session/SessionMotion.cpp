@@ -303,9 +303,11 @@ void Session::tickMotion()
         nextMotionTick += TickSeconds;
         ++due;
     }
-    for (int32_t index = 0; index < std::min(due, MaxCatchUpTicks); ++index) {
+    int32_t run = std::min(due, MaxCatchUpTicks);
+    for (int32_t index = 0; index < run; ++index) {
         tickProjectiles(nextMotionTick - TickSeconds * (due - index));
-        runMotionTick(now);
+        // stamp the tick with when it was due, not when this loop got around to it, or the camera hitches by the delay
+        runMotionTick(nextMotionTick - TickSeconds * (run - index));
     }
     if (due > 0) {
         sendMapRequests();
