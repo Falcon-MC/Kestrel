@@ -113,6 +113,7 @@ struct ChatStyle {
     double fontScale = 1.0;
     double linePadding = 0.0;
     double lifetime = 10.0;
+    double backgroundOpacity = 0.5;
 };
 
 // The game's HudElement ids, as SetHud names them.
@@ -160,6 +161,8 @@ struct HudView {
     HudGameTip gameTip;
     std::vector<HudChatLine> chat;
     ChatStyle chatStyle;
+    double textBackgroundOpacity = 0.5;
+    double actionbarBackgroundOpacity = 0.5;
     float health = 20.0f;
     int32_t previousHealth = 20;
     float maxHealth = 20.0f;

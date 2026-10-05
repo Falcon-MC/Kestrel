@@ -257,6 +257,7 @@ ChatStyle Menu::chatStyle() const
     ChatStyle style;
     constexpr std::array<double, 3> durations { 3.0, 10.0, 30.0 };
     style.lifetime = durations[static_cast<size_t>(std::clamp(option("chat_message_duration", 1), 0, 2))];
+    style.backgroundOpacity = std::clamp(option("chat_background_opacity", 50), 0, 100) / 100.0;
     style.fontType = chatOptions.smoothFont ? "smooth" : "default";
     style.fontScale = chatOptions.smoothFont ? static_cast<double>(chatOptions.fontSize) / static_cast<double>(DefaultChatFontSize) : 1.0;
     style.linePadding = (static_cast<double>(chatOptions.lineSpacing) - 1.0) * ChatLineHeight * style.fontScale;

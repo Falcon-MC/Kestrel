@@ -17,9 +17,6 @@ constexpr float IconSize = 9.0f;
 constexpr float IconStep = 8.0f;
 constexpr std::array<int32_t, 11> HarmfulEffects { 2, 4, 7, 9, 15, 17, 18, 19, 20, 25, 30 };
 
-// Background defaults passed to hud_screen.json from code.
-constexpr double ChatBackgroundOpacity = 0.7;
-constexpr double TextBackgroundOpacity = 0.6;
 constexpr double GameTipFadeIn = 0.5;
 constexpr const char* ItemNameTextOffset = "0,-11";
 
@@ -336,7 +333,7 @@ ui::UiData hudData(const HudView& view)
     g["#scoreboard_sidebar_visible"] = flag(view.sidebarVisible);
     g["#player_position_visible"] = flag(false);
     g["#number_of_days_played_visible"] = flag(false);
-    g["#hud_text_background_alpha"] = number(TextBackgroundOpacity);
+    g["#hud_text_background_alpha"] = number(view.textBackgroundOpacity);
     static constexpr const char* BossBarColors[8] = {
         "#ff69b4", "#5555ff", "#ff5555", "#55ff55", "#ffff55", "#aa00aa", "#663399", "#ffffff",
     };
@@ -391,7 +388,7 @@ ui::UiData hudData(const HudView& view)
     // hearts and hunger the survival padding in hud_screen.json already steps over.
     ui::UiRow itemTextVariables {
         { "$show_text_background", flag(true) },
-        { "$item_text_background_alpha", number(TextBackgroundOpacity) },
+        { "$item_text_background_alpha", number(view.textBackgroundOpacity) },
     };
     g["#item_name_text_offset"] = text(ItemNameTextOffset);
     if (view.jukebox) {
@@ -405,7 +402,7 @@ ui::UiData hudData(const HudView& view)
     item("hud_tip_text_factory", "hud_tip_text", view.tip, {});
     item("hud_actionbar_text_factory", "hud_actionbar_text", view.actionbar, {
         { "$actionbar_text", text(view.actionbar.text) },
-        { "$actionbar_text_background_alpha", number(TextBackgroundOpacity) },
+        { "$actionbar_text_background_alpha", number(view.actionbarBackgroundOpacity) },
     });
 
     g["#hud_title_text_string"] = text(view.title.title);
@@ -415,7 +412,7 @@ ui::UiData hudData(const HudView& view)
             { "$title_fade_in_time", number(view.title.fadeIn) },
             { "$title_stay_time", number(view.title.stay) },
             { "$title_fade_out_time", number(view.title.fadeOut) },
-            { "$title_alpha", number(TextBackgroundOpacity) },
+            { "$title_alpha", number(view.textBackgroundOpacity) },
             { "$subtitle_initially_visible", flag(view.title.subtitleWithTitle) },
             { "$title_shadow", flag(false) },
         }, view.title.serial });
@@ -438,7 +435,7 @@ ui::UiData hudData(const HudView& view)
         chat.push_back({ { "#chat_text", text(line.text) } });
         data.factories["chat_item_factory"].push_back({ "chat_item", {
             { "$chat_item_lifetime", number(view.chatStyle.lifetime) },
-            { "$chat_background_opacity", number(ChatBackgroundOpacity) },
+            { "$chat_background_opacity", number(view.chatStyle.backgroundOpacity) },
             { "$chat_font_scale_factor", number(view.chatStyle.fontScale) },
             { "$chat_line_spacing", number(view.chatStyle.linePadding) },
             { "$chat_font_type", text(view.chatStyle.fontType) },
