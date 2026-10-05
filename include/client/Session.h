@@ -287,6 +287,7 @@ struct HudEffect {
     int32_t amplifier = 0;
     double expires = -1.0;
     bool ambient = false;
+    bool particles = false;
 };
 
 /**

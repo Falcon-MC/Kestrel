@@ -362,6 +362,7 @@ void Session::handleHudPacket(const std::shared_ptr<Packet>& packet)
             entry.amplifier = effect->mAmplifier;
             entry.expires = effect->mDuration < 0 ? -1.0 : now + effect->mDuration / 20.0;
             entry.ambient = effect->mAmbient;
+            entry.particles = effect->mParticles;
             effects.push_back(entry);
         }
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
