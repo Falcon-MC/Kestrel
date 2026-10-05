@@ -15,6 +15,8 @@ constexpr float BlockCubeSize = 0.5f;
 constexpr float FlatItemSize = 0.65f;
 constexpr float GroundBlockSize = 0.25f;
 constexpr float GroundItemSize = 0.5f;
+// how high a lying item floats over the ground, enough to stay out of it
+constexpr float LyingLift = 0.02f;
 constexpr double PickupSeconds = 0.15;
 
 /**
@@ -120,10 +122,13 @@ void Client::appendDroppedItem(const ActorView& actor, const std::array<int32_t,
 
     float ticks = static_cast<float>(std::fmod(now * 20.0, 1.0e6));
     float phase = scatter(actor.runtimeId, 0) * Pi * 2.0f;
-    float bob = std::sin(ticks / 10.0f + phase) * 0.1f + 0.1f;
+    // item physics: no bobbing or spinning, and flat items lie down on their back
+    bool still = visuals.itemPhysics.value_or(false);
+    bool lying = still && !mesh->block;
+    float bob = still ? 0.0f : std::sin(ticks / 10.0f + phase) * 0.1f + 0.1f;
     float scale = mesh->block ? GroundBlockSize / BlockCubeSize : GroundItemSize / FlatItemSize;
-    float center = mesh->block ? GroundBlockSize * 0.5f : GroundItemSize * 0.5f;
-    float turn = mesh->block ? ticks / 20.0f + phase : std::atan2(float(camera.x() - position[0]), float(camera.z() - position[2]));
+    float center = mesh->block ? GroundBlockSize * 0.5f : lying ? LyingLift : GroundItemSize * 0.5f;
+    float turn = still ? phase : mesh->block ? ticks / 20.0f + phase : std::atan2(float(camera.x() - position[0]), float(camera.z() - position[2]));
     float turnCos = std::cos(turn);
     float turnSin = std::sin(turn);
     Vec3 base {
@@ -151,6 +156,10 @@ void Client::appendDroppedItem(const ActorView& actor, const std::array<int32_t,
                     face.corners[corner][1] * scale + shift[1],
                     face.corners[corner][2] * scale + shift[2],
                 };
+                if (lying) {
+                    // tip it over backwards: its height runs along the ground, the stack piles upward
+                    local = { local[0], -local[2], local[1] };
+                }
                 corners[corner] = {
                     base[0] + (local[0] * turnCos + local[2] * turnSin) * 256.0f,
                     base[1] + local[1] * 256.0f,

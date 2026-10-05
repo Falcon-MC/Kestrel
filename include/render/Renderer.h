@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -118,6 +119,8 @@ struct WorldView {
     float nightVision = 0.0f;
     uint8_t cameraMedium = 0;
     std::array<float, 3> sunDirection { 0.0f, 1.0f, 0.0f };
+    // Hurt flash color as RGBA bytes, alpha the strength; 0 keeps the game's red.
+    uint32_t hitColor = 0;
     const SkyVertex* background = nullptr;
     uint32_t backgroundCount = 0;
     /**
@@ -156,7 +159,8 @@ inline constexpr float HandDepthRange = 0.05f;
 
 /**
  * Push constants shared by every world pipeline: view projection, draw origin
- * and animation ticks, fog color and start, fog end, daylight, sun direction.
+ * and animation ticks, fog color and start, fog end, daylight, sun direction
+ * and the packed hurt flash color.
  */
 struct WorldConstants {
     std::array<float, 32> values {};
@@ -176,6 +180,8 @@ struct WorldConstants {
         values[28] = view.sunDirection[0];
         values[29] = view.sunDirection[1];
         values[30] = view.sunDirection[2];
+        // the shaders read these bits back as a uint, it is never used as a number
+        values[31] = std::bit_cast<float>(view.hitColor);
     }
 
     void setOrigin(float x, float y, float z)

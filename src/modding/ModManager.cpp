@@ -462,10 +462,41 @@ float ModManager::fovScale() const
     return std::clamp(scale, 0.05f, 3.0f);
 }
 
-void ModManager::setView(const mod::Vec3& position, mod::Rotation rotation)
+void ModManager::setView(const mod::Vec3& position, mod::Rotation rotation, float fieldOfView)
 {
     host->viewPosition = position;
     host->viewRotation = rotation;
+    host->viewFieldOfView = fieldOfView;
+}
+
+VisualRequest ModManager::visuals() const
+{
+    VisualRequest merged;
+    auto take = [](auto& into, const auto& from) {
+        if (!into && from) {
+            into = from;
+        }
+    };
+    // owners count up as mods load, so the map walks them oldest first
+    for (const auto& [owner, request] : host->visuals) {
+        take(merged.time, request.time);
+        take(merged.rain, request.rain);
+        take(merged.thunder, request.thunder);
+        take(merged.fogScale, request.fogScale);
+        take(merged.brightness, request.brightness);
+        take(merged.hurtCamera, request.hurtCamera);
+        take(merged.hitColor, request.hitColor);
+        take(merged.glintStrength, request.glintStrength);
+        take(merged.glintSpeed, request.glintSpeed);
+        take(merged.itemPhysics, request.itemPhysics);
+        take(merged.swingDuration, request.swingDuration);
+        take(merged.heldOffset, request.heldOffset);
+        take(merged.heldScale, request.heldScale);
+        take(merged.nametagScale, request.nametagScale);
+        take(merged.ownNametag, request.ownNametag);
+        take(merged.interfaceScale, request.interfaceScale);
+    }
+    return merged;
 }
 
 std::optional<BlockFilter> ModManager::takeHiddenBlocks()

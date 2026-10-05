@@ -33,6 +33,10 @@ public:
      * Multiplies the field of view: below 1 zooms in, above 1 widens it.
      */
     virtual void setFovScale(float scale) = 0;
+
+    // Added in API 3 and kept last so older mods still find everything above.
+    // The vertical field of view the world was drawn with last frame, in degrees.
+    virtual float fieldOfView() const = 0;
 };
 
 }

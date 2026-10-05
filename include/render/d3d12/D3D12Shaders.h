@@ -406,7 +406,11 @@ float4 surfaceTexel(WorldOut input)
             : page == 2 ? entities2.Load(at)
             : entities3.Load(at);
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
-        if ((input.entity & 4) != 0) texel.rgb = lerp(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
+        if ((input.entity & 4) != 0) {
+            uint hit = asuint(sun.w);
+            float4 flash = hit == 0 ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255, (hit >> 8) & 255, (hit >> 16) & 255, hit >> 24) / 255.0;
+            texel.rgb = lerp(texel.rgb, flash.rgb, flash.a);
+        }
         return applyTint(texel, input.tint);
     }
     return applyTint(sampleMaterial(input.material, input.uv), input.tint);

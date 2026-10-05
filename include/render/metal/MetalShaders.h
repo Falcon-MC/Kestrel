@@ -377,6 +377,13 @@ float3 endPortalColor(constant DrawData& draw, float3 relative)
     return min(color, float3(1.0));
 }
 
+// The hurt flash color packed into sun.w, or the game's red when none is set.
+float4 hitFlash(constant DrawData& draw)
+{
+    uint hit = as_type<uint>(draw.sun.w);
+    return hit == 0u ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255u, (hit >> 8) & 255u, (hit >> 16) & 255u, hit >> 24) / 255.0;
+}
+
 bool isEndPortal(WorldOut in)
 {
     return in.entity == 0 && (in.material & 0x1fffu) == EndPortalLayer;
@@ -389,7 +396,10 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
-    if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
+    if ((in.entity & 4u) != 0u) {
+        float4 flash = hitFlash(draw);
+        texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
+    }
     if (texel.a < 0.004) {
         discard_fragment();
     }
@@ -464,7 +474,10 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
-    if ((in.entity & 4u) != 0u) texel.rgb = mix(texel.rgb, float3(1.0, 0.0, 0.0), 0.5);
+    if ((in.entity & 4u) != 0u) {
+        float4 flash = hitFlash(draw);
+        texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
+    }
     if (in.entity != 0) {
         if (texel.a < 0.1) {
             discard_fragment();

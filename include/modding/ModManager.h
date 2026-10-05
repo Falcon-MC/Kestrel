@@ -54,6 +54,29 @@ struct CameraRequest {
 };
 
 /**
+ * What one mod changed through Visuals. Anything left empty keeps the game's
+ * own behaviour, so mods only fight over what they actually set.
+ */
+struct VisualRequest {
+    std::optional<int64_t> time;
+    std::optional<float> rain;
+    std::optional<float> thunder;
+    std::optional<float> fogScale;
+    std::optional<float> brightness;
+    std::optional<float> hurtCamera;
+    std::optional<mod::Color> hitColor;
+    std::optional<int> glintStrength;
+    std::optional<int> glintSpeed;
+    std::optional<bool> itemPhysics;
+    std::optional<float> swingDuration;
+    std::optional<mod::Vec3> heldOffset;
+    std::optional<float> heldScale;
+    std::optional<float> nametagScale;
+    std::optional<bool> ownNametag;
+    std::optional<float> interfaceScale;
+};
+
+/**
  * What only the client knows how to do, handed to the mods' services.
  */
 struct ClientBridge {
@@ -116,7 +139,13 @@ public:
     /**
      * Tells the mods where the view was drawn from, for Camera::position.
      */
-    void setView(const mod::Vec3& position, mod::Rotation rotation);
+    void setView(const mod::Vec3& position, mod::Rotation rotation, float fieldOfView);
+
+    /**
+     * Everything the mods changed through Visuals, merged so the mod loaded
+     * first wins wherever two set the same thing.
+     */
+    VisualRequest visuals() const;
 
     /**
      * The blocks the mods want drawn as air, when that changed since the

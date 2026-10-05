@@ -1399,7 +1399,28 @@ std::vector<menu::NameTag> Client::buildNameTags() const
     float height = static_cast<float>(window->height());
     Mat4 matrix = camera.viewProjection(width / std::max(height, 1.0f));
     float focalPixels = height / (2.0f * camera.halfVerticalTangent(width / std::max(height, 1.0f)));
+    float tagScale = visuals.nametagScale.value_or(1.0f);
+    std::vector<const ActorView*> named;
+    named.reserve(actorViews.size() + 1);
     for (const ActorView& actor : actorViews) {
+        named.push_back(&actor);
+    }
+    // your own tag, the way other players see it, when a mod asks and the camera is off your head
+    ActorView self;
+    bool ownShown = visuals.ownNametag.value_or(false) && playerView.active && seenSessionSnapshot
+        && (perspective != PerspectiveFirst || cameraDetached) && !seenSessionSnapshot->displayName.empty();
+    if (ownShown) {
+        self.runtimeId = LocalActorId;
+        self.identifier = "minecraft:player";
+        self.name = seenSessionSnapshot->displayName;
+        self.x = eyePosition[0];
+        self.y = eyePosition[1] - playerView.eyeHeight();
+        self.z = eyePosition[2];
+        self.flags[0] = playerView.sneaking ? SneakingFlag : 0;
+        named.push_back(&self);
+    }
+    for (const ActorView* candidate : named) {
+        const ActorView& actor = *candidate;
         if (actor.name.empty() || (actor.flags[0] & InvisibleFlag) != 0) {
             continue;
         }
@@ -1459,7 +1480,7 @@ std::vector<menu::NameTag> Client::buildNameTags() const
         }
         tag.x = pixelX / scale;
         tag.y = pixelY / scale;
-        tag.magnify = NameTagPixelSize * focalPixels / (static_cast<float>((*anchor)[2]) * scale);
+        tag.magnify = NameTagPixelSize * focalPixels / (static_cast<float>((*anchor)[2]) * scale) * tagScale;
         tag.depth = static_cast<float>((*anchor)[3]);
         tag.sneaking = sneaking;
         placed.emplace_back(distance, std::move(tag));

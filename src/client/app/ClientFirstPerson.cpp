@@ -572,8 +572,12 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     bool consuming = consumeStarted > 0.0;
     float consumeTicks = static_cast<float>(ticksUsed);
     float consumeLength = consuming ? static_cast<float>(consumeDuration) : 0.0f;
-    Mat4 blockPlacement = firstPersonItem(true, false, attackTime, handEquip, consumeTicks, consumeLength);
-    Mat4 spritePlacement = firstPersonItem(false, mirroredArt(held.identifier), attackTime, handEquip, consumeTicks, consumeLength);
+    // a mod can shift the item in view space and grow it around its own middle
+    mod::Vec3 heldOffset = visuals.heldOffset.value_or(mod::Vec3 {});
+    Mat4 moved = translation(static_cast<float>(heldOffset.x), static_cast<float>(heldOffset.y), static_cast<float>(heldOffset.z));
+    Mat4 grown = uniformScale(visuals.heldScale.value_or(1.0f));
+    Mat4 blockPlacement = moved * firstPersonItem(true, false, attackTime, handEquip, consumeTicks, consumeLength) * grown;
+    Mat4 spritePlacement = moved * firstPersonItem(false, mirroredArt(held.identifier), attackTime, handEquip, consumeTicks, consumeLength) * grown;
     auto place = [&](const Vec3& local, bool cube) {
         Vec3 shaped = cube
             ? scaled(local, 1.0f / HeldCubeSize)
@@ -770,7 +774,7 @@ void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, Hel
  */
 void Client::startSwing(double now)
 {
-    if (swingStart < 0.0 || now - swingStart >= SwingSeconds * 0.5) {
+    if (swingStart < 0.0 || now - swingStart >= SwingSeconds * visuals.swingDuration.value_or(1.0f) * 0.5) {
         swingStart = now;
     }
 }
@@ -780,7 +784,7 @@ void Client::startSwing(double now)
  */
 float Client::swingProgressSince(double start, double now) const
 {
-    double swing = (now - start) / SwingSeconds;
+    double swing = (now - start) / (SwingSeconds * visuals.swingDuration.value_or(1.0f));
     return swing >= 0.0 && swing < 1.0 ? static_cast<float>(swing) : 0.0f;
 }
 

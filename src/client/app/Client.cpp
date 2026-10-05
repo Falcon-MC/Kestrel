@@ -225,6 +225,7 @@ int Client::run()
                 mods->request(std::move(action));
             }
             mods->update(deltaSeconds);
+            visuals = mods->visuals();
             if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
                 session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
             }
@@ -334,7 +335,7 @@ int Client::run()
             }
             session.setLookRay(eyePosition, camera.forward());
             camera.setHurtProgress(playerView.active && hudState.lastHurt > 0.0
-                ? static_cast<float>(std::clamp(1.0 - (secondsNow() - hudState.lastHurt) / 0.5, 0.0, 1.0)) : 0.0f);
+                ? static_cast<float>(std::clamp(1.0 - (secondsNow() - hudState.lastHurt) / 0.5, 0.0, 1.0)) * visuals.hurtCamera.value_or(1.0f) : 0.0f);
         }
         std::array<double, 3> playerCameraPosition { camera.x(), camera.y(), camera.z() };
         float playerCameraYaw = camera.minecraftYaw();
@@ -523,7 +524,9 @@ int Client::run()
                 camera.setPosition(detachedView->position.x, detachedView->position.y, detachedView->position.z);
                 camera.setRotation(detachedView->rotation.yaw, detachedView->rotation.pitch);
             }
-            mods->setView({ camera.x(), camera.y(), camera.z() }, { camera.minecraftYaw(), camera.minecraftPitch() });
+            float viewAspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
+            float verticalFov = 2.0f * std::atan(camera.halfVerticalTangent(viewAspect)) * 180.0f / 3.14159265f;
+            mods->setView({ camera.x(), camera.y(), camera.z() }, { camera.minecraftYaw(), camera.minecraftPitch() }, verticalFov);
             float renderDistance = static_cast<float>(std::max(timeState.chunkRadius, 4) * 16);
             session.setRenderedCamera({ camera.x(), camera.y(), camera.z() });
             auto environmentSample = seenSessionSnapshot ? session.cameraEnvironment(*seenSessionSnapshot,
@@ -554,6 +557,10 @@ int Client::run()
             view.cameraY = camera.y();
             view.cameraZ = camera.z();
             view.animationTicks = static_cast<float>(std::fmod((secondsNow() - startSeconds) * 20.0, 1048576.0));
+            // a mod pushing the fog out scales both ends, the fade keeps its shape
+            float fogStretch = visuals.fogScale.value_or(1.0f);
+            sky.fogStart *= fogStretch;
+            sky.fogEnd *= fogStretch;
             view.fogColor = sky.fogColor;
             view.fogStart = sky.fogStart;
             view.cameraMedium = timeState.cameraMedium;
@@ -561,6 +568,12 @@ int Client::run()
             view.daylight = sky.daylight;
             float brightnessLift = menu::brightnessLift(menu.brightness());
             view.nightVision = 1.0f - (1.0f - (serverCamera.playerEffects() ? nightVisionStrength() : 0.0f)) * (1.0f - brightnessLift);
+            view.nightVision = std::max(view.nightVision, visuals.brightness.value_or(0.0f));
+            if (visuals.hitColor) {
+                const mod::Color& hit = *visuals.hitColor;
+                // 0 means the game's own red, so a fully clear color still counts as set
+                view.hitColor = uint32_t(hit.r) | uint32_t(hit.g) << 8 | uint32_t(hit.b) << 16 | uint32_t(std::max<uint8_t>(hit.a, 1)) << 24;
+            }
             view.sunDirection = sky.sunDirection;
             view.background = background.data();
             view.backgroundCount = static_cast<uint32_t>(background.size());
@@ -951,7 +964,7 @@ float Client::guiScale() const
     float automatic = std::max(1.0f, std::min(byHeight, byWidth));
     float fit = std::min(static_cast<float>(window->width()) / 360.0f,
         static_cast<float>(window->height()) / 240.0f);
-    return std::max(0.01f, std::min(automatic * menu.interfaceScale(), fit));
+    return std::max(0.01f, std::min(automatic * visuals.interfaceScale.value_or(menu.interfaceScale()), fit));
 }
 
 /**
@@ -1406,6 +1419,17 @@ void Client::syncSession()
     }
     timeState.daylightCycle = snapshot.daylightCycle;
     timeState.chunkRadius = snapshot.chunkRadius;
+    // a mod's time and weather only change what this client shows
+    if (visuals.time) {
+        timeState.worldTime = *visuals.time;
+        timeState.daylightCycle = false;
+    }
+    if (visuals.rain) {
+        timeState.rainLevel = *visuals.rain;
+    }
+    if (visuals.thunder) {
+        timeState.thunderLevel = *visuals.thunder;
+    }
     menu::SessionInfo info;
     switch (snapshot.state) {
     case SessionState::Idle:

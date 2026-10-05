@@ -47,11 +47,13 @@ struct HostState {
     std::map<size_t, CameraRequest> cameras;
     // HUD elements each mod hides, one bit per mod::HudElement.
     std::map<size_t, uint32_t> hiddenHud;
+    std::map<size_t, VisualRequest> visuals;
     std::map<size_t, std::set<std::string>> hiddenBlocks;
     std::map<size_t, std::set<std::string>> visibleBlocks;
     bool hiddenChanged = false;
     mod::Vec3 viewPosition;
     mod::Rotation viewRotation;
+    float viewFieldOfView = 70.0f;
     double seconds = 0.0;
     mod::Environment environment;
     std::filesystem::path root;
