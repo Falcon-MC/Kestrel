@@ -469,6 +469,9 @@ private:
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
     float localBodyYaw = 0.0f;
+    // What the server was last told the player faces, which a mod may have turned away from the camera.
+    float localLookYaw = 0.0f;
+    float localLookPitch = 0.0f;
     uint32_t localSkinSlot = NoSkin;
     struct ServerFovBlend {
         bool active = false;

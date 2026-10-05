@@ -268,6 +268,8 @@ int Client::run()
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
                 mods->adjustMovement(input);
+                localLookYaw = input.yaw;
+                localLookPitch = input.pitch;
                 session.setMotionInput(input);
                 constexpr int32_t SpeedEffect = 1;
                 constexpr int32_t SlownessEffect = 2;
