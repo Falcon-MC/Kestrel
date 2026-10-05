@@ -984,6 +984,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::SetTitle:
     case MinecraftPacketIds::ToastRequest:
     case MinecraftPacketIds::AvailableCommands:
+    case MinecraftPacketIds::CommandOutput:
     case MinecraftPacketIds::SetDisplayObjective:
     case MinecraftPacketIds::SetScore:
     case MinecraftPacketIds::RemoveObjective:

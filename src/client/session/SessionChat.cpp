@@ -2,6 +2,7 @@
 
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/AvailableCommandsPacket.h"
+#include "Protocol/Packets/CommandOutputPacket.h"
 #include "Protocol/Packets/CommandRequestPacket.h"
 #include "Protocol/Packets/SetTitlePacket.h"
 #include "Protocol/Packets/TextPacket.h"
@@ -164,6 +165,20 @@ void Session::sendChat(std::string text)
 
 void Session::handleChatPacket(const std::shared_ptr<Packet>& packet)
 {
+    if (auto output = std::dynamic_pointer_cast<CommandOutputPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        for (const CommandOutputMessage& line : output->mMessages) {
+            if (pendingChat.size() >= MaxPendingChat) break;
+            ChatMessage message;
+            message.kind = ChatMessage::Kind::System;
+            message.message = line.mMessageId;
+            message.parameters = line.mParameters;
+            message.translate = true;
+            message.commandError = !line.mInternal;
+            pendingChat.push_back(std::move(message));
+        }
+        return;
+    }
     if (auto available = std::dynamic_pointer_cast<AvailableCommandsPacket>(packet)) {
         std::shared_ptr<const std::vector<menu::ChatCommand>> commands = chatCommands(*available);
         std::lock_guard<std::mutex> guard(mutex);
