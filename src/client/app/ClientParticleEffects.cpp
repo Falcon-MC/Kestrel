@@ -245,7 +245,7 @@ void Client::appendParticles(double deltaSeconds, const std::array<int32_t, 3>& 
         self.onGround = playerView.onGround;
         double now = secondsNow();
         for (const HudEffect& effect : hudState.effects) {
-            if (effect.expires >= 0.0 && effect.expires < now) {
+            if (!effect.particles || (effect.expires >= 0.0 && effect.expires < now)) {
                 continue;
             }
             if (uint32_t color = ClientParticleEmitters::effectColor(effect.id)) {
