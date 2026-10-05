@@ -307,7 +307,9 @@ int Client::run()
                 }
                 fovTarget = std::clamp(fovTarget, 0.05f, 2.0f);
                 camera.easeFov(fovTarget, deltaSeconds);
-                double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.0);
+                // The session thread runs a tick a few ms late now and then, so keep gliding a little past it
+                // instead of stopping dead until the tick lands.
+                double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.2);
                 double eye = playerView.eyeHeight();
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
