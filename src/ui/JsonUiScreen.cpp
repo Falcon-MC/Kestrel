@@ -2074,6 +2074,23 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::
     r.order.clear();
     r.byId.clear();
     r.gather(root);
+    for (Node* node : r.order) {
+        if (node->type != "dropdown" || !node->parent || !r.lookup(*node, "#toggle_state").truthy()) continue;
+        Node* popup = r.nearest(*node->parent, r.text(*node, "dropdown_content_control"));
+        std::string boundsName = r.text(*node, "dropdown_area");
+        Node* boundsNode = boundsName.empty() ? nullptr : r.named(boundsName);
+        if (!popup || !popup->parent || popup == node || popup == node->parent || !popup->shown || !boundsNode || !boundsNode->shown) continue;
+        Rect bounds = intersect(area, { boundsNode->x, boundsNode->y, boundsNode->w, boundsNode->h });
+        if (boundsNode->clipped) bounds = intersect(bounds, boundsNode->clip);
+        if (!(bounds.w > 0.0f && bounds.h > 0.0f)) continue;
+        r.size(*popup, 0, popup->parent->w, std::min(popup->w, bounds.w));
+        r.size(*popup, 1, popup->parent->h, std::min(popup->h, bounds.h));
+        scrolls(*popup);
+        float x = std::clamp(popup->x, bounds.x, std::max(bounds.x, bounds.right() - popup->w));
+        float y = std::clamp(popup->y, bounds.y, std::max(bounds.y, bounds.bottom() - popup->h));
+        // A dropdown overlays the scrolled row and stays inside its declared dropdown_area.
+        r.place(*popup, x, y, popup->z, bounds, true, popup->inherited);
+    }
     r.input();
 
     std::vector<Node*> painted(r.order);
