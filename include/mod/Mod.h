@@ -63,6 +63,7 @@ protected:
     Camera& camera() const { return context().camera(); }
     Emotes& emotes() const { return context().emotes(); }
     Hud& hud() const { return context().hud(); }
+    Visuals& visuals() const { return context().visuals(); }
 
     Subscription emote(EmoteSpec spec)
     {

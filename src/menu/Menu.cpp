@@ -1610,7 +1610,7 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
     hud.actionbarBackgroundOpacity = std::clamp(option("actionbar_text_background_opacity", 50), 0, 100) / 100.0;
     hud.players = players;
     // Tab is button.scoreboard, the player list key, while nothing covers the HUD.
-    hudScreen->holdButton("button.scoreboard", capturesMouse() && ui.input().isHeld(Key::Tab));
+    hudScreen->holdButton("button.scoreboard", capturesMouse() && hud.playerList && ui.input().isHeld(Key::Tab));
     ui::UiData data = hudData(hud);
     // The HUD never takes the mouse, so the controls under it stay idle.
     bool blocked = ui.isBlocked();

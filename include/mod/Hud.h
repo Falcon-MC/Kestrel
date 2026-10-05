@@ -18,6 +18,9 @@ enum class HudElement {
     StatusEffects,
     PaperDoll,
     ItemText,
+    BossBars,
+    // the list Tab holds open
+    PlayerList,
 };
 
 class Hud {

@@ -405,6 +405,18 @@ mod::Sidebar WorldService::sidebar() const
     return { view.visible && joined(host), view.title, view.lines };
 }
 
+std::vector<mod::BossBar> WorldService::bossBars() const
+{
+    std::vector<mod::BossBar> bars;
+    if (!joined(host)) {
+        return bars;
+    }
+    for (const BossBarView& bar : host.snapshot.hud.bossBars) {
+        bars.push_back({ bar.title, bar.progress, bar.color });
+    }
+    return bars;
+}
+
 mod::Environment WorldService::environment() const
 {
     return host.environment;
@@ -898,6 +910,132 @@ void CameraService::setFovScale(float scale)
     if (!request.detached && request.fovScale == 1.0f) {
         host.cameras.erase(owner);
     }
+}
+
+float CameraService::fieldOfView() const
+{
+    return host.viewFieldOfView;
+}
+
+namespace {
+
+/**
+ * A mod's value, or nothing when it is the game's own default anyway, so a
+ * mod setting things back to normal stops overriding other mods.
+ */
+std::optional<float> unlessDefault(float value, float fallback, float low, float high)
+{
+    if (!std::isfinite(value)) {
+        return std::nullopt;
+    }
+    value = std::clamp(value, low, high);
+    return value == fallback ? std::nullopt : std::optional<float>(value);
+}
+
+bool emptyRequest(const VisualRequest& request)
+{
+    return !request.time && !request.rain && !request.thunder && !request.fogScale && !request.brightness && !request.hurtCamera
+        && !request.hitColor && !request.glintStrength && !request.glintSpeed && !request.itemPhysics && !request.swingDuration
+        && !request.heldOffset && !request.heldScale && !request.nametagScale && !request.ownNametag && !request.interfaceScale;
+}
+
+}
+
+VisualsService::VisualsService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+template <class Change>
+void VisualsService::change(Change&& apply)
+{
+    VisualRequest& request = host.visuals[owner];
+    apply(request);
+    if (emptyRequest(request)) {
+        host.visuals.erase(owner);
+    }
+}
+
+void VisualsService::setTime(std::optional<int64_t> ticks)
+{
+    change([&](VisualRequest& request) { request.time = ticks; });
+}
+
+void VisualsService::setWeather(std::optional<float> rain, std::optional<float> thunder)
+{
+    auto level = [](std::optional<float> value) -> std::optional<float> {
+        if (!value || !std::isfinite(*value)) {
+            return std::nullopt;
+        }
+        return std::clamp(*value, 0.0f, 1.0f);
+    };
+    change([&](VisualRequest& request) {
+        request.rain = level(rain);
+        request.thunder = level(thunder);
+    });
+}
+
+void VisualsService::setFogScale(float scale)
+{
+    change([&](VisualRequest& request) { request.fogScale = unlessDefault(scale, 1.0f, 0.1f, 1000.0f); });
+}
+
+void VisualsService::setBrightness(float amount)
+{
+    change([&](VisualRequest& request) { request.brightness = unlessDefault(amount, 0.0f, 0.0f, 1.0f); });
+}
+
+void VisualsService::setHurtCamera(float scale)
+{
+    change([&](VisualRequest& request) { request.hurtCamera = unlessDefault(scale, 1.0f, 0.0f, 1.0f); });
+}
+
+void VisualsService::setHitColor(std::optional<mod::Color> color)
+{
+    change([&](VisualRequest& request) { request.hitColor = color; });
+}
+
+void VisualsService::setGlint(std::optional<int> strength, std::optional<int> speed)
+{
+    change([&](VisualRequest& request) {
+        request.glintStrength = strength ? std::optional<int>(std::clamp(*strength, 0, 100)) : std::nullopt;
+        request.glintSpeed = speed ? std::optional<int>(std::clamp(*speed, 0, 400)) : std::nullopt;
+    });
+}
+
+void VisualsService::setItemPhysics(bool enabled)
+{
+    change([&](VisualRequest& request) { request.itemPhysics = enabled ? std::optional<bool>(true) : std::nullopt; });
+}
+
+void VisualsService::setSwingDuration(float scale)
+{
+    change([&](VisualRequest& request) { request.swingDuration = unlessDefault(scale, 1.0f, 0.25f, 4.0f); });
+}
+
+void VisualsService::setHeldItem(mod::Vec3 offset, float scale)
+{
+    bool moved = std::isfinite(offset.x) && std::isfinite(offset.y) && std::isfinite(offset.z) && !(offset == mod::Vec3 {});
+    change([&](VisualRequest& request) {
+        request.heldOffset = moved ? std::optional<mod::Vec3>(mod::Vec3 { std::clamp(offset.x, -2.0, 2.0), std::clamp(offset.y, -2.0, 2.0), std::clamp(offset.z, -2.0, 2.0) }) : std::nullopt;
+        request.heldScale = unlessDefault(scale, 1.0f, 0.1f, 3.0f);
+    });
+}
+
+void VisualsService::setNametags(float scale, bool showOwn)
+{
+    change([&](VisualRequest& request) {
+        request.nametagScale = unlessDefault(scale, 1.0f, 0.25f, 4.0f);
+        request.ownNametag = showOwn ? std::optional<bool>(true) : std::nullopt;
+    });
+}
+
+void VisualsService::setInterfaceScale(std::optional<float> scale)
+{
+    change([&](VisualRequest& request) {
+        request.interfaceScale = scale && std::isfinite(*scale) ? std::optional<float>(std::clamp(*scale, 0.25f, 4.0f)) : std::nullopt;
+    });
 }
 
 }

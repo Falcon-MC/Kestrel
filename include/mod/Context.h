@@ -13,6 +13,7 @@
 #include "mod/Player.h"
 #include "mod/Scheduler.h"
 #include "mod/Shaders.h"
+#include "mod/Visuals.h"
 #include "mod/World.h"
 
 #include <filesystem>
@@ -55,6 +56,7 @@ public:
     virtual Camera& camera() = 0;
     virtual Emotes& emotes() = 0;
     virtual Hud& hud() = 0;
+    virtual Visuals& visuals() = 0;
 };
 
 }

@@ -179,4 +179,14 @@ struct Sidebar {
     std::vector<std::pair<std::string, int32_t>> lines;
 };
 
+/**
+ * A boss bar at the top of the screen. color is the game's index: 0 pink,
+ * 1 blue, 2 red, 3 green, 4 yellow, 5 purple, 6 white.
+ */
+struct BossBar {
+    std::string title;
+    float progress = 1.0f;
+    int32_t color = 0;
+};
+
 }

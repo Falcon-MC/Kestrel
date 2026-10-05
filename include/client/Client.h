@@ -450,6 +450,8 @@ private:
     // What the server was last told the player faces, which a mod may have turned away from the camera.
     float localLookYaw = 0.0f;
     float localLookPitch = 0.0f;
+    // What the mods changed through Visuals, merged once a frame.
+    modding::VisualRequest visuals;
     uint32_t localSkinSlot = NoSkin;
     struct ServerFovBlend {
         bool active = false;

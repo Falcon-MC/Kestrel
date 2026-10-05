@@ -149,6 +149,8 @@ struct HudView {
     bool showStats = true;
     // The crosshair shows only through the player's own eyes.
     bool crosshair = true;
+    // Whether Tab opens the player list; a mod showing its own turns it off.
+    bool playerList = true;
     std::array<HudSlot, 9> hotbar {};
     HudSlot offhand;
     int32_t selected = 0;

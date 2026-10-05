@@ -79,6 +79,9 @@ public:
      */
     virtual std::vector<FoundBlock> findBlocks(const std::vector<std::string>& names, const Vec3& center, double radius, size_t limit) const = 0;
 
+    // Added in API 3 and kept last so older mods still find everything above.
+    virtual std::vector<BossBar> bossBars() const = 0;
+
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {
         std::optional<Entity> best;

@@ -107,6 +107,7 @@ public:
     std::vector<std::string> blockNames() const override;
     void setVisibleBlocks(const std::vector<std::string>& names) override;
     std::vector<mod::FoundBlock> findBlocks(const std::vector<std::string>& names, const mod::Vec3& center, double radius, size_t limit) const override;
+    std::vector<mod::BossBar> bossBars() const override;
 
 private:
     HostState& host;
@@ -123,8 +124,35 @@ public:
     void attach() override;
     bool detached() const override;
     void setFovScale(float scale) override;
+    float fieldOfView() const override;
 
 private:
+    HostState& host;
+    size_t owner;
+};
+
+class VisualsService final : public mod::Visuals {
+public:
+    VisualsService(HostState& host, size_t owner);
+
+    void setTime(std::optional<int64_t> ticks) override;
+    void setWeather(std::optional<float> rain, std::optional<float> thunder) override;
+    void setFogScale(float scale) override;
+    void setBrightness(float amount) override;
+    void setHurtCamera(float scale) override;
+    void setHitColor(std::optional<mod::Color> color) override;
+    void setGlint(std::optional<int> strength, std::optional<int> speed) override;
+    void setItemPhysics(bool enabled) override;
+    void setSwingDuration(float scale) override;
+    void setHeldItem(mod::Vec3 offset, float scale) override;
+    void setNametags(float scale, bool showOwn) override;
+    void setInterfaceScale(std::optional<float> scale) override;
+
+private:
+    // Applies a change, then forgets the mod once it asks for nothing at all.
+    template <class Change>
+    void change(Change&& apply);
+
     HostState& host;
     size_t owner;
 };
