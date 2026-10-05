@@ -2,6 +2,7 @@
 
 #include "client/Session.h"
 #include "menu/Menu.h"
+#include "mod/Hud.h"
 #include "mod/Types.h"
 #include "modding/EmoteRegistry.h"
 #include "render/Renderer.h"
@@ -97,6 +98,8 @@ public:
      * Whether a mod has freed the mouse, so play should give the cursor back.
      */
     bool wantsCursor() const;
+    // Whether any mod hides this element of the game's HUD.
+    bool hidesHud(mod::HudElement element) const;
 
     /**
      * Where a mod wants the world drawn from this frame, if one detached the

@@ -238,6 +238,7 @@ private:
     menu::HudSlot inventoryIcon(const HudItem& item);
     void drawInventoryEntity(ui::Context& ui, const std::string& identifier, const ui::Rect& rect, float alpha);
     menu::HudView buildHudView();
+    uint32_t modHiddenElements() const;
     std::vector<menu::NameTag> buildNameTags() const;
     void countFrame(std::chrono::steady_clock::time_point now);
     menu::DebugView buildDebugView(const SessionSnapshot& snapshot);
@@ -469,6 +470,9 @@ private:
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
     float localBodyYaw = 0.0f;
+    // What the server was last told the player faces, which a mod may have turned away from the camera.
+    float localLookYaw = 0.0f;
+    float localLookPitch = 0.0f;
     uint32_t localSkinSlot = NoSkin;
     struct ServerFovBlend {
         bool active = false;

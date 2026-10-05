@@ -6,6 +6,7 @@
 #include "mod/Events.h"
 #include "platform/Input.h"
 #include "platform/Keys.h"
+#include "world/ItemInfo.h"
 
 #include "Protocol/MinecraftPacketIds.h"
 
@@ -305,6 +306,11 @@ void PlayerService::dropHeld(bool wholeStack)
 void PlayerService::respawn()
 {
     host.session.requestRespawn();
+}
+
+int32_t PlayerService::maxDurability(const std::string& identifier) const
+{
+    return world::itemMaxDurability(identifier);
 }
 
 WorldService::WorldService(HostState& host, size_t owner)
@@ -897,6 +903,28 @@ void CameraService::setFovScale(float scale)
 }
 
 namespace kestrel::modding {
+
+HudService::HudService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+void HudService::setHidden(mod::HudElement element, bool hidden)
+{
+    uint32_t bit = 1u << static_cast<uint32_t>(element);
+    uint32_t& mask = host.hiddenHud[owner];
+    mask = hidden ? mask | bit : mask & ~bit;
+    if (mask == 0) {
+        host.hiddenHud.erase(owner);
+    }
+}
+
+bool HudService::hidden(mod::HudElement element) const
+{
+    auto found = host.hiddenHud.find(owner);
+    return found != host.hiddenHud.end() && ((found->second >> static_cast<uint32_t>(element)) & 1u) != 0;
+}
 
 EmoteService::EmoteService(HostState& host, size_t owner)
     : host(host)

@@ -62,6 +62,7 @@ protected:
     Shaders& shaders() const { return context().shaders(); }
     Camera& camera() const { return context().camera(); }
     Emotes& emotes() const { return context().emotes(); }
+    Hud& hud() const { return context().hud(); }
 
     Subscription emote(EmoteSpec spec)
     {

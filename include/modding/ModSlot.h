@@ -57,6 +57,7 @@ public:
     mod::Shaders& shaders() override;
     mod::Camera& camera() override;
     mod::Emotes& emotes() override;
+    mod::Hud& hud() override;
     std::filesystem::path dataDirectory() override;
     std::vector<mod::ModInfo> loadedMods() const override;
 
@@ -86,6 +87,7 @@ private:
     InputService inputService;
     CameraService cameraService;
     EmoteService emoteService;
+    HudService hudService;
 };
 
 /**

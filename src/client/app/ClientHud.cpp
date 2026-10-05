@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <set>
+#include <utility>
 
 namespace kestrel {
 
@@ -150,6 +151,36 @@ float Client::nightVisionStrength() const
 }
 
 /**
+ * The game's HUD elements mods asked to hide, as SetHud bits so they join
+ * the ones the server hid.
+ */
+uint32_t Client::modHiddenElements() const
+{
+    if (!mods) {
+        return 0;
+    }
+    static constexpr std::pair<mod::HudElement, menu::HudElement> Elements[] = {
+        { mod::HudElement::Crosshair, menu::HudElement::Crosshair },
+        { mod::HudElement::Hotbar, menu::HudElement::HotBar },
+        { mod::HudElement::Health, menu::HudElement::Health },
+        { mod::HudElement::Hunger, menu::HudElement::Hunger },
+        { mod::HudElement::Armor, menu::HudElement::Armor },
+        { mod::HudElement::AirBubbles, menu::HudElement::AirBubbles },
+        { mod::HudElement::ExperienceBar, menu::HudElement::ProgressBar },
+        { mod::HudElement::StatusEffects, menu::HudElement::StatusEffects },
+        { mod::HudElement::PaperDoll, menu::HudElement::PaperDoll },
+        { mod::HudElement::ItemText, menu::HudElement::ItemText },
+    };
+    uint32_t mask = 0;
+    for (const auto& [element, bit] : Elements) {
+        if (mods->hidesHud(element)) {
+            mask |= 1u << static_cast<uint32_t>(bit);
+        }
+    }
+    return mask;
+}
+
+/**
  * The HUD for this frame from the latest session state: slot icons from the
  * icon cache (new icons are rendered and queued for the atlas), durability,
  * armor points, heart and hunger looks from active effects, the fading name
@@ -165,10 +196,10 @@ menu::HudView Client::buildHudView()
     const HudState& state = hudState;
     view.visible = true;
     view.nameTags = buildNameTags();
-    view.sidebarVisible = sidebarView.visible;
-    view.hiddenElements = state.hiddenElements;
+    view.sidebarVisible = sidebarView.visible && !(mods && mods->hidesHud(mod::HudElement::Sidebar));
+    view.hiddenElements = state.hiddenElements | modHiddenElements();
     view.paperDoll = paperDollVisible() && !view.hidden(menu::HudElement::PaperDoll);
-    if (sidebarView.visible) {
+    if (view.sidebarVisible) {
         view.sidebar = sidebarData();
     }
     for (const BossBarView& bar : state.bossBars) {

@@ -1496,8 +1496,8 @@ ActorView Client::localActorView(float deltaSeconds)
     self.x = eyePosition[0];
     self.y = eyePosition[1] - playerView.eyeHeight();
     self.z = eyePosition[2];
-    self.headYaw = camera.minecraftYaw();
-    self.pitch = camera.minecraftPitch();
+    self.headYaw = localLookYaw;
+    self.pitch = localLookPitch;
     self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;

@@ -75,6 +75,7 @@ public:
     void pickBlock(bool withData) override;
     void dropHeld(bool wholeStack) override;
     void respawn() override;
+    int32_t maxDurability(const std::string& identifier) const override;
 
 private:
     HostState& host;
@@ -122,6 +123,18 @@ public:
     void attach() override;
     bool detached() const override;
     void setFovScale(float scale) override;
+
+private:
+    HostState& host;
+    size_t owner;
+};
+
+class HudService final : public mod::Hud {
+public:
+    HudService(HostState& host, size_t owner);
+
+    void setHidden(mod::HudElement element, bool hidden) override;
+    bool hidden(mod::HudElement element) const override;
 
 private:
     HostState& host;
