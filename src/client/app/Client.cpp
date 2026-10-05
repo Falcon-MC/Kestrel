@@ -314,8 +314,10 @@ int Client::run()
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
+                perspective = std::clamp(menu.option("third_person", PerspectiveFirst), PerspectiveFirst, PerspectiveFront);
                 if (captured && !serverCamera.controlsPerspective() && keys.pressedKey == bindings.perspective()) {
                     perspective = (perspective + 1) % 3;
+                    menu.setExtraOption("third_person", perspective);
                 }
                 std::array<float, 3> look = camera.forward();
                 double reach = perspective == PerspectiveBack ? -ThirdPersonRadius : perspective == PerspectiveFront ? ThirdPersonRadius : 0.0;
