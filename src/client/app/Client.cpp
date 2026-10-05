@@ -976,7 +976,7 @@ void Client::syncDressingRoom()
     for (const std::string& page : menu.takeDressingRequests()) {
         dressingCatalog.request(page, account.signedInAuthentication());
     }
-    std::map<std::string, DressingPage> pages = dressingCatalog.snapshot();
+    std::map<std::string, DressingPage> pages = dressingCatalog.snapshot(dressingRevisions);
     bool changed = false;
     for (const auto& [id, page] : pages) {
         uint64_t& seen = dressingRevisions[id];

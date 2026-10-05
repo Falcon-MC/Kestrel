@@ -121,10 +121,16 @@ void DressingRoomCatalog::request(const std::string& pageId, MinecraftAuthentica
     wake.notify_one();
 }
 
-std::map<std::string, DressingPage> DressingRoomCatalog::snapshot() const
+std::map<std::string, DressingPage> DressingRoomCatalog::snapshot(const std::map<std::string, uint64_t>& seen) const
 {
     std::lock_guard<std::mutex> guard(mutex);
-    return pages;
+    for (const auto& [id, page] : pages) {
+        auto previous = seen.find(id);
+        if (previous == seen.end() || previous->second != page.revision) {
+            return pages;
+        }
+    }
+    return {};
 }
 
 void DressingRoomCatalog::run()
