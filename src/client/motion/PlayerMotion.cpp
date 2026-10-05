@@ -123,9 +123,9 @@ void PlayerMotion::setScale(float value)
 
 void PlayerMotion::setAbilities(bool canFly, bool flying, bool clip, float horizontal, float vertical)
 {
-    mayFly = canFly;
-    isFlying = flying && canFly;
-    noClip = clip;
+    mayFly = canFly || gameType == GameSpectator;
+    isFlying = (flying && canFly) || gameType == GameSpectator;
+    noClip = clip || gameType == GameSpectator;
     if (std::isfinite(horizontal) && horizontal > 0.0f) {
         flySpeed = horizontal;
     }
@@ -137,11 +137,9 @@ void PlayerMotion::setAbilities(bool canFly, bool flying, bool clip, float horiz
 void PlayerMotion::setGameType(int32_t value)
 {
     gameType = value;
-    if (gameType == GameSpectator) {
-        mayFly = true;
-        isFlying = true;
-        noClip = true;
-    }
+    mayFly = gameType == GameCreative || gameType == GameSpectator;
+    noClip = gameType == GameSpectator;
+    isFlying = noClip || (mayFly && isFlying);
 }
 
 void PlayerMotion::setEffects(int32_t jumpBoost, int32_t levitation, bool slow, bool weave)
