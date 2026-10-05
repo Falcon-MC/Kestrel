@@ -1744,7 +1744,9 @@ void Menu::handleKeys(Context& ui)
             }
             type(codepoints);
         } else if (input.backspace) {
-            if (selected) {
+            if (field == Field::Chat) {
+                eraseChat(true);
+            } else if (selected) {
                 target->clear();
             } else {
                 while (!target->empty() && target->back() == ' ') {
@@ -1762,7 +1764,9 @@ void Menu::handleKeys(Context& ui)
         }
         if (input.backspace) {
             if (std::string* target = focusedText()) {
-                if (selectedField == field) {
+                if (field == Field::Chat) {
+                    eraseChat(false);
+                } else if (selectedField == field) {
                     target->clear();
                     selectedField = Field::None;
                 } else {
@@ -1844,6 +1848,7 @@ void Menu::type(std::u32string_view text)
     }
     if (selectedField == field) {
         target->clear();
+        if (field == Field::Chat) chatCaret.reset();
         selectedField = Field::None;
     }
     for (char32_t cp : text) {
@@ -1856,7 +1861,17 @@ void Menu::type(std::u32string_view text)
         if (field == Field::ServerPort && (cp < U'0' || cp > U'9' || target->size() >= 5)) {
             continue;
         }
-        appendUtf8(*target, cp);
+        if (field == Field::Chat) {
+            std::string encoded;
+            appendUtf8(encoded, cp);
+            if (target->size() + encoded.size() > MaxChatLength) break;
+            size_t caret = std::min(chatCaret.value_or(target->size()), target->size());
+            target->insert(caret, encoded);
+            chatCaret = caret + encoded.size();
+            chatCycle.clear();
+        } else {
+            appendUtf8(*target, cp);
+        }
     }
 }
 

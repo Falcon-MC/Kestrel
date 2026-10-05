@@ -235,6 +235,7 @@ public:
      * type into them from outside while they never hold the focus.
      */
     void showListeningCaret(bool shown);
+    void showListeningCaret(bool shown, std::optional<size_t> byteOffset);
 
     /**
      * Shows the whole text of the always listening edit boxes as selected,

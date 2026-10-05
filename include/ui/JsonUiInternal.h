@@ -213,6 +213,7 @@ struct Node {
     float value = 0.0f;
     std::string edit;
     bool caret = false;
+    std::optional<size_t> caretOffset;
     bool selected = false;
     int wheelSlice = -1;
     std::unordered_map<const Node*, bool> states;
@@ -254,6 +255,7 @@ struct JsonUiRuntime {
     bool navigation = false;
     uint64_t keyFocus = 0;
     bool listeningCaret = false;
+    std::optional<size_t> listeningCaretOffset;
     bool listeningSelected = false;
     float grab = 0.0f;
 
