@@ -205,6 +205,8 @@ void Menu::openChat(std::string draft)
     field = Field::Chat;
     selectedField = Field::None;
     chatDraft = std::move(draft);
+    chatCaret.reset();
+    chatCycle.clear();
     chatRecall.reset();
     chatToBottom = true;
 }
@@ -284,6 +286,8 @@ void Menu::closeChat()
     field = Field::None;
     selectedField = Field::None;
     chatDraft.clear();
+    chatCaret.reset();
+    chatCycle.clear();
     chatRecall.reset();
 }
 
@@ -304,6 +308,8 @@ void Menu::submitChat()
         chatOutgoing.push_back(chatDraft);
     }
     chatDraft.clear();
+    chatCaret.reset();
+    chatCycle.clear();
     chatRecall.reset();
     selectedField = Field::None;
     chatToBottom = true;
@@ -332,7 +338,30 @@ void Menu::recallChat(int step)
         chatRecall = index;
         chatDraft = chatHistory[index];
     }
+    chatCaret.reset();
+    chatCycle.clear();
     selectedField = Field::None;
+}
+
+void Menu::eraseChat(bool word)
+{
+    size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
+    if (selectedField == Field::Chat) {
+        chatDraft.clear();
+        chatCaret.reset();
+    } else {
+        std::string prefix = chatDraft.substr(0, caret);
+        if (word) {
+            while (!prefix.empty() && prefix.back() == ' ') prefix.pop_back();
+            while (!prefix.empty() && prefix.back() != ' ') popUtf8(prefix);
+        } else {
+            popUtf8(prefix);
+        }
+        chatDraft.erase(prefix.size(), caret - prefix.size());
+        chatCaret = prefix.size();
+    }
+    selectedField = Field::None;
+    chatCycle.clear();
 }
 
 /**
@@ -341,19 +370,24 @@ void Menu::recallChat(int step)
  */
 void Menu::completeChat(bool backwards)
 {
-    if (chatCycle.empty() || chatDraft != chatCycleDraft) {
-        CommandHints hints = chatCompletions(commands, players, chatDraft);
+    size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
+    if (chatCycle.empty() || chatDraft != chatCycleDraft || caret != chatCycleCaret) {
+        CommandHints hints = chatCompletions(commands, players, std::string_view(chatDraft).substr(0, caret));
         if (hints.suggestions.empty()) {
             chatCycle.clear();
             return;
         }
         chatCycle = std::move(hints.suggestions);
         chatCycleBase = chatDraft.substr(0, hints.replaceFrom);
+        size_t end = chatDraft.find_first_of(" \t", caret);
+        chatCycleTail = end == std::string::npos ? std::string() : chatDraft.substr(end);
         chatCycleIndex = backwards ? chatCycle.size() - 1 : 0;
     } else {
         chatCycleIndex = (chatCycleIndex + (backwards ? chatCycle.size() - 1 : 1)) % chatCycle.size();
     }
-    chatDraft = chatCycleBase + chatCycle[chatCycleIndex].text;
+    chatDraft = chatCycleBase + chatCycle[chatCycleIndex].text + chatCycleTail;
+    chatCaret = chatCycleBase.size() + chatCycle[chatCycleIndex].text.size();
+    chatCycleCaret = *chatCaret;
     chatCycleDraft = chatDraft;
     chatRecall.reset();
     selectedField = Field::None;
@@ -386,15 +420,42 @@ bool Menu::handleChatKeys(const InputState& input)
         return input.escape || input.enter || input.tab || input.pressedKey == Key::Up || input.pressedKey == Key::Down;
     }
     if (input.enter) {
+        if (!input.text.empty()) type(input.text);
         submitChat();
         return true;
     }
     if (input.tab) {
+        if (!input.text.empty()) type(input.text);
         completeChat(input.isHeld(Key::Shift));
         return true;
     }
     if (input.pressedKey == Key::Up || input.pressedKey == Key::Down) {
         recallChat(input.pressedKey == Key::Up ? -1 : 1);
+        return true;
+    }
+    if (input.pressedKey == Key::Left || input.pressedKey == Key::Right) {
+        bool left = input.pressedKey == Key::Left;
+        size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
+        if (selectedField == Field::Chat) {
+            caret = left ? 0 : chatDraft.size();
+        } else if (left) {
+            std::string prefix = chatDraft.substr(0, caret);
+            popUtf8(prefix);
+            if (input.isHeld(Key::Control)) {
+                while (!prefix.empty() && prefix.back() == ' ') prefix.pop_back();
+                while (!prefix.empty() && prefix.back() != ' ') popUtf8(prefix);
+            }
+            caret = prefix.size();
+        } else if (caret < chatDraft.size()) {
+            nextCodepoint(chatDraft, caret);
+            if (input.isHeld(Key::Control)) {
+                while (caret < chatDraft.size() && chatDraft[caret] != ' ') nextCodepoint(chatDraft, caret);
+                while (caret < chatDraft.size() && chatDraft[caret] == ' ') ++caret;
+            }
+        }
+        chatCaret = caret;
+        selectedField = Field::None;
+        chatCycle.clear();
         return true;
     }
     return false;
@@ -439,10 +500,13 @@ std::vector<Menu::ChatRow> Menu::chatRows(size_t capacity) const
     if (chatDraft.empty() || capacity == 0) {
         return rows;
     }
-    bool cycling = !chatCycle.empty() && chatDraft == chatCycleDraft;
-    CommandHints hints = chatCompletions(commands, players, chatDraft);
+    size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
+    bool cycling = !chatCycle.empty() && chatDraft == chatCycleDraft && caret == chatCycleCaret;
+    CommandHints hints = chatCompletions(commands, players, std::string_view(chatDraft).substr(0, caret));
     const std::vector<CommandSuggestion>& suggestions = cycling ? chatCycle : hints.suggestions;
     std::string base = cycling ? chatCycleBase : chatDraft.substr(0, hints.replaceFrom);
+    size_t end = chatDraft.find_first_of(" \t", caret);
+    std::string tail = cycling ? chatCycleTail : end == std::string::npos ? std::string() : chatDraft.substr(end);
 
     std::vector<ChatRow> all;
     for (const CommandSuggestion& suggestion : suggestions) {
@@ -450,7 +514,7 @@ std::vector<Menu::ChatRow> Menu::chatRows(size_t capacity) const
         if (!suggestion.description.empty()) {
             text += std::string(" - ") + Italic + commandDescription(suggestion.description);
         }
-        all.push_back({ std::move(text), base + suggestion.text });
+        all.push_back({ std::move(text), base + suggestion.text + tail, base.size() + suggestion.text.size() });
     }
     for (const std::string& line : hints.usage) {
         all.push_back({ line, std::nullopt });
@@ -531,7 +595,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
     }
 
     globals["#message_text_box_content"] = UiValue::of(chatDraft);
-    chatUi->showListeningCaret(interactive);
+    chatUi->showListeningCaret(interactive, chatCaret);
     chatUi->showListeningSelection(interactive && selectedField == Field::Chat && !chatDraft.empty());
 
     std::vector<ui::UiRow>& messages = data.collections["messages_factory"];
@@ -599,6 +663,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
                 chatDraft += ' ';
             }
             chatDraft += coordinates;
+            chatCaret.reset();
             chatCycle.clear();
             chatRecall.reset();
             selectedField = Field::None;
@@ -613,6 +678,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
         } else if (event.name == "button.click_autocomplete" && event.index >= 0 && static_cast<size_t>(event.index) < rows.size()) {
             if (const std::optional<std::string>& pick = rows[static_cast<size_t>(event.index)].pick) {
                 chatDraft = *pick;
+                chatCaret = rows[static_cast<size_t>(event.index)].caret;
                 chatCycle.clear();
                 chatRecall.reset();
                 selectedField = Field::None;
@@ -622,6 +688,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
             break;
         } else if (event.name == "button.keyboard_toggle" || event.name == "button.host_toggle") {
             chatDraft = chatDraft == "/" ? std::string() : chatDraft.starts_with('/') ? chatDraft : "/" + chatDraft;
+            chatCaret.reset();
             chatCycle.clear();
             chatRecall.reset();
             selectedField = Field::None;

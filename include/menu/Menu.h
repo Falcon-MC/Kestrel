@@ -1104,6 +1104,7 @@ private:
     struct ChatRow {
         std::string text;
         std::optional<std::string> pick;
+        std::optional<size_t> caret;
     };
 
     // Screens drawn with the classic textures.
@@ -1215,6 +1216,7 @@ private:
     void submitChat();
     void recallChat(int step);
     void completeChat(bool backwards);
+    void eraseChat(bool word);
     std::vector<ChatRow> chatRows(size_t capacity) const;
     void type(std::u32string_view text);
     std::string* focusedText();
@@ -1369,6 +1371,7 @@ private:
     std::deque<ChatLine> chatLines;
     uint64_t chatSerial = 0;
     std::string chatDraft;
+    std::optional<size_t> chatCaret;
     std::vector<std::string> chatHistory;
     std::optional<size_t> chatRecall;
     std::vector<std::string> chatOutgoing;
@@ -1400,6 +1403,8 @@ private:
     std::vector<CommandSuggestion> chatCycle;
     size_t chatCycleIndex = 0;
     std::string chatCycleBase;
+    std::string chatCycleTail;
+    size_t chatCycleCaret = 0;
     std::string chatCycleDraft;
     float scale = 1.0f;
     int chunkDistance = DefaultRenderDistance;
