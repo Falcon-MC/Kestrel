@@ -6,6 +6,7 @@
 #include "mod/Events.h"
 #include "platform/Input.h"
 #include "platform/Keys.h"
+#include "world/ItemInfo.h"
 
 #include "Protocol/MinecraftPacketIds.h"
 
@@ -305,6 +306,11 @@ void PlayerService::dropHeld(bool wholeStack)
 void PlayerService::respawn()
 {
     host.session.requestRespawn();
+}
+
+int32_t PlayerService::maxDurability(const std::string& identifier) const
+{
+    return world::itemMaxDurability(identifier);
 }
 
 WorldService::WorldService(HostState& host, size_t owner)
