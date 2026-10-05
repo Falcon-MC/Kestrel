@@ -537,7 +537,8 @@ std::unique_ptr<Node> JsonUiRuntime::make(Node* parent, std::string_view key, co
                 return text;
             }
             const json::Value* value = resolve(probe, variable(probe, text).value);
-            return value && value->isString() ? value->mString : std::string();
+            if (!value || !value->isString()) return std::string();
+            return !value->mString.empty() && value->mString.front() == '(' ? evaluate(probe, value->mString).toText() : value->mString;
         };
         name = named(name);
         base = named(base);
