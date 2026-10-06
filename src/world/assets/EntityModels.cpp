@@ -774,6 +774,12 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             readClientEntity(text, definitions);
         }
     }
+    for (const std::string& name : pack.archiveEntries("attachables")) {
+        std::string text;
+        if (pack.readBaseArchived("attachables", name, text)) {
+            readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+        }
+    }
     for (const std::string& name : pack.archiveEntries("render_controllers")) {
         std::string text;
         if (pack.readBaseArchived("render_controllers", name, text)) {
@@ -788,14 +794,26 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
-    // The game keeps its own attachables outside the resource pack, next to
-    // resource_packs. Only the bow's is read for now: the others draw items
-    // Kestrel already shows its own way.
-    for (const char* name : { "bow.json" }) {
+    // Some installations retain these definitions outside the resource pack archives.
+    for (const char* name : { "bow.json", "shield.json", "trident.json" }) {
         std::ifstream file(pack.root().parent_path().parent_path() / "definitions" / "attachables" / name, std::ios::binary);
         if (file) {
             std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+        }
+    }
+    if (!attachableDefinitions.contains("minecraft:trident")) {
+        auto projectile = definitions.find("minecraft:thrown_trident");
+        if (projectile != definitions.end()) {
+            ClientEntity held = projectile->second;
+            auto scripts = std::make_shared<EntityScripts>();
+            scripts->aliases["wield"] = "controller.animation.trident.wield";
+            for (const char* name : { "wield_first_person", "wield_first_person_raise", "wield_first_person_riptide", "wield_third_person", "wield_third_person_raise" }) {
+                scripts->aliases[name] = std::string("animation.trident.") + name;
+            }
+            scripts->animate.emplace_back("wield", molang::Script {});
+            held.scripts = std::move(scripts);
+            attachableDefinitions.emplace("minecraft:trident", std::move(held));
         }
     }
     for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
