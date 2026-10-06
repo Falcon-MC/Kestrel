@@ -234,7 +234,7 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
     swiftSneakLevel = std::max(input.swiftSneak, 0);
     updatePose(input, tick);
 
-    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !forcedSneak && !isCrawling && !isGliding && !input.usingItem && hunger > 6.0f;
+    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !forcedSneak && !isCrawling && !isGliding && !input.usingItem && (gameType == GameCreative || hunger > 6.0f);
     bool startSprint = wantSprint && !isSprinting;
     bool stopSprint = !wantSprint && isSprinting;
     if (!startSprint && !stopSprint && !serverSprintApplied && serverSprint != isSprinting) {
@@ -776,7 +776,10 @@ void PlayerMotion::runFlight(const MotionInput& input)
     applyKnockback();
     float speed = flySpeed * (isSprinting ? 2.0f : 1.0f);
     moveRelative(speed);
-    float vertical = flySpeed * 3.0f * verticalFlySpeed;
+    if (gameType == GameCreative && impulseSideways == 0.0f && impulseForward == 0.0f && !input.jump && !input.sneak) {
+        velocity.y *= 0.375f;
+    }
+    float vertical = flySpeed * (input.sneak && !input.jump ? 4.4f : 3.0f) * verticalFlySpeed;
     if (input.jump) {
         velocity.y += vertical;
     }
