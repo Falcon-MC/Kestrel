@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -23,10 +24,18 @@ enum class FoliageVariant : uint8_t {
     Dry = 3,
 };
 
+struct BiomeFog {
+    uint32_t color = 0;
+    float start = 0.0f;
+    float end = 0.0f;
+    bool relative = false;
+};
+
 /**
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
  */
 struct BiomeColors {
+    std::optional<BiomeFog> airFog;
     uint32_t waterFog = 0x44AFF5;
     float waterFogStart = 0.0f;
     float waterFogEnd = 60.0f;

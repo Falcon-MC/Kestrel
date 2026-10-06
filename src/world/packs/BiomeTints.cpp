@@ -130,6 +130,21 @@ const json::Value* component(const json::Value& components, const char* name, co
     return entry ? entry->get(field) : nullptr;
 }
 
+std::optional<BiomeFog> parseFog(const json::Value* source)
+{
+    const auto* start = source ? source->get("fog_start") : nullptr;
+    const auto* end = source ? source->get("fog_end") : nullptr;
+    const auto* color = source ? source->get("fog_color") : nullptr;
+    const auto* mode = source ? source->get("render_distance_type") : nullptr;
+    if (!start || !end || !color || !mode) return std::nullopt;
+    auto rgb = parseDirect(*color);
+    float first = float(start->number(-1)), last = float(end->number(-1));
+    std::string type = mode->string();
+    if (!rgb || !std::isfinite(first) || !std::isfinite(last) || first < 0 || last < first
+        || (type != "fixed" && type != "render")) return std::nullopt;
+    return BiomeFog { *rgb, first, last, type == "render" };
+}
+
 }
 
 uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
@@ -168,22 +183,18 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* description = settings ? settings->get("description") : nullptr;
         const auto* identifier = description ? description->get("identifier") : nullptr;
         const auto* distance = settings ? settings->get("distance") : nullptr;
-        const auto* water = distance ? distance->get("water") : nullptr;
-        const auto* start = water ? water->get("fog_start") : nullptr;
-        const auto* end = water ? water->get("fog_end") : nullptr;
-        const auto* color = water ? water->get("fog_color") : nullptr;
-        const auto* mode = water ? water->get("render_distance_type") : nullptr;
-        if (!identifier || !start || !end || !color || !mode) continue;
-        auto rgb = parseDirect(*color);
-        float first = float(start->number(-1)), last = float(end->number(-1));
-        std::string type = mode->string();
-        if (!rgb || !std::isfinite(first) || !std::isfinite(last) || first < 0 || last < first
-            || (type != "fixed" && type != "render")) continue;
+        if (!identifier || !identifier->isString()) continue;
+        auto water = parseFog(distance ? distance->get("water") : nullptr);
+        auto air = parseFog(distance ? distance->get("air") : nullptr);
+        if (!water && !air) continue;
         BiomeColors fog;
-        fog.waterFog = *rgb;
-        fog.waterFogStart = first;
-        fog.waterFogEnd = last;
-        fog.waterFogRelative = type == "render";
+        fog.airFog = air;
+        if (water) {
+            fog.waterFog = water->color;
+            fog.waterFogStart = water->start;
+            fog.waterFogEnd = water->end;
+            fog.waterFogRelative = water->relative;
+        }
         fogs.try_emplace(identifier->string(), fog);
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
@@ -283,6 +294,7 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         auto fog = fogs.find(appearance.fog);
         if (fog == fogs.end()) fog = fogs.find("minecraft:fog_default");
         if (fog != fogs.end()) {
+            colors.airFog = fog->second.airFog;
             colors.waterFog = fog->second.waterFog;
             colors.waterFogStart = fog->second.waterFogStart;
             colors.waterFogEnd = fog->second.waterFogEnd;
