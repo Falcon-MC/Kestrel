@@ -35,5 +35,10 @@ int main()
         require(kestrel::messageBody(message) == "\xC2\xA7" "eAlex connected", "Marked text packet keys must resolve across chat and popup surfaces");
     }
     require(localization.translateMessage("audit.mode", { "%audit.creative" }) == "Mode: Creative", "Command arguments must resolve their marked keys");
+    for (const std::string& literal : { "audit.creative", "Alex %audit.creative", "%audit.unknown", "%audit.creative extra" }) {
+        require(localization.translateMessage("audit.mode", { literal }) == "Mode: " + literal, "Unmarked, embedded and unknown argument keys must stay literal");
+        const std::string input = std::string(R"({"translate":"audit.mode","with":[")") + literal + R"("]})";
+        require(kestrel::rawText(input) == "Mode: " + literal, "Rawtext arguments must preserve literal player names");
+    }
     require(kestrel::rawText(R"({"rawtext":[{"text":"%audit.creative"}]})") == "%audit.creative", "Literal rawtext must not be localized");
 }

@@ -317,8 +317,8 @@ std::string Localization::translateMessage(const std::string& message, const std
     std::vector<std::string> translated;
     translated.reserve(parameters.size());
     for (const std::string& parameter : parameters) {
-        std::string key = !parameter.empty() && parameter.front() == '%' ? parameter.substr(1) : parameter;
-        translated.push_back(has(key) ? text(key, parameter) : parameter);
+        std::string key = !parameter.empty() && parameter.front() == '%' ? parameter.substr(1) : std::string();
+        translated.push_back(!key.empty() && has(key) ? text(key, parameter) : parameter);
     }
     if (has(message)) {
         return fill(text(message, message), translated);
