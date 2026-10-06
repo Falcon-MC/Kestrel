@@ -218,7 +218,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
-    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 15 : 0;
+    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 47 : 0;
     if (output.entity != 0) {
         output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0x80ffffffu) : 0;
     }
@@ -275,7 +275,7 @@ WorldOut vs_actor(ModelIn input)
     output.relative=position;
     output.tint=0;
     output.light=cornerLight(asuint(actorParams.w),0,corner);
-    output.entity=(asuint(actorParams.z)>>5)&15;
+    output.entity=(asuint(actorParams.z)>>5)&47;
     if (any(actorUv != float4(0,0,1,1))) output.entity|=16;
     return output;
 }
@@ -312,17 +312,13 @@ float4 sampleMaterial(uint material, float2 uv)
     return texel;
 }
 
-float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
+float3 fogWorld(float3 color, float3 relative, bool additive)
 {
-    float daylight = max(saturate(params.y), 0.2);
-    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
-    channel = lerp(channel, 1.0, saturate(params.z));
-    float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
-    float3 color = rgb * shade * pow(light, 1.0 / 2.2);
+    float3 fogColor = additive ? float3(0, 0, 0) : fog.rgb;
     float amount = params.w == 1.0 ? saturate((length(relative) - fog.w) / max(params.x - fog.w, 0.0001))
         : smoothstep(fog.w, params.x, length(relative));
     if (params.w == 1.0) {
-        float3 tint = fog.rgb;
+        float3 tint = fogColor;
         for (int i = 0; i < 3; ++i) {
             float c = max(color[i], 0.0);
             float f = max(tint[i], 0.0);
@@ -333,7 +329,16 @@ float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
         }
         return color;
     }
-    return lerp(color, fog.rgb, amount);
+    return lerp(color, fogColor, amount);
+}
+
+float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
+{
+    float daylight = max(saturate(params.y), 0.2);
+    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    channel = lerp(channel, 1.0, saturate(params.z));
+    float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
+    return fogWorld(rgb * shade * pow(light, 1.0 / 2.2), relative, false);
 }
 
 float4 applyTint(float4 texel, uint tint)
@@ -406,6 +411,7 @@ float4 surfaceTexel(WorldOut input)
             : page == 2 ? entities2.Load(at)
             : entities3.Load(at);
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
+        else if ((input.entity & 32) != 0) texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2) != 0);
         if ((input.entity & 4) != 0) {
             uint hit = asuint(sun.w);
             float4 flash = hit == 0 ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255, (hit >> 8) & 255, (hit >> 16) & 255, hit >> 24) / 255.0;
