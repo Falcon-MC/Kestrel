@@ -1,5 +1,6 @@
 #include "client/session/SessionData.h"
 #include "client/ContainerLayout.h"
+#include "client/InventoryTransaction.h"
 #include "client/DebugLog.h"
 #include "Core/Json/Json.h"
 #include "Network/BedrockConnection.h"
@@ -333,6 +334,11 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         if (slot >= 0) {
             inventoryModel.slots[slot] = single->mItem;
             if (inventoryBefore) (*inventoryBefore)[slot] = single->mItem;
+            publishInventory();
+        }
+    } else if (auto transaction = std::dynamic_pointer_cast<InventoryTransactionPacket>(packet)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (applyServerInventoryTransaction(inventoryModel, *transaction, inventoryBefore ? &*inventoryBefore : nullptr)) {
             publishInventory();
         }
     } else if (auto trade = std::dynamic_pointer_cast<UpdateTradePacket>(packet)) {
