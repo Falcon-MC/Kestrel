@@ -77,6 +77,6 @@ void main()
     outRelative = position;
     outTint = 0u;
     outLight = cornerLight(floatBitsToUint(actor.params.w),0u,corner);
-    outEntity = (floatBitsToUint(actor.params.z) >> 5u) & 15u;
+    outEntity = (floatBitsToUint(actor.params.z) >> 5u) & 47u;
     if (any(notEqual(actor.uv, vec4(0,0,1,1)))) outEntity |= 16u;
 }

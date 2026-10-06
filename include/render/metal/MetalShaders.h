@@ -211,7 +211,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
-    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 15u : 0u;
+    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 47u : 0u;
     if (out.entity != 0u) {
         out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0x80ffffffu) : 0u;
     }
@@ -267,7 +267,7 @@ vertex WorldOut actor_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     out.relative=position;
     out.tint=0;
     out.light=cornerLight(as_type<uint>(actor.params.w),0,corner);
-    out.entity=(as_type<uint>(actor.params.z)>>5)&15;
+    out.entity=(as_type<uint>(actor.params.z)>>5)&47;
     if(any(actor.uv!=float4(0,0,1,1))) out.entity|=16;
     return out;
 }
@@ -304,17 +304,13 @@ float4 sampleMaterial(texture2d_array<float> blocks, texture2d_array<float> bloc
     return texel;
 }
 
-float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative, float3 cornerLevels)
+float3 fogWorld(constant DrawData& draw, float3 color, float3 relative, bool additive)
 {
-    float daylight = max(saturate(draw.params.y), 0.2);
-    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
-    channel = mix(channel, 1.0, saturate(draw.params.z));
-    float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
-    float3 color = rgb * shade * pow(light, 1.0 / 2.2);
+    float3 fogColor = additive ? float3(0) : draw.fog.rgb;
     float amount = draw.params.w == 1.0 ? clamp((length(relative) - draw.fog.w) / max(draw.params.x - draw.fog.w, 0.0001), 0.0, 1.0)
         : smoothstep(draw.fog.w, draw.params.x, length(relative));
     if (draw.params.w == 1.0) {
-        float3 tint = draw.fog.rgb;
+        float3 tint = fogColor;
         for (int i = 0; i < 3; ++i) {
             float c = max(color[i], 0.0f), f = max(tint[i], 0.0f);
             c = c <= 0.04045f ? c / 12.92f : pow((c + 0.055f) / 1.055f, 2.4f);
@@ -324,7 +320,16 @@ float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relat
         }
         return color;
     }
-    return mix(color, draw.fog.rgb, amount);
+    return mix(color, fogColor, amount);
+}
+
+float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative, float3 cornerLevels)
+{
+    float daylight = max(saturate(draw.params.y), 0.2);
+    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
+    channel = mix(channel, 1.0, saturate(draw.params.z));
+    float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
+    return fogWorld(draw, rgb * shade * pow(light, 1.0 / 2.2), relative, false);
 }
 
 float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, float2 uv, uint material)
@@ -396,6 +401,7 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
+    else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if ((in.entity & 4u) != 0u) {
         float4 flash = hitFlash(draw);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
@@ -474,6 +480,7 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
+    else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if ((in.entity & 4u) != 0u) {
         float4 flash = hitFlash(draw);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);

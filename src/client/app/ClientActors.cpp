@@ -24,6 +24,8 @@ constexpr float DefaultActorHeight = 2.0f;
 constexpr float PoseMargin = 0.5f;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
 constexpr uint32_t AdditiveQuadFlag = 1u << 6;
+// Bit 9 maps to the shader's animated UV flag.
+constexpr uint32_t FoggedQuadFlag = 1u << 10;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr int SwimmingFlag = 57;
 constexpr double HeadClearance = 0.7;
@@ -944,6 +946,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 }
             }
             uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
+            if (!lit) shadeWord |= FoggedQuadFlag;
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
@@ -1028,7 +1031,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             std::copy(transform.begin(), transform.end(), draw.constants.begin());
             draw.constants[24] = actorPartialTick;
             draw.constants[25] = std::bit_cast<float>(layer);
-            uint32_t flags = EntityQuadFlag | (lit ? (1u << 8) : 0u);
+            uint32_t flags = EntityQuadFlag | (lit ? (1u << 8) : FoggedQuadFlag);
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) flags |= 1u << 7;
             draw.constants[26] = std::bit_cast<float>(flags);
             draw.constants[27] = std::bit_cast<float>(light);
