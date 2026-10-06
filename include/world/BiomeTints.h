@@ -36,6 +36,8 @@ struct BiomeFog {
  */
 struct BiomeColors {
     std::optional<BiomeFog> airFog;
+    std::optional<BiomeFog> lavaFog;
+    std::optional<BiomeFog> lavaResistanceFog;
     uint32_t waterFog = 0x44AFF5;
     float waterFogStart = 0.0f;
     float waterFogEnd = 60.0f;

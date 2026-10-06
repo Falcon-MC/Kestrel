@@ -71,6 +71,13 @@ struct Appearance {
     std::string fog;
 };
 
+struct FogProfiles {
+    std::optional<BiomeFog> air;
+    std::optional<BiomeFog> water;
+    std::optional<BiomeFog> lava;
+    std::optional<BiomeFog> resistance;
+};
+
 struct Climate {
     float temperature = 0.8f;
     float downfall = 0.4f;
@@ -174,7 +181,7 @@ uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
 
 void BiomeTints::load(PackSource& resources, PackSource& behaviors)
 {
-    std::map<std::string, BiomeColors> fogs;
+    std::map<std::string, FogProfiles> fogs;
     for (const auto& entry : resources.archiveEntries("fogs")) {
         std::string text;
         if (!resources.readArchived("fogs", entry, text)) continue;
@@ -186,16 +193,10 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         if (!identifier || !identifier->isString()) continue;
         auto water = parseFog(distance ? distance->get("water") : nullptr);
         auto air = parseFog(distance ? distance->get("air") : nullptr);
-        if (!water && !air) continue;
-        BiomeColors fog;
-        fog.airFog = air;
-        if (water) {
-            fog.waterFog = water->color;
-            fog.waterFogStart = water->start;
-            fog.waterFogEnd = water->end;
-            fog.waterFogRelative = water->relative;
-        }
-        fogs.try_emplace(identifier->string(), fog);
+        auto lava = parseFog(distance ? distance->get("lava") : nullptr);
+        auto resistance = parseFog(distance ? distance->get("lava_resistance") : nullptr);
+        if (!air && !water && !lava && !resistance) continue;
+        fogs.try_emplace(identifier->string(), FogProfiles { air, water, lava, resistance });
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
     for (size_t i = 0; i < maps.size(); ++i) {
@@ -291,15 +292,21 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         colors.evergreen = resolve(std::nullopt, TintMap::Evergreen, climate);
         colors.dryFoliage = resolve(appearance.dryFoliage, TintMap::DryFoliage, climate);
         colors.water = appearance.water.value_or(0x44AFF5);
-        auto fog = fogs.find(appearance.fog);
-        if (fog == fogs.end()) fog = fogs.find("minecraft:fog_default");
-        if (fog != fogs.end()) {
-            colors.airFog = fog->second.airFog;
-            colors.waterFog = fog->second.waterFog;
-            colors.waterFogStart = fog->second.waterFogStart;
-            colors.waterFogEnd = fog->second.waterFogEnd;
-            colors.waterFogRelative = fog->second.waterFogRelative;
+        auto applyFog = [&](const FogProfiles& fog) {
+            if (fog.air) colors.airFog = fog.air;
+            if (fog.water) {
+                colors.waterFog = fog.water->color;
+                colors.waterFogStart = fog.water->start;
+                colors.waterFogEnd = fog.water->end;
+                colors.waterFogRelative = fog.water->relative;
+            }
+            if (fog.lava) colors.lavaFog = fog.lava;
+            if (fog.resistance) colors.lavaResistanceFog = fog.resistance;
+        };
+        if (auto defaults = fogs.find("minecraft:fog_default"); defaults != fogs.end()) {
+            applyFog(defaults->second);
         }
+        if (auto fog = fogs.find(appearance.fog); fog != fogs.end()) applyFog(fog->second);
         return colors;
     };
 
