@@ -347,12 +347,23 @@ enum class EntityBlend : uint8_t {
     Additive,
 };
 
+enum class EntityMaterial : uint8_t {
+    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture,
+};
+
 struct EntityRenderController {
     molang::Script condition;
     molang::Script geometry;
     std::vector<uint32_t> geometryChoices;
     molang::Script texture;
     std::vector<uint32_t> textureChoices;
+    std::array<molang::Script, 2> extraTextures;
+    std::array<std::vector<uint32_t>, 2> extraTextureChoices;
+    std::array<molang::Script, 4> color;
+    std::array<molang::Script, 4> overlay;
+    std::array<molang::Script, 4> hurtColor;
+    std::array<molang::Script, 4> fireColor;
+    EntityMaterial material = EntityMaterial::Default;
     std::vector<EntityPartRule> parts;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;

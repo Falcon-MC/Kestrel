@@ -362,6 +362,7 @@ public:
         descriptor.vertexDescriptor = vertices;
         descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
         applyBlend(descriptor.colorAttachments[0], desc.blend);
+        descriptor.colorAttachments[0].writeMask = desc.colorWrite ? MTLColorWriteMaskAll : MTLColorWriteMaskNone;
         descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 
         NSError* error = nil;
@@ -371,7 +372,7 @@ public:
             throw std::runtime_error(std::string("Metal pipeline creation failed: ") + (error ? error.localizedDescription.UTF8String : desc.vertexEntry));
         }
         MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
-        depth.depthCompareFunction = desc.depthCompare == DepthCompare::Less ? MTLCompareFunctionLess : MTLCompareFunctionLessEqual;
+        depth.depthCompareFunction = desc.depthCompare == DepthCompare::Equal ? MTLCompareFunctionEqual : desc.depthCompare == DepthCompare::Less ? MTLCompareFunctionLess : MTLCompareFunctionLessEqual;
         depth.depthWriteEnabled = desc.depthWrite ? YES : NO;
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
@@ -471,7 +472,7 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!encoder || !bound || !bound->actorConstants || !values || count != 36) return;
+        if (!encoder || !bound || !bound->actorConstants || !values || count != 60) return;
         constexpr size_t pageBytes = 1024 * 1024;
         constexpr size_t stride = 256;
         size_t page = actorCursor / pageBytes;

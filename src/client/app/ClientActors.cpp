@@ -3,6 +3,7 @@
 
 #include "platform/Window.h"
 #include "render/Renderer.h"
+#include "ui/Image.h"
 
 #include <algorithm>
 #include <bit>
@@ -626,12 +627,21 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         // Collision bounds need not enclose custom skins or animated geometry.
         // Outside that box, reject individual posed faces rather than the actor.
         bool cullFaces = !frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth);
-        uint32_t light = lightCorners(actor.x, actor.y, actor.z);
+        uint32_t light = lightCorners(actor.x, actor.y + boxHeight * 0.66f, actor.z);
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
                 size_t first = out.size();
                 appendDroppedItem(actor, origin, now, out);
                 lightQuads(out, first, light);
+            }
+            continue;
+        }
+        if (actor.identifier == "minecraft:falling_block") {
+            if (!invisible && !actor.fallingBlockLanded) {
+                size_t first = out.size(), firstBlended = blended.size();
+                appendFallingBlock(actor, origin, out, blended);
+                lightQuads(out, first, light);
+                lightQuads(blended, firstBlended, light);
             }
             continue;
         }
@@ -650,13 +660,20 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.yaw = actor.yaw;
         input.headYaw = actor.headYaw;
         input.pitch = actor.pitch;
-        input.now = now;
+        input.now = actorTickStart;
         input.hurtTime = actor.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - actor.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
         input.worldTime = worldTime;
         input.flags = actor.flags;
         input.variant = actor.variant;
         input.markVariant = actor.markVariant;
         input.color = actor.color;
+        input.health = actor.health;
+        input.maxHealth = actor.maxHealth;
+        input.deathTicks = actor.diedAt > 0.0 ? float(std::max(now - actor.diedAt, 0.0) * TicksPerSecond) : 0.0f;
+        input.onFireTime = actor.fireChangedAt > 0.0 ? float(std::max(now - actor.fireChangedAt, 0.0) * TicksPerSecond) : 0.0f;
+        input.horseFlags = actor.horseFlags;
+        input.nativeVelocity = actor.velocity;
+        input.metadataQueries = actor.animationQueries;
         input.skinId = actor.skinId;
         input.identifier = actor.identifier;
         input.name = actor.name;
@@ -684,6 +701,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.cameraPitch = viewPitch;
         if (actor.identifier == "minecraft:armor_stand") {
             input.engineVariables = { { "armor_stand.pose_index", double(actor.poseIndex) } };
+        }
+        input.randomSeed = actor.runtimeId;
+        input.offHandItem = actor.runtimeId == LocalActorId ? hudState.offhand.identifier : actor.offhand.identifier;
+        const auto& armorItems = actor.runtimeId == LocalActorId ? hudState.armor : actor.armorItems;
+        for (size_t slot = 0; slot < armorItems.size(); ++slot) {
+            input.armorItems[slot] = armorItems[slot].identifier;
+            input.armorColors[slot] = armorItems[slot].customColor;
         }
         input.itemUseTicks = actorItemUseTicks(actor, now);
         if (input.itemUseTicks > 0.0) {
@@ -754,13 +778,16 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         const world::EntityRig& rig = *chosenRig;
         ActorPose& pose = actorPoses[actor.runtimeId];
         bool stale = animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
-        if (stale || pose.tick != actorTickStart) {
+        bool billboard = world::cameraFacingSprite(actor.identifier);
+        if (stale || pose.tick != actorTickStart || billboard) {
             Profiler::Section section(profiler, "  animation");
+            if (billboard) input.now = now;
             animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
-            pose.previous = stale ? animator.matrices() : std::move(pose.current);
+            pose.previous = stale || billboard ? animator.matrices() : std::move(pose.current);
             pose.current = animator.matrices();
             pose.tick = actorTickStart;
         }
+        animator.setRenderContext(input, now, actorPartialTick);
         std::vector<world::BoneMatrix>& matrices = pose.interpolated;
         bool interpolated = false;
         auto interpolatePose = [&] {
@@ -883,6 +910,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             return matched;
         };
+        const world::EntityRenderController* renderingController = nullptr;
+        std::array<float, 36> surfaceConstants {};
         auto emitQuad = [&](const world::ModelQuad& quad, const world::BoneMatrix* matrix, uint32_t layer, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim, float offsetV) {
             auto place = [&](const std::array<float, 3>& point) {
                 float x = point[0];
@@ -959,19 +988,76 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     target[placed].words[15] = uvAnim[1];
                 }
             }
+            if (uvAnim[1] == 0 && renderingController && !player) {
+                uint32_t rgb = 0;
+                for (size_t channel = 0; channel < 3; ++channel) rgb |= uint32_t(std::clamp(surfaceConstants[8 + channel], 0.0f, 1.0f) * 255.0f) << (16 - channel * 8);
+                for (size_t placed = first; placed < target.size(); ++placed) target[placed].words[14] = 0x80000000u | rgb;
+            }
             if (lit) {
                 lightQuads(target, first, light);
             }
         };
         pose.gpuTransformValid.assign(rig.bones.size() + 1, 0);
         pose.gpuTransforms.resize(rig.bones.size() + 1);
-        auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided) {
+        auto setSurface = [&](const world::EntityRenderController* controller, uint32_t layer) {
+            renderingController = controller;
+            surfaceConstants.fill(0.0f);
+            surfaceConstants[4] = surfaceConstants[5] = surfaceConstants[6] = surfaceConstants[7] = 1.0f;
+            surfaceConstants[8] = surfaceConstants[9] = surfaceConstants[10] = surfaceConstants[11] = 1.0f;
+            bool hurt = input.hurtTime > 0.0f || input.deathTicks > 0.0f;
+            if (hurt) {
+                surfaceConstants[12] = 1.0f;
+                surfaceConstants[15] = 0.5f;
+                if (visuals.hitColor) {
+                    const auto& color = *visuals.hitColor;
+                    surfaceConstants[12] = color.r / 255.0f;
+                    surfaceConstants[13] = color.g / 255.0f;
+                    surfaceConstants[14] = color.b / 255.0f;
+                    surfaceConstants[15] = std::max<uint8_t>(color.a, 1) / 255.0f;
+                }
+            }
+            if (controller) {
+                for (size_t channel = 0; channel < 4; ++channel) {
+                    surfaceConstants[8 + channel] = float(animator.evaluateWithThis(controller->color[channel], 1.0));
+                    surfaceConstants[12 + channel] = float(animator.evaluateWithThis(controller->overlay[channel], surfaceConstants[12 + channel]));
+                }
+                if (hurt) {
+                    for (size_t channel = 0; channel < 4; ++channel) surfaceConstants[12 + channel] = float(animator.evaluateWithThis(controller->hurtColor[channel], surfaceConstants[12 + channel]));
+                } else if ((actor.flags[0] & 1u) != 0u || (actor.fireChangedAt > 0.0 && input.onFireTime < 10.0f)) {
+                    for (size_t channel = 0; channel < 4; ++channel) surfaceConstants[12 + channel] = float(animator.evaluateWithThis(controller->fireColor[channel], surfaceConstants[12 + channel]));
+                }
+            }
+            surfaceConstants[4] = surfaceConstants[5] = 0.0f;
+            if (controller && controller->uvAnimated) {
+                for (size_t channel = 0; channel < 4; ++channel) surfaceConstants[4 + channel] = float(animator.evaluateWithThis(controller->uvAnim[channel], surfaceConstants[4 + channel]));
+            }
+            std::array<uint32_t, 3> textures { layer, world::NoEntityChoice, world::NoEntityChoice };
+            if (controller) for (size_t index = 0; index < 2; ++index) textures[index + 1] = pickChoice(animator, controller->extraTextures[index], controller->extraTextureChoices[index]);
+            for (size_t index = 0; index < 3; ++index) {
+                surfaceConstants[16 + index] = std::bit_cast<float>(textures[index]);
+                auto grid = tileGridOf(textures[index] == world::NoEntityChoice ? layer : textures[index]);
+                surfaceConstants[20 + index * 4] = float(grid.tilesX);
+                surfaceConstants[21 + index * 4] = float(grid.tilesY);
+                surfaceConstants[22 + index * 4] = grid.coverX;
+                surfaceConstants[23 + index * 4] = grid.coverY;
+            }
+            surfaceConstants[19] = std::bit_cast<float>(controller ? uint32_t(controller->material) : 0u);
+            surfaceConstants[35] = surfaceConstants[15];
+        };
+        auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided, world::EntityBlend blend) {
             auto& cached = actorGeometry[&rig];
             if (!cached.id) {
                 cached.id = nextActorGeometry++;
                 cached.quads.resize(rig.quads.size());
+                cached.bounds.assign(rig.bones.size() + 1, { 32768.0f, 32768.0f, 32768.0f, -32768.0f, -32768.0f, -32768.0f });
                 for (size_t q = 0; q < rig.quads.size(); ++q) {
                     const auto& source = rig.quads[q];
+                    size_t owner = q < rig.quadBones.size() ? std::min<size_t>(rig.quadBones[q], rig.bones.size()) : rig.bones.size();
+                    auto& bounds = cached.bounds[owner];
+                    for (const auto& position : source.positions) for (size_t axis = 0; axis < 3; ++axis) {
+                        bounds[axis] = std::min(bounds[axis], float(position[axis]) / 16.0f);
+                        bounds[axis + 3] = std::max(bounds[axis + 3], float(position[axis]) / 16.0f);
+                    }
                     auto& words = cached.quads[q].words;
                     for (size_t component = 0; component < 12; ++component) {
                         uint32_t value = uint16_t(source.positions[component / 3][component % 3]);
@@ -980,6 +1066,15 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     for (size_t corner = 0; corner < 4; ++corner)
                         words[6 + corner] = uint32_t(source.uvs[corner][0]) | (uint32_t(source.uvs[corner][1]) << 16);
                     words[11] = source.flags & world::QuadFaceMask;
+                    std::array<float, 3> ab {}, ac {}, normal {};
+                    for (size_t axis = 0; axis < 3; ++axis) {
+                        ab[axis] = float(source.positions[1][axis] - source.positions[0][axis]);
+                        ac[axis] = float(source.positions[3][axis] - source.positions[0][axis]);
+                    }
+                    normal = { ac[1] * ab[2] - ac[2] * ab[1], ac[2] * ab[0] - ac[0] * ab[2], ac[0] * ab[1] - ac[1] * ab[0] };
+                    float length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+                    if (length > 0.0f) for (float& value : normal) value /= length;
+                    for (size_t axis = 0; axis < 3; ++axis) words[12 + axis] = std::bit_cast<uint32_t>(normal[axis]);
                 }
             }
             cached.used = heldItemFrame;
@@ -1001,7 +1096,21 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     transform[state * 12 + 11] += float(dz);
                 }
                 pose.gpuTransformValid[slot] = 1;
+                if (cullFaces) {
+                    const auto& bounds = cached.bounds[slot];
+                    std::array<float, 3> center {}, extent {};
+                    for (size_t row = 0; row < 3; ++row) {
+                        center[row] = transform[row * 4 + 3] + (transform[12 + row * 4 + 3] - transform[row * 4 + 3]) * actorPartialTick;
+                        for (size_t column = 0; column < 3; ++column) {
+                            float coefficient = transform[row * 4 + column] + (transform[12 + row * 4 + column] - transform[row * 4 + column]) * actorPartialTick;
+                            center[row] += coefficient * (bounds[column] + bounds[column + 3]) * 0.5f;
+                            extent[row] += std::abs(coefficient) * (bounds[column + 3] - bounds[column]) * 0.5f;
+                        }
+                    }
+                    if (!frustum.containsBox(cullView, origin[0] + center[0], origin[1] + center[1], origin[2] + center[2], extent[0], extent[1], extent[2])) pose.gpuTransformValid[slot] = 2;
+                }
             }
+            if (pose.gpuTransformValid[slot] == 2) return;
             if (oneSided) {
                 auto point = [&](size_t corner) {
                     std::array<float, 3> placed {};
@@ -1030,16 +1139,30 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             draw.first = uint32_t(index);
             draw.count = 1;
             std::copy(transform.begin(), transform.end(), draw.constants.begin());
+            std::copy(surfaceConstants.begin(), surfaceConstants.end(), draw.constants.begin() + 24);
             draw.constants[24] = actorPartialTick;
             draw.constants[25] = std::bit_cast<float>(layer);
-            uint32_t flags = EntityQuadFlag | (lit ? (1u << 8) : FoggedQuadFlag);
+            uint32_t flags = (blend != world::EntityBlend::Opaque ? (1u << 12) : 0u) | EntityQuadFlag | (1u << 11) | (lit ? (1u << 8) : FoggedQuadFlag) | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) flags |= 1u << 7;
             draw.constants[26] = std::bit_cast<float>(flags);
             draw.constants[27] = std::bit_cast<float>(light);
-            draw.constants[30] = draw.constants[31] = 1.0f;
+            draw.blended = blend != world::EntityBlend::Opaque;
+            draw.depthOnly = renderingController && renderingController->material == world::EntityMaterial::DissolveDepth;
+            draw.equalDepth = renderingController && renderingController->material == world::EntityMaterial::DissolveColor;
+            if (draw.blended) for (size_t axis = 0; axis < 3; ++axis) {
+                float center = 0.0f;
+                for (size_t corner = 0; corner < 4; ++corner) {
+                    for (size_t column = 0; column < 4; ++column) {
+                        float coefficient = transform[axis * 4 + column] + (transform[12 + axis * 4 + column] - transform[axis * 4 + column]) * actorPartialTick;
+                        center += coefficient * (column == 3 ? 1.0f : rig.quads[index].positions[corner][column] / 16.0f) * 0.25f;
+                    }
+                }
+                draw.center[axis] = center;
+            }
             if (!actorDraws.empty()) {
                 auto& previous = actorDraws.back();
-                if (previous.geometryKey == draw.geometryKey && previous.first + previous.count == draw.first && previous.constants == draw.constants) {
+                if (!draw.blended && previous.geometryKey == draw.geometryKey && previous.first + previous.count == draw.first
+                    && std::memcmp(previous.constants.data(), draw.constants.data(), sizeof(draw.constants)) == 0) {
                     ++previous.count;
                     return;
                 }
@@ -1052,9 +1175,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             if (bone < hidden.size() && hidden[bone]) {
                 return;
             }
-            if (world::projectileEntity(actor.identifier) && !cullFaces && blend == world::EntityBlend::Opaque && !(quad.flags & world::QuadInward)
-                && tileGridOf(layer).single() && uvAnim[1] == 0) {
-                emitGpu(index, bone, layer, lit, oneSided || !(quad.flags & world::QuadTwoSided));
+            if (!player && !(quad.flags & world::QuadInward)) {
+                emitGpu(index, bone, layer, lit, oneSided || !(quad.flags & world::QuadTwoSided), blend);
                 return;
             }
             interpolatePose();
@@ -1085,6 +1207,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 uint32_t layer = textureOf(&source);
                 const std::vector<uint8_t>& hidden = hiddenBones(source).get();
                 std::array<uint32_t, 2> uvAnim = uvAnimOf(&source);
+                setSurface(&source, layer);
                 for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
                     const world::CombinedQuadSource& from = model->combinedSources[quad];
                     if (from.controller == index && from.rig == picked) {
@@ -1100,6 +1223,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             bool oneSided = controller && controller->oneSided;
             bool lit = !controller || !controller->ignoreLighting;
             std::array<uint32_t, 2> uvAnim = uvAnimOf(controller);
+            setSurface(controller, layer);
             for (size_t index = 0; index < rig.quads.size(); ++index) {
                 emit(index, layer, hidden, blend, oneSided, lit, uvAnim);
             }
@@ -1121,18 +1245,23 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             std::array<float, 3> p { posed[0] * scale, posed[1] * scale, posed[2] * scale };
             return std::array<float, 3> { baseX + cosine * p[0] + sine * p[2], baseY + p[1], baseZ - sine * p[0] + cosine * p[2] };
         };
-        if (actor.identifier == "minecraft:player" && std::any_of(actor.armor.begin(), actor.armor.end(), [](const std::string& item) { return !item.empty(); })) {
+        if (std::any_of(actor.armor.begin(), actor.armor.end(), [](const std::string& item) { return !item.empty(); })) {
             interpolatePose();
             bool hurt = actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5;
-            appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out);
+            appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out, nullptr, actor.runtimeId == LocalActorId ? &hudState.armor : &actor.armorItems);
         }
         if (actor.runtimeId == LocalActorId) {
             interpolatePose();
             appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
-            appendThirdPersonItem(hudState.offhand, input.itemUseTicks, bodyOffhandAttachable, rig, matrices, toWorld, out, true);
-        } else if (actor.identifier == "minecraft:player" && !actor.held.empty()) {
+        } else if (!actor.held.empty()) {
             interpolatePose();
             appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
+        }
+        const HudItem& offhand = actor.runtimeId == LocalActorId ? hudState.offhand : actor.offhand;
+        if (!offhand.empty()) {
+            interpolatePose();
+            HeldAttachable& state = actor.runtimeId == LocalActorId ? bodyOffhandAttachable : actorOffhandAttachables[actor.runtimeId];
+            appendThirdPersonItem(offhand, 0.0, state, rig, matrices, toWorld, out, true);
         }
         lightQuads(out, firstWorn, light);
     }
@@ -1166,6 +1295,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             it = actorAttachables.erase(it);
         }
     }
+    std::erase_if(actorOffhandAttachables, [&](const auto& entry) { return !present.count(entry.first); });
     for (auto it = actorItemUseSince.begin(); it != actorItemUseSince.end();) {
         if (present.count(it->first)) {
             ++it;
@@ -1181,7 +1311,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
  * share the humanoid's names, so each armor bone follows the pose of the
  * wearer's bone of the same name, whatever geometry the skin brings.
  */
-void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones)
+void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones, const std::array<HudItem, 4>* items)
 {
     for (size_t slot = 0; slot < armor.size(); ++slot) {
         if (armor[slot].empty()) {
@@ -1230,7 +1360,13 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
                 corners[corner].position = place(point);
                 corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
             }
+            size_t first = out.size();
             appendTiled(corners, look.layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | shadeFlags, out);
+            if (armor[slot].starts_with("minecraft:leather_")) {
+                constexpr uint32_t defaultColor = (uint32_t(ui::LeatherColor[0]) << 16) | (uint32_t(ui::LeatherColor[1]) << 8) | ui::LeatherColor[2];
+                uint32_t tint = 0xc0000000u | (items ? (*items)[slot].customColor.value_or(defaultColor) : defaultColor);
+                for (size_t q = first; q < out.size(); ++q) out[q].words[14] = tint;
+            }
         }
     }
 }

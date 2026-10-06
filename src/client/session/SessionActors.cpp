@@ -234,13 +234,14 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
     for (const EntityDataEntry& entry : metadata.mEntries) {
         switch (entry.mId) {
         case 0:
+            if ((actor.flags[0] ^ static_cast<uint64_t>(entry.mLongValue)) & 1u) actor.fireChangedAt = secondsNow();
             actor.flags[0] = static_cast<uint64_t>(entry.mLongValue);
             break;
         case 92:
             actor.flags[1] = static_cast<uint64_t>(entry.mLongValue);
             break;
         case 2:
-            actor.variant = entry.mIntValue;
+            if (entry.mFormat == EntityDataFormat::Int) actor.variant = entry.mIntValue;
             break;
         case 43:
             actor.markVariant = entry.mIntValue;
@@ -282,6 +283,33 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
             break;
         default:
             break;
+        }
+        static constexpr std::pair<int, const char*> Queries[] = {
+            { 1, "structural_integrity" }, { 19, "swell_amount" }, { 21, "swelling_dir" },
+            { 23, "is_carrying_block" }, { 48, "invulnerable_ticks" }, { 55, "fuse_time" },
+            { 89, "sit_amount" }, { 93, "lie_amount" }, { 101, "trade_tier" },
+        };
+        if (entry.mId == 16 && entry.mFormat == EntityDataFormat::Long) actor.horseFlags = static_cast<uint64_t>(entry.mLongValue);
+        if (entry.mId == 6 && entry.mFormat == EntityDataFormat::Long) actor.animationQueries["has_target"] = entry.mLongValue != 0 && entry.mLongValue != -1 ? 1.0 : 0.0;
+        if (entry.mId == 15 && entry.mFormat == EntityDataFormat::Int && actor.identifier == "minecraft:xp_orb") {
+            static constexpr int Bounds[] = { 2, 6, 16, 36, 72, 148, 306, 616, 1236, 2476 };
+            actor.animationQueries["texture_frame_index"] = std::lower_bound(std::begin(Bounds), std::end(Bounds), entry.mIntValue) - std::begin(Bounds);
+        }
+        for (const auto& [id, name] : Queries) {
+            if (entry.mId != id) continue;
+            double value = 0.0;
+            switch (entry.mFormat) {
+            case EntityDataFormat::Byte: value = entry.mByteValue; break;
+            case EntityDataFormat::Short: value = entry.mShortValue; break;
+            case EntityDataFormat::Int: value = entry.mIntValue; break;
+            case EntityDataFormat::Long: value = static_cast<double>(entry.mLongValue); break;
+            case EntityDataFormat::Float: value = entry.mFloatValue; break;
+            default: continue;
+            }
+            if (!std::isfinite(value)) continue;
+            if (id == 19) value = std::max(value / 28.0, 0.0);
+            if (id == 23) value = value != 0.0 ? 1.0 : 0.0;
+            actor.animationQueries[name] = value;
         }
     }
 }
@@ -330,6 +358,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     }
     actor->second.x = x;
     actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
+    if (actor->second.identifier == "minecraft:falling_block") actor->second.y -= 0.49;
     actor->second.z = z;
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;

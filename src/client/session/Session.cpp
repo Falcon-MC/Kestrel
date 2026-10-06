@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/ActorEquipment.h"
 
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"
@@ -67,6 +68,7 @@
 #include "Protocol/Packets/SubChunkPacket.h"
 #include "Protocol/Packets/SubChunkRequestPacket.h"
 #include "Protocol/Packets/UpdateBlockPacket.h"
+#include "Protocol/Packets/UpdateBlockSyncedPacket.h"
 #include "Protocol/Packets/UpdateSubChunkBlocksPacket.h"
 #include "Protocol/Packets/CorrectPlayerMovePredictionPacket.h"
 #include "Protocol/Packets/NetworkStackLatencyPacket.h"
@@ -949,6 +951,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::LevelChunk:
     case MinecraftPacketIds::SubChunk:
     case MinecraftPacketIds::UpdateBlock:
+    case MinecraftPacketIds::UpdateBlockSynced:
     case MinecraftPacketIds::UpdateSubChunkBlocks:
     case MinecraftPacketIds::NetworkChunkPublisherUpdate:
     case MinecraftPacketIds::ChunkRadiusUpdated:
@@ -1078,10 +1081,24 @@ void Session::handleWorldPacket(std::string& payload)
     }
 
     if (auto event = std::dynamic_pointer_cast<ActorEventPacket>(packet);
-        event && event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) {
+        event) {
         double now = secondsNow();
         if (auto actor = actors.find(event->mRuntimeActorId); actor != actors.end()) {
-            actor->second.lastHurt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) actor->second.lastHurt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::DeathAnimation)
+                || event->mEventId == static_cast<uint8_t>(EntityEventType::EnderDragonDeath)) actor->second.diedAt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::Respawn)) actor->second.diedAt = 0.0;
+        }
+    }
+    if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
+        if (auto actor = actors.find(static_cast<uint64_t>(attributes->mRuntimeActorId)); actor != actors.end()) {
+            for (const auto& attribute : attributes->mAttributes) {
+                if (attribute.mName != "minecraft:health" || !std::isfinite(attribute.mValue)) continue;
+                actor->second.health = attribute.mValue;
+                if (std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f) actor->second.maxHealth = attribute.mMaximum;
+                if (attribute.mValue <= 0.0f && actor->second.diedAt == 0.0) actor->second.diedAt = secondsNow();
+                if (attribute.mValue > 0.0f) actor->second.diedAt = 0.0;
+            }
         }
     }
 
@@ -1093,21 +1110,29 @@ void Session::handleWorldPacket(std::string& payload)
 
     if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
+            actor->second.armorItems = { hudItemOf(equipment->mHelmet), hudItemOf(equipment->mChestplate), hudItemOf(equipment->mLeggings), hudItemOf(equipment->mBoots) };
             actor->second.armor = {
-                hudItemOf(equipment->mHelmet).identifier,
-                hudItemOf(equipment->mChestplate).identifier,
-                hudItemOf(equipment->mLeggings).identifier,
-                hudItemOf(equipment->mBoots).identifier,
+                actor->second.armorItems[0].identifier,
+                actor->second.armorItems[1].identifier,
+                actor->second.armorItems[2].identifier,
+                actor->second.armorItems[3].identifier,
             };
         }
     }
 
-    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet); equipment && equipment->mContainerId == 0) {
+    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet); equipment && (equipment->mContainerId == 0 || equipment->mContainerId == 119)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
-            actor->second.held = hudItemOf(equipment->mItem);
+            const bool offhand = actorEquipmentIsOffhand(actor->second.identifier, equipment->mContainerId, equipment->mInventorySlot);
+            (offhand ? actor->second.offhand : actor->second.held) = hudItemOf(equipment->mItem);
         }
     }
 
+    auto syncFallingBlock = [this](uint64_t uniqueId, bool landed) {
+        if (auto runtime = runtimeByUnique.find(static_cast<int64_t>(uniqueId)); runtime != runtimeByUnique.end()) {
+            if (auto actor = actors.find(runtime->second); actor != actors.end() && actor->second.identifier == "minecraft:falling_block")
+                actor->second.fallingBlockLanded = landed;
+        }
+    };
     if (auto levelChunk = std::dynamic_pointer_cast<LevelChunkPacket>(packet)) {
         if (world.stats().levelChunks < 8) {
             debugLog("LevelChunk received x=" + std::to_string(levelChunk->mChunkX) + " z=" + std::to_string(levelChunk->mChunkZ)
@@ -1124,9 +1149,19 @@ void Session::handleWorldPacket(std::string& payload)
             answerPredictedBreak({ at.x, at.y, at.z }, updateBlock->mRuntimeId);
         }
         world.handle(*updateBlock);
+    } else if (auto synced = std::dynamic_pointer_cast<UpdateBlockSyncedPacket>(packet)) {
+        if (synced->mDataLayer == 0) {
+            const auto& at = synced->mBlockPosition;
+            answerPredictedBreak({ at.x, at.y, at.z }, synced->mRuntimeId);
+        }
+        world.handle(*synced);
+        if (synced->mDataLayer == 0 && (synced->mEntityBlockSyncType == BlockSyncType::Create || synced->mEntityBlockSyncType == BlockSyncType::Destroy))
+            syncFallingBlock(synced->mRuntimeActorId, synced->mEntityBlockSyncType == BlockSyncType::Destroy);
     } else if (auto updateSubChunk = std::dynamic_pointer_cast<UpdateSubChunkBlocksPacket>(packet)) {
         for (const BlockChangeEntry& entry : updateSubChunk->mStandardBlocks) {
             answerPredictedBreak({ entry.mPosition.x, entry.mPosition.y, entry.mPosition.z }, entry.mRuntimeId);
+            if (entry.mMessageType == BlockChangeMessageType::Create || entry.mMessageType == BlockChangeMessageType::Destroy)
+                syncFallingBlock(entry.mMessageEntityId, entry.mMessageType == BlockChangeMessageType::Destroy);
         }
         world.handle(updateSubChunk);
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
@@ -1191,6 +1226,12 @@ void Session::handleWorldPacket(std::string& payload)
         actor.identifier = added->mIdentifier;
         actor.scale = metadataScale(added->mMetadata, 1.0f);
         applyActorMetadata(added->mMetadata, actor);
+        for (const auto& attribute : added->mAttributes) {
+            if (attribute.mName == "minecraft:health" && std::isfinite(attribute.mValue)) {
+                actor.health = attribute.mValue;
+                if (std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f) actor.maxHealth = attribute.mMaximum;
+            }
+        }
         actors[runtime] = actor;
         runtimeByUnique[added->mUniqueActorId] = runtime;
         moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
@@ -1271,6 +1312,7 @@ void Session::handleWorldPacket(std::string& payload)
         auto actor = actors.find(delta->mRuntimeActorId);
         if (actor != actors.end()) {
             double eye = actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0;
+            if (actor->second.identifier == "minecraft:falling_block") eye = 0.49;
             moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : actor->second.x, delta->mHasY ? delta->mY : actor->second.y + eye,
                 delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
                 delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);

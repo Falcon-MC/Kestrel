@@ -511,7 +511,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     for (size_t piece = 0; piece < armor.size(); ++piece) {
         armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
     }
-    appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown);
+    appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown, &hudState.armor);
     if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, out)) {
         return;
     }
@@ -727,7 +727,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f / 16.0f, place);
         appendEntityQuad(corners, quadUvs(quad), skinLayer, posedFace | EntityQuadFlag | hurt, out);
     }
-    appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
+    appendArmor(self.armor, rig, matrices, toWorld, hurt, out, nullptr, &hudState.armor);
     appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
     appendThirdPersonItem(hudState.offhand, input.itemUseTicks, bodyOffhandAttachable, rig, matrices, toWorld, out, true);
 }

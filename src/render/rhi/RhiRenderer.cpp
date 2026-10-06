@@ -190,6 +190,19 @@ public:
         auto actorDesc = worldPipeline("vs_actor", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less);
         actorDesc.bindings.actorConstants = true;
         actorPipeline = device->createPipeline(actorDesc);
+        actorDesc.pixelEntry = "ps_blend";
+        actorDesc.blend = BlendMode::Premultiplied;
+        actorDesc.depthWrite = false;
+        actorBlendPipeline = device->createPipeline(actorDesc);
+        actorDesc.pixelEntry = "ps_world";
+        actorDesc.blend = BlendMode::None;
+        actorDesc.depthWrite = true;
+        actorDesc.colorWrite = false;
+        actorDepthPipeline = device->createPipeline(actorDesc);
+        actorDesc.colorWrite = true;
+        actorDesc.depthWrite = false;
+        actorDesc.depthCompare = DepthCompare::Equal;
+        actorDissolvePipeline = device->createPipeline(actorDesc);
         modelBlendPipeline = device->createPipeline(worldPipeline("vs_model", "ps_blend", modelLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
         cubeBlendPipeline = device->createPipeline(worldPipeline("vs_world", "ps_blend", cubeLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
         skyPipeline = device->createPipeline(worldPipeline("vs_sky", "ps_sky", skyLayout(), BlendMode::Premultiplied, false, DepthCompare::Less));
@@ -470,19 +483,24 @@ public:
             device->setDepthRange(1.0f);
         };
         drawEntities(*modelPipeline, 0, view.entityQuadCount, 1.0f);
-        for (uint32_t index = 0; entityLayers && index < view.actorDrawCount; ++index) {
+        auto drawActor = [&](uint32_t index) {
             const ActorDraw& draw = view.actorDraws[index];
-            if (!draw.count || !draw.total) continue;
+            if (!draw.count || !draw.total || !entityLayers) return;
             auto& mesh = actorMeshes[draw.geometryKey];
             if (!mesh.buffer) {
                 mesh.buffer = acquirePersistent(size_t(draw.total) * ModelQuadBytes);
                 device->uploadBuffer(*mesh.buffer, draw.quads, size_t(draw.total) * ModelQuadBytes);
             }
             mesh.used = recording.submission;
-            bind(*actorPipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
-            device->setActorConstants(draw.constants.data(), static_cast<uint32_t>(draw.constants.size()));
+            const Pipeline& pipeline = draw.depthOnly ? *actorDepthPipeline : draw.equalDepth ? *actorDissolvePipeline : draw.blended ? *actorBlendPipeline : *actorPipeline;
+            bind(pipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            auto constants = draw.constants;
+            device->setActorConstants(constants.data(), static_cast<uint32_t>(constants.size()));
             device->setVertexBuffer(*mesh.buffer, ModelQuadBytes, size_t(draw.total) * ModelQuadBytes);
             device->draw(6, draw.count, 0, draw.first);
+        };
+        for (uint32_t index = 0; index < view.actorDrawCount; ++index) {
+            if (!view.actorDraws[index].blended) drawActor(index);
         }
 
 
@@ -528,6 +546,13 @@ public:
             for (size_t axis = 0; axis < 3; ++axis) point[axis] += view.entityOrigin[axis];
             actorTransparent.push_back({ depth(point), nullptr, 3, index });
         }
+        for (uint32_t index = 0; entityLayers && index < view.actorDrawCount; ++index) {
+            const ActorDraw& draw = view.actorDraws[index];
+            if (!draw.blended) continue;
+            auto point = draw.center;
+            for (size_t axis = 0; axis < 3; ++axis) point[axis] += view.entityOrigin[axis];
+            actorTransparent.push_back({ depth(point), nullptr, 4, index });
+        }
         std::sort(actorTransparent.begin(), actorTransparent.end(), transparentBefore);
         std::array<size_t, 2> sortedCounts = terrainCounts;
         if (actorTransparent.empty()) {
@@ -555,7 +580,7 @@ public:
         } else {
             transparent.resize(terrainTransparent.size() + actorTransparent.size());
             std::merge(terrainTransparent.begin(), terrainTransparent.end(), actorTransparent.begin(), actorTransparent.end(), transparent.begin(), transparentBefore);
-            sortedCounts[1] += actorTransparent.size();
+            sortedCounts[1] += std::count_if(actorTransparent.begin(), actorTransparent.end(), [](const auto& quad) { return quad.stream == 3; });
             std::array<uint8_t*, 2> sortedData {};
             for (size_t stream = 0; stream < sortedCounts.size(); ++stream) {
                 if (sortedCounts[stream] == 0) continue;
@@ -564,6 +589,7 @@ public:
             }
             std::array<uint32_t, 2> offsets {};
             for (auto& quad : transparent) {
+                if (quad.stream == 4) continue;
                 size_t stream = quad.stream - 2;
                 size_t stride = StreamStride[quad.stream];
                 const uint8_t* source = quad.chunk ? quad.chunk->translucent[stream].data() : entityData;
@@ -575,6 +601,11 @@ public:
         const auto& sorted = actorTransparent.empty() ? terrainDraws : transparent;
         for (size_t index = 0; index < sorted.size();) {
             const auto& first = sorted[index];
+            if (first.stream == 4) {
+                drawActor(first.quad);
+                ++index;
+                continue;
+            }
             uint32_t count = 1;
             while (index + count < sorted.size()) {
                 const auto& next = sorted[index + count];
@@ -899,6 +930,9 @@ private:
     std::unique_ptr<Pipeline> cubePipeline;
     std::unique_ptr<Pipeline> modelPipeline;
     std::unique_ptr<Pipeline> actorPipeline;
+    std::unique_ptr<Pipeline> actorBlendPipeline;
+    std::unique_ptr<Pipeline> actorDepthPipeline;
+    std::unique_ptr<Pipeline> actorDissolvePipeline;
     std::unique_ptr<Pipeline> cubeBlendPipeline;
     std::unique_ptr<Pipeline> modelBlendPipeline;
     std::unique_ptr<Pipeline> overlayPipeline;

@@ -234,6 +234,17 @@ bool ChunkStore::updateBlocks(const SubChunkKey& key, const std::vector<BlockUpd
     }
     commit(key, std::move(updated));
     urgent.insert(key);
+    // Adjacent meshes own newly exposed faces and sample the changed section's light.
+    for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dz = -1; dz <= 1; ++dz) {
+            auto neighbour = columnsByKey.find({ key.dimension, key.x + dx, key.z + dz });
+            if (neighbour == columnsByKey.end()) continue;
+            for (int32_t dy = -1; dy <= 1; ++dy) {
+                if (neighbour->second.subChunks.contains(key.y + dy))
+                    urgent.insert({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+            }
+        }
+    }
     return true;
 }
 

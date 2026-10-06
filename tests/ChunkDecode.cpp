@@ -4,6 +4,7 @@
 #include "Protocol/Packets/SubChunkPacket.h"
 #include "Protocol/Packets/SubChunkRequestPacket.h"
 #include "Protocol/Packets/UpdateBlockPacket.h"
+#include "Protocol/Packets/UpdateBlockSyncedPacket.h"
 #include "Protocol/Packets/UpdateSubChunkBlocksPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Core/NBT/NbtIo.h"
@@ -209,6 +210,30 @@ void requestedSubChunks()
     require(stream.stats().pendingSubChunks == 0, "Decoded reply did not clear the pending request");
 }
 
+void fallingBlockUpdates()
+{
+    WorldStream stream;
+    stream.reset(0, 0, 0);
+    stream.handle(column());
+    stream.handle(update());
+    UpdateBlockSyncedPacket synced;
+    synced.mBlockPosition = Vector3i(0, -64, 0);
+    synced.mRuntimeId = 0;
+    synced.mEntityBlockSyncType = BlockSyncType::Create;
+    stream.handle(synced);
+    synced.mBlockPosition = Vector3i(0, -63, 0);
+    synced.mRuntimeId = 0xF1234567u;
+    synced.mEntityBlockSyncType = BlockSyncType::Destroy;
+    stream.handle(synced);
+    synced.mDataLayer = 255;
+    synced.mRuntimeId = 42;
+    stream.handle(synced);
+    drain(stream, 1);
+    const auto chunk = stream.store().subChunk({ 0, 0, -4, 0 });
+    require(chunk && chunk->runtimeId(0, 0, 0, 0) == 0, "Falling block source must clear after pending chunk decode");
+    require(chunk->runtimeId(0, 0, 1, 0) == 0xF1234567u, "Landing must retain high-bit block hashes and ignore invalid layers");
+}
+
 void lateColumnAfterPublisher()
 {
     WorldStream stream;
@@ -379,9 +404,31 @@ void backpressureTimeout()
 
 int main()
 {
+    {
+        ChunkStore store;
+        const SubChunkKey center { 0, 0, 0, 0 };
+        const SubChunkKey neighbour { 0, 1, 0, 0 };
+        const SubChunkKey below { 0, 0, -3, 0 };
+        for (const auto& key : { center, neighbour, below }) {
+            SubChunk section;
+            require(section.apply({ BlockUpdate { 0, 0, 0, 0, 7 } }), "Could not create mesh refresh fixture");
+            store.commit(key, std::move(section));
+        }
+        store.takeDirty();
+        require(store.updateBlocks(center, { BlockUpdate { 15, 0, 0, 0, 8 } }), "Block change must apply");
+        require(store.isDirty(neighbour), "Adjacent meshes must be invalidated with the block change");
+        store.takeDirty();
+        const auto urgent = store.takeUrgent();
+        require(urgent.contains(center), "Changed section must be urgent");
+        require(urgent.contains(neighbour), "Newly exposed neighbouring faces must be urgent too");
+        require(!urgent.contains(below), "Distant sky lighting refreshes must retain their normal priority");
+        require(!store.updateBlocks(center, { BlockUpdate { 15, 0, 0, 0, 8 } }), "Unchanged blocks must not schedule refreshes");
+        require(store.takeUrgent().empty(), "Unchanged blocks must not produce urgent work");
+    }
     orderedWorker();
     cancellationAndErrors();
     streamedWorldOrder();
+    fallingBlockUpdates();
     requestedSubChunks();
     lateColumnAfterPublisher();
     resolverSnapshot();

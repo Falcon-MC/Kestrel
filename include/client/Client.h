@@ -202,7 +202,7 @@ private:
     bool appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand = false);
     double localItemUseTicks() const;
     double actorItemUseTicks(const ActorView& actor, double now);
-    void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones = nullptr);
+    void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones = nullptr, const std::array<HudItem, 4>* items = nullptr);
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBlockOverlays(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
@@ -430,6 +430,7 @@ private:
     std::unordered_map<uint64_t, float> swimAmounts;
     float localSwimAmount = 0.0f;
     std::unordered_map<uint64_t, HeldAttachable> actorAttachables;
+    std::unordered_map<uint64_t, HeldAttachable> actorOffhandAttachables;
     // When each other player's using item flag came on, since servers only send the flag.
     std::unordered_map<uint64_t, double> actorItemUseSince;
     double lastActorTime = 0.0;
@@ -495,6 +496,7 @@ private:
         uint64_t id = 0;
         uint64_t used = 0;
         std::vector<world::ModelQuadGpu> quads;
+        std::vector<std::array<float, 6>> bounds;
     };
     uint64_t nextActorGeometry = 1;
     std::unordered_map<const world::EntityRig*, ActorGeometry> actorGeometry;
@@ -516,6 +518,7 @@ private:
     uint32_t nextDroppedIcon = 0;
     const DroppedItemMesh* droppedItemMesh(const HudItem& item);
     void appendDroppedItem(const ActorView& actor, const std::array<int32_t, 3>& origin, double now, std::vector<world::ModelQuadGpu>& out);
+    void appendFallingBlock(const ActorView& actor, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     uint32_t mapBackgroundLayer() const;
     void loadMapArt(const std::vector<std::shared_ptr<const world::PackFiles>>& packs, uint8_t* backgroundLayer);
     std::vector<uint8_t> composeMap(const MapView& map) const;
