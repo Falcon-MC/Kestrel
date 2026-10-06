@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "client/AttachableFrame.h"
 
 #include "platform/Window.h"
 #include "render/Renderer.h"
@@ -1128,6 +1129,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (actor.runtimeId == LocalActorId) {
             interpolatePose();
             appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
+            appendThirdPersonItem(hudState.offhand, input.itemUseTicks, bodyOffhandAttachable, rig, matrices, toWorld, out, true);
         } else if (actor.identifier == "minecraft:player" && !actor.held.empty()) {
             interpolatePose();
             appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
@@ -1267,7 +1269,7 @@ double Client::actorItemUseTicks(const ActorView& actor, double now)
  * attachable without a binding hangs from that bone as a whole. Returns false
  * when the item has no attachable, so the caller draws it as usual.
  */
-bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out)
+bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
     if (!model || model->rigs.empty()) {
@@ -1275,7 +1277,7 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     }
     int32_t itemBone = -1;
     for (size_t bone = 0; bone < holder.bones.size() && bone < holderMatrices.size(); ++bone) {
-        if (lowercase(holder.bones[bone].name) == "rightitem") {
+        if (lowercase(holder.bones[bone].name) == (leftHand ? "leftitem" : "rightitem")) {
             itemBone = static_cast<int32_t>(bone);
         }
     }
@@ -1299,7 +1301,7 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     input.identifier = held.identifier;
     input.mainHandItem = held.identifier;
     input.itemUseTicks = itemUseTicks;
-    input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", 0.0 } };
+    input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
     state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
     const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
     if (matrices.size() != state.bones.size()) {
@@ -1337,7 +1339,11 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
         }
         detach = *inverse;
     }
-    world::BoneMatrix hand = compose(holderMatrices[size_t(itemBone)], detach);
+    world::BoneMatrix hand = holderMatrices[size_t(itemBone)];
+    if (bound >= 0) {
+        hand = boundAttachableFrame(hand, holderPivot);
+    }
+    hand = compose(hand, detach);
     std::vector<uint8_t> attached(rig.bones.size(), bound < 0 ? 1 : 0);
     for (size_t bone = 0; bone < rig.bones.size() && bound >= 0; ++bone) {
         for (int32_t walker = static_cast<int32_t>(bone), steps = 0; walker >= 0 && steps <= int32_t(rig.bones.size()); walker = rig.bones[size_t(walker)].parent, ++steps) {
