@@ -621,6 +621,10 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             if (input.pressedKey == Key::Q) {
                 send(InventoryAction::Drop, hoveredSlot, 0, input.isHeld(Key::Control));
             }
+        } else if (creativeMode && input.pressedKey == Key::Q && target.collection == "recipe_book"
+            && catalog && target.index >= 0 && target.index < int(catalogEntries.size()) && catalogGroups[target.index] < 0) {
+            const auto& entry = (*catalog)[catalogEntries[target.index]];
+            send(InventoryAction::CreativeDrop, -1, entry.networkId, input.isHeld(Key::Control));
         }
         if (input.mousePressed || input.rightMousePressed) {
             bool secondary = input.rightMousePressed;

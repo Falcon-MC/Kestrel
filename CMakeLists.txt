@@ -215,6 +215,23 @@ target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
     enable_testing()
+    add_executable(KestrelCreativeDropTest
+        tests/CreativeDrop.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelCreativeDropTest PRIVATE include)
+    target_link_libraries(KestrelCreativeDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME creative-drop COMMAND KestrelCreativeDropTest)
     add_executable(KestrelInventoryStackTest
         tests/InventoryStack.cpp
         src/client/inventory/InventoryStack.cpp
