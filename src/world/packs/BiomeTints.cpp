@@ -71,13 +71,6 @@ struct Appearance {
     std::string fog;
 };
 
-struct FogProfiles {
-    std::optional<BiomeFog> air;
-    std::optional<BiomeFog> water;
-    std::optional<BiomeFog> lava;
-    std::optional<BiomeFog> resistance;
-};
-
 struct Climate {
     float temperature = 0.8f;
     float downfall = 0.4f;
@@ -152,6 +145,28 @@ std::optional<BiomeFog> parseFog(const json::Value* source)
     return BiomeFog { *rgb, first, last, type == "render" };
 }
 
+std::optional<BiomeFog> parseWaterFog(const json::Value* source)
+{
+    auto fog = parseFog(source);
+    const auto* transition = source ? source->get("transition_fog") : nullptr;
+    if (!fog || !transition) return fog;
+    auto initial = parseFog(transition->get("init_fog"));
+    auto number = [&](const char* name) {
+        const auto* value = transition->get(name);
+        return value ? float(value->number(-1)) : -1.0f;
+    };
+    float minimum = number("min_percent"), middle = number("mid_percent");
+    float midSeconds = number("mid_seconds"), maxSeconds = number("max_seconds");
+    if (initial && std::isfinite(minimum) && std::isfinite(middle)
+        && std::isfinite(midSeconds) && std::isfinite(maxSeconds)
+        && minimum >= 0 && minimum <= middle && middle <= 1
+        && midSeconds >= 0 && maxSeconds >= midSeconds) {
+        fog->transition = BiomeFogTransition { initial->color, initial->start, initial->end, initial->relative,
+            minimum, midSeconds, middle, maxSeconds };
+    }
+    return fog;
+}
+
 }
 
 uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
@@ -182,7 +197,7 @@ uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
 void BiomeTints::load(PackSource& resources, PackSource& behaviors)
 {
     powderSnow.reset();
-    std::map<std::string, FogProfiles> fogs;
+    fogs.clear();
     for (const auto& entry : resources.archiveEntries("fogs")) {
         std::string text;
         if (!resources.readArchived("fogs", entry, text)) continue;
@@ -192,15 +207,17 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* identifier = description ? description->get("identifier") : nullptr;
         const auto* distance = settings ? settings->get("distance") : nullptr;
         if (!identifier || !identifier->isString()) continue;
+        auto snow = parseFog(distance ? distance->get("powder_snow") : nullptr);
         if (identifier->string() == "minecraft:fog_powder_snow") {
-            powderSnow = parseFog(distance ? distance->get("powder_snow") : nullptr);
+            powderSnow = snow;
         }
-        auto water = parseFog(distance ? distance->get("water") : nullptr);
+        auto water = parseWaterFog(distance ? distance->get("water") : nullptr);
         auto air = parseFog(distance ? distance->get("air") : nullptr);
         auto lava = parseFog(distance ? distance->get("lava") : nullptr);
         auto resistance = parseFog(distance ? distance->get("lava_resistance") : nullptr);
-        if (!air && !water && !lava && !resistance) continue;
-        fogs.try_emplace(identifier->string(), FogProfiles { air, water, lava, resistance });
+        auto weather = parseFog(distance ? distance->get("weather") : nullptr);
+        if (!air && !water && !lava && !resistance && !weather && !snow) continue;
+        fogs.try_emplace(identifier->string(), FogProfiles { air, water, lava, resistance, weather, snow });
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
     for (size_t i = 0; i < maps.size(); ++i) {
@@ -327,6 +344,27 @@ const BiomeColors& BiomeTints::colors(uint32_t biomeId) const
 {
     auto found = byId.find(biomeId);
     return found == byId.end() ? fallback : found->second;
+}
+
+const BiomeFog* BiomeTints::commandFog(const std::vector<std::string>& stack, FogMedium medium) const
+{
+    // PlayerFog lists pushes oldest first; absent media fall through to earlier pushes.
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+        auto entry = fogs.find(*it);
+        if (entry == fogs.end()) continue;
+        const auto& fog = entry->second;
+        const std::optional<BiomeFog>* selected = nullptr;
+        switch (medium) {
+        case FogMedium::Air: selected = &fog.air; break;
+        case FogMedium::Weather: selected = &fog.weather; break;
+        case FogMedium::Water: selected = &fog.water; break;
+        case FogMedium::Lava: selected = &fog.lava; break;
+        case FogMedium::LavaResistance: selected = &fog.resistance; break;
+        case FogMedium::PowderSnow: selected = &fog.powderSnow; break;
+        }
+        if (selected && *selected) return &**selected;
+    }
+    return nullptr;
 }
 
 }

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -24,12 +25,26 @@ enum class FoliageVariant : uint8_t {
     Dry = 3,
 };
 
+struct BiomeFogTransition {
+    uint32_t color = 0;
+    float start = 0.0f;
+    float end = 0.0f;
+    bool relative = false;
+    float minPercent = 0.0f;
+    float midSeconds = 0.0f;
+    float midPercent = 0.0f;
+    float maxSeconds = 0.0f;
+};
+
 struct BiomeFog {
     uint32_t color = 0;
     float start = 0.0f;
     float end = 0.0f;
     bool relative = false;
+    std::optional<BiomeFogTransition> transition;
 };
+
+enum class FogMedium : uint8_t { Air, Weather, Water, Lava, LavaResistance, PowderSnow };
 
 /**
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
@@ -62,8 +77,18 @@ public:
 
     const BiomeColors& colors(uint32_t biomeId) const;
     const BiomeFog* powderSnowFog() const { return powderSnow ? &*powderSnow : nullptr; }
+    const BiomeFog* commandFog(const std::vector<std::string>& stack, FogMedium medium) const;
 
 private:
+    struct FogProfiles {
+        std::optional<BiomeFog> air;
+        std::optional<BiomeFog> water;
+        std::optional<BiomeFog> lava;
+        std::optional<BiomeFog> resistance;
+        std::optional<BiomeFog> weather;
+        std::optional<BiomeFog> powderSnow;
+    };
+    std::unordered_map<std::string, FogProfiles> fogs;
     std::unordered_map<uint32_t, BiomeColors> byId;
     BiomeColors fallback;
     std::optional<BiomeFog> powderSnow;
