@@ -215,6 +215,18 @@ target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
     enable_testing()
+    add_executable(KestrelInventoryStackTest
+        tests/InventoryStack.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelInventoryStackTest PRIVATE include)
+    target_link_libraries(KestrelInventoryStackTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME inventory-stack COMMAND KestrelInventoryStackTest)
     add_executable(KestrelSettingsSliderTest tests/SettingsSlider.cpp)
     target_include_directories(KestrelSettingsSliderTest PRIVATE include)
     add_test(NAME settings-slider COMMAND KestrelSettingsSliderTest)
