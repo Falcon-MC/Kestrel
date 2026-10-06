@@ -72,6 +72,7 @@ struct Appearance {
 };
 
 struct FogProfiles {
+    std::optional<BiomeFog> air;
     std::optional<BiomeFog> water;
     std::optional<BiomeFog> lava;
     std::optional<BiomeFog> resistance;
@@ -191,10 +192,11 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* distance = settings ? settings->get("distance") : nullptr;
         if (!identifier || !identifier->isString()) continue;
         auto water = parseFog(distance ? distance->get("water") : nullptr);
+        auto air = parseFog(distance ? distance->get("air") : nullptr);
         auto lava = parseFog(distance ? distance->get("lava") : nullptr);
         auto resistance = parseFog(distance ? distance->get("lava_resistance") : nullptr);
-        if (!water && !lava && !resistance) continue;
-        fogs.try_emplace(identifier->string(), FogProfiles { water, lava, resistance });
+        if (!air && !water && !lava && !resistance) continue;
+        fogs.try_emplace(identifier->string(), FogProfiles { air, water, lava, resistance });
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
     for (size_t i = 0; i < maps.size(); ++i) {
@@ -291,6 +293,7 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         colors.dryFoliage = resolve(appearance.dryFoliage, TintMap::DryFoliage, climate);
         colors.water = appearance.water.value_or(0x44AFF5);
         auto applyFog = [&](const FogProfiles& fog) {
+            if (fog.air) colors.airFog = fog.air;
             if (fog.water) {
                 colors.waterFog = fog.water->color;
                 colors.waterFogStart = fog.water->start;
