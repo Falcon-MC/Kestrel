@@ -1,6 +1,8 @@
 #pragma once
 
 #include "world/ChunkStore.h"
+#include "world/ChunkDecodeQueue.h"
+#include "world/MeshPriority.h"
 
 #include <chrono>
 #include <cstdint>
@@ -38,18 +40,22 @@ public:
     using Clock = std::chrono::steady_clock;
 
     void reset(int32_t dimension, int32_t chunkX, int32_t chunkZ);
-    void setBlockPaletteResolver(BlockPaletteResolver resolver) { blockPaletteResolver = std::move(resolver); }
+    void setBlockPaletteResolver(BlockPaletteResolver resolver) { blockPaletteResolver = std::make_shared<BlockPaletteResolver>(std::move(resolver)); }
     void setChunkRadius(int32_t radius);
     void changeDimension(int32_t dimension, int32_t chunkX, int32_t chunkZ);
 
-    void handle(const LevelChunkPacket& packet);
-    void handle(const SubChunkPacket& packet);
+    void handle(std::shared_ptr<const LevelChunkPacket> packet);
+    void handle(std::shared_ptr<const SubChunkPacket> packet);
     void handle(const UpdateBlockPacket& packet);
-    void handle(const UpdateSubChunkBlocksPacket& packet);
+    void handle(std::shared_ptr<const UpdateSubChunkBlocksPacket> packet);
     void handle(const NetworkChunkPublisherUpdatePacket& packet);
-    void handle(const BlockActorDataPacket& packet);
+    void handle(std::shared_ptr<const BlockActorDataPacket> packet, size_t bytes);
 
-    std::vector<std::unique_ptr<SubChunkRequestPacket>> takeRequests(Clock::time_point now);
+    bool applyDecoded() { decoding.drain(); return decoding.empty(); }
+    void cancelDecoding() { decoding.clear(); decodingReplies.clear(); }
+    bool decodeBacklogged() const { return decoding.backlogged(); }
+
+    std::vector<std::unique_ptr<SubChunkRequestPacket>> takeRequests(Clock::time_point now, const MeshViewPriority& priority = {});
 
     ChunkStore& store()
     {
@@ -89,16 +95,26 @@ private:
     void evictColumn(const ChunkKey& key);
     void recordError(const std::string& error);
 
-    BlockPaletteResolver blockPaletteResolver;
+    void apply(const UpdateBlockPacket& packet);
+    void apply(const UpdateSubChunkBlocksPacket& packet);
+    void apply(const NetworkChunkPublisherUpdatePacket& packet);
+    void apply(const BlockActorDataPacket& packet);
+    void applyChunkRadius(int32_t radius);
+
+    std::shared_ptr<BlockPaletteResolver> blockPaletteResolver;
     ChunkStore chunks;
     std::map<ChunkKey, std::map<int32_t, PendingSubChunk>> pending;
+    std::map<SubChunkKey, size_t> decodingReplies;
     int32_t dimension = 0;
     int32_t centerX = 0;
     int32_t centerZ = 0;
     int32_t chunkRadius = 0;
     int32_t publisherRadius = 0;
     Clock::time_point lastColumnAt {};
+    Clock::time_point lastRequestPoll {};
+    bool requestsPaused = false;
     WorldStats counters;
+    ChunkDecodeQueue decoding;
 };
 
 }
