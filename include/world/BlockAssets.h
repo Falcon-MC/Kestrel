@@ -184,6 +184,7 @@ struct BlockVisual {
     uint8_t liquidLevel = 0;
     uint8_t lightEmission = 0;
     uint8_t lightFilter = 0;
+    bool powderSnow = false;
 
     bool emitsCubeGeometry() const
     {

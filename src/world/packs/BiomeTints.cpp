@@ -181,6 +181,7 @@ uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
 
 void BiomeTints::load(PackSource& resources, PackSource& behaviors)
 {
+    powderSnow.reset();
     std::map<std::string, FogProfiles> fogs;
     for (const auto& entry : resources.archiveEntries("fogs")) {
         std::string text;
@@ -191,6 +192,9 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* identifier = description ? description->get("identifier") : nullptr;
         const auto* distance = settings ? settings->get("distance") : nullptr;
         if (!identifier || !identifier->isString()) continue;
+        if (identifier->string() == "minecraft:fog_powder_snow") {
+            powderSnow = parseFog(distance ? distance->get("powder_snow") : nullptr);
+        }
         auto water = parseFog(distance ? distance->get("water") : nullptr);
         auto air = parseFog(distance ? distance->get("air") : nullptr);
         auto lava = parseFog(distance ? distance->get("lava") : nullptr);
