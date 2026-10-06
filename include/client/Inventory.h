@@ -8,6 +8,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ struct HudItem {
     int32_t count = 0;
     int32_t aux = 0;
     int32_t damage = 0;
+    std::optional<uint32_t> customColor;
     std::string customName;
     std::string icon;
     std::vector<std::string> lore;

@@ -79,7 +79,11 @@ struct ActorDraw {
     uint32_t total = 0;
     uint32_t first = 0;
     uint32_t count = 0;
-    std::array<float, 36> constants {};
+    std::array<float, 60> constants {};
+    bool blended = false;
+    bool depthOnly = false;
+    bool equalDepth = false;
+    std::array<float, 3> center {};
 };
 
 inline void packEntityPositions(const std::array<std::array<float, 3>, 4>& corners, std::array<uint32_t, 16>& words)
