@@ -348,9 +348,19 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextur
             };
             std::array<float, 3> cubePivot { -cube.pivot[0], cube.pivot[1], cube.pivot[2] };
             std::array<float, 3> cubeRotation { -cube.rotation[0], -cube.rotation[1], cube.rotation[2] };
+            std::array<float, 3> bindOffset {};
+            if (bone.bindRotationSet) {
+                std::array<float, 3> rotation { -bone.bindRotation[0], -bone.bindRotation[1], bone.bindRotation[2] };
+                auto pivot = rotateEulerAround(cubePivot, { -bone.pivot[0], bone.pivot[1], bone.pivot[2] }, rotation);
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    cubeRotation[axis] += rotation[axis];
+                    bindOffset[axis] = pivot[axis] - cubePivot[axis];
+                }
+            }
             bool mirror = cube.mirrorSet ? cube.mirror : bone.mirror;
             bool inverted = cube.size[0] < 0.0f || cube.size[1] < 0.0f || cube.size[2] < 0.0f;
             std::array<float, 3> cubeCenter = rotateEulerAround({ (min[0] + max[0]) * 0.5f, (min[1] + max[1]) * 0.5f, (min[2] + max[2]) * 0.5f }, cubePivot, cubeRotation);
+            for (size_t axis = 0; axis < 3; ++axis) cubeCenter[axis] += bindOffset[axis];
             float x = cube.size[0];
             float y = cube.size[1];
             float z = cube.size[2];
@@ -415,6 +425,7 @@ void buildEntityRig(const Geometry& geometry, EntityRig& model, const MeshTextur
                         point[axis] = center + offset * half;
                     }
                     point = rotateEulerAround(point, cubePivot, cubeRotation);
+                    for (size_t axis = 0; axis < 3; ++axis) point[axis] += bindOffset[axis];
                     for (int axis = 0; axis < 3; ++axis) {
                         quad.positions[corner][axis] = static_cast<int16_t>(std::lround(point[axis] * 16.0f));
                     }
@@ -459,6 +470,12 @@ struct RenderControllerSource {
     std::vector<std::string> geometryChoices;
     molang::Script texture;
     std::vector<std::string> textureChoices;
+    std::array<molang::Script, 2> extraTextures;
+    std::array<std::vector<std::string>, 2> extraTextureChoices;
+    std::array<molang::Script, 4> color;
+    std::array<molang::Script, 4> overlay;
+    std::array<molang::Script, 4> hurtColor;
+    std::array<molang::Script, 4> fireColor;
     std::vector<EntityPartRule> parts;
     std::string material;
     bool ignoreLighting = false;
@@ -595,6 +612,25 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
             texture = list->mArray.front()->mString;
         }
         parsed.texture = molang::Script::compile(rewriteSelector(texture, textureArrays, "texture", parsed.textureChoices));
+        if (const json::Value* list = controller.get("textures"); list && list->isArray()) {
+            for (size_t index = 1; index < std::min<size_t>(list->mArray.size(), 3); ++index) {
+                if (list->mArray[index]->isString()) parsed.extraTextures[index - 1] = molang::Script::compile(
+                    rewriteSelector(list->mArray[index]->mString, textureArrays, "texture", parsed.extraTextureChoices[index - 1]));
+            }
+        }
+        auto colorOf = [&](const char* name, std::array<molang::Script, 4>& channels, const std::array<double, 4>& defaults) {
+            const json::Value* value = controller.get(name);
+            static constexpr const char* Keys[] = { "r", "g", "b", "a" };
+            for (size_t channel = 0; channel < 4; ++channel) {
+                const json::Value* entry = value && value->isObject() ? value->get(Keys[channel]) : nullptr;
+                channels[channel] = entry && entry->isString() ? molang::Script::compile(entry->mString, defaults[channel])
+                    : entry && entry->isNumber() ? molang::Script(entry->mNumber) : molang::Script::compile("this", defaults[channel]);
+            }
+        };
+        colorOf("color", parsed.color, { 1, 1, 1, 1 });
+        colorOf("overlay_color", parsed.overlay, { 0, 0, 0, 0 });
+        colorOf("is_hurt_color", parsed.hurtColor, { 1, 0, 0, 0.5 });
+        colorOf("on_fire_color", parsed.fireColor, { 1, 1, 1, 0 });
         if (const json::Value* list = controller.get("materials"); list && list->isArray() && !list->mArray.empty()) {
             const json::Value& first = *list->mArray.front();
             if (!first.mKeys.empty()) {
@@ -760,14 +796,14 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
     };
     // Server packs come after, file by file, so a pack's player.animation.json
     // adds to the game's animations instead of hiding the whole file.
+    PackSource nativeModels(pack.root());
     for (const char* archive : { "models", "models/entity" }) {
-        for (const std::string& name : pack.archiveEntries(archive)) {
-            std::string text;
-            if (pack.readBaseArchived(archive, name, text)) {
-                library.parse(stripJsonComments(text));
-            }
+        for (const std::string& name : nativeModels.archiveEntries(archive)) {
+            auto layers = nativeModels.readArchivedLayers(archive, name);
+            for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer) library.parse(stripJsonComments(*layer), true);
         }
     }
+    library.expandVanillaModels();
     for (const std::string& name : pack.archiveEntries("entity")) {
         std::string text;
         if (pack.readBaseArchived("entity", name, text)) {
@@ -794,13 +830,18 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
-    // Some installations retain these definitions outside the resource pack archives.
-    for (const char* name : { "bow.json", "shield.json", "trident.json" }) {
-        std::ifstream file(pack.root().parent_path().parent_path() / "definitions" / "attachables" / name, std::ios::binary);
-        if (file) {
-            std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            readClientEntity(text, attachableDefinitions, "minecraft:attachable");
-        }
+    for (const std::string& name : pack.archiveEntries("attachables")) {
+        std::string text;
+        if (pack.readBaseArchived("attachables", name, text)) readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+    }
+    std::error_code error;
+    auto directory = pack.root().parent_path().parent_path() / "definitions" / "attachables";
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+        if (entry.path().extension() != ".json") continue;
+        std::ifstream file(entry.path(), std::ios::binary);
+        if (!file) continue;
+        std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        readClientEntity(text, attachableDefinitions, "minecraft:attachable");
     }
     if (!attachableDefinitions.contains("minecraft:trident")) {
         auto projectile = definitions.find("minecraft:thrown_trident");
@@ -976,6 +1017,11 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
             controller.geometry = source->second.geometry;
             controller.texture = source->second.texture;
+            controller.extraTextures = source->second.extraTextures;
+            controller.color = source->second.color;
+            controller.overlay = source->second.overlay;
+            controller.hurtColor = source->second.hurtColor;
+            controller.fireColor = source->second.fireColor;
             controller.parts = source->second.parts;
             controller.ignoreLighting = source->second.ignoreLighting;
             controller.uvAnim = source->second.uvAnim;
@@ -986,11 +1032,19 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             for (const std::string& choice : source->second.textureChoices) {
                 controller.textureChoices.push_back(layerOf(choice));
             }
+            for (size_t index = 0; index < 2; ++index) {
+                for (const std::string& choice : source->second.extraTextureChoices[index]) controller.extraTextureChoices[index].push_back(layerOf(choice));
+            }
             const std::string& material = source->second.material;
             if (startsWith(material, "material.")) {
                 if (auto named = definition.materials.find(material.substr(std::string("material.").size())); named != definition.materials.end()) {
                     controller.blend = blendOf(named->second);
                     controller.oneSided = named->second.find("one_sided") != std::string::npos;
+                    if (named->second == "ender_dragon") controller.material = EntityMaterial::Dragon;
+                    else if (startsWith(named->second, "entity_dissolve_layer0")) controller.material = EntityMaterial::DissolveDepth;
+                    else if (startsWith(named->second, "entity_dissolve_layer1")) controller.material = EntityMaterial::DissolveColor;
+                    else if (named->second.find("change_color") != std::string::npos) controller.material = EntityMaterial::ColorMask;
+                    else if (named->second.find("multitexture") != std::string::npos) controller.material = EntityMaterial::Multitexture;
                 }
             }
             model.controllers.push_back(std::move(controller));
@@ -1074,10 +1128,6 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                 continue;
             }
             armorLayers.emplace(path, *layer);
-            if (std::string_view(material) == "leather" && entityTileGrid(*layer).single()) {
-                size_t bytes = size_t(EntityTextureSize) * EntityTextureSize * 4;
-                ui::applyDyeMask(std::span<uint8_t>(entityPixels).subspan(size_t(*layer) * bytes, bytes), ui::LeatherColor);
-            }
         }
     }
     geometries = std::make_shared<const GeometryLibrary>(std::move(library));

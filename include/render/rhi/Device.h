@@ -59,6 +59,7 @@ enum class BlendMode {
 enum class DepthCompare {
     Less,
     LessEqual,
+    Equal,
 };
 
 /**
@@ -106,6 +107,7 @@ struct PipelineDesc {
     BindingLayout bindings;
     BlendMode blend = BlendMode::None;
     bool depthWrite = true;
+    bool colorWrite = true;
     DepthCompare depthCompare = DepthCompare::Less;
 };
 

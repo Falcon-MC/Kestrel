@@ -511,7 +511,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     for (size_t piece = 0; piece < armor.size(); ++piece) {
         armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
     }
-    appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown);
+    appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown, &hudState.armor);
     if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, out)) {
         return;
     }
@@ -727,7 +727,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
         uint32_t posedFace = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f / 16.0f, place);
         appendEntityQuad(corners, quadUvs(quad), skinLayer, posedFace | EntityQuadFlag | hurt, out);
     }
-    appendArmor(self.armor, rig, matrices, toWorld, hurt, out);
+    appendArmor(self.armor, rig, matrices, toWorld, hurt, out, nullptr, &hudState.armor);
     appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
     appendThirdPersonItem(hudState.offhand, input.itemUseTicks, bodyOffhandAttachable, rig, matrices, toWorld, out, true);
 }
@@ -740,11 +740,11 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
+void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool offhand)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
-        if (lowercase(rig.bones[bone].name) == (leftHand ? "leftarm" : "rightarm")) {
+        if (lowercase(rig.bones[bone].name) == (offhand ? "leftarm" : "rightarm")) {
             armBone = static_cast<int32_t>(bone);
         }
     }
@@ -753,7 +753,7 @@ void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, Hel
     }
     const world::BoneMatrix& m = matrices[static_cast<size_t>(armBone)];
     const Vec3& shoulder = rig.bones[static_cast<size_t>(armBone)].pivot;
-    if (appendAttachable(held, itemUseTicks, rig, matrices, false, attachable, toWorld, out, leftHand)) {
+    if (appendAttachable(held, itemUseTicks, rig, matrices, false, attachable, toWorld, out, offhand)) {
         return;
     }
     auto place = [&](const Vec3& local, bool cube) {
@@ -762,8 +762,7 @@ void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, Hel
         p = rotate(rotate(rotate(p, { 0.0f, 0.0f, display.rotation[2] }), { 0.0f, display.rotation[1], 0.0f }), { display.rotation[0], 0.0f, 0.0f });
         p = add(p, scaled(add(display.translation, HandOffset), 1.0f / 16.0f));
         p = rotate(rotate(p, { 0.0f, 180.0f, 0.0f }), { -90.0f, 0.0f, 0.0f });
-        if (leftHand) p[0] = -p[0];
-        Vec3 pixels { shoulder[0] - p[0] * 16.0f, shoulder[1] - p[1] * 16.0f, shoulder[2] + p[2] * 16.0f };
+        Vec3 pixels { shoulder[0] - p[0] * (offhand ? -16.0f : 16.0f), shoulder[1] - p[1] * 16.0f, shoulder[2] + p[2] * 16.0f };
         return toWorld({
             m[0] * pixels[0] + m[1] * pixels[1] + m[2] * pixels[2] + m[3],
             m[4] * pixels[0] + m[5] * pixels[1] + m[6] * pixels[2] + m[7],

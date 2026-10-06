@@ -14,7 +14,26 @@ layout(std140, set = 1, binding = 0) uniform Actor {
     vec4 params;
     vec4 uv;
     vec4 color;
+    vec4 overlay;
+    vec4 textures;
+    vec4 grid0;
+    vec4 grid1;
+    vec4 grid2;
+    vec4 options;
 } actor;
+
+const float lightCurve[16] = float[16](
+    0.0, 0.01754386, 0.037037037, 0.05882353,
+    0.083333336, 0.11111111, 0.14285715, 0.17948718,
+    0.22222222, 0.27272728, 0.33333334, 0.4074074,
+    0.5, 0.61904764, 0.7777778, 1.0);
+
+vec3 cornerLight(uint light, uint ao, uint corner)
+{
+    uint levels = (light >> (corner * 8u)) & 0xffu;
+    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
+    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+}
 
 vec3 pose(vec3 point) {
     vec4 p = vec4(point, 1.0);
@@ -35,25 +54,25 @@ layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
 layout(location = 5) out vec3 outLight;
 layout(location = 6) flat out uint outEntity;
-
-const float lightCurve[16] = float[16](
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0);
-
-vec3 cornerLight(uint light, uint ao, uint corner)
-{
-    uint levels = (light >> (corner * 8u)) & 0xffu;
-    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
-    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
-}
+layout(location = 7) flat out vec4 outActorColor;
+layout(location = 8) flat out vec4 outActorOverlay;
+layout(location = 9) flat out uvec4 outActorTextures;
+layout(location = 10) flat out vec4 outActorGrid0;
+layout(location = 11) flat out vec4 outActorGrid1;
+layout(location = 12) flat out vec4 outActorGrid2;
+layout(location = 13) flat out float outActorDissolve;
 
 void main()
 {
+    outActorColor = actor.color;
+    outActorOverlay = actor.overlay;
+    outActorTextures = floatBitsToUint(actor.textures);
+    outActorGrid0 = actor.grid0;
+    outActorGrid1 = actor.grid1;
+    outActorGrid2 = actor.grid2;
+    outActorDissolve = actor.options.w;
+
     const uint cornerOrder[6] = uint[6](0u, 1u, 2u, 0u, 2u, 3u);
-    const float faceShade[7] = float[7](0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
-    const vec3 normals[7] = vec3[7](vec3(0), vec3(0,-1,0), vec3(0,1,0), vec3(-1,0,0), vec3(1,0,0), vec3(0,0,-1), vec3(0,0,1));
     uint words[12] = uint[12](inA.x,inA.y,inA.z,inA.w,inB.x,inB.y,inB.z,inB.w,inC.x,inC.y,inC.z,inC.w);
     uint corner = cornerOrder[gl_VertexIndex];
     vec3 local;
@@ -69,14 +88,13 @@ void main()
     uint uvWord = words[6u+corner];
     outUv = actor.uv.xy + vec2(float(uvWord & 65535u), float(uvWord >> 16)) / 4096.0 * actor.uv.zw;
     outMaterial = floatBitsToUint(actor.params.y);
-    vec3 direction = pose(normals[(words[11] & 15u) < 7u ? words[11] & 15u : 0u]) - pose(vec3(0));
-    uint axis = 0u;
-    for (uint i=1u;i<3u;++i) if (abs(direction[i]) > abs(direction[axis])) axis=i;
-    uint shade = direction[axis] == 0.0 ? 0u : axis*2u + (direction[axis]>0.0 ? 2u : 1u);
-    outShade = faceShade[shade];
+    vec3 normal = vec3(uintBitsToFloat(inD.x), uintBitsToFloat(inD.y), uintBitsToFloat(inD.z));
+    vec3 direction = pose(normal) - pose(vec3(0));
+    direction = length(direction) > 0.0 ? normalize(direction) : vec3(0,1,0);
+    outShade = (1.0 + direction.y) * 0.275 - direction.x * direction.x * 0.1 + direction.z * direction.z * 0.1 + 0.45 + actor.overlay.a * 0.35;
     outRelative = position;
     outTint = 0u;
-    outLight = cornerLight(floatBitsToUint(actor.params.w),0u,corner);
-    outEntity = (floatBitsToUint(actor.params.z) >> 5u) & 47u;
+    outLight = cornerLight(floatBitsToUint(actor.params.w), 0u, corner);
+    outEntity = (floatBitsToUint(actor.params.z) >> 5u) & 255u;
     if (any(notEqual(actor.uv, vec4(0,0,1,1)))) outEntity |= 16u;
 }

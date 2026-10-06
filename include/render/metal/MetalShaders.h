@@ -77,6 +77,11 @@ struct WorldOut {
     uint tint [[flat]];
     float3 light;
     uint entity [[flat]];
+    float4 actorColor [[flat]];
+    float4 actorOverlay [[flat]];
+    uint4 actorTextures [[flat]];
+    float4 actorGrid0 [[flat]], actorGrid1 [[flat]], actorGrid2 [[flat]];
+    float actorDissolve [[flat]];
 };
 
 constant float lightCurve[16] = {
@@ -99,7 +104,7 @@ float4 applyTint(float4 texel, uint tint)
     }
     float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
     if ((tint & 0x40000000u) != 0) {
-        return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
     }
     return float4(texel.rgb * color, texel.a);
 }
@@ -157,7 +162,7 @@ vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]
     float height = float(((geometry >> 22) & 0xf) + 1);
     uint corner = cornerOrder[vertexId];
 
-    WorldOut out;
+    WorldOut out = {};
     float3 position = draw.origin.xyz + quadCorner(face, corner, localOrigin, width, height);
     out.position = draw.viewProjection * float4(position, 1.0);
     out.uv = greedyUv(face, corner, width, height, (in.quad.y >> 12) & 1);
@@ -180,7 +185,6 @@ struct ModelIn {
 WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float positionScale)
 {
     const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
-    const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
     uint words[12] = { in.a.x, in.a.y, in.a.z, in.a.w, in.b.x, in.b.y, in.b.z, in.b.w, in.c.x, in.c.y, in.c.z, in.c.w };
     uint corner = cornerOrder[vertexId];
     float3 local;
@@ -198,7 +202,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     }
     uint uvWord = words[6 + corner];
 
-    WorldOut out;
+    WorldOut out = {};
     float3 position = draw.origin.xyz + local;
     out.position = draw.viewProjection * float4(position, 1.0);
     out.uv = float2(float(uvWord & 0xffff), float(uvWord >> 16)) / 4096.0;
@@ -206,6 +210,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
         out.uv.y -= fract(draw.origin.w / 32.0);
     }
     out.material = words[10];
+    const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
     out.shade = faceShade[min(words[11] & 0xfu, 6u)];
     out.relative = position;
     uint rgb = words[11] >> 8;
@@ -213,7 +218,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
     out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 47u : 0u;
     if (out.entity != 0u) {
-        out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0x80ffffffu) : 0u;
+        out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0xc0ffffffu) : 0u;
     }
     if (out.entity != 0u && in.d.w != 0u) {
         float2 uvOffset = float2(as_type<half2>(in.d.z));
@@ -230,6 +235,12 @@ struct ActorData {
     float4 params;
     float4 uv;
     float4 color;
+    float4 overlay;
+    float4 textures;
+    float4 grid0;
+    float4 grid1;
+    float4 grid2;
+    float4 options;
 };
 
 float3 actorPose(float3 point, constant ActorData& actor)
@@ -243,7 +254,6 @@ vertex WorldOut actor_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
 {
     const uint corners[6]={0,1,2,0,2,3};
     const float shades[7]={0.9,0.6,0.6,0.5,1.0,0.8,0.8};
-    const float3 normals[7]={float3(0),float3(0,-1,0),float3(0,1,0),float3(-1,0,0),float3(1,0,0),float3(0,0,-1),float3(0,0,1)};
     uint words[12]={in.a.x,in.a.y,in.a.z,in.a.w,in.b.x,in.b.y,in.b.z,in.b.w,in.c.x,in.c.y,in.c.z,in.c.w};
     uint corner=corners[vertexId];
     float3 local;
@@ -254,20 +264,24 @@ vertex WorldOut actor_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
         local[axis]=float(value)/16.0;
     }
     float3 position=draw.origin.xyz+actorPose(local,actor);
-    float3 direction=actorPose(normals[(words[11]&15u) < 7u ? words[11]&15u : 0u],actor)-actorPose(float3(0),actor);
-    uint axis=0;
-    for(uint i=1;i<3;++i) if(abs(direction[i])>abs(direction[axis])) axis=i;
-    uint shade=direction[axis]==0 ? 0 : axis*2+(direction[axis]>0 ? 2 : 1);
+    float3 normal = as_type<float3>(in.d.xyz);
+    float3 direction = actorPose(normal,actor) - actorPose(float3(0),actor);
+    direction = length(direction)>0 ? normalize(direction) : float3(0,1,0);
+    float shade=(1+direction.y)*0.275-direction.x*direction.x*0.1+direction.z*direction.z*0.1+0.45+actor.overlay.a*0.35;
     uint uvWord=words[6+corner];
-    WorldOut out;
+    WorldOut out = {};
     out.position=draw.viewProjection*float4(position,1);
     out.uv=actor.uv.xy+float2(float(uvWord&65535u),float(uvWord>>16))/4096.0*actor.uv.zw;
     out.material=as_type<uint>(actor.params.y);
-    out.shade=shades[shade];
+    out.shade=shade;
     out.relative=position;
     out.tint=0;
-    out.light=cornerLight(as_type<uint>(actor.params.w),0,corner);
-    out.entity=(as_type<uint>(actor.params.z)>>5)&47;
+    out.light = cornerLight(as_type<uint>(actor.params.w), 0u, corner);
+    out.entity=(as_type<uint>(actor.params.z)>>5)&255;
+    out.actorColor=actor.color; out.actorOverlay=actor.overlay;
+    out.actorTextures=as_type<uint4>(actor.textures);
+    out.actorGrid0=actor.grid0; out.actorGrid1=actor.grid1; out.actorGrid2=actor.grid2;
+    out.actorDissolve=actor.options.w;
     if(any(actor.uv!=float4(0,0,1,1))) out.entity|=16;
     return out;
 }
@@ -394,10 +408,46 @@ bool isEndPortal(WorldOut in)
     return in.entity == 0 && (in.material & 0x1fffu) == EndPortalLayer;
 }
 
+float4 actorTexture(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, uint layer, float4 grid, float2 uv)
+{
+    float2 coordinate = clamp(uv, float2(0,0), float2(0.999999,0.999999)) * grid.xy * grid.zw;
+    uint2 tile = uint2(floor(coordinate));
+    return sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
+}
+
+float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, constant DrawData& draw, WorldOut input, float2 uv)
+{
+    float4 texel = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.x, input.actorGrid0, uv);
+    uint mode = input.actorTextures.w;
+    if (mode == 2u && texel.a * input.actorDissolve < 0.5) discard_fragment();
+    if (mode == 3u && texel.a < 0.5) discard_fragment();
+    if (mode == 1u && all(texel == float4(0,0,0,0))) discard_fragment();
+    if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard_fragment();
+    if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
+    else if (mode != 5u) texel.rgb *= input.actorColor.rgb;
+    texel.a *= input.actorColor.a;
+    if (mode == 5u && input.actorTextures.y != 0xffffffffu && input.actorTextures.z != 0xffffffffu) {
+        float4 second = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
+        float4 third = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.z, input.actorGrid2, uv);
+        texel.rgb = mix(mix(texel.rgb, second.rgb, second.a), third.rgb, third.a);
+    }
+    if (mode != 3u) texel.rgb = mix(texel.rgb, input.actorOverlay.rgb, input.actorOverlay.a);
+    float3 unlit = fogWorld(draw, texel.rgb, input.relative, (input.entity & 2u) != 0u);
+    float3 lit = (input.entity & 8u) != 0u ? shadeWorld(draw, texel.rgb, input.shade, input.relative, input.light) : unlit;
+    texel.rgb = mode == 1u ? mix(unlit, lit, texel.a) : lit;
+    if (mode != 0u) texel.a = 1.0;
+    return texel;
+}
+
 fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
+    }
+    if ((in.entity & 64u) != 0u) {
+        float4 actor = actorSurface(entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
+        if (actor.a < 0.004) discard_fragment();
+        return float4(actor.rgb * actor.a, (in.entity & 2u) != 0u ? 0.0 : actor.a);
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
@@ -477,6 +527,10 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
 {
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
+    }
+    if ((in.entity & 64u) != 0u) {
+        float4 actor = actorSurface(entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
+        return actor;
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);

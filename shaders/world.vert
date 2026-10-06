@@ -18,6 +18,13 @@ layout(location = 3) out vec3 outRelative;
 layout(location = 4) flat out uint outTint;
 layout(location = 5) out vec3 outLight;
 layout(location = 6) flat out uint outEntity;
+layout(location = 7) flat out vec4 outActorColor;
+layout(location = 8) flat out vec4 outActorOverlay;
+layout(location = 9) flat out uvec4 outActorTextures;
+layout(location = 10) flat out vec4 outActorGrid0;
+layout(location = 11) flat out vec4 outActorGrid1;
+layout(location = 12) flat out vec4 outActorGrid2;
+layout(location = 13) flat out float outActorDissolve;
 
 const float lightCurve[16] = float[16](
     0.0, 0.01754386, 0.037037037, 0.05882353,
@@ -76,6 +83,12 @@ vec2 greedyUv(uint face, uint corner, float w, float h, uint flags)
 
 void main()
 {
+    outActorColor = vec4(1);
+    outActorOverlay = vec4(0);
+    outActorTextures = uvec4(0);
+    outActorGrid0 = outActorGrid1 = outActorGrid2 = vec4(1);
+    outActorDissolve = 0.0;
+
     const uint cornerOrder[6] = uint[6](0u, 1u, 2u, 0u, 2u, 3u);
     const float faceShade[6] = float[6](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
     uint geometry = inQuad.x;

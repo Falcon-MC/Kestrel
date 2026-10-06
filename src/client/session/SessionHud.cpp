@@ -150,6 +150,9 @@ HudItem hudItemOf(const ItemStack& stack)
         item.damage = damage->asInt();
     }
     const Tag* display = stack.mTag.get("display");
+    if (const Tag* color = stack.mTag.get("customColor"); color && color->getType() == Tag::Type::Int) {
+        item.customColor = uint32_t(color->asInt()) & 0xffffffu;
+    }
     if (display && display->getType() == Tag::Type::Compound) {
         if (const Tag* name = display->get("Name"); name && name->getType() == Tag::Type::String) {
             item.customName = name->asString();

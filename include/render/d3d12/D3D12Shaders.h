@@ -94,6 +94,13 @@ struct WorldOut
     nointerpolation uint tint : TEXCOORD4;
     float3 light : TEXCOORD5;
     nointerpolation uint entity : TEXCOORD6;
+    nointerpolation float4 actorColor : TEXCOORD7;
+    nointerpolation float4 actorOverlay : TEXCOORD8;
+    nointerpolation uint4 actorTextures : TEXCOORD9;
+    nointerpolation float4 actorGrid0 : TEXCOORD10;
+    nointerpolation float4 actorGrid1 : TEXCOORD11;
+    nointerpolation float4 actorGrid2 : TEXCOORD12;
+    nointerpolation float actorDissolve : TEXCOORD13;
 };
 
 static const float lightCurve[16] = {
@@ -162,7 +169,7 @@ WorldOut vs_world(WorldIn input)
     float height = ((geometry >> 22) & 0xf) + 1;
     uint corner = cornerOrder[input.vertexId];
 
-    WorldOut output;
+    WorldOut output = (WorldOut)0;
     float3 position = origin.xyz + quadCorner(face, corner, localOrigin, width, height);
     output.position = mul(viewProjection, float4(position, 1.0));
     output.uv = greedyUv(face, corner, width, height, (input.quad.y >> 12) & 1);
@@ -187,7 +194,6 @@ struct ModelIn
 WorldOut placeModel(ModelIn input, float positionScale)
 {
     static const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
-    static const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
     uint words[12] = { input.a.x, input.a.y, input.a.z, input.a.w, input.b.x, input.b.y, input.b.z, input.b.w, input.c.x, input.c.y, input.c.z, input.c.w };
     uint corner = cornerOrder[input.vertexId];
     float3 local;
@@ -205,7 +211,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
     }
     uint uvWord = words[6 + corner];
 
-    WorldOut output;
+    WorldOut output = (WorldOut)0;
     float3 position = origin.xyz + local;
     output.position = mul(viewProjection, float4(position, 1.0));
     output.uv = float2(uvWord & 0xffff, uvWord >> 16) / 4096.0;
@@ -213,6 +219,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
         output.uv.y -= frac(origin.w / 32.0);
     }
     output.material = words[10];
+    static const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
     output.shade = faceShade[min(words[11] & 0xf, 6u)];
     output.relative = position;
     uint rgb = words[11] >> 8;
@@ -220,7 +227,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 47 : 0;
     if (output.entity != 0) {
-        output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0x80ffffffu) : 0;
+        output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0xc0ffffffu) : 0;
     }
     if (output.entity != 0 && input.d.w != 0) {
         float2 uvOffset = float2(f16tof32(input.d.z), f16tof32(input.d.z >> 16));
@@ -238,6 +245,12 @@ cbuffer ActorData : register(b1)
     float4 actorParams;
     float4 actorUv;
     float4 actorColor;
+    float4 actorOverlay;
+    float4 actorTextures;
+    float4 actorGrid0;
+    float4 actorGrid1;
+    float4 actorGrid2;
+    float4 actorOptions;
 };
 
 float3 actorPose(float3 position)
@@ -251,7 +264,6 @@ WorldOut vs_actor(ModelIn input)
 {
     static const uint corners[6] = {0,1,2,0,2,3};
     static const float shades[7] = {0.9,0.6,0.6,0.5,1.0,0.8,0.8};
-    static const float3 normals[7] = {float3(0,0,0),float3(0,-1,0),float3(0,1,0),float3(-1,0,0),float3(1,0,0),float3(0,0,-1),float3(0,0,1)};
     uint words[12] = {input.a.x,input.a.y,input.a.z,input.a.w,input.b.x,input.b.y,input.b.z,input.b.w,input.c.x,input.c.y,input.c.z,input.c.w};
     uint corner = corners[input.vertexId];
     float3 local;
@@ -262,20 +274,25 @@ WorldOut vs_actor(ModelIn input)
         local[axis]=float(value)/16.0;
     }
     float3 position=origin.xyz+actorPose(local);
-    float3 direction=actorPose(normals[(words[11]&15u) < 7u ? words[11]&15u : 0u])-actorPose(float3(0,0,0));
-    uint major=0;
-    for (uint i=1;i<3;++i) if (abs(direction[i])>abs(direction[major])) major=i;
-    uint shade=direction[major]==0 ? 0 : major*2+(direction[major]>0 ? 2 : 1);
+    float3 normal = asfloat(input.d.xyz);
+    float3 direction = actorPose(normal) - actorPose(float3(0,0,0));
+    direction = length(direction) > 0 ? normalize(direction) : float3(0,1,0);
+    float shade = (1+direction.y)*0.275-direction.x*direction.x*0.1+direction.z*direction.z*0.1+0.45+actorOverlay.a*0.35;
     uint uvWord=words[6+corner];
-    WorldOut output;
+    WorldOut output = (WorldOut)0;
     output.position=mul(viewProjection,float4(position,1));
     output.uv=actorUv.xy+float2(uvWord&65535u,uvWord>>16)/4096.0*actorUv.zw;
     output.material=asuint(actorParams.y);
-    output.shade=shades[shade];
+    output.shade=shade;
     output.relative=position;
     output.tint=0;
-    output.light=cornerLight(asuint(actorParams.w),0,corner);
-    output.entity=(asuint(actorParams.z)>>5)&47;
+    output.light=cornerLight(asuint(actorParams.w), 0u, corner);
+    output.entity=(asuint(actorParams.z)>>5)&255;
+    output.actorColor=actorColor;
+    output.actorOverlay=actorOverlay;
+    output.actorTextures=asuint(actorTextures);
+    output.actorGrid0=actorGrid0; output.actorGrid1=actorGrid1; output.actorGrid2=actorGrid2;
+    output.actorDissolve=actorOptions.w;
     if (any(actorUv != float4(0,0,1,1))) output.entity|=16;
     return output;
 }
@@ -348,7 +365,7 @@ float4 applyTint(float4 texel, uint tint)
     }
     float3 color = float3((tint >> 16) & 0xff, (tint >> 8) & 0xff, tint & 0xff) / 255.0;
     if ((tint & 0x40000000) != 0) {
-        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), 1.0);
+        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
     }
     return float4(texel.rgb * color, texel.a);
 }
@@ -395,8 +412,50 @@ bool isEndPortal(WorldOut input)
     return input.entity == 0 && (input.material & 0x1fffu) == EndPortalLayer;
 }
 
+float4 sampleEntity(uint layer, float2 uv)
+{
+    uint width, height, layers, levels;
+    entities.GetDimensions(0, width, height, layers, levels);
+    int2 cell = clamp(int2(floor(uv * float2(width,height))), int2(0,0), int2(width,height)-1);
+    int4 at = int4(cell, layer & 2047u, 0);
+    uint page = layer >> 11;
+    return page == 0u ? entities.Load(at) : page == 1u ? entitiesHigh.Load(at) : page == 2u ? entities2.Load(at) : entities3.Load(at);
+}
+
+float4 actorTexture(uint layer, float4 grid, float2 uv)
+{
+    float2 coordinate = clamp(uv, float2(0,0), float2(0.999999,0.999999)) * grid.xy * grid.zw;
+    uint2 tile = uint2(floor(coordinate));
+    return sampleEntity(layer + tile.y * uint(grid.x) + tile.x, frac(coordinate));
+}
+
+float4 actorSurface(WorldOut input, float2 uv)
+{
+    float4 texel = actorTexture(input.actorTextures.x, input.actorGrid0, uv);
+    uint mode = input.actorTextures.w;
+    if (mode == 2u && texel.a * input.actorDissolve < 0.5) discard;
+    if (mode == 3u && texel.a < 0.5) discard;
+    if (mode == 1u && all(texel == float4(0,0,0,0))) discard;
+    if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard;
+    if (mode == 4u) texel.rgb = lerp(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
+    else if (mode != 5u) texel.rgb *= input.actorColor.rgb;
+    texel.a *= input.actorColor.a;
+    if (mode == 5u && input.actorTextures.y != 0xffffffffu && input.actorTextures.z != 0xffffffffu) {
+        float4 second = actorTexture(input.actorTextures.y, input.actorGrid1, uv);
+        float4 third = actorTexture(input.actorTextures.z, input.actorGrid2, uv);
+        texel.rgb = lerp(lerp(texel.rgb, second.rgb, second.a), third.rgb, third.a);
+    }
+    if (mode != 3u) texel.rgb = lerp(texel.rgb, input.actorOverlay.rgb, input.actorOverlay.a);
+    float3 unlit = fogWorld(texel.rgb, input.relative, (input.entity & 2u) != 0u);
+    float3 lit = (input.entity & 8u) != 0u ? shadeWorld(texel.rgb, input.shade, input.relative, input.light) : unlit;
+    texel.rgb = mode == 1u ? lerp(unlit, lit, texel.a) : lit;
+    if (mode != 0u) texel.a = 1.0;
+    return texel;
+}
+
 float4 surfaceTexel(WorldOut input)
 {
+    if ((input.entity & 64u) != 0u) return actorSurface(input, (input.entity & 16u) != 0u ? frac(input.uv) : input.uv);
     if (input.entity != 0) {
         uint layer = input.material & 0x1fff;
         uint page = layer >> 11;
@@ -429,7 +488,7 @@ float4 ps_world(WorldOut input) : SV_Target
     }
     float4 texel = surfaceTexel(input);
     if (input.entity != 0) {
-        if (texel.a < 0.1) {
+        if ((input.entity & 64u) == 0u && texel.a < 0.1) {
             discard;
         }
         return texel;

@@ -151,6 +151,7 @@ struct AnimationInput {
     float yaw = 0.0f;
     float headYaw = 0.0f;
     float pitch = 0.0f;
+    uint64_t randomSeed = 1;
     double now = 0.0;
     double worldTime = 0.0;
     std::array<uint64_t, 3> flags{};
@@ -161,10 +162,15 @@ struct AnimationInput {
     float health = 20.0f;
     float maxHealth = 20.0f;
     float hurtTime = 0.0f;
+    float deathTicks = 0.0f;
+    float onFireTime = 0.0f;
+    uint64_t horseFlags = 0;
+    std::unordered_map<std::string, double> metadataQueries;
     bool onGround = true;
     float swimAmount = 0.0f;
     std::optional<bool> inWater;
     std::optional<std::array<double, 3>> tickPositionDelta;
+    std::array<float, 3> nativeVelocity {};
     std::optional<float> frameAlpha;
     float shakeTime = 0.0f;
     bool attachedToEntity = false;
@@ -177,6 +183,8 @@ struct AnimationInput {
     std::string name;
     std::string mainHandItem;
     std::string offHandItem;
+    std::array<std::string, 4> armorItems;
+    std::array<std::optional<uint32_t>, 4> armorColors;
     // Ticks the main hand item has been held in use, like a bow being drawn, 0 when it is not.
     double itemUseTicks = 0.0;
     std::vector<std::pair<std::string, double>> engineVariables;
@@ -208,6 +216,7 @@ bool projectileEntity(const std::string& identifier);
 class EntityAnimator : public molang::QuerySource {
 public:
     void update(const EntityScripts* scripts, const AnimationLibrary* library, const std::vector<EntityBone>& bones, const AnimationInput& input);
+    void setRenderContext(const AnimationInput& input, double now, float partialTick);
 
     const std::vector<BoneMatrix>& matrices() const
     {
@@ -226,6 +235,7 @@ public:
      * its last update.
      */
     double evaluate(const molang::Script& script);
+    double evaluateWithThis(const molang::Script& script, double base);
 
     /**
      * The rotation, in degrees, the clip gives each of its bones at that
@@ -299,6 +309,13 @@ private:
     bool finishedAll = false;
     bool finishedAny = false;
     float modelScale = 1.0f;
+    float horseStand = 0.0f;
+    unsigned horseTailTicks = 0;
+    uint64_t randomState = 1;
+    double dragonFlap = 0.0;
+    std::array<float, 2> fishPhase {};
+    std::array<std::array<double, 2>, 64> dragonHistory {};
+    size_t dragonHistoryIndex = 0;
 };
 
 }
