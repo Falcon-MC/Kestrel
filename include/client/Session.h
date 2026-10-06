@@ -7,6 +7,7 @@
 #include "client/Inventory.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
+#include "client/WorldClock.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
 #include "world/BlockCollisions.h"
@@ -638,6 +639,7 @@ struct SessionSnapshot {
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
+    bool worldClockPaused = false;
     float rainLevel = 0.0f;
     float thunderLevel = 0.0f;
     uint8_t cameraMedium = 0;
@@ -916,6 +918,7 @@ private:
     std::atomic<bool> cancelled { false };
     mutable std::mutex mutex;
     SessionSnapshot current;
+    WorldClockSync worldClock;
     bool startingTerrain = true;
     std::shared_ptr<const SessionSnapshot> publishedSnapshot;
     std::vector<std::shared_ptr<const SessionSnapshot>> retiredSnapshots;

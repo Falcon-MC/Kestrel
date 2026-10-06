@@ -1347,6 +1347,7 @@ void Client::syncSession()
     worldShown = snapshot.state == SessionState::Joined;
     timeState.worldTime = snapshot.worldTime;
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
+    timeState.worldClockPaused = snapshot.worldClockPaused;
     timeState.rainLevel = snapshot.rainLevel;
     timeState.thunderLevel = snapshot.thunderLevel;
     timeState.cameraMedium = snapshot.cameraMedium;
