@@ -642,6 +642,7 @@ struct SessionSnapshot {
     bool worldClockPaused = false;
     float rainLevel = 0.0f;
     float thunderLevel = 0.0f;
+    std::shared_ptr<const std::vector<std::string>> fogStack;
     uint8_t cameraMedium = 0;
     bool cohortComplete = false;
 

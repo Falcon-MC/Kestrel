@@ -58,6 +58,7 @@
 #include "Protocol/Packets/ServerboundLoadingScreenPacket.h"
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
 #include "Protocol/Packets/SetTimePacket.h"
+#include "Protocol/Packets/PlayerFogPacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
 #include "Protocol/Packets/ClientboundMapItemDataPacket.h"
 #include "Protocol/Packets/MovePlayerPacket.h"
@@ -986,6 +987,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::PlayerList:
     case MinecraftPacketIds::PlayerSkin:
     case MinecraftPacketIds::SetTime:
+    case MinecraftPacketIds::PlayerFog:
     case MinecraftPacketIds::SyncWorldClocks:
     case MinecraftPacketIds::GameRulesChanged:
     case MinecraftPacketIds::LevelEvent:
@@ -1299,6 +1301,10 @@ void Session::handleWorldPacket(std::string& payload)
         std::sort(names.begin(), names.end());
         std::lock_guard<std::mutex> guard(mutex);
         current.players = std::move(names);
+    } else if (auto fog = std::dynamic_pointer_cast<PlayerFogPacket>(packet)) {
+        auto stack = std::make_shared<const std::vector<std::string>>(std::move(fog->mFogStack));
+        std::lock_guard<std::mutex> guard(mutex);
+        current.fogStack = std::move(stack);
     } else if (auto clocks = std::dynamic_pointer_cast<SyncWorldClocksPacket>(packet)) {
         if (auto state = worldClock.apply(*clocks)) {
             std::lock_guard<std::mutex> guard(mutex);
