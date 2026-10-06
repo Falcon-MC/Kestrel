@@ -241,7 +241,7 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
             actor.flags[1] = static_cast<uint64_t>(entry.mLongValue);
             break;
         case 2:
-            actor.variant = entry.mIntValue;
+            if (entry.mFormat == EntityDataFormat::Int) actor.variant = entry.mIntValue;
             break;
         case 43:
             actor.markVariant = entry.mIntValue;
@@ -358,6 +358,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     }
     actor->second.x = x;
     actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
+    if (actor->second.identifier == "minecraft:falling_block") actor->second.y -= 0.49;
     actor->second.z = z;
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;
