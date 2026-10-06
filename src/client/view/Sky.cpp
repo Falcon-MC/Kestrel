@@ -179,7 +179,8 @@ SkyFrame foggedBy(const SkyFrame& frame, const world::BiomeFog& fog, float rende
 }
 
 SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds,
-    uint32_t waterColor, float waterStart, float waterEnd, const world::BiomeFog* lavaFog, float renderDistance)
+    uint32_t waterColor, float waterStart, float waterEnd, const world::BiomeFog* lavaFog, float renderDistance,
+    const world::BiomeFog* powderSnowFog)
 {
     std::array<float, 3> WaterFog { float((waterColor >> 16) & 255) / 255.0f,
         float((waterColor >> 8) & 255) / 255.0f, float(waterColor & 255) / 255.0f };
@@ -188,19 +189,20 @@ SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSecon
         : seconds < 30.0f ? lerp(0.6f, 1.0f, (seconds - 5.0f) / 25.0f) : 1.0f;
     constexpr std::array<float, 3> LavaFog { 0.702f, 0.313f, 0.0f };
     constexpr float LavaFogEnd = 3.0f;
-    if (medium != 1 && medium != 2) {
+    if (medium != 1 && medium != 2 && !(medium == 3 && powderSnowFog)) {
         return frame;
     }
     SkyFrame result = frame;
     result.fogColor = medium == 1 ? WaterFog : LavaFog;
     result.fogStart = medium == 1 ? waterStart : 0.0f;
     result.fogEnd = medium == 1 ? waterEnd * fraction : LavaFogEnd;
-    if (medium == 2 && lavaFog) {
-        result.fogColor = { float((lavaFog->color >> 16) & 255) / 255.0f,
-            float((lavaFog->color >> 8) & 255) / 255.0f, float(lavaFog->color & 255) / 255.0f };
-        float scale = lavaFog->relative ? renderDistance : 1.0f;
-        result.fogStart = lavaFog->start * scale;
-        result.fogEnd = lavaFog->end * scale;
+    const auto* fog = medium == 3 ? powderSnowFog : lavaFog;
+    if (medium != 1 && fog) {
+        result.fogColor = { float((fog->color >> 16) & 255) / 255.0f,
+            float((fog->color >> 8) & 255) / 255.0f, float(fog->color & 255) / 255.0f };
+        float scale = fog->relative ? renderDistance : 1.0f;
+        result.fogStart = fog->start * scale;
+        result.fogEnd = fog->end * scale;
     }
     result.zenith = result.fogColor;
     result.horizon = result.fogColor;

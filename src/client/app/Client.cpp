@@ -567,10 +567,12 @@ int Client::run()
                 }
                 sky = submergedIn(sky, timeState.cameraMedium,
                     submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale,
-                    lavaFog ? &*lavaFog : nullptr, renderDistance);
+                    lavaFog ? &*lavaFog : nullptr, renderDistance,
+                    blockAssets ? blockAssets->biomeTints().powderSnowFog() : nullptr);
                 if (blockAssets && timeState.fogStack) {
                     auto medium = timeState.cameraMedium == 1 ? world::FogMedium::Water
                         : timeState.cameraMedium == 2 ? (fireResistance ? world::FogMedium::LavaResistance : world::FogMedium::Lava)
+                        : timeState.cameraMedium == 3 ? world::FogMedium::PowderSnow
                         : timeState.dimension == 0 && timeState.rainLevel > 0.0f ? world::FogMedium::Weather : world::FogMedium::Air;
                     if (const auto* fog = blockAssets->biomeTints().commandFog(*timeState.fogStack, medium)) {
                         sky = foggedBy(sky, *fog, renderDistance, submergedSeconds);

@@ -31,13 +31,14 @@ SkyFrame foggedBy(const SkyFrame& frame, const world::BiomeFog& fog, float rende
     float submergedSeconds = 30.0f);
 
 /**
- * The atmosphere seen from inside a liquid: medium 1 is water and 2 is lava,
+ * The atmosphere seen from inside a block: medium 1 is water, 2 is lava and 3 is powder snow,
  * each with its own fog colour closing in from the camera; 0 leaves the frame
  * unchanged.
  */
 SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds = 30.0f,
     uint32_t waterColor = 0x44AFF5, float waterStart = 0.0f, float waterEnd = 60.0f,
-    const world::BiomeFog* lavaFog = nullptr, float renderDistance = 1.0f);
+    const world::BiomeFog* lavaFog = nullptr, float renderDistance = 1.0f,
+    const world::BiomeFog* powderSnowFog = nullptr);
 
 std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLayer, uint32_t moonLayer);
 

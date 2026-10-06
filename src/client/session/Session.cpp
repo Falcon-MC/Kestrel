@@ -614,7 +614,7 @@ void Session::configurePaletteResolver()
     });
 }
 
-/** The liquid the given point sits in: 0 for air, 1 for water, 2 for lava. */
+/** The camera medium: 0 for air, 1 for water, 2 for lava, 3 for powder snow. */
 uint8_t Session::mediumAt(const std::array<double, 3>& position)
 {
     if (!assets) {
@@ -632,6 +632,7 @@ uint8_t Session::mediumAt(const std::array<double, 3>& position)
                 continue;
             }
             const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+            if (visual.powderSnow) return 3;
             if (visual.liquid) {
                 level = visual.liquidLevel;
                 return visual.liquid;
@@ -644,6 +645,7 @@ uint8_t Session::mediumAt(const std::array<double, 3>& position)
     int64_t z = static_cast<int64_t>(std::floor(position[2]));
     uint8_t level = 0;
     uint8_t kind = liquidAt(x, y, z, level);
+    if (kind == 3) return kind;
     if (!kind) {
         return 0;
     }
@@ -718,6 +720,7 @@ std::pair<uint8_t, uint32_t> Session::cameraEnvironment(const SessionSnapshot& s
         }
         return 0;
     };
+    if (const auto* visual = visualAt(x, y, z, 0); visual && visual->powderSnow) return { 3, biomeId };
     uint8_t level = 0, above = 0;
     uint8_t kind = liquid(x, y, z, level);
     if (!kind) return { 0, biomeId };

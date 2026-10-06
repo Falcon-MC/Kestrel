@@ -696,6 +696,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         const BlockRecord& record = registry.records()[i];
         std::string name = startsWith(record.name, "minecraft:") ? record.name.substr(10) : record.name;
         BlockVisual& visual = visuals[i];
+        visual.powderSnow = name == "powder_snow";
         if (name == "air") {
             airSequential = static_cast<uint32_t>(i);
             airHash = record.networkHash;
