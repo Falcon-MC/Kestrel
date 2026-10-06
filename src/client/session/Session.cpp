@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/ActorEquipment.h"
 
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"
@@ -1077,10 +1078,24 @@ void Session::handleWorldPacket(std::string& payload)
     }
 
     if (auto event = std::dynamic_pointer_cast<ActorEventPacket>(packet);
-        event && event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) {
+        event) {
         double now = secondsNow();
         if (auto actor = actors.find(event->mRuntimeActorId); actor != actors.end()) {
-            actor->second.lastHurt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::HurtAnimation)) actor->second.lastHurt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::DeathAnimation)
+                || event->mEventId == static_cast<uint8_t>(EntityEventType::EnderDragonDeath)) actor->second.diedAt = now;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::Respawn)) actor->second.diedAt = 0.0;
+        }
+    }
+    if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
+        if (auto actor = actors.find(static_cast<uint64_t>(attributes->mRuntimeActorId)); actor != actors.end()) {
+            for (const auto& attribute : attributes->mAttributes) {
+                if (attribute.mName != "minecraft:health" || !std::isfinite(attribute.mValue)) continue;
+                actor->second.health = attribute.mValue;
+                if (std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f) actor->second.maxHealth = attribute.mMaximum;
+                if (attribute.mValue <= 0.0f && actor->second.diedAt == 0.0) actor->second.diedAt = secondsNow();
+                if (attribute.mValue > 0.0f) actor->second.diedAt = 0.0;
+            }
         }
     }
 
@@ -1092,18 +1107,20 @@ void Session::handleWorldPacket(std::string& payload)
 
     if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
+            actor->second.armorItems = { hudItemOf(equipment->mHelmet), hudItemOf(equipment->mChestplate), hudItemOf(equipment->mLeggings), hudItemOf(equipment->mBoots) };
             actor->second.armor = {
-                hudItemOf(equipment->mHelmet).identifier,
-                hudItemOf(equipment->mChestplate).identifier,
-                hudItemOf(equipment->mLeggings).identifier,
-                hudItemOf(equipment->mBoots).identifier,
+                actor->second.armorItems[0].identifier,
+                actor->second.armorItems[1].identifier,
+                actor->second.armorItems[2].identifier,
+                actor->second.armorItems[3].identifier,
             };
         }
     }
 
-    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet); equipment && equipment->mContainerId == 0) {
+    if (auto equipment = std::dynamic_pointer_cast<MobEquipmentPacket>(packet); equipment && (equipment->mContainerId == 0 || equipment->mContainerId == 119)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
-            actor->second.held = hudItemOf(equipment->mItem);
+            const bool offhand = actorEquipmentIsOffhand(actor->second.identifier, equipment->mContainerId, equipment->mInventorySlot);
+            (offhand ? actor->second.offhand : actor->second.held) = hudItemOf(equipment->mItem);
         }
     }
 
@@ -1190,6 +1207,12 @@ void Session::handleWorldPacket(std::string& payload)
         actor.identifier = added->mIdentifier;
         actor.scale = metadataScale(added->mMetadata, 1.0f);
         applyActorMetadata(added->mMetadata, actor);
+        for (const auto& attribute : added->mAttributes) {
+            if (attribute.mName == "minecraft:health" && std::isfinite(attribute.mValue)) {
+                actor.health = attribute.mValue;
+                if (std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f) actor.maxHealth = attribute.mMaximum;
+            }
+        }
         actors[runtime] = actor;
         runtimeByUnique[added->mUniqueActorId] = runtime;
         moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);

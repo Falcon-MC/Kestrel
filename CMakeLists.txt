@@ -255,6 +255,26 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelFogFrameTest tests/FogFrame.cpp src/client/view/Sky.cpp)
     target_include_directories(KestrelFogFrameTest PRIVATE include)
     add_test(NAME fog-frame COMMAND KestrelFogFrameTest)
+    add_executable(KestrelEntityRenderingTest
+        tests/EntityRendering.cpp
+        src/world/animation/EntityAnimation.cpp
+        src/world/animation/MolangScript.cpp
+        src/world/mesh/Geometry.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelEntityRenderingTest PRIVATE include)
+    target_link_libraries(KestrelEntityRenderingTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME entity-rendering COMMAND KestrelEntityRenderingTest)
+    if(WIN32)
+        add_executable(KestrelD3D12ShadersTest tests/D3D12Shaders.cpp)
+        target_include_directories(KestrelD3D12ShadersTest PRIVATE include)
+        target_link_libraries(KestrelD3D12ShadersTest PRIVATE d3dcompiler)
+        add_test(NAME d3d12-shaders COMMAND KestrelD3D12ShadersTest)
+    endif()
     add_executable(KestrelParticleEffectsTest
         tests/ParticleEffects.cpp
         src/world/particles/ParticleBinary.cpp

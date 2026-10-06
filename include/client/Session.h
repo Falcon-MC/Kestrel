@@ -177,6 +177,12 @@ struct ActorView {
     int64_t uniqueId = 0;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
+    double diedAt = 0.0;
+    double fireChangedAt = 0.0;
+    float health = 20.0f;
+    float maxHealth = 20.0f;
+    uint64_t horseFlags = 0;
+    std::unordered_map<std::string, double> animationQueries;
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
@@ -203,7 +209,9 @@ struct ActorView {
     bool onGround = true;
     // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
     std::array<std::string, 4> armor {};
+    std::array<HudItem, 4> armorItems {};
     HudItem held;
+    HudItem offhand;
     uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;

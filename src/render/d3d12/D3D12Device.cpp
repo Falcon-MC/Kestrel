@@ -548,13 +548,14 @@ public:
         pipelineDesc.VS = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
         pipelineDesc.PS = { pixelShader->GetBufferPointer(), pixelShader->GetBufferSize() };
         pipelineDesc.BlendState.RenderTarget[0] = blendState(desc.blend);
+        pipelineDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = desc.colorWrite ? D3D12_COLOR_WRITE_ENABLE_ALL : 0;
         pipelineDesc.SampleMask = UINT_MAX;
         pipelineDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
         pipelineDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         pipelineDesc.RasterizerState.DepthClipEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthWriteMask = desc.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
-        pipelineDesc.DepthStencilState.DepthFunc = desc.depthCompare == DepthCompare::Less ? D3D12_COMPARISON_FUNC_LESS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pipelineDesc.DepthStencilState.DepthFunc = desc.depthCompare == DepthCompare::Equal ? D3D12_COMPARISON_FUNC_EQUAL : desc.depthCompare == DepthCompare::Less ? D3D12_COMPARISON_FUNC_LESS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
         pipelineDesc.DepthStencilState.StencilEnable = FALSE;
         pipelineDesc.InputLayout = { layout.data(), static_cast<UINT>(layout.size()) };
         pipelineDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -657,7 +658,7 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!active || !boundActorConstants || !values || count != 36) return;
+        if (!active || !boundActorConstants || !values || count != 60) return;
         constexpr size_t pageBytes = 1024 * 1024;
         constexpr size_t stride = 256;
         size_t page = actorCursor / pageBytes;

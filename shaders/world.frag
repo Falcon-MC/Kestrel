@@ -22,6 +22,13 @@ layout(location = 3) in vec3 inRelative;
 layout(location = 4) flat in uint inTint;
 layout(location = 5) in vec3 inLight;
 layout(location = 6) flat in uint inEntity;
+layout(location = 7) flat in vec4 inActorColor;
+layout(location = 8) flat in vec4 inActorOverlay;
+layout(location = 9) flat in uvec4 inActorTextures;
+layout(location = 10) flat in vec4 inActorGrid0;
+layout(location = 11) flat in vec4 inActorGrid1;
+layout(location = 12) flat in vec4 inActorGrid2;
+layout(location = 13) flat in float inActorDissolve;
 
 layout(location = 0) out vec4 outColor;
 
@@ -141,9 +148,40 @@ vec4 applyTint(vec4 texel, uint tint)
     }
     vec3 color = vec3(float((tint >> 16) & 0xffu), float((tint >> 8) & 0xffu), float(tint & 0xffu)) / 255.0;
     if ((tint & 0x40000000u) != 0u) {
-        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
+        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
     }
     return vec4(texel.rgb * color, texel.a);
+}
+
+vec4 actorTexture(uint layer, vec4 grid, vec2 uv)
+{
+    vec2 coordinate = clamp(uv, vec2(0), vec2(0.999999)) * grid.xy * grid.zw;
+    uvec2 tile = uvec2(floor(coordinate));
+    return sampleEntity(fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
+}
+
+vec4 actorSurface(vec2 uv)
+{
+    vec4 texel = actorTexture(inActorTextures.x, inActorGrid0, uv);
+    uint mode = inActorTextures.w;
+    if (mode == 2u && texel.a * inActorDissolve < 0.5) discard;
+    if (mode == 3u && texel.a < 0.5) discard;
+    if (mode == 1u && all(equal(texel, vec4(0)))) discard;
+    if (mode == 0u && texel.a < 0.1 && (inEntity & 128u) == 0u) discard;
+    if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
+    else if (mode != 5u) texel.rgb *= inActorColor.rgb;
+    texel.a *= inActorColor.a;
+    if (mode == 5u && inActorTextures.y != 0xffffffffu && inActorTextures.z != 0xffffffffu) {
+        vec4 second = actorTexture(inActorTextures.y, inActorGrid1, uv);
+        vec4 third = actorTexture(inActorTextures.z, inActorGrid2, uv);
+        texel.rgb = mix(mix(texel.rgb, second.rgb, second.a), third.rgb, third.a);
+    }
+    if (mode != 3u) texel.rgb = mix(texel.rgb, inActorOverlay.rgb, inActorOverlay.a);
+    vec3 unlit = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
+    vec3 lit = (inEntity & 8u) != 0u ? shadeWorld(texel.rgb) : unlit;
+    texel.rgb = mode == 1u ? mix(unlit, lit, texel.a) : lit;
+    if (mode != 0u) texel.a = 1.0;
+    return texel;
 }
 
 void main()
@@ -162,6 +200,16 @@ void main()
 #else
     if (inEntity == 0u && (inMaterial & 0x1fffu) == EndPortalLayer) {
         outColor = vec4(endPortalColor(), 1.0);
+        return;
+    }
+    if ((inEntity & 64u) != 0u) {
+        vec4 actor = actorSurface((inEntity & 16u) != 0u ? fract(inUv) : inUv);
+#ifdef BLEND
+        if (actor.a < 0.004) discard;
+        outColor = vec4(actor.rgb * actor.a, (inEntity & 2u) != 0u ? 0.0 : actor.a);
+#else
+        outColor = actor;
+#endif
         return;
     }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);

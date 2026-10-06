@@ -73,6 +73,8 @@ struct GeometryBone {
     std::string binding;
     Vec3f pivot {};
     Vec3f rotation {};
+    Vec3f bindRotation {};
+    bool bindRotationSet = false;
     bool mirror = false;
     float inflate = 0.0f;
     bool neverRender = false;
@@ -115,8 +117,9 @@ struct BlockTransform {
 class GeometryLibrary {
 public:
     void load(const std::vector<std::shared_ptr<const PackFiles>>& packs);
-    void parse(const std::string& text);
+    void parse(const std::string& text, bool retainNativeBindPose = false);
     void resolveInheritance();
+    void expandVanillaModels();
     const Geometry* find(const std::string& identifier) const;
 
     /**

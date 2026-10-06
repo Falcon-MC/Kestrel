@@ -160,6 +160,7 @@ void mergeBone(GeometryBone& base, const GeometryBone& child)
     if (child.bindingSet) base.binding = child.binding;
     if (child.pivotSet) base.pivot = child.pivot;
     if (child.rotationSet) base.rotation = child.rotation;
+    if (child.bindRotationSet) { base.bindRotation = child.bindRotation; base.bindRotationSet = true; }
     if (child.mirrorSet) base.mirror = child.mirror;
     if (child.inflateSet) base.inflate = child.inflate;
     if (child.neverRenderSet) base.neverRender = child.neverRender;
@@ -301,6 +302,8 @@ void parseBones(const json::Value* bones, Geometry& geometry)
         parsed.pivotSet = bone->get("pivot") != nullptr;
         parsed.rotation = readVec3(bone->get("rotation"));
         parsed.rotationSet = bone->get("rotation") != nullptr;
+        parsed.bindRotation = readVec3(bone->get("bind_pose_rotation"));
+        parsed.bindRotationSet = bone->get("bind_pose_rotation") != nullptr;
         if (const json::Value* mirror = bone->get("mirror"); mirror && mirror->mType == json::Value::Type::Boolean) {
             parsed.mirror = mirror->mBoolean;
             parsed.mirrorSet = true;
@@ -405,12 +408,68 @@ void GeometryLibrary::load(const std::vector<std::shared_ptr<const PackFiles>>& 
     }
 }
 
-void GeometryLibrary::parse(const std::string& text)
+void GeometryLibrary::expandVanillaModels()
+{
+    auto found = byIdentifier.find("geometry.dragon");
+    if (found == byIdentifier.end()) return;
+    auto& bones = found->second.bones;
+    auto neck = std::find_if(bones.begin(), bones.end(), [](const auto& bone) { return bone.name == "neck"; });
+    if (bones.size() != 21 || neck == bones.end()) return;
+    // The installed dragon geometry supplies a template; its animation addresses repeated segments.
+    GeometryBone segment = *neck;
+    segment.parent = "root";
+    segment.parentSet = true;
+    bones.erase(neck);
+    static constexpr std::pair<const char*, const char*> Parents[] = {
+        { "jaw", "head" }, { "wingtip", "wing" }, { "wingtip1", "wing1" },
+        { "rearlegtip", "rearleg" }, { "rearlegtip1", "rearleg1" }, { "frontlegtip", "frontleg" }, { "frontlegtip1", "frontleg1" },
+        { "rearfoot", "rearlegtip" }, { "rearfoot1", "rearlegtip1" }, { "frontfoot", "frontlegtip" }, { "frontfoot1", "frontlegtip1" },
+    };
+    for (auto& bone : bones) {
+        for (const auto& [child, parent] : Parents) if (bone.name == child) bone.parent = parent;
+        if (bone.name != "root" && bone.parent.empty()) bone.parent = "root";
+        if (bone.name == "wing" || bone.name == "wing1") {
+            bone.rotation[1] += 14.3f;
+            if (bone.name == "wing1") bone.rotation[2] += 180.0f;
+        }
+    }
+    for (const auto& [child, parent] : Parents) {
+        auto owner = std::find_if(bones.begin(), bones.end(), [&](const auto& bone) { return bone.name == parent; });
+        auto piece = std::find_if(bones.begin(), bones.end(), [&](const auto& bone) { return bone.name == child; });
+        if (owner == bones.end() || piece == bones.end()) continue;
+        Vec3f offset { owner->pivot[0], owner->pivot[1] - 24.0f, owner->pivot[2] };
+        auto translate = [&](Vec3f& point) { for (size_t axis = 0; axis < 3; ++axis) point[axis] += offset[axis]; };
+        translate(piece->pivot);
+        for (auto& cube : piece->cubes) { translate(cube.origin); translate(cube.pivot); }
+    }
+    for (const auto& [prefix, count] : { std::pair { "neck", 5 }, std::pair { "tail", 12 } }) {
+        for (int index = 1; index <= count; ++index) {
+            GeometryBone part = segment;
+            part.name = std::string(prefix) + std::to_string(index);
+            bones.push_back(std::move(part));
+        }
+    }
+}
+
+void GeometryLibrary::parse(const std::string& text, bool retainNativeBindPose)
 {
     std::unique_ptr<json::Value> document = json::parse(text);
     if (!document || !document->isObject()) {
         return;
     }
+    auto retainBindPose = [&](const std::string& identifier, Geometry& geometry) {
+        if (!retainNativeBindPose) return;
+        auto previous = byIdentifier.find(identifier);
+        if (previous == byIdentifier.end()) return;
+        for (auto& bone : geometry.bones) {
+            if (bone.bindRotationSet) continue;
+            auto old = std::find_if(previous->second.bones.begin(), previous->second.bones.end(), [&](const auto& entry) { return entry.name == bone.name; });
+            if (old != previous->second.bones.end() && old->bindRotationSet) {
+                bone.bindRotation = old->bindRotation;
+                bone.bindRotationSet = true;
+            }
+        }
+    };
     if (const json::Value* list = document->get("minecraft:geometry"); list && list->isArray()) {
         for (const auto& entry : list->mArray) {
             const json::Value* description = entry->get("description");
@@ -428,6 +487,7 @@ void GeometryLibrary::parse(const std::string& text)
                 geometry.textureSizeSet = true;
             }
             parseBones(entry->get("bones"), geometry);
+            retainBindPose(identifier->string(), geometry);
             byIdentifier[identifier->string()] = std::move(geometry);
         }
         return;
@@ -455,6 +515,7 @@ void GeometryLibrary::parse(const std::string& text)
         parseBones(entry->get("bones"), geometry);
         size_t separator = key.find(':');
         std::string name = key.substr(0, separator);
+        retainBindPose(name, geometry);
         if (separator != std::string::npos) {
             parents[name] = key.substr(separator + 1);
         }

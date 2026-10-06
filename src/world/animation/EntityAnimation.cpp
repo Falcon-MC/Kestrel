@@ -470,7 +470,7 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
             }
         }
     }
-    std::vector<std::string> controllerAliases;
+    std::vector<std::string> legacyControllers;
     if (const json::Value* controllers = description.get("animation_controllers"); controllers && controllers->isArray()) {
         for (const auto& entry : controllers->mArray) {
             if (!entry->isObject()) {
@@ -479,8 +479,9 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
             for (const std::string& alias : entry->mKeys) {
                 const json::Value* target = entry->get(alias);
                 if (target && target->isString()) {
-                    scripts->aliases[lowercase(alias)] = lowercase(target->mString);
-                    controllerAliases.push_back(lowercase(alias));
+                    // Legacy controller names can also name clips used inside that controller.
+                    scripts->aliases.try_emplace(lowercase(alias), lowercase(target->mString));
+                    legacyControllers.push_back(lowercase(target->mString));
                 }
             }
         }
@@ -493,8 +494,8 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
         scripts->scale = optionalScript(body->get("scale"));
     }
     if (!body || !body->get("animate")) {
-        for (const std::string& alias : controllerAliases) {
-            scripts->animate.emplace_back(alias, molang::Script {});
+        for (const std::string& controller : legacyControllers) {
+            scripts->animate.emplace_back(controller, molang::Script {});
         }
     }
     return scripts;
@@ -548,6 +549,14 @@ double EntityAnimator::evaluate(const molang::Script& script)
     scope.queries = this;
     scope.temps.clear();
     return script.run(scope);
+}
+
+double EntityAnimator::evaluateWithThis(const molang::Script& script, double base)
+{
+    scope.thisValue = base;
+    double value = evaluate(script);
+    scope.thisValue = 0.0;
+    return std::isfinite(value) ? value : 0.0;
 }
 
 std::array<float, 3> EntityAnimator::evaluateKey(const std::array<molang::Script, 3>& values, const std::array<float, 3>& current)
@@ -934,14 +943,16 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
         }
         velocity = { moved[0] / ticks / TickSeconds, moved[1] / ticks / TickSeconds, moved[2] / ticks / TickSeconds };
         double step = std::sqrt(moved[0] * moved[0] + moved[2] * moved[2]) / ticks;
-        double target = std::min(step * 4.0, 1.0);
+        double target = step > 0.0 ? std::min(step * 4.0, 1.0)
+            : std::min(std::abs(wrapDegrees(input.yaw - lastYaw)) / ticks * 0.05, 0.5);
         for (int tick = 0; tick < ticks; ++tick) {
             previousLimbAmount = limbAmount;
-            limbAmount += (target - limbAmount) * 0.4;
+            limbAmount = input.flags[0] & (uint64_t(1) << 2) ? 0.0 : limbAmount + (target - limbAmount) * 0.4;
             limbDistance += limbAmount;
         }
-        previousWalkDistance = walkDistance + step * (ticks - 1);
-        walkDistance += step * ticks;
+        double stride = step > 0.05 ? step * 1.8 : 0.0;
+        previousWalkDistance = walkDistance + stride * (ticks - 1);
+        walkDistance += stride * ticks;
         lastPosition = { input.x, input.y, input.z };
     }
     yawSpeed = deltaTime > 0.0 ? wrapDegrees(input.yaw - lastYaw) / deltaTime : 0.0;
@@ -954,6 +965,7 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     scope.queries = this;
     if (!initialized) {
         initialized = true;
+        randomState = input.randomSeed | 1;
         if (scripts) {
             runScripts(scripts->initialize);
         }
@@ -963,6 +975,53 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     }
     for (const auto& [name, value] : input.contextVariables) {
         scope.context[name] = value;
+    }
+    bool horse = input.identifier == "minecraft:horse" || input.identifier == "minecraft:donkey" || input.identifier == "minecraft:mule"
+        || input.identifier == "minecraft:zombie_horse" || input.identifier == "minecraft:skeleton_horse";
+    if (input.identifier == "minecraft:cod" || input.identifier == "minecraft:salmon" || input.identifier == "minecraft:pufferfish" || input.identifier == "minecraft:tropicalfish") {
+        float speed = std::sqrt(input.nativeVelocity[0] * input.nativeVelocity[0] + input.nativeVelocity[1] * input.nativeVelocity[1] + input.nativeVelocity[2] * input.nativeVelocity[2]);
+        for (int tick = 0; tick < ticks; ++tick) {
+            fishPhase[1] = fishPhase[0];
+            fishPhase[0] += 1.0f + speed * 0.1f;
+        }
+        variables["animationamount"] = fishPhase[0];
+        variables["animationamountprev"] = fishPhase[1];
+    }
+    if (auto target = input.metadataQueries.find("has_target"); target != input.metadataQueries.end()) variables["has_target"] = target->second;
+    if (horse) {
+        for (int tick = 0; tick < ticks; ++tick) {
+            horseStand = (input.flags[0] & (uint64_t(1) << 39))
+                ? std::min(horseStand + (1.0f - horseStand) * 0.4f + 0.05f, 1.0f)
+                : std::max(horseStand + (horseStand * horseStand * horseStand * 0.8f - horseStand) * 0.6f - 0.05f, 0.0f);
+            randomState ^= randomState << 13;
+            randomState ^= randomState >> 7;
+            randomState ^= randomState << 17;
+            if (randomState % 200 == 0) horseTailTicks = 1;
+            if (horseTailTicks && ++horseTailTicks > 8) horseTailTicks = 0;
+        }
+        variables["stand_anim"] = horseStand;
+        variables["shake_tail"] = horseTailTicks > 0 ? 1.0 : 0.0;
+        variables["open_mouth"] = (input.horseFlags >> 7) & 1;
+    }
+    if (input.identifier == "minecraft:tropicalfish") {
+        int family = static_cast<uint8_t>(input.variant) != 0 ? 1 : 0;
+        variables["tropicalfish.base"] = family;
+        variables["tropicalfish.pattern"] = (input.markVariant >= 0 && input.markVariant < 6 ? input.markVariant : 0) + family * 6;
+    }
+    if (input.identifier == "minecraft:ender_dragon") {
+        if (frame == 0) dragonHistory.fill({ wrapDegrees(input.yaw), input.y });
+        for (int tick = 0; tick < ticks; ++tick) {
+            dragonHistoryIndex = (dragonHistoryIndex + 1) % dragonHistory.size();
+            dragonHistory[dragonHistoryIndex] = { wrapDegrees(input.yaw), input.y };
+            double dx = velocity[0] * TickSeconds, dy = velocity[1] * TickSeconds, dz = velocity[2] * TickSeconds;
+            dragonFlap += (input.flags[0] & (uint64_t(1) << 24)) ? 0.1 : std::exp2(std::clamp(dy, -16.0, 16.0)) * 0.2 / (std::hypot(dx, dz) * 10.0 + 1.0);
+        }
+        if (input.deathTicks > 0.0f) dragonFlap = 0.0;
+        for (size_t offset = 0; offset < 24; ++offset) {
+            const auto& history = dragonHistory[(dragonHistoryIndex + dragonHistory.size() - offset - (input.deathTicks > 0.0f ? 1 : 0)) % dragonHistory.size()];
+            variables["historical_frame_" + std::to_string(offset) + ".rot_y"] = history[0];
+            variables["historical_frame_" + std::to_string(offset) + ".pos_y"] = history[1];
+        }
     }
     ++frame;
     poses.assign(bones.size(), BonePose {});
@@ -1023,6 +1082,27 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
             done[index] = 1;
         }
     }
+    if (input.deathTicks > 0.0f && input.identifier != "minecraft:ender_dragon") {
+        float angle = std::sqrt(std::clamp(input.deathTicks / 20.0f, 0.0f, 1.0f)) * float(Pi * 0.5);
+        Row tilt { std::cos(angle), -std::sin(angle), 0, 0, std::sin(angle), std::cos(angle), 0, 0, 0, 0, 1, 0 };
+        for (auto& matrix : boneMatrices) matrix = multiply(tilt, matrix);
+    }
+
+}
+
+void EntityAnimator::setRenderContext(const AnimationInput& input, double now, float partialTick)
+{
+    current.now = now;
+    current.worldTime = input.worldTime;
+    current.cameraX = input.cameraX;
+    current.cameraY = input.cameraY;
+    current.cameraZ = input.cameraZ;
+    current.cameraYaw = input.cameraYaw;
+    current.cameraPitch = input.cameraPitch;
+    current.frameAlpha = partialTick;
+    current.hurtTime = input.hurtTime;
+    current.deathTicks = input.deathTicks;
+    current.onFireTime = input.onFireTime;
 }
 
 double EntityAnimator::query(const std::string& name, std::span<const double> arguments)
@@ -1049,7 +1129,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "delta_time") {
         return deltaTime;
     }
-    double partialTick = tickClock / TickSeconds;
+    double partialTick = current.frameAlpha.value_or(float(tickClock / TickSeconds));
     if (name == "frame_alpha") {
         return current.frameAlpha.value_or(float(partialTick));
     }
@@ -1191,6 +1271,8 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         {"timer_flag_2", 116},
         {"timer_flag_3", 117},
     };
+    if (name == "is_grazing" && (current.identifier == "minecraft:horse" || current.identifier == "minecraft:donkey" || current.identifier == "minecraft:mule"
+        || current.identifier == "minecraft:zombie_horse" || current.identifier == "minecraft:skeleton_horse")) return (current.horseFlags >> 5) & 1;
     if (auto found = flagQueries.find(name); found != flagQueries.end()) {
         return flag(found->second);
     }
@@ -1215,20 +1297,34 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "hurt_time") {
         return current.hurtTime;
     }
-    if (name == "is_alive" || name == "has_collision" || name == "has_gravity") {
+    if (auto found = current.metadataQueries.find(name); found != current.metadataQueries.end()) return found->second;
+    if (name == "death_ticks") return current.deathTicks;
+    if (name == "on_fire_time") return current.onFireTime;
+    if (name == "overlay_alpha") return current.hurtTime > 0.0f || current.deathTicks > 0.0f ? 0.5 : 0.0;
+    if (name == "wing_flap_position") return dragonFlap;
+    if (name == "is_shield_powered") return current.maxHealth > 0.0f && current.health <= current.maxHealth * 0.5f ? 1.0 : 0.0;
+    if (name == "tail_angle") {
+        if (current.identifier != "minecraft:wolf") return 0.0;
+        if (flag(25)) return 1.539380431175232;
+        if (!flag(28) || current.maxHealth <= 0.0f) return 0.6283185482025146;
+        return (current.health / current.maxHealth * 0.4 + 0.15) * Pi;
+    }
+    if (name == "is_alive") return current.health > 0.0f && current.deathTicks == 0.0f ? 1.0 : 0.0;
+    if (name == "has_collision" || name == "has_gravity") {
         return 1.0;
     }
-    if (name == "body_x_rotation" || name == "target_x_rotation" || name == "head_x_rotation" || name == "eye_target_x_rotation") {
+    if (name == "head_x_rotation") return arguments.empty() ? 0.0 : current.pitch;
+    if (name == "body_x_rotation" || name == "target_x_rotation" || name == "eye_target_x_rotation") {
         return current.pitch;
     }
     if (name == "target_y_rotation" && targetRotationIsAbsolute(current.identifier)) {
         return current.yaw;
     }
     if (name == "target_y_rotation" || name == "eye_target_y_rotation") {
-        return wrapDegrees(current.headYaw - current.yaw);
+        return std::clamp(wrapDegrees(current.headYaw - current.yaw), -85.0, 85.0);
     }
     if (name == "head_y_rotation") {
-        return current.headYaw;
+        return arguments.empty() ? 0.0 : std::clamp(wrapDegrees(current.headYaw - current.yaw), -std::abs(argument(0)), std::abs(argument(0)));
     }
     if (name == "body_y_rotation") {
         return current.yaw;
@@ -1273,6 +1369,38 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     }
     if (name == "get_name" || name == "get_nametag") {
         return molang::internString(current.name);
+    }
+    if (name == "armor_texture_slot" || name == "armor_color_slot") {
+        double slotValue = argument(0);
+        if (arguments.empty() || !std::isfinite(slotValue) || slotValue < 0.0 || slotValue >= 4.0) return 0.0;
+        size_t slot = static_cast<size_t>(slotValue);
+        const std::string& item = current.armorItems[slot];
+        if (name == "armor_color_slot") {
+            double channel = argument(1);
+            if (arguments.size() < 2 || !std::isfinite(channel)) return 0.0;
+            if (channel < 0.0 || channel >= 3.0) return 1.0;
+            uint32_t rgb = current.armorColors[slot].value_or(item.starts_with("minecraft:leather_") ? 0xa06540u : 0xffffffu);
+            return double((rgb >> (16 - static_cast<unsigned>(channel) * 8)) & 255) / 255.0;
+        }
+        if (slot == 1 && item == "minecraft:elytra") return 5.0;
+        static constexpr std::pair<const char*, double> Materials[] = {
+            { "minecraft:leather_", 1 }, { "minecraft:iron_", 2 }, { "minecraft:golden_", 3 },
+            { "minecraft:gold_", 3 }, { "minecraft:diamond_", 4 }, { "minecraft:copper_", 5 }, { "minecraft:netherite_", 6 },
+        };
+        for (const auto& [prefix, value] : Materials) if (item.starts_with(prefix)) return value;
+        return 0.0;
+    }
+    if (name == "is_item_name_any") {
+        if (arguments.size() < 2) return 0.0;
+        const std::string* item = nullptr;
+        if (argument(0) == molang::internString("slot.weapon.mainhand")) item = &current.mainHandItem;
+        if (argument(0) == molang::internString("slot.weapon.offhand")) item = &current.offHandItem;
+        if (!item || item->empty()) return 0.0;
+        const double value = molang::internString(*item);
+        for (size_t i = 1; i < arguments.size(); ++i) {
+            if (arguments[i] == value) return 1.0;
+        }
+        return 0.0;
     }
     if (name == "get_equipped_item_name") {
         bool offHand = argument(0) == molang::internString("off_hand") || argument(0) == 1.0;
