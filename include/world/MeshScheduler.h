@@ -2,6 +2,7 @@
 
 #include "world/ChunkStore.h"
 #include "world/Mesher.h"
+#include "world/MeshPriority.h"
 
 #include <condition_variable>
 #include <deque>
@@ -25,6 +26,13 @@ struct MeshResult {
     uint64_t epoch = 0;
     ChunkMesh mesh;
     std::shared_ptr<MeshMemoryCredit> credit;
+    bool urgent = false;
+    bool refresh = false;
+};
+
+struct MeshDeferred {
+    SubChunkKey key;
+    bool urgent = false;
 };
 
 class MeshScheduler {
@@ -35,7 +43,7 @@ public:
     MeshScheduler(const MeshScheduler&) = delete;
     MeshScheduler& operator=(const MeshScheduler&) = delete;
 
-    bool submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent = false);
+    bool submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent = false, MeshDeferred* displaced = nullptr, bool refresh = false);
     std::vector<MeshResult> takeResults(size_t maximum = 32);
     size_t pending() const;
     double averageMilliseconds() const;
@@ -46,9 +54,9 @@ public:
     void clear();
     void cancel(const SubChunkKey& key);
     void invalidate(const SubChunkKey& key, uint64_t generation);
-    void setView(std::array<double, 3> position);
+    void setView(const MeshViewPriority& priority);
     bool isCurrent(const MeshResult& result) const;
-    bool canSubmit(const SubChunkKey& key) const;
+    bool canSubmit(const SubChunkKey& key, bool urgent = false, bool refresh = false) const;
     static constexpr size_t QueueCapacity = 64;
     static constexpr size_t ResultCapacity = 32;
     static constexpr size_t ResultByteCapacity = 64 * 1024 * 1024;
@@ -60,6 +68,7 @@ private:
         uint64_t generation = 0;
         uint64_t epoch = 0;
         bool urgent = false;
+        bool refresh = false;
         MeshInput input;
         std::shared_ptr<const BlockAssets> assets;
         IdMapping ids;
@@ -88,7 +97,7 @@ private:
     std::shared_ptr<const BlockAssets> boundAssets;
     size_t maxTemplateQuads = 0;
     std::map<SubChunkKey, LightCacheEntry> lightCache;
-    std::array<double, 3> view {};
+    MeshViewPriority view;
     uint64_t currentEpoch = 1;
     uint64_t cacheClock = 0;
     size_t resultBytes = 0;

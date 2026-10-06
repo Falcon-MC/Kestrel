@@ -1071,11 +1071,18 @@ void Client::applyMeshUpdate(const MeshUpdate& update)
 
 void Client::applyMeshUpdates()
 {
+    const auto removalDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+    for (size_t count = 0; count < 128; ++count) {
+        if (count && std::chrono::steady_clock::now() >= removalDeadline) break;
+        auto updates = session.takeMeshUpdates(1, blockAssets.get(), MeshUpdateKind::Removal);
+        if (updates.empty()) break;
+        applyMeshUpdate(updates.front());
+    }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
     size_t uploadedBytes = 0;
     for (size_t count = 0; count < 32; ++count) {
         if (count && (std::chrono::steady_clock::now() >= deadline || uploadedBytes >= 4 * 1024 * 1024)) break;
-        auto updates = session.takeMeshUpdates(1, blockAssets.get());
+        auto updates = session.takeMeshUpdates(1, blockAssets.get(), MeshUpdateKind::Terrain);
         if (updates.empty()) break;
         const MeshUpdate& update = updates.front();
         if (update.mesh) uploadedBytes += (update.mesh->cubes.size() + update.mesh->translucentCubes.size()) * sizeof(world::PackedQuad)

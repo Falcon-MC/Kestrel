@@ -543,7 +543,11 @@ struct MeshUpdate {
     world::SubChunkKey key;
     std::shared_ptr<const world::ChunkMesh> mesh;
     std::shared_ptr<void> credit;
+    bool urgent = false;
+    bool refresh = false;
 };
+
+enum class MeshUpdateKind { All, Terrain, Removal };
 
 /**
  * The last field of view the server set through a camera instruction: its
@@ -677,7 +681,7 @@ public:
 
     SessionSnapshot snapshot() const;
     std::shared_ptr<const SessionSnapshot> sharedSnapshot() const;
-    std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32, const world::BlockAssets* expectedAssets = nullptr);
+    std::vector<MeshUpdate> takeMeshUpdates(size_t maximum = 32, const world::BlockAssets* expectedAssets = nullptr, MeshUpdateKind kind = MeshUpdateKind::All);
     std::vector<std::shared_ptr<const Packet>> takeCameraEvents();
     std::vector<SkinUpload> takeSkinUploads();
     std::vector<SoundRequest> takeSounds();
@@ -912,6 +916,7 @@ private:
     std::atomic<bool> cancelled { false };
     mutable std::mutex mutex;
     SessionSnapshot current;
+    bool startingTerrain = true;
     std::shared_ptr<const SessionSnapshot> publishedSnapshot;
     std::vector<std::shared_ptr<const SessionSnapshot>> retiredSnapshots;
     std::thread::id snapshotProducerThread;

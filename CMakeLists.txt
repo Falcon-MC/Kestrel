@@ -221,16 +221,20 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelActorInterpolationTest tests/ActorInterpolation.cpp)
     target_include_directories(KestrelActorInterpolationTest PRIVATE include)
     add_test(NAME actor-interpolation COMMAND KestrelActorInterpolationTest)
-    add_executable(KestrelPlayerMotionTest
-        tests/PlayerMotion.cpp
-        src/client/motion/PlayerMotion.cpp
-        src/client/motion/MotionMath.cpp
-        src/client/motion/MotionWorld.cpp
-        src/client/motion/MotionCollision.cpp
-        src/client/motion/MotionLiquid.cpp
-        src/world/blocks/BlockCollisions.cpp)
-    target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
+    add_executable(KestrelMeshPriorityTest tests/MeshPriority.cpp)
+    target_include_directories(KestrelMeshPriorityTest PRIVATE include)
+    add_test(NAME mesh-priority COMMAND KestrelMeshPriorityTest)
+    find_package(Threads REQUIRED)
+    add_executable(KestrelChunkDecodeTest
+        tests/ChunkDecode.cpp
+        src/world/chunks/WorldStream.cpp
+        src/world/chunks/ChunkStore.cpp
+        src/world/chunks/SubChunk.cpp
+        src/world/chunks/PalettedStorage.cpp
+        src/world/chunks/ByteReader.cpp)
+    target_include_directories(KestrelChunkDecodeTest PRIVATE include)
+    target_link_libraries(KestrelChunkDecodeTest PRIVATE FalconProtocol Threads::Threads)
+    add_test(NAME chunk-decode COMMAND KestrelChunkDecodeTest)
     add_executable(KestrelInventoryDecodeTest tests/InventoryDecode.cpp)
     target_link_libraries(KestrelInventoryDecodeTest PRIVATE FalconProtocol)
     add_test(NAME inventory-decode COMMAND KestrelInventoryDecodeTest)
