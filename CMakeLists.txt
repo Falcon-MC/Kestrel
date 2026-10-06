@@ -221,11 +221,15 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelChatCommandsTest
         tests/ChatCommands.cpp
         src/menu/ChatCommands.cpp
+    add_executable(KestrelLocalizedTextTest
+        tests/LocalizedText.cpp
+        src/client/app/ChatText.cpp
         src/ui/Localization.cpp
         src/world/packs/PackSource.cpp
         src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp
         src/util/Text.cpp)
+<<<<<<< HEAD
     target_include_directories(KestrelChatCommandsTest PRIVATE include)
     target_link_libraries(KestrelChatCommandsTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME chat-commands COMMAND KestrelChatCommandsTest)
@@ -240,6 +244,11 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
     add_test(NAME border-block COMMAND KestrelBorderBlockTest)
+=======
+    target_include_directories(KestrelLocalizedTextTest PRIVATE include)
+    target_link_libraries(KestrelLocalizedTextTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME localized-text COMMAND KestrelLocalizedTextTest)
+>>>>>>> a4577ce (fix(chat): localize rawtext translation arguments)
     add_executable(KestrelHealthFeedbackTest tests/HealthFeedback.cpp)
     target_include_directories(KestrelHealthFeedbackTest PRIVATE include)
     add_test(NAME health-feedback COMMAND KestrelHealthFeedbackTest)

@@ -365,7 +365,7 @@ std::string rawText(const json::Value& component)
         return text->string();
     }
     if (const json::Value* key = component.get("translate"); key && key->isString()) {
-        return trf(key->string(), key->string(), rawArguments(component.get("with")));
+        return Localization::shared().translateMessage(key->string(), rawArguments(component.get("with")));
     }
     std::string joined;
     if (const json::Value* parts = component.get("rawtext"); parts && parts->isArray()) {
