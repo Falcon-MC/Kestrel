@@ -248,6 +248,10 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelInventoryDecodeTest tests/InventoryDecode.cpp)
     target_link_libraries(KestrelInventoryDecodeTest PRIVATE FalconProtocol)
     add_test(NAME inventory-decode COMMAND KestrelInventoryDecodeTest)
+    add_executable(KestrelWorldClockTest tests/WorldClock.cpp)
+    target_include_directories(KestrelWorldClockTest PRIVATE include)
+    target_link_libraries(KestrelWorldClockTest PRIVATE FalconProtocol)
+    add_test(NAME world-clock COMMAND KestrelWorldClockTest)
     add_executable(KestrelParticleEffectsTest
         tests/ParticleEffects.cpp
         src/world/particles/ParticleBinary.cpp

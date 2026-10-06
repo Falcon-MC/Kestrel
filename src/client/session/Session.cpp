@@ -106,10 +106,7 @@ double secondsNow()
 
 double currentWorldTime(const SessionSnapshot& snapshot)
 {
-    if (!snapshot.daylightCycle) {
-        return static_cast<double>(snapshot.worldTime);
-    }
-    return static_cast<double>(snapshot.worldTime) + (secondsNow() - snapshot.worldTimeStamp) * 20.0;
+    return worldTimeAt(snapshot.worldTime, snapshot.worldTimeStamp, snapshot.daylightCycle, snapshot.worldClockPaused, secondsNow());
 }
 
 namespace {
@@ -417,6 +414,7 @@ void Session::resetSnapshot(std::string name, std::string target)
 {
     std::lock_guard<std::mutex> guard(mutex);
     current = SessionSnapshot {};
+    worldClock = {};
     current.state = resolvesOnline(target) ? SessionState::Resolving : SessionState::Connecting;
     current.name = std::move(name);
     current.target = std::move(target);
@@ -987,6 +985,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::PlayerList:
     case MinecraftPacketIds::PlayerSkin:
     case MinecraftPacketIds::SetTime:
+    case MinecraftPacketIds::SyncWorldClocks:
     case MinecraftPacketIds::GameRulesChanged:
     case MinecraftPacketIds::LevelEvent:
     case MinecraftPacketIds::NetworkStackLatency:
@@ -1299,9 +1298,17 @@ void Session::handleWorldPacket(std::string& payload)
         std::sort(names.begin(), names.end());
         std::lock_guard<std::mutex> guard(mutex);
         current.players = std::move(names);
+    } else if (auto clocks = std::dynamic_pointer_cast<SyncWorldClocksPacket>(packet)) {
+        if (auto state = worldClock.apply(*clocks)) {
+            std::lock_guard<std::mutex> guard(mutex);
+            current.worldTime = state->time;
+            current.worldTimeStamp = secondsNow();
+            current.worldClockPaused = state->paused;
+        }
     } else if (auto time = std::dynamic_pointer_cast<SetTimePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         current.worldTime = time->mTime;
+        current.worldClockPaused = false;
         current.worldTimeStamp = secondsNow();
         debugLog("set time " + std::to_string(time->mTime));
     } else if (auto rules = std::dynamic_pointer_cast<GameRulesChangedPacket>(packet)) {
