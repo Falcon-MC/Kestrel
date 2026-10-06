@@ -634,6 +634,15 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             continue;
         }
+        if (actor.identifier == "minecraft:falling_block") {
+            if (!invisible && !actor.fallingBlockLanded) {
+                size_t first = out.size(), firstBlended = blended.size();
+                appendFallingBlock(actor, origin, out, blended);
+                lightQuads(out, first, light);
+                lightQuads(blended, firstBlended, light);
+            }
+            continue;
+        }
         const world::EntityModel* model = actor.slim ? blockAssets->entityModel(actor.identifier + "#slim") : nullptr;
         if (!model) {
             model = blockAssets->entityModel(actor.identifier);

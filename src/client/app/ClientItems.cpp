@@ -87,6 +87,56 @@ const Client::DroppedItemMesh* Client::droppedItemMesh(const HudItem& item)
     return &droppedMeshes.emplace(key, std::move(mesh)).first->second;
 }
 
+void Client::appendFallingBlock(const ActorView& actor, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
+{
+    if (!seenSessionSnapshot) return;
+    const auto sequential = blockAssets->sequentialMap();
+    const auto& visual = blockAssets->visual(static_cast<uint32_t>(actor.variant), seenSessionSnapshot->hashedIds, sequential.get());
+    const auto& materials = blockAssets->materials();
+    auto& target = (visual.flags & world::FlagTranslucent) ? blended : out;
+    Vec3 base {
+        float((actor.x - 0.5 - origin[0]) * 256.0),
+        float((actor.y - origin[1]) * 256.0),
+        float((actor.z - 0.5 - origin[2]) * 256.0),
+    };
+    auto emit = [&](const std::array<Vec3, 4>& local, const std::array<std::array<uint16_t, 2>, 4>& uvs, uint32_t material, uint32_t shade) {
+        if (material >= materials.size()) return;
+        auto corners = local;
+        for (auto& corner : corners) {
+            for (size_t axis = 0; axis < 3; ++axis) corner[axis] = base[axis] + corner[axis] * actor.scale;
+        }
+        uint32_t tint = materials[material].tintKind() != world::TintKind::None ? world::ItemTint : 0u;
+        target.push_back(packQuad(corners, uvs, materials[material].gpuWord(), shade | (tint << 8)));
+    };
+    if (visual.hasModel()) {
+        const auto& templates = blockAssets->modelTemplates();
+        const auto& quads = blockAssets->modelQuads();
+        if (visual.modelTemplate >= templates.size()) return;
+        const auto& model = templates[visual.modelTemplate];
+        if (model.quadStart > quads.size() || model.quadCount > quads.size() - model.quadStart) return;
+        for (size_t i = 0; i < model.quadCount; ++i) {
+            const auto& quad = quads[model.quadStart + i];
+            std::array<Vec3, 4> corners;
+            for (size_t corner = 0; corner < 4; ++corner) {
+                for (size_t axis = 0; axis < 3; ++axis) corners[corner][axis] = float(quad.positions[corner][axis]);
+            }
+            emit(corners, quad.uvs, quad.material, world::shadeFaceTowards(world::modelFaceNormal(quad.flags & world::QuadFaceMask)));
+        }
+    } else if (visual.emitsCubeGeometry()) {
+        const std::array<std::array<Vec3, 4>, 6> faces { {
+            { { { 256, 256, 256 }, { 256, 256, 0 }, { 256, 0, 0 }, { 256, 0, 256 } } },
+            { { { 0, 256, 0 }, { 0, 256, 256 }, { 0, 0, 256 }, { 0, 0, 0 } } },
+            { { { 0, 256, 0 }, { 256, 256, 0 }, { 256, 256, 256 }, { 0, 256, 256 } } },
+            { { { 0, 0, 256 }, { 256, 0, 256 }, { 256, 0, 0 }, { 0, 0, 0 } } },
+            { { { 0, 256, 256 }, { 256, 256, 256 }, { 256, 0, 256 }, { 0, 0, 256 } } },
+            { { { 256, 256, 0 }, { 0, 256, 0 }, { 0, 0, 0 }, { 256, 0, 0 } } },
+        } };
+        const std::array<std::array<uint16_t, 2>, 4> uvs { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
+        static constexpr uint32_t Shades[] = { 2, 1, 4, 3, 6, 5 };
+        for (size_t face = 0; face < faces.size(); ++face) emit(faces[face], uvs, visual.faces[face ^ 1], Shades[face]);
+    }
+}
+
 /**
  * A dropped item the way the game draws one on the ground: a block as a
  * small cube turning slowly, any other item as its icon facing the camera,

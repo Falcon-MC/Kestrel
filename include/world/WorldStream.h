@@ -14,6 +14,7 @@
 class LevelChunkPacket;
 class SubChunkPacket;
 class UpdateBlockPacket;
+class UpdateBlockSyncedPacket;
 class UpdateSubChunkBlocksPacket;
 class NetworkChunkPublisherUpdatePacket;
 class BlockActorDataPacket;
@@ -47,6 +48,7 @@ public:
     void handle(std::shared_ptr<const LevelChunkPacket> packet);
     void handle(std::shared_ptr<const SubChunkPacket> packet);
     void handle(const UpdateBlockPacket& packet);
+    void handle(const UpdateBlockSyncedPacket& packet);
     void handle(std::shared_ptr<const UpdateSubChunkBlocksPacket> packet);
     void handle(const NetworkChunkPublisherUpdatePacket& packet);
     void handle(std::shared_ptr<const BlockActorDataPacket> packet, size_t bytes);

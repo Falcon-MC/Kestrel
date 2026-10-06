@@ -194,6 +194,7 @@ struct ActorView {
     float nameplateDistance = 64.0f;
     std::array<uint64_t, 3> flags{};
     int variant = 0;
+    bool fallingBlockLanded = false;
     int markVariant = 0;
     int color = 0;
     int skinId = 0;

@@ -9,6 +9,7 @@
 #include "Protocol/Packets/SubChunkPacket.h"
 #include "Protocol/Packets/SubChunkRequestPacket.h"
 #include "Protocol/Packets/UpdateBlockPacket.h"
+#include "Protocol/Packets/UpdateBlockSyncedPacket.h"
 #include "Protocol/Packets/UpdateSubChunkBlocksPacket.h"
 
 #include <algorithm>
@@ -336,6 +337,16 @@ void WorldStream::handle(const UpdateBlockPacket& packet)
 {
     if (decoding.empty()) apply(packet);
     else decoding.append(sizeof(packet), [this, packet] { apply(packet); });
+}
+
+void WorldStream::handle(const UpdateBlockSyncedPacket& packet)
+{
+    UpdateBlockPacket update;
+    update.mBlockPosition = packet.mBlockPosition;
+    update.mRuntimeId = packet.mRuntimeId;
+    update.mFlags = packet.mFlags;
+    update.mDataLayer = packet.mDataLayer;
+    handle(update);
 }
 
 void WorldStream::apply(const UpdateBlockPacket& packet)

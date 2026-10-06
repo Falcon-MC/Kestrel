@@ -4,6 +4,7 @@
 #include "Protocol/Packets/SubChunkPacket.h"
 #include "Protocol/Packets/SubChunkRequestPacket.h"
 #include "Protocol/Packets/UpdateBlockPacket.h"
+#include "Protocol/Packets/UpdateBlockSyncedPacket.h"
 #include "Protocol/Packets/UpdateSubChunkBlocksPacket.h"
 #include "Protocol/Packets/BlockActorDataPacket.h"
 #include "Core/NBT/NbtIo.h"
@@ -209,6 +210,30 @@ void requestedSubChunks()
     require(stream.stats().pendingSubChunks == 0, "Decoded reply did not clear the pending request");
 }
 
+void fallingBlockUpdates()
+{
+    WorldStream stream;
+    stream.reset(0, 0, 0);
+    stream.handle(column());
+    stream.handle(update());
+    UpdateBlockSyncedPacket synced;
+    synced.mBlockPosition = Vector3i(0, -64, 0);
+    synced.mRuntimeId = 0;
+    synced.mEntityBlockSyncType = BlockSyncType::Create;
+    stream.handle(synced);
+    synced.mBlockPosition = Vector3i(0, -63, 0);
+    synced.mRuntimeId = 0xF1234567u;
+    synced.mEntityBlockSyncType = BlockSyncType::Destroy;
+    stream.handle(synced);
+    synced.mDataLayer = 255;
+    synced.mRuntimeId = 42;
+    stream.handle(synced);
+    drain(stream, 1);
+    const auto chunk = stream.store().subChunk({ 0, 0, -4, 0 });
+    require(chunk && chunk->runtimeId(0, 0, 0, 0) == 0, "Falling block source must clear after pending chunk decode");
+    require(chunk->runtimeId(0, 0, 1, 0) == 0xF1234567u, "Landing must retain high-bit block hashes and ignore invalid layers");
+}
+
 void lateColumnAfterPublisher()
 {
     WorldStream stream;
@@ -382,6 +407,7 @@ int main()
     orderedWorker();
     cancellationAndErrors();
     streamedWorldOrder();
+    fallingBlockUpdates();
     requestedSubChunks();
     lateColumnAfterPublisher();
     resolverSnapshot();
