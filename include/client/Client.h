@@ -518,6 +518,7 @@ private:
     uint32_t nextDroppedIcon = 0;
     const DroppedItemMesh* droppedItemMesh(const HudItem& item);
     void appendDroppedItem(const ActorView& actor, const std::array<int32_t, 3>& origin, double now, std::vector<world::ModelQuadGpu>& out);
+    void appendFallingBlock(const ActorView& actor, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     uint32_t mapBackgroundLayer() const;
     void loadMapArt(const std::vector<std::shared_ptr<const world::PackFiles>>& packs, uint8_t* backgroundLayer);
     std::vector<uint8_t> composeMap(const MapView& map) const;
