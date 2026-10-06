@@ -157,7 +157,7 @@ struct RaycastHit {
  * What the sky and the camera look like this frame, for shaders that light
  * or fog the world. sunDirection points at the sun (the moon is opposite),
  * daylight runs from 0 at night to 1 at noon, medium is 0 in air, 1 in water
- * and 2 in lava.
+ * 2 in lava and 3 in powder snow.
  */
 struct Environment {
     Vec3 camera;

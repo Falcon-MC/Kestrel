@@ -566,7 +566,9 @@ int Client::run()
                     sky.zenith = sky.horizon = sky.fogColor;
                 }
                 sky = submergedIn(sky, timeState.cameraMedium,
-                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale);
+                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale,
+                    lavaFog ? &*lavaFog : nullptr, renderDistance,
+                    blockAssets ? blockAssets->biomeTints().powderSnowFog() : nullptr);
                 if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }

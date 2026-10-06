@@ -59,10 +59,12 @@ public:
     void load(PackSource& resources, PackSource& behaviors);
 
     const BiomeColors& colors(uint32_t biomeId) const;
+    const BiomeFog* powderSnowFog() const { return powderSnow ? &*powderSnow : nullptr; }
 
 private:
     std::unordered_map<uint32_t, BiomeColors> byId;
     BiomeColors fallback;
+    std::optional<BiomeFog> powderSnow;
 };
 
 }
