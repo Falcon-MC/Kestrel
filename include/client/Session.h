@@ -640,6 +640,7 @@ struct SessionSnapshot {
     int64_t worldTime = 6000;
     double worldTimeStamp = 0.0;
     bool daylightCycle = true;
+    bool showCoordinates = false;
     bool worldClockPaused = false;
     float rainLevel = 0.0f;
     float thunderLevel = 0.0f;

@@ -2,6 +2,7 @@
 
 #include "client/DebugLog.h"
 #include "platform/Window.h"
+#include "ui/Localization.h"
 #include "world/ItemInfo.h"
 
 #include <algorithm>
@@ -195,6 +196,13 @@ menu::HudView Client::buildHudView()
     double now = secondsNow();
     const HudState& state = hudState;
     view.visible = true;
+    if (seenSessionSnapshot && seenSessionSnapshot->showCoordinates && playerView.active) {
+        view.playerPosition = ui::trf("map.position", "Position: %s, %s, %s", {
+            std::to_string(static_cast<int>(std::floor(playerView.current[0]))),
+            std::to_string(static_cast<int>(std::floor(playerView.current[1]))),
+            std::to_string(static_cast<int>(std::floor(playerView.current[2]))),
+        });
+    }
     view.nameTags = buildNameTags();
     view.sidebarVisible = sidebarView.visible && !(mods && mods->hidesHud(mod::HudElement::Sidebar));
     view.hiddenElements = state.hiddenElements | modHiddenElements();
