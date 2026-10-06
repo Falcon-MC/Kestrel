@@ -535,12 +535,26 @@ int Client::run()
             submergedSeconds = timeState.cameraMedium == 1 ? submergedSeconds + environmentDeltaSeconds : 0.0f;
             world::BiomeColors biomeColors = blockAssets ? blockAssets->biomeTints().colors(environmentSample.second) : world::BiomeColors {};
             float fogScale = biomeColors.waterFogRelative ? renderDistance : 1.0f;
+            bool fireResistance = false;
+            if (timeState.cameraMedium == 2 && serverCamera.playerEffects()) {
+                constexpr int32_t FireResistanceEffect = 12;
+                double now = secondsNow();
+                for (const HudEffect& effect : hudState.effects) {
+                    if (effect.id == FireResistanceEffect && (effect.expires < 0.0 || effect.expires > now)) {
+                        fireResistance = true;
+                        break;
+                    }
+                }
+            }
+            const auto& lavaFog = fireResistance && biomeColors.lavaResistanceFog
+                ? biomeColors.lavaResistanceFog : biomeColors.lavaFog;
             SkyFrame sky;
             std::vector<SkyVertex> background;
             {
                 Profiler::Section section(profiler, "sky");
                 sky = submergedIn(atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel), timeState.cameraMedium,
-                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale);
+                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale,
+                    lavaFog ? &*lavaFog : nullptr, renderDistance);
                 if (blockAssets && timeState.cameraMedium == 0) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }

@@ -71,6 +71,12 @@ struct Appearance {
     std::string fog;
 };
 
+struct FogProfiles {
+    std::optional<BiomeFog> water;
+    std::optional<BiomeFog> lava;
+    std::optional<BiomeFog> resistance;
+};
+
 struct Climate {
     float temperature = 0.8f;
     float downfall = 0.4f;
@@ -130,6 +136,21 @@ const json::Value* component(const json::Value& components, const char* name, co
     return entry ? entry->get(field) : nullptr;
 }
 
+std::optional<BiomeFog> parseFog(const json::Value* source)
+{
+    const auto* start = source ? source->get("fog_start") : nullptr;
+    const auto* end = source ? source->get("fog_end") : nullptr;
+    const auto* color = source ? source->get("fog_color") : nullptr;
+    const auto* mode = source ? source->get("render_distance_type") : nullptr;
+    if (!start || !end || !color || !mode) return std::nullopt;
+    auto rgb = parseDirect(*color);
+    float first = float(start->number(-1)), last = float(end->number(-1));
+    std::string type = mode->string();
+    if (!rgb || !std::isfinite(first) || !std::isfinite(last) || first < 0 || last < first
+        || (type != "fixed" && type != "render")) return std::nullopt;
+    return BiomeFog { *rgb, first, last, type == "render" };
+}
+
 }
 
 uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
@@ -159,7 +180,7 @@ uint32_t BiomeColors::domain(TintKind kind, FoliageVariant variant) const
 
 void BiomeTints::load(PackSource& resources, PackSource& behaviors)
 {
-    std::map<std::string, BiomeColors> fogs;
+    std::map<std::string, FogProfiles> fogs;
     for (const auto& entry : resources.archiveEntries("fogs")) {
         std::string text;
         if (!resources.readArchived("fogs", entry, text)) continue;
@@ -168,23 +189,12 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* description = settings ? settings->get("description") : nullptr;
         const auto* identifier = description ? description->get("identifier") : nullptr;
         const auto* distance = settings ? settings->get("distance") : nullptr;
-        const auto* water = distance ? distance->get("water") : nullptr;
-        const auto* start = water ? water->get("fog_start") : nullptr;
-        const auto* end = water ? water->get("fog_end") : nullptr;
-        const auto* color = water ? water->get("fog_color") : nullptr;
-        const auto* mode = water ? water->get("render_distance_type") : nullptr;
-        if (!identifier || !start || !end || !color || !mode) continue;
-        auto rgb = parseDirect(*color);
-        float first = float(start->number(-1)), last = float(end->number(-1));
-        std::string type = mode->string();
-        if (!rgb || !std::isfinite(first) || !std::isfinite(last) || first < 0 || last < first
-            || (type != "fixed" && type != "render")) continue;
-        BiomeColors fog;
-        fog.waterFog = *rgb;
-        fog.waterFogStart = first;
-        fog.waterFogEnd = last;
-        fog.waterFogRelative = type == "render";
-        fogs.try_emplace(identifier->string(), fog);
+        if (!identifier || !identifier->isString()) continue;
+        auto water = parseFog(distance ? distance->get("water") : nullptr);
+        auto lava = parseFog(distance ? distance->get("lava") : nullptr);
+        auto resistance = parseFog(distance ? distance->get("lava_resistance") : nullptr);
+        if (!water && !lava && !resistance) continue;
+        fogs.try_emplace(identifier->string(), FogProfiles { water, lava, resistance });
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
     for (size_t i = 0; i < maps.size(); ++i) {
@@ -280,14 +290,20 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         colors.evergreen = resolve(std::nullopt, TintMap::Evergreen, climate);
         colors.dryFoliage = resolve(appearance.dryFoliage, TintMap::DryFoliage, climate);
         colors.water = appearance.water.value_or(0x44AFF5);
-        auto fog = fogs.find(appearance.fog);
-        if (fog == fogs.end()) fog = fogs.find("minecraft:fog_default");
-        if (fog != fogs.end()) {
-            colors.waterFog = fog->second.waterFog;
-            colors.waterFogStart = fog->second.waterFogStart;
-            colors.waterFogEnd = fog->second.waterFogEnd;
-            colors.waterFogRelative = fog->second.waterFogRelative;
+        auto applyFog = [&](const FogProfiles& fog) {
+            if (fog.water) {
+                colors.waterFog = fog.water->color;
+                colors.waterFogStart = fog.water->start;
+                colors.waterFogEnd = fog.water->end;
+                colors.waterFogRelative = fog.water->relative;
+            }
+            if (fog.lava) colors.lavaFog = fog.lava;
+            if (fog.resistance) colors.lavaResistanceFog = fog.resistance;
+        };
+        if (auto defaults = fogs.find("minecraft:fog_default"); defaults != fogs.end()) {
+            applyFog(defaults->second);
         }
+        if (auto fog = fogs.find(appearance.fog); fog != fogs.end()) applyFog(fog->second);
         return colors;
     };
 
