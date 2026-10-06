@@ -27,6 +27,8 @@ struct SkyFrame {
  * and distance fog that closes in as the weather worsens.
  */
 SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, float thunderLevel);
+SkyFrame foggedBy(const SkyFrame& frame, const world::BiomeFog& fog, float renderDistance,
+    float submergedSeconds = 30.0f);
 
 /**
  * The atmosphere seen from inside a block: medium 1 is water, 2 is lava and 3 is powder snow,

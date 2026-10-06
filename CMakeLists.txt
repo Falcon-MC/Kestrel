@@ -242,6 +242,9 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelWorldClockTest PRIVATE include)
     target_link_libraries(KestrelWorldClockTest PRIVATE FalconProtocol)
     add_test(NAME world-clock COMMAND KestrelWorldClockTest)
+    add_executable(KestrelFogFrameTest tests/FogFrame.cpp src/client/view/Sky.cpp)
+    target_include_directories(KestrelFogFrameTest PRIVATE include)
+    add_test(NAME fog-frame COMMAND KestrelFogFrameTest)
     add_executable(KestrelParticleEffectsTest
         tests/ParticleEffects.cpp
         src/world/particles/ParticleBinary.cpp

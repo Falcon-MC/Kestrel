@@ -151,6 +151,33 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
     return frame;
 }
 
+SkyFrame foggedBy(const SkyFrame& frame, const world::BiomeFog& fog, float renderDistance, float submergedSeconds)
+{
+    SkyFrame result = frame;
+    auto rgb = [](uint32_t color) -> Vec3 {
+        return { float((color >> 16) & 255) / 255.0f,
+            float((color >> 8) & 255) / 255.0f, float(color & 255) / 255.0f };
+    };
+    float scale = fog.relative ? renderDistance : 1.0f;
+    result.fogColor = rgb(fog.color);
+    result.fogStart = fog.start * scale;
+    result.fogEnd = fog.end * scale;
+    if (fog.transition) {
+        const auto& transition = *fog.transition;
+        float seconds = std::isfinite(submergedSeconds) ? std::max(0.0f, submergedSeconds) : 0.0f;
+        float fraction = transition.midSeconds > 0.0f && seconds <= transition.midSeconds
+            ? lerp(transition.minPercent, transition.midPercent, seconds / transition.midSeconds)
+            : transition.maxSeconds > transition.midSeconds
+                ? lerp(transition.midPercent, 1.0f, std::clamp((seconds - transition.midSeconds)
+                    / (transition.maxSeconds - transition.midSeconds), 0.0f, 1.0f)) : 1.0f;
+        float initialScale = transition.relative ? renderDistance : 1.0f;
+        result.fogColor = mix3(rgb(transition.color), result.fogColor, fraction);
+        result.fogStart = lerp(transition.start * initialScale, result.fogStart, fraction);
+        result.fogEnd = lerp(transition.end * initialScale, result.fogEnd, fraction);
+    }
+    return result;
+}
+
 SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds,
     uint32_t waterColor, float waterStart, float waterEnd, const world::BiomeFog* lavaFog, float renderDistance,
     const world::BiomeFog* powderSnowFog)
