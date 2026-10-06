@@ -1335,6 +1335,9 @@ void Session::handleWorldPacket(std::string& payload)
                 current.worldTime = currentWorldTime(current);
                 current.worldTimeStamp = secondsNow();
                 current.daylightCycle = rule.mBoolValue;
+            } else if (rule.mType == ChangedGameRuleType::Bool && util::lowercase(rule.mName) == "showcoordinates") {
+                std::lock_guard<std::mutex> guard(mutex);
+                current.showCoordinates = rule.mBoolValue;
             }
         }
     } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
@@ -2055,6 +2058,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             for (const GameRuleData& rule : startGame->mGamerules) {
                 if (rule.mType == GameRuleData::Type::Bool && util::lowercase(rule.mName) == "dodaylightcycle") {
                     current.daylightCycle = rule.mBoolValue;
+                } else if (rule.mType == GameRuleData::Type::Bool && util::lowercase(rule.mName) == "showcoordinates") {
+                    current.showCoordinates = rule.mBoolValue;
                 }
             }
             current.worldTime = !current.daylightCycle && startGame->mDayCycleStopTime >= 0 ? startGame->mDayCycleStopTime : startGame->mCurrentTick;

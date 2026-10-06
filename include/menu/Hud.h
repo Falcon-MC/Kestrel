@@ -145,6 +145,7 @@ enum class HeartKind {
  */
 struct HudView {
     bool visible = false;
+    std::string playerPosition;
     bool showHotbar = true;
     bool showStats = true;
     // The crosshair shows only through the player's own eyes.

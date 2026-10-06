@@ -331,7 +331,8 @@ ui::UiData hudData(const HudView& view)
     g["#paper_doll_visible"] = flag(view.paperDoll);
     g["#status_effects_visible"] = flag(!view.hidden(HudElement::StatusEffects));
     g["#scoreboard_sidebar_visible"] = flag(view.sidebarVisible);
-    g["#player_position_visible"] = flag(false);
+    g["#player_position_visible"] = flag(!view.playerPosition.empty());
+    g["#player_position_text"] = text(view.playerPosition);
     g["#number_of_days_played_visible"] = flag(false);
     g["#hud_text_background_alpha"] = number(view.textBackgroundOpacity);
     static constexpr const char* BossBarColors[8] = {
