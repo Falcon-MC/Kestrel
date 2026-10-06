@@ -1416,7 +1416,8 @@ std::vector<menu::NameTag> Client::buildNameTags() const
         self.x = eyePosition[0];
         self.y = eyePosition[1] - playerView.eyeHeight();
         self.z = eyePosition[2];
-        self.flags[0] = playerView.sneaking ? SneakingFlag : 0;
+        self.flags = seenSessionSnapshot->localActorFlags;
+        self.flags[0] = (self.flags[0] & ~SneakingFlag) | (playerView.sneaking ? SneakingFlag : 0);
         named.push_back(&self);
     }
     for (const ActorView* candidate : named) {
@@ -1519,7 +1520,9 @@ ActorView Client::localActorView(float deltaSeconds)
     self.z = eyePosition[2];
     self.headYaw = localLookYaw;
     self.pitch = localLookPitch;
-    self.flags[0] = (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0);
+    if (seenSessionSnapshot) self.flags = seenSessionSnapshot->localActorFlags;
+    self.flags[0] &= ~((1ull << 1) | (1ull << 3) | (1ull << SwimmingFlag));
+    self.flags[0] |= (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;
     for (size_t slot = 0; slot < self.armor.size(); ++slot) {
