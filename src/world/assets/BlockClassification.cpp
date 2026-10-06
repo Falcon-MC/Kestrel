@@ -98,7 +98,7 @@ Family classify(const std::string& name)
     }
     if (isShapeName(name) || name == "soul_sand" || name == "mud"
         || contains(name, "trapdoor") || endsWith(name, "_door") || name == "wooden_door" || endsWith(name, "_stairs")
-        || contains(name, "slab") || contains(name, "fence_gate") || endsWith(name, "_wall") || name == "cobblestone_wall"
+        || contains(name, "slab") || contains(name, "fence_gate") || endsWith(name, "_wall") || name == "cobblestone_wall" || name == "border_block"
         || endsWith(name, "_fence") || name == "fence" || name == "nether_brick_fence" || contains(name, "glass_pane")
         || endsWith(name, "_pane") || endsWith(name, "_bars") || endsWith(name, "_bed") || name == "bed"
         || contains(name, "chest") || contains(name, "sign") || contains(name, "rail") || isTorchName(name) || isLanternName(name)
@@ -153,7 +153,7 @@ ModelKind modelKind(const std::string& name)
     if (endsWith(name, "_stairs")) {
         return ModelKind::Stair;
     }
-    if (endsWith(name, "_wall") || name == "cobblestone_wall") {
+    if (endsWith(name, "_wall") || name == "cobblestone_wall" || name == "border_block") {
         return ModelKind::Wall;
     }
     if (endsWith(name, "_fence") || name == "fence") {

@@ -229,6 +229,17 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelChatCommandsTest PRIVATE include)
     target_link_libraries(KestrelChatCommandsTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME chat-commands COMMAND KestrelChatCommandsTest)
+    add_executable(KestrelBorderBlockTest
+        tests/BorderBlock.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
+    add_test(NAME border-block COMMAND KestrelBorderBlockTest)
     add_executable(KestrelHealthFeedbackTest tests/HealthFeedback.cpp)
     target_include_directories(KestrelHealthFeedbackTest PRIVATE include)
     add_test(NAME health-feedback COMMAND KestrelHealthFeedbackTest)
