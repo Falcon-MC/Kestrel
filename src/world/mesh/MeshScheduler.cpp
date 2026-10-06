@@ -58,12 +58,25 @@ MeshScheduler::~MeshScheduler()
     for (std::thread& worker : workers) worker.join();
 }
 
-bool MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent)
+bool MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInput input, std::shared_ptr<const BlockAssets> assets, IdMapping ids, bool urgent, MeshDeferred* displaced, bool refresh)
 {
     {
         std::lock_guard<std::mutex> guard(mutex);
+        if (active.contains(key) || std::any_of(results.begin(), results.end(), [&](const auto& result) { return result.key == key; })) return false;
         auto existing = queued.find(key);
-        if (existing == queued.end() && queued.size() >= QueueCapacity) return false;
+        if (existing == queued.end() && queued.size() >= QueueCapacity) {
+            if (!displaced) return false;
+            auto worst = std::max_element(queued.begin(), queued.end(), [&](const auto& left, const auto& right) {
+                const auto& a = left.second;
+                const auto& b = right.second;
+                return view.rank(a.key.x, a.key.y, a.key.z, a.urgent, a.refresh) < view.rank(b.key.x, b.key.y, b.key.z, b.urgent, b.refresh);
+            });
+            const auto& job = worst->second;
+            if (!(view.rank(key.x, key.y, key.z, urgent, refresh) < view.rank(job.key.x, job.key.y, job.key.z, job.urgent, job.refresh))) return false;
+            *displaced = { job.key, job.urgent };
+            if (auto token = cancellations.find(job.key); token != cancellations.end()) token->second->store(true);
+            queued.erase(worst);
+        }
         if (existing != queued.end()) urgent |= existing->second.urgent;
         newest[key] = generation;
         if (auto old = cancellations.find(key); old != cancellations.end()) old->second->store(true);
@@ -75,7 +88,7 @@ bool MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInpu
             maxTemplateQuads = 0;
             for (const auto& model : assets->modelTemplates()) maxTemplateQuads = std::max(maxTemplateQuads, size_t(model.quadCount));
         }
-        queued.insert_or_assign(key, Job { key, generation, currentEpoch, urgent, std::move(input), std::move(assets), std::move(ids), maxTemplateQuads });
+        queued.insert_or_assign(key, Job { key, generation, currentEpoch, urgent, refresh, std::move(input), std::move(assets), std::move(ids), maxTemplateQuads });
     }
     wake.notify_all();
     memory->wake.notify_all();
@@ -114,10 +127,10 @@ void MeshScheduler::cancel(const SubChunkKey& key)
     memory->wake.notify_all();
 }
 
-void MeshScheduler::setView(std::array<double, 3> position)
+void MeshScheduler::setView(const MeshViewPriority& priority)
 {
     std::lock_guard<std::mutex> guard(mutex);
-    view = position;
+    view = priority;
 }
 
 bool MeshScheduler::isCurrent(const MeshResult& result) const
@@ -127,10 +140,16 @@ bool MeshScheduler::isCurrent(const MeshResult& result) const
     return result.epoch == currentEpoch && entry != newest.end() && entry->second == result.generation;
 }
 
-bool MeshScheduler::canSubmit(const SubChunkKey& key) const
+bool MeshScheduler::canSubmit(const SubChunkKey& key, bool urgent, bool refresh) const
 {
     std::lock_guard<std::mutex> guard(mutex);
-    return queued.contains(key) || queued.size() < QueueCapacity;
+    if (active.contains(key) || std::any_of(results.begin(), results.end(), [&](const auto& result) { return result.key == key; })) return false;
+    if (queued.contains(key) || queued.size() < QueueCapacity) return true;
+    const auto priority = view.rank(key.x, key.y, key.z, urgent, refresh);
+    return std::any_of(queued.begin(), queued.end(), [&](const auto& entry) {
+        const auto& job = entry.second;
+        return priority < view.rank(job.key.x, job.key.y, job.key.z, job.urgent, job.refresh);
+    });
 }
 
 std::vector<MeshResult> MeshScheduler::takeResults(size_t maximum)
@@ -196,16 +215,13 @@ void MeshScheduler::work()
             wake.wait(lock, [this] { return stopping || (results.size() < ResultCapacity && resultBytes < ResultByteCapacity && hasReadyJob()); });
             if (stopping) return;
             auto best = queued.end();
-            double bestDistance = std::numeric_limits<double>::infinity();
+            MeshPriority bestPriority;
             for (auto entry = queued.begin(); entry != queued.end(); ++entry) {
                 if (active.contains(entry->first)) continue;
-                double dx = double(entry->first.x) * 16 + 8 - view[0];
-                double dy = double(entry->first.y) * 16 + 8 - view[1];
-                double dz = double(entry->first.z) * 16 + 8 - view[2];
-                double distance = dx * dx + dy * dy + dz * dz;
-                if (best == queued.end() || (entry->second.urgent && !best->second.urgent)
-                    || (entry->second.urgent == best->second.urgent && distance < bestDistance)) {
-                    best = entry; bestDistance = distance;
+                const auto& key = entry->first;
+                MeshPriority priority = view.rank(key.x, key.y, key.z, entry->second.urgent, entry->second.refresh);
+                if (best == queued.end() || priority < bestPriority) {
+                    best = entry; bestPriority = priority;
                 }
             }
             job = std::move(best->second);
@@ -244,7 +260,7 @@ void MeshScheduler::work()
             if (!cancelled()) output = meshSubChunk(*job.assets, job.ids, job.input);
             credit->reconcile(meshBytes(output));
         }
-        MeshResult result { job.key, job.generation, job.epoch, std::move(output), std::move(credit) };
+        MeshResult result { job.key, job.generation, job.epoch, std::move(output), std::move(credit), job.urgent, job.refresh };
         double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         size_t bytes = meshBytes(result.mesh);
         {
