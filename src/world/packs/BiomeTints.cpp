@@ -191,10 +191,17 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         const auto* distance = settings ? settings->get("distance") : nullptr;
         if (!identifier || !identifier->isString()) continue;
         auto water = parseFog(distance ? distance->get("water") : nullptr);
-        auto lava = parseFog(distance ? distance->get("lava") : nullptr);
-        auto resistance = parseFog(distance ? distance->get("lava_resistance") : nullptr);
-        if (!water && !lava && !resistance) continue;
-        fogs.try_emplace(identifier->string(), FogProfiles { water, lava, resistance });
+        auto air = parseFog(distance ? distance->get("air") : nullptr);
+        if (!water && !air) continue;
+        BiomeColors fog;
+        fog.airFog = air;
+        if (water) {
+            fog.waterFog = water->color;
+            fog.waterFogStart = water->start;
+            fog.waterFogEnd = water->end;
+            fog.waterFogRelative = water->relative;
+        }
+        fogs.try_emplace(identifier->string(), fog);
     }
     std::array<std::vector<uint8_t>, size_t(TintMap::Count)> maps;
     for (size_t i = 0; i < maps.size(); ++i) {
@@ -290,18 +297,14 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
         colors.evergreen = resolve(std::nullopt, TintMap::Evergreen, climate);
         colors.dryFoliage = resolve(appearance.dryFoliage, TintMap::DryFoliage, climate);
         colors.water = appearance.water.value_or(0x44AFF5);
-        auto applyFog = [&](const FogProfiles& fog) {
-            if (fog.water) {
-                colors.waterFog = fog.water->color;
-                colors.waterFogStart = fog.water->start;
-                colors.waterFogEnd = fog.water->end;
-                colors.waterFogRelative = fog.water->relative;
-            }
-            if (fog.lava) colors.lavaFog = fog.lava;
-            if (fog.resistance) colors.lavaResistanceFog = fog.resistance;
-        };
-        if (auto defaults = fogs.find("minecraft:fog_default"); defaults != fogs.end()) {
-            applyFog(defaults->second);
+        auto fog = fogs.find(appearance.fog);
+        if (fog == fogs.end()) fog = fogs.find("minecraft:fog_default");
+        if (fog != fogs.end()) {
+            colors.airFog = fog->second.airFog;
+            colors.waterFog = fog->second.waterFog;
+            colors.waterFogStart = fog->second.waterFogStart;
+            colors.waterFogEnd = fog->second.waterFogEnd;
+            colors.waterFogRelative = fog->second.waterFogRelative;
         }
         if (auto fog = fogs.find(appearance.fog); fog != fogs.end()) applyFog(fog->second);
         return colors;

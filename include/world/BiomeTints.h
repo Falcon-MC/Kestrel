@@ -35,8 +35,7 @@ struct BiomeFog {
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
  */
 struct BiomeColors {
-    std::optional<BiomeFog> lavaFog;
-    std::optional<BiomeFog> lavaResistanceFog;
+    std::optional<BiomeFog> airFog;
     uint32_t waterFog = 0x44AFF5;
     float waterFogStart = 0.0f;
     float waterFogEnd = 60.0f;

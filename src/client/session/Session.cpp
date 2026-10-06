@@ -692,7 +692,7 @@ std::pair<uint8_t, uint32_t> Session::cameraEnvironment(const SessionSnapshot& s
         size_t index = size_t((bx * NearbyBlocks::Span + by) * NearbyBlocks::Span + bz);
         if (index < area.biomes.size()) biome = area.biomes[index];
     }
-    uint32_t biomeId = biome ? biome->runtimeId(x & 15, y & 15, z & 15) : 1;
+    uint32_t biomeId = biome ? biome->runtimeId(x & 15, y & 15, z & 15) : (snapshot.dimension == 1 ? 8 : 1);
     auto visualAt = [&](int32_t atX, int32_t atY, int32_t atZ, uint32_t layer) -> const world::BlockVisual* {
         std::shared_ptr<const world::SubChunk> sub;
         auto& nearby = *cameraBlocks;

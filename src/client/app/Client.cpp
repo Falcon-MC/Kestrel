@@ -552,10 +552,22 @@ int Client::run()
             std::vector<SkyVertex> background;
             {
                 Profiler::Section section(profiler, "sky");
-                sky = submergedIn(atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel), timeState.cameraMedium,
-                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale,
-                    lavaFog ? &*lavaFog : nullptr, renderDistance);
-                if (blockAssets && timeState.cameraMedium == 0) {
+                sky = atmosphereAt(currentWorldTime(timeState), renderDistance, timeState.rainLevel, timeState.thunderLevel);
+                if (timeState.dimension == 1) {
+                    sky = SkyFrame {};
+                    if (biomeColors.airFog) {
+                        const auto& fog = *biomeColors.airFog;
+                        sky.fogColor = { float((fog.color >> 16) & 255) / 255.0f,
+                            float((fog.color >> 8) & 255) / 255.0f, float(fog.color & 255) / 255.0f };
+                        float scale = fog.relative ? renderDistance : 1.0f;
+                        sky.fogStart = fog.start * scale;
+                        sky.fogEnd = fog.end * scale;
+                    }
+                    sky.zenith = sky.horizon = sky.fogColor;
+                }
+                sky = submergedIn(sky, timeState.cameraMedium,
+                    submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale);
+                if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
             }
