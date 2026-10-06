@@ -20,6 +20,7 @@ namespace kestrel::world {
 namespace {
 
 constexpr uint8_t MaxRetries = 2;
+constexpr size_t MaxInFlightColumns = 32;
 constexpr auto ResponseTimeout = std::chrono::seconds(2);
 constexpr auto CohortSettleTime = std::chrono::seconds(2);
 
@@ -127,14 +128,23 @@ bool decodeBiomes(ByteReader& reader, int32_t count, std::vector<std::shared_ptr
 
 void WorldStream::reset(int32_t newDimension, int32_t chunkX, int32_t chunkZ)
 {
+    cancelDecoding();
     chunks.clear();
     pending.clear();
+    lastRequestPoll = {};
+    requestsPaused = false;
     dimension = newDimension;
     centerX = chunkX;
     centerZ = chunkZ;
 }
 
 void WorldStream::setChunkRadius(int32_t radius)
+{
+    if (decoding.empty()) applyChunkRadius(radius);
+    else decoding.append(0, [this, radius] { applyChunkRadius(radius); });
+}
+
+void WorldStream::applyChunkRadius(int32_t radius)
 {
     chunkRadius = radius;
     retain();
@@ -148,168 +158,187 @@ bool WorldStream::subChunkPending(const SubChunkKey& key) const
 
 void WorldStream::changeDimension(int32_t newDimension, int32_t chunkX, int32_t chunkZ)
 {
+    cancelDecoding();
     counters.evictedColumns += chunks.columnCount();
     chunks.clear();
     pending.clear();
+    lastRequestPoll = {};
+    requestsPaused = false;
     dimension = newDimension;
     centerX = chunkX;
     centerZ = chunkZ;
 }
 
-void WorldStream::handle(const LevelChunkPacket& packet)
+void WorldStream::handle(std::shared_ptr<const LevelChunkPacket> packet)
 {
-    ChunkKey key { packet.mDimension, packet.mChunkX, packet.mChunkZ };
-    if (key.dimension != dimension) {
-        debugLog("LevelChunk ignored: dimension=" + std::to_string(key.dimension) + " active=" + std::to_string(dimension));
-        return;
-    }
-
+    ChunkKey key { packet->mDimension, packet->mChunkX, packet->mChunkZ };
+    if (key.dimension != dimension) return;
     DimensionRange range;
     if (!vanillaDimensionRange(key.dimension, range)) {
-        recordError("LevelChunk for unsupported dimension " + std::to_string(key.dimension));
+        decoding.append(0, [this, key] { recordError("LevelChunk for unsupported dimension " + std::to_string(key.dimension)); });
         return;
     }
+    const size_t bytes = packet->mData.size() + packet->mBlobIds.size() * sizeof(uint64_t)
+        + size_t(std::max(range.subChunkCount, 0)) * 4096;
     ++counters.levelChunks;
-
-    if (packet.mRequestSubChunks) {
-        int32_t count = packet.mSubChunkLimit < 0 ? range.subChunkCount : std::min(packet.mSubChunkLimit, range.subChunkCount);
-        chunks.markLoaded(key);
-        lastColumnAt = Clock::now();
-        ByteReader reader(reinterpret_cast<const uint8_t*>(packet.mData.data()), packet.mData.size());
-        std::vector<std::shared_ptr<const PalettedStorage>> biomes;
-        std::string error;
-        if (decodeBiomes(reader, range.subChunkCount, biomes, error)) {
-            chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
-        } else {
-            recordError("LevelChunk biomes " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + error);
+    decoding.submit(bytes, [this, packet = std::move(packet), key, range, resolver = blockPaletteResolver] {
+        const BlockPaletteResolver emptyResolver;
+        const BlockPaletteResolver& palette = resolver ? *resolver : emptyResolver;
+        struct Result {
+            std::vector<SubChunk> chunks;
+            std::vector<int32_t> y;
+            std::vector<std::shared_ptr<const PalettedStorage>> biomes;
+            std::vector<Tag> entities;
+            std::string error;
+            int32_t requestCount = 0;
+            bool request = false;
+        } result;
+        result.request = packet->mRequestSubChunks;
+        result.requestCount = packet->mSubChunkLimit < 0 ? range.subChunkCount : std::min(packet->mSubChunkLimit, range.subChunkCount);
+        const auto& data = packet->mData;
+        const auto* raw = reinterpret_cast<const uint8_t*>(data.data());
+        size_t offset = 0;
+        if (!result.request) {
+            if (packet->mSubChunksLength > static_cast<uint32_t>(range.subChunkCount)) {
+                result.error = "LevelChunk carries " + std::to_string(packet->mSubChunksLength) + " sub-chunks";
+            } else {
+                result.chunks.resize(packet->mSubChunksLength);
+                result.y.resize(packet->mSubChunksLength);
+                for (uint32_t i = 0; i < packet->mSubChunksLength; ++i) {
+                    size_t consumed = 0;
+                    std::string error;
+                    if (!SubChunk::decode(raw + offset, data.size() - offset, result.chunks[i], consumed, error, palette)) {
+                        result.error = "LevelChunk " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + error;
+                        break;
+                    }
+                    int32_t y = result.chunks[i].yIndex().value_or(range.baseSubChunkY + static_cast<int32_t>(i));
+                    if (y < range.baseSubChunkY || y >= range.baseSubChunkY + range.subChunkCount
+                        || std::find(result.y.begin(), result.y.begin() + i, y) != result.y.begin() + i) {
+                        result.error = "LevelChunk invalid or duplicate sub-chunk Y index: " + std::to_string(y);
+                        break;
+                    }
+                    result.y[i] = y;
+                    offset += consumed;
+                }
+            }
         }
-        if (count > 0) {
-            requestColumn(key, range.baseSubChunkY, count);
+        if (result.error.empty()) {
+            ByteReader reader(raw + offset, data.size() - offset);
+            std::string error;
+            decodeBiomes(reader, range.subChunkCount, result.biomes, error);
+            uint8_t borderBlocks = 0;
+            if (!result.request && reader.readByte(borderBlocks, error, "border blocks") && reader.remaining() >= borderBlocks) {
+                size_t start = reader.position() + borderBlocks;
+                result.entities = readBlockEntities(raw + offset + start, data.size() - offset - start);
+            }
         }
-        return;
-    }
-
-    if (packet.mSubChunksLength > static_cast<uint32_t>(range.subChunkCount)) {
-        recordError("LevelChunk carries " + std::to_string(packet.mSubChunksLength) + " sub-chunks");
-        return;
-    }
-
-    std::vector<SubChunk> decoded(packet.mSubChunksLength);
-    std::vector<int32_t> subChunkY(packet.mSubChunksLength);
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(packet.mData.data());
-    size_t offset = 0;
-    for (uint32_t i = 0; i < packet.mSubChunksLength; ++i) {
-        size_t consumed = 0;
-        std::string error;
-        if (!SubChunk::decode(data + offset, packet.mData.size() - offset, decoded[i], consumed, error, blockPaletteResolver)) {
-            recordError("LevelChunk " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + error);
-            return;
-        }
-        int32_t y = decoded[i].yIndex().value_or(range.baseSubChunkY + static_cast<int32_t>(i));
-        if (y < range.baseSubChunkY || y >= range.baseSubChunkY + range.subChunkCount
-            || std::find(subChunkY.begin(), subChunkY.begin() + i, y) != subChunkY.begin() + i) {
-            recordError("LevelChunk invalid or duplicate sub-chunk Y index: " + std::to_string(y));
-            return;
-        }
-        subChunkY[i] = y;
-        offset += consumed;
-    }
-
-    ByteReader reader(data + offset, packet.mData.size() - offset);
-    std::vector<std::shared_ptr<const PalettedStorage>> biomes;
-    std::string biomeError;
-    bool hasBiomes = decodeBiomes(reader, range.subChunkCount, biomes, biomeError);
-    if (!hasBiomes) {
-        recordError("LevelChunk biomes " + std::to_string(key.x) + "," + std::to_string(key.z) + ": " + biomeError);
-    }
-
-    std::vector<Tag> entities;
-    uint8_t borderBlocks = 0;
-    std::string borderError;
-    if (hasBiomes && reader.readByte(borderBlocks, borderError, "border blocks") && reader.remaining() >= borderBlocks) {
-        size_t start = reader.position() + borderBlocks;
-        entities = readBlockEntities(data + offset + start, packet.mData.size() - offset - start);
-    }
-
-    pending.erase(key);
-    chunks.evict(key);
-    chunks.markLoaded(key);
-    lastColumnAt = Clock::now();
-    if (hasBiomes) {
-        chunks.setBiomes(key, range.baseSubChunkY, std::move(biomes));
-    }
-    for (uint32_t i = 0; i < decoded.size(); ++i) {
-        chunks.commit({ key.dimension, key.x, subChunkY[i], key.z }, std::move(decoded[i]));
-    }
-    for (Tag& entity : entities) {
-        chunks.setBlockEntity(key.dimension, tagInt(entity, "x"), tagInt(entity, "y"), tagInt(entity, "z"), std::move(entity));
-    }
+        return [this, key, range, result = std::move(result)]() mutable {
+            if (!result.error.empty()) {
+                recordError(result.error);
+                return;
+            }
+            if (publisherRadius > 0 && chunkRadius > 0 && !chunkInView(chunkRadius, key.x, key.z, centerX, centerZ)) return;
+            if (!result.request) {
+                pending.erase(key);
+                chunks.evict(key);
+            }
+            chunks.markLoaded(key);
+            lastColumnAt = Clock::now();
+            chunks.setBiomes(key, range.baseSubChunkY, std::move(result.biomes));
+            if (result.request) {
+                if (result.requestCount > 0) requestColumn(key, range.baseSubChunkY, result.requestCount);
+                return;
+            }
+            for (size_t i = 0; i < result.chunks.size(); ++i)
+                chunks.commit({ key.dimension, key.x, result.y[i], key.z }, std::move(result.chunks[i]));
+            for (Tag& entity : result.entities) {
+                const int32_t x = tagInt(entity, "x"), y = tagInt(entity, "y"), z = tagInt(entity, "z");
+                chunks.setBlockEntity(key.dimension, x, y, z, std::move(entity));
+            }
+        };
+    });
 }
 
-void WorldStream::handle(const BlockActorDataPacket& packet)
+void WorldStream::handle(std::shared_ptr<const SubChunkPacket> packet)
+{
+    if (packet->mDimension != dimension) return;
+    size_t bytes = 0;
+    for (const auto& entry : packet->mSubChunks) {
+        bytes += entry.mData.size() + entry.mHeightMapData.size() + entry.mRenderHeightMapData.size() + 4096;
+        ++decodingReplies[{ packet->mDimension, packet->mCenterPosition.x + entry.mPosition.x,
+            packet->mCenterPosition.y + entry.mPosition.y, packet->mCenterPosition.z + entry.mPosition.z }];
+    }
+    counters.subChunkReplies += packet->mSubChunks.size();
+    decoding.submit(bytes, [this, packet = std::move(packet), resolver = blockPaletteResolver] {
+        const BlockPaletteResolver emptyResolver;
+        const BlockPaletteResolver& palette = resolver ? *resolver : emptyResolver;
+        struct Reply {
+            SubChunkKey key;
+            SubChunkRequestResult status;
+            SubChunk chunk;
+            BlockEntityMap entities;
+            std::string error;
+            bool replaceEntities = false;
+        };
+        std::vector<Reply> replies;
+        replies.reserve(packet->mSubChunks.size());
+        for (const SubChunkData& entry : packet->mSubChunks) {
+            Reply reply;
+            reply.key = { packet->mDimension, packet->mCenterPosition.x + entry.mPosition.x,
+                packet->mCenterPosition.y + entry.mPosition.y, packet->mCenterPosition.z + entry.mPosition.z };
+            reply.status = entry.mResult;
+            reply.replaceEntities = entry.mResult == SubChunkRequestResult::SuccessAllAir;
+            if (entry.mResult == SubChunkRequestResult::Success && entry.mHasData) {
+                size_t consumed = 0;
+                const auto* raw = reinterpret_cast<const uint8_t*>(entry.mData.data());
+                if (!SubChunk::decode(raw, entry.mData.size(), reply.chunk, consumed, reply.error, palette)) {
+                    reply.error = "SubChunk " + std::to_string(reply.key.x) + "," + std::to_string(reply.key.y) + "," + std::to_string(reply.key.z) + ": " + reply.error;
+                } else {
+                    reply.replaceEntities = true;
+                    for (Tag& entity : readBlockEntities(raw + consumed, entry.mData.size() - consumed)) {
+                        int32_t x = tagInt(entity, "x"), y = tagInt(entity, "y"), z = tagInt(entity, "z");
+                        reply.entities[static_cast<uint16_t>(linearIndex(uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15)))] = std::move(entity);
+                    }
+                }
+            }
+            replies.push_back(std::move(reply));
+        }
+        return [this, replies = std::move(replies)]() mutable {
+            for (Reply& reply : replies) {
+                auto decodingReply = decodingReplies.find(reply.key);
+                if (decodingReply != decodingReplies.end() && --decodingReply->second == 0)
+                    decodingReplies.erase(decodingReply);
+                auto column = pending.find(reply.key.chunk());
+                if (column == pending.end() || !column->second.contains(reply.key.y)) continue;
+                column->second.erase(reply.key.y);
+                if (column->second.empty()) pending.erase(column);
+                if (!reply.error.empty()) { recordError(reply.error); continue; }
+                if (reply.status != SubChunkRequestResult::Success && reply.status != SubChunkRequestResult::SuccessAllAir) continue;
+                chunks.commit(reply.key, std::move(reply.chunk));
+                if (reply.replaceEntities) chunks.replaceBlockEntities(reply.key, std::move(reply.entities));
+            }
+        };
+    });
+}
+
+void WorldStream::handle(std::shared_ptr<const BlockActorDataPacket> packet, size_t bytes)
+{
+    if (decoding.empty()) apply(*packet);
+    else decoding.append(bytes, [this, packet = std::move(packet)] { apply(*packet); });
+}
+
+void WorldStream::apply(const BlockActorDataPacket& packet)
 {
     chunks.setBlockEntity(dimension, packet.mBlockPosition.x, packet.mBlockPosition.y, packet.mBlockPosition.z, packet.mData);
 }
 
-void WorldStream::handle(const SubChunkPacket& packet)
+void WorldStream::handle(const UpdateBlockPacket& packet)
 {
-    if (packet.mDimension != dimension) {
-        return;
-    }
-
-    for (const SubChunkData& entry : packet.mSubChunks) {
-        SubChunkKey key {
-            packet.mDimension,
-            packet.mCenterPosition.x + entry.mPosition.x,
-            packet.mCenterPosition.y + entry.mPosition.y,
-            packet.mCenterPosition.z + entry.mPosition.z,
-        };
-        ++counters.subChunkReplies;
-
-        auto column = pending.find(key.chunk());
-        if (column == pending.end() || !column->second.contains(key.y)) {
-            continue;
-        }
-        column->second.erase(key.y);
-        if (column->second.empty()) {
-            pending.erase(column);
-        }
-
-        switch (entry.mResult) {
-        case SubChunkRequestResult::Success: {
-            if (!entry.mHasData) {
-                chunks.commit(key, SubChunk {});
-                break;
-            }
-            SubChunk subChunk;
-            size_t consumed = 0;
-            std::string error;
-            if (!SubChunk::decode(reinterpret_cast<const uint8_t*>(entry.mData.data()), entry.mData.size(), subChunk, consumed, error, blockPaletteResolver)) {
-                recordError("SubChunk " + std::to_string(key.x) + "," + std::to_string(key.y) + "," + std::to_string(key.z) + ": " + error);
-                break;
-            }
-            chunks.commit(key, std::move(subChunk));
-            BlockEntityMap entities;
-            for (Tag& entity : readBlockEntities(reinterpret_cast<const uint8_t*>(entry.mData.data()) + consumed, entry.mData.size() - consumed)) {
-                int32_t x = tagInt(entity, "x");
-                int32_t y = tagInt(entity, "y");
-                int32_t z = tagInt(entity, "z");
-                entities[static_cast<uint16_t>(linearIndex(uint32_t(x & 15), uint32_t(y & 15), uint32_t(z & 15)))] = std::move(entity);
-            }
-            chunks.replaceBlockEntities(key, std::move(entities));
-            break;
-        }
-        case SubChunkRequestResult::SuccessAllAir:
-            chunks.commit(key, SubChunk {});
-            chunks.replaceBlockEntities(key, {});
-            break;
-        default:
-            break;
-        }
-    }
+    if (decoding.empty()) apply(packet);
+    else decoding.append(sizeof(packet), [this, packet] { apply(packet); });
 }
 
-void WorldStream::handle(const UpdateBlockPacket& packet)
+void WorldStream::apply(const UpdateBlockPacket& packet)
 {
     SubChunkKey key {
         dimension,
@@ -332,7 +361,16 @@ void WorldStream::handle(const UpdateBlockPacket& packet)
     }
 }
 
-void WorldStream::handle(const UpdateSubChunkBlocksPacket& packet)
+void WorldStream::handle(std::shared_ptr<const UpdateSubChunkBlocksPacket> packet)
+{
+    if (decoding.empty()) apply(*packet);
+    else {
+        const size_t bytes = (packet->mStandardBlocks.size() + packet->mExtraBlocks.size()) * sizeof(BlockChangeEntry);
+        decoding.append(bytes, [this, packet = std::move(packet)] { apply(*packet); });
+    }
+}
+
+void WorldStream::apply(const UpdateSubChunkBlocksPacket& packet)
 {
     std::map<SubChunkKey, std::vector<BlockUpdate>> grouped;
     auto collect = [&](const std::vector<BlockChangeEntry>& entries, uint8_t layer) {
@@ -394,7 +432,7 @@ bool WorldStream::columnPending(const ChunkKey& key) const
 
 bool WorldStream::settled() const
 {
-    return pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime;
+    return decoding.empty() && pending.empty() && lastColumnAt != Clock::time_point {} && Clock::now() - lastColumnAt >= CohortSettleTime;
 }
 
 /**
@@ -416,6 +454,17 @@ bool WorldStream::centerLoaded() const
 
 void WorldStream::handle(const NetworkChunkPublisherUpdatePacket& packet)
 {
+    if (decoding.empty()) apply(packet);
+    else decoding.append(sizeof(packet), [this, position = packet.mPosition, radius = packet.mRadius] {
+        NetworkChunkPublisherUpdatePacket deferred;
+        deferred.mPosition = position;
+        deferred.mRadius = radius;
+        apply(deferred);
+    });
+}
+
+void WorldStream::apply(const NetworkChunkPublisherUpdatePacket& packet)
+{
     centerX = floorDiv16(packet.mPosition.x);
     centerZ = floorDiv16(packet.mPosition.z);
     publisherRadius = static_cast<int32_t>(packet.mRadius / 16);
@@ -425,16 +474,50 @@ void WorldStream::handle(const NetworkChunkPublisherUpdatePacket& packet)
     retain();
 }
 
-std::vector<std::unique_ptr<SubChunkRequestPacket>> WorldStream::takeRequests(Clock::time_point now)
+std::vector<std::unique_ptr<SubChunkRequestPacket>> WorldStream::takeRequests(Clock::time_point now, const MeshViewPriority& priority)
 {
     std::vector<std::unique_ptr<SubChunkRequestPacket>> requests;
     std::vector<ChunkKey> abandoned;
+    bool paused = decoding.backlogged();
+    if (requestsPaused && now > lastRequestPoll) {
+        // Receiving is paused under decode backpressure; queued replies have not had a chance to arrive.
+        auto delay = now - lastRequestPoll;
+        for (auto& [key, column] : pending) {
+            for (auto& [y, entry] : column) {
+                if (entry.sent) entry.deadline += delay;
+            }
+        }
+    }
+    requestsPaused = paused;
+    lastRequestPoll = now;
+    if (paused) return requests;
 
-    for (auto& [key, column] : pending) {
+    struct Candidate {
+        ChunkKey key;
+        MeshPriority priority;
+        bool inFlight;
+    };
+    thread_local std::vector<Candidate> candidates;
+    candidates.clear();
+    candidates.reserve(pending.size());
+    size_t inFlight = 0;
+    for (const auto& [key, column] : pending) {
+        bool sent = std::any_of(column.begin(), column.end(), [](const auto& entry) { return entry.second.sent; });
+        inFlight += sent;
+        candidates.push_back({ key, priority.rankColumn(key.x, key.z), sent });
+    }
+    std::stable_sort(candidates.begin(), candidates.end(), [](const auto& left, const auto& right) {
+        return left.priority < right.priority;
+    });
+    for (const auto& candidate : candidates) {
+        if (!candidate.inFlight && inFlight >= MaxInFlightColumns) continue;
+        const ChunkKey& key = candidate.key;
+        auto& column = pending.at(key);
         std::vector<int32_t> due;
         for (auto it = column.begin(); it != column.end();) {
             PendingSubChunk& entry = it->second;
-            if (entry.sent && now < entry.deadline) {
+            // A reply waiting for decode must not time out and be requested again.
+            if (entry.sent && (now < entry.deadline || decodingReplies.contains({ key.dimension, key.x, it->first, key.z }))) {
                 ++it;
                 continue;
             }
@@ -454,10 +537,12 @@ std::vector<std::unique_ptr<SubChunkRequestPacket>> WorldStream::takeRequests(Cl
         }
         if (column.empty()) {
             abandoned.push_back(key);
+            inFlight -= candidate.inFlight;
         }
         if (due.empty()) {
             continue;
         }
+        if (!candidate.inFlight) ++inFlight;
 
         auto request = std::make_unique<SubChunkRequestPacket>();
         request->mDimension = key.dimension;

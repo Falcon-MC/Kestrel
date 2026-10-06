@@ -500,16 +500,35 @@ void Session::cachePackLocked(const std::string& path, std::shared_ptr<const wor
 }
 
 
-std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum, const world::BlockAssets* expectedAssets)
+std::vector<MeshUpdate> Session::takeMeshUpdates(size_t maximum, const world::BlockAssets* expectedAssets, MeshUpdateKind kind)
 {
+    std::array<float, 3> direction;
+    {
+        std::unique_lock<std::mutex> viewGuard(viewInputMutex, std::try_to_lock);
+        if (!viewGuard.owns_lock()) return {};
+        direction = requestedLookDirection;
+    }
     std::unique_lock<std::mutex> guard(mutex, std::try_to_lock);
     if (!guard.owns_lock()) return {};
     if (expectedAssets && current.assets.get() != expectedAssets) return {};
     std::vector<MeshUpdate> updates;
     updates.reserve(std::min(maximum, pendingUpdates.size()));
+    world::MeshViewPriority priority(current.player.current, direction, startingTerrain);
     while (!pendingUpdates.empty() && updates.size() < maximum) {
-        updates.push_back(std::move(pendingUpdates.front()));
-        pendingUpdates.pop_front();
+        auto best = pendingUpdates.end();
+        world::MeshPriority bestPriority;
+        for (auto candidate = pendingUpdates.begin(); candidate != pendingUpdates.end(); ++candidate) {
+            if ((kind == MeshUpdateKind::Removal && candidate->mesh) || (kind == MeshUpdateKind::Terrain && !candidate->mesh)) continue;
+            if (kind == MeshUpdateKind::Removal) { best = candidate; break; }
+            auto candidatePriority = priority.rank(candidate->key.x, candidate->key.y, candidate->key.z, candidate->urgent, candidate->refresh);
+            if (best == pendingUpdates.end() || candidatePriority < bestPriority) {
+                best = candidate;
+                bestPriority = candidatePriority;
+            }
+        }
+        if (best == pendingUpdates.end()) break;
+        updates.push_back(std::move(*best));
+        pendingUpdates.erase(best);
     }
     return updates;
 }
@@ -1089,9 +1108,9 @@ void Session::handleWorldPacket(std::string& payload)
                      + " request-subchunks=" + (levelChunk->mRequestSubChunks ? "yes" : "no")
                      + " cached=" + (levelChunk->mCachingEnabled ? "yes" : "no") + " bytes=" + std::to_string(levelChunk->mData.size()));
         }
-        world.handle(*levelChunk);
+        world.handle(levelChunk);
     } else if (auto subChunk = std::dynamic_pointer_cast<SubChunkPacket>(packet)) {
-        world.handle(*subChunk);
+        world.handle(subChunk);
     } else if (auto updateBlock = std::dynamic_pointer_cast<UpdateBlockPacket>(packet)) {
         if (updateBlock->mDataLayer == 0) {
             const Vector3i& at = updateBlock->mBlockPosition;
@@ -1102,7 +1121,7 @@ void Session::handleWorldPacket(std::string& payload)
         for (const BlockChangeEntry& entry : updateSubChunk->mStandardBlocks) {
             answerPredictedBreak({ entry.mPosition.x, entry.mPosition.y, entry.mPosition.z }, entry.mRuntimeId);
         }
-        world.handle(*updateSubChunk);
+        world.handle(updateSubChunk);
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
         world.handle(*publisher);
     } else if (auto dimensions = std::dynamic_pointer_cast<DimensionDataPacket>(packet)) {
@@ -1295,7 +1314,7 @@ void Session::handleWorldPacket(std::string& payload)
             }
         }
     } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
-        world.handle(*actor);
+        world.handle(actor, payloadSize);
         std::array<int32_t, 3> cell { actor->mBlockPosition.x, actor->mBlockPosition.y, actor->mBlockPosition.z };
         if (chestLidStates.contains(cell)) {
             markChestLid(cell, true);
@@ -1387,6 +1406,7 @@ void Session::handleWorldPacket(std::string& payload)
         current.cameraFov = {};
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
+        startingTerrain = true;
     } else if (auto action = std::dynamic_pointer_cast<PlayerActionPacket>(packet)) {
         if (action->mAction == PlayerActionType::DimensionChangeSuccess) {
             dimensionAckReceived = true;
@@ -1481,8 +1501,7 @@ void Session::scheduleMeshes()
         frontierRecheck = now + FrontierRecheckSeconds;
     }
     frontierColumns = columns;
-    // Every column that lands dirties its whole 3x3 neighbourhood, so a sub-chunk at the loading edge
-    // meshed right away gets meshed again for each neighbour that follows. Hold it until they are in.
+    // Coalesce neighbour refreshes at the loading edge without delaying the first visible terrain.
     auto neighboursLoaded = [&](const world::SubChunkKey& key) {
         for (int32_t dx = -1; dx <= 1; ++dx) {
             for (int32_t dz = -1; dz <= 1; ++dz) {
@@ -1502,30 +1521,47 @@ void Session::scheduleMeshes()
         return false;
     };
     MotionVector feet = motion.position();
-    mesher->setView({ feet.x, feet.y, feet.z });
-    auto distance = [&](const world::SubChunkKey& key) {
-        double dx = double(key.x) * 16 + 8 - feet.x;
-        double dy = double(key.y) * 16 + 8 - feet.y;
-        double dz = double(key.z) * 16 + 8 - feet.z;
-        return dx * dx + dy * dy + dz * dz;
+    bool startup;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        startup = startingTerrain;
+    }
+    world::MeshViewPriority priority({ feet.x, feet.y, feet.z }, lookDirection, startup);
+    mesher->setView(priority);
+    struct RankedChunk {
+        world::SubChunkKey key;
+        world::MeshPriority priority;
     };
-    std::stable_sort(dirty.begin(), dirty.end(), [&](const auto& left, const auto& right) {
-        if (urgent.contains(left) != urgent.contains(right)) return urgent.contains(left);
-        return distance(left) < distance(right);
+    thread_local std::vector<RankedChunk> ranked;
+    ranked.clear();
+    ranked.reserve(dirty.size());
+    for (const auto& key : dirty) {
+        ranked.push_back({ key, priority.rank(key.x, key.y, key.z, urgent.contains(key), meshedGenerations.contains(key)) });
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& left, const auto& right) {
+        return left.priority < right.priority;
     });
     size_t admitted = 0;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
 
     static constexpr int32_t Offsets[6][3] = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
-    for (const world::SubChunkKey& key : dirty) {
+    for (const auto& entry : ranked) {
+        const world::SubChunkKey& key = entry.key;
         std::shared_ptr<const world::SubChunk> center = world.store().subChunk(key);
-        if (center && !urgent.contains(key) && waitsForNeighbours(key)) {
+        bool startupTerrain = priority.isStartup(key.x, key.z);
+        if (center && meshedGenerations.contains(key) && !urgent.contains(key) && !startupTerrain && waitsForNeighbours(key)) {
             continue;
         }
+        if (startupTerrain) frontierMeshes.erase(key);
+        if (center && (admitted >= world::MeshScheduler::QueueCapacity
+            || (admitted && std::chrono::steady_clock::now() >= deadline) || !mesher->canSubmit(key, urgent.contains(key), meshedGenerations.contains(key)))) {
+            world.store().deferDirty(key, urgent.contains(key));
+            continue;
+        }
+        // Deferring admission must not repeatedly cancel a queued or running mesh.
         uint64_t generation = ++nextMeshGeneration;
-        meshGenerations.insert_or_assign(key, generation);
-        mesher->invalidate(key, generation);
         if (!center) {
+            mesher->invalidate(key, generation);
             frontierMeshes.erase(key);
             mesher->cancel(key);
             meshGenerations.erase(key);
@@ -1540,11 +1576,6 @@ void Session::scheduleMeshes()
             }
             continue;
         }
-        if (admitted >= world::MeshScheduler::QueueCapacity || (admitted && std::chrono::steady_clock::now() >= deadline) || !mesher->canSubmit(key)) {
-            world.store().deferDirty(key, urgent.contains(key));
-            continue;
-        }
-
         world::DimensionRange range;
         if (!world::vanillaDimensionRange(key.dimension, range)) {
             range = { key.y, 32 };
@@ -1573,7 +1604,10 @@ void Session::scheduleMeshes()
         input.skyLight = key.dimension == 0;
         input.blockEntities = world.store().blockEntities(key);
         input.origin = { key.x * 16, key.y * 16, key.z * 16 };
-        if (mesher->submit(key, generation, std::move(input), assets, ids, urgent.contains(key))) {
+        world::MeshDeferred displaced { key };
+        if (mesher->submit(key, generation, std::move(input), assets, ids, urgent.contains(key), &displaced, meshedGenerations.contains(key))) {
+            meshGenerations.insert_or_assign(key, generation);
+            if (displaced.key != key) world.store().deferDirty(displaced.key, displaced.urgent);
             ++admitted;
         } else {
             world.store().deferDirty(key, urgent.contains(key));
@@ -1627,8 +1661,12 @@ void Session::collectMeshes()
         }
         if (mesh || hadMesh) {
             std::lock_guard<std::mutex> guard(mutex);
+            bool refresh = result.refresh;
+            for (const auto& update : pendingUpdates) {
+                if (update.key == result.key) refresh &= update.refresh;
+            }
             std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == result.key; });
-            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit) });
+            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit), result.urgent, refresh });
         }
     }
 }
@@ -1709,6 +1747,7 @@ void Session::run(std::string target, MinecraftAuthentication* authentication, s
     } catch (...) {
         fail("Unexpected session failure");
     }
+    world.cancelDecoding();
     std::lock_guard<std::mutex> guard(mutex);
     if (cancelled && (current.state == SessionState::Joined || current.state == SessionState::Connecting || current.state == SessionState::Resolving)) {
         current.state = SessionState::Idle;
@@ -2129,6 +2168,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     {
         std::lock_guard<std::mutex> guard(mutex);
         current.assetsError = assetsError;
+        startingTerrain = true;
         current.customBlocks = customCount;
         current.customPermutations = customPermutationCount;
         current.assets = assets;
@@ -2148,20 +2188,23 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     double nextPublication = 0.0;
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
+        world.applyDecoded();
         collectViewInput();
         pollGlobalPacks();
         int waitMs = 5;
         if (spawnInitialized && nextMotionTick > 0.0) {
             waitMs = std::clamp(static_cast<int>((nextMotionTick - secondsNow()) * 1000.0), 0, 5);
         }
-        bool received = connection->readRaw(payload, waitMs, &cancelled);
+        bool decodeBacklogged = world.decodeBacklogged();
+        if (decodeBacklogged && waitMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+        bool received = !decodeBacklogged && connection->readRaw(payload, waitMs, &cancelled);
         if (received) {
             lastWorldPacket = secondsNow();
             handleWorldPacket(payload);
             ++receivedSincePublication;
             const double batchDeadline = secondsNow() + 0.004;
             for (size_t count = 1; count < 256 && !cancelled && !transferTarget && secondsNow() < batchDeadline; ++count) {
-                if (!connection->receiveRaw(payload)) break;
+                if (world.decodeBacklogged() || !connection->receiveRaw(payload)) break;
                 handleWorldPacket(payload);
                 ++receivedSincePublication;
             }
@@ -2171,7 +2214,15 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             break;
         }
 
-        for (const std::unique_ptr<SubChunkRequestPacket>& request : world.takeRequests(world::WorldStream::Clock::now())) {
+        world.applyDecoded();
+        MotionVector requestFeet = motion.position();
+        bool startupRequests;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            startupRequests = startingTerrain;
+        }
+        world::MeshViewPriority requestPriority({ requestFeet.x, requestFeet.y, requestFeet.z }, lookDirection, startupRequests);
+        for (const std::unique_ptr<SubChunkRequestPacket>& request : world.takeRequests(world::WorldStream::Clock::now(), requestPriority)) {
             transmit(*request);
         }
         if (int wanted = requestedRadius.load(); wanted != sentRadius) {
@@ -2208,8 +2259,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         flushChat();
         flushForms();
         tickMotion();
-        scheduleMeshes();
         collectMeshes();
+        scheduleMeshes();
         finishDimensionChange();
         if (assets) {
             publishBreaking();
@@ -2233,6 +2284,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         bool localReady = localTerrainReady();
         std::lock_guard<std::mutex> guard(mutex);
         current.localTerrainReady = localReady;
+        if (localReady) startingTerrain = false;
         current.packetsReceived += receivedSincePublication;
         receivedSincePublication = 0;
         current.world = world.stats();
@@ -2274,6 +2326,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         publishSnapshotLocked(std::move(publication));
     }
 
+    world.cancelDecoding();
     std::optional<std::string> next = std::exchange(transferTarget, std::nullopt);
     std::lock_guard<std::mutex> guard(mutex);
     if (cancelled) {
