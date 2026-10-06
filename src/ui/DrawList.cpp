@@ -77,8 +77,59 @@ void DrawList::quad(float x0, float y0, float x1, float y1, float u0, float v0, 
 
 void DrawList::freeQuad(const std::array<std::array<float, 2>, 4>& points, const std::array<std::array<float, 2>, 4>& uvs, uint32_t color, float depth)
 {
-    uint32_t base = static_cast<uint32_t>(vertexData.size());
     uint32_t tinted = layered(color);
+    if (clip.w > 0.0f && std::any_of(points.begin(), points.end(), [&](const auto& point) {
+            return point[0] < clip.x || point[0] > clip.right() || point[1] < clip.y || point[1] > clip.bottom();
+        })) {
+        // Clip each original triangle separately to preserve its UV interpolation.
+        using Vertex = std::array<float, 4>;
+        const float edges[] = { clip.x, clip.right(), clip.y, clip.bottom() };
+        for (const std::array<size_t, 3>& triangle : { std::array<size_t, 3> { 0, 1, 2 }, std::array<size_t, 3> { 0, 2, 3 } }) {
+            std::array<Vertex, 8> polygon {};
+            size_t count = triangle.size();
+            for (size_t i = 0; i < count; ++i) {
+                size_t corner = triangle[i];
+                polygon[i] = { points[corner][0], points[corner][1], uvs[corner][0], uvs[corner][1] };
+            }
+            for (size_t edge = 0; edge < 4 && count > 0; ++edge) {
+                size_t axis = edge / 2;
+                auto inside = [&](const Vertex& vertex) {
+                    return edge % 2 == 0 ? vertex[axis] >= edges[edge] : vertex[axis] <= edges[edge];
+                };
+                std::array<Vertex, 8> output {};
+                size_t size = 0;
+                Vertex previous = polygon[count - 1];
+                bool previousInside = inside(previous);
+                for (size_t i = 0; i < count; ++i) {
+                    const Vertex& current = polygon[i];
+                    bool currentInside = inside(current);
+                    if (previousInside != currentInside) {
+                        float t = (edges[edge] - previous[axis]) / (current[axis] - previous[axis]);
+                        Vertex intersection {};
+                        for (size_t component = 0; component < intersection.size(); ++component) {
+                            intersection[component] = previous[component] + t * (current[component] - previous[component]);
+                        }
+                        intersection[axis] = edges[edge];
+                        output[size++] = intersection;
+                    }
+                    if (currentInside) output[size++] = current;
+                    previous = current;
+                    previousInside = currentInside;
+                }
+                polygon = output;
+                count = size;
+            }
+            if (count < 3) continue;
+            uint32_t base = static_cast<uint32_t>(vertexData.size());
+            for (size_t i = 0; i < count; ++i) {
+                const Vertex& vertex = polygon[i];
+                vertexData.push_back({ vertex[0] + originX + layerX, vertex[1] + originY + layerY, vertex[2], vertex[3], tinted, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, depth });
+            }
+            for (uint32_t i = 1; i + 1 < count; ++i) indexData.insert(indexData.end(), { base, base + i, base + i + 1 });
+        }
+        return;
+    }
+    uint32_t base = static_cast<uint32_t>(vertexData.size());
     for (size_t corner = 0; corner < 4; ++corner) {
         vertexData.push_back({ points[corner][0] + originX + layerX, points[corner][1] + originY + layerY, uvs[corner][0], uvs[corner][1], tinted, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, depth });
     }
