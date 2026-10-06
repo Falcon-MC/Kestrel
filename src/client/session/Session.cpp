@@ -4,6 +4,7 @@
 #include "Core/NBT/NbtIo.h"
 #include "Protocol/BlockStateHasher.h"
 #include "util/SkinChoice.h"
+#include "util/Text.h"
 #include "BlockUpgradeSchemas.h"
 #include "Core/BlockState/BlockStateUpgrader.h"
 #include "Network/Auth/MinecraftAuthentication.h"
@@ -1306,7 +1307,7 @@ void Session::handleWorldPacket(std::string& payload)
         debugLog("set time " + std::to_string(time->mTime));
     } else if (auto rules = std::dynamic_pointer_cast<GameRulesChangedPacket>(packet)) {
         for (const ChangedGameRuleData& rule : rules->mGameRules) {
-            if (rule.mName == "dodaylightcycle" && rule.mType == ChangedGameRuleType::Bool) {
+            if (rule.mType == ChangedGameRuleType::Bool && util::lowercase(rule.mName) == "dodaylightcycle") {
                 std::lock_guard<std::mutex> guard(mutex);
                 current.worldTime = currentWorldTime(current);
                 current.worldTimeStamp = secondsNow();
@@ -2029,7 +2030,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             current.rainLevel = std::isfinite(startGame->mRainLevel) ? std::clamp(startGame->mRainLevel, 0.0f, 1.0f) : 0.0f;
             current.thunderLevel = std::isfinite(startGame->mLightningLevel) ? std::clamp(startGame->mLightningLevel, 0.0f, 1.0f) : 0.0f;
             for (const GameRuleData& rule : startGame->mGamerules) {
-                if (rule.mName == "dodaylightcycle" && rule.mType == GameRuleData::Type::Bool) {
+                if (rule.mType == GameRuleData::Type::Bool && util::lowercase(rule.mName) == "dodaylightcycle") {
                     current.daylightCycle = rule.mBoolValue;
                 }
             }
