@@ -106,17 +106,13 @@ vec3 endPortalColor()
     return min(color, vec3(1.0));
 }
 
-vec3 shadeWorld(vec3 rgb)
+vec3 fogWorld(vec3 color, bool additive)
 {
-    float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
-    float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
-    channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
-    float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
-    vec3 color = rgb * inShade * pow(light, 1.0 / 2.2);
+    vec3 fogColor = additive ? vec3(0.0) : draw.fog.rgb;
     float amount = draw.params.w == 1.0 ? clamp((length(inRelative) - draw.fog.w) / max(draw.params.x - draw.fog.w, 0.0001), 0.0, 1.0)
         : smoothstep(draw.fog.w, draw.params.x, length(inRelative));
     if (draw.params.w == 1.0) {
-        vec3 tint = draw.fog.rgb;
+        vec3 tint = fogColor;
         for (int i = 0; i < 3; ++i) {
             float c = max(color[i], 0.0), f = max(tint[i], 0.0);
             c = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
@@ -126,7 +122,16 @@ vec3 shadeWorld(vec3 rgb)
         }
         return color;
     }
-    return mix(color, draw.fog.rgb, amount);
+    return mix(color, fogColor, amount);
+}
+
+vec3 shadeWorld(vec3 rgb)
+{
+    float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
+    float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
+    channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
+    float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
+    return fogWorld(rgb * inShade * pow(light, 1.0 / 2.2), false);
 }
 
 vec4 applyTint(vec4 texel, uint tint)
@@ -161,6 +166,7 @@ void main()
     }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
+    else if ((inEntity & 32u) != 0u) texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
     if ((inEntity & 4u) != 0u) {
         uint hit = floatBitsToUint(draw.sun.w);
         vec4 flash = hit == 0u ? vec4(1.0, 0.0, 0.0, 0.5) : unpackUnorm4x8(hit);
