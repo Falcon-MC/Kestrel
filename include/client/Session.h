@@ -573,6 +573,7 @@ struct SessionSnapshot {
     CameraFovRequest cameraFov;
     int64_t localUniqueActorId = 0;
     uint64_t localRuntimeId = 0;
+    std::array<uint64_t, 3> localActorFlags {};
     std::string name;
     std::string target;
     // The host and port the target resolved to, once known. Realms and

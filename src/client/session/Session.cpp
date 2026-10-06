@@ -1206,6 +1206,13 @@ void Session::handleWorldPacket(std::string& payload)
             item->second.pickedUpAt = secondsNow();
         }
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
+        if (static_cast<uint64_t>(data->mRuntimeActorId) == localRuntimeId) {
+            for (const EntityDataEntry& entry : data->mMetadata.mEntries) {
+                if (entry.mFormat != EntityDataFormat::Long) continue;
+                if (entry.mId == 0) current.localActorFlags[0] = static_cast<uint64_t>(entry.mLongValue);
+                if (entry.mId == 92) current.localActorFlags[1] = static_cast<uint64_t>(entry.mLongValue);
+            }
+        }
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
             actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);
             applyActorMetadata(data->mMetadata, actor->second);

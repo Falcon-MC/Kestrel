@@ -17,6 +17,7 @@ namespace {
 constexpr float Pi = 3.14159265f;
 constexpr double SwingSeconds = 0.3;
 constexpr uint32_t EntityQuadFlag = 1u << 5;
+constexpr uint64_t InvisibleFlag = 1ull << 5;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr float HandFovDegrees = 70.0f;
 constexpr float HeldCubeSize = 0.5f;
@@ -381,6 +382,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.now = now;
     input.worldTime = currentWorldTime(timeState);
     input.identifier = "minecraft:player";
+    if (seenSessionSnapshot) input.flags = seenSessionSnapshot->localActorFlags;
     input.onGround = playerView.onGround;
     input.health = hudState.health;
     input.maxHealth = hudState.maxHealth;
@@ -489,7 +491,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     };
     for (size_t index = 0; index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
-        if (bone >= rig.bones.size() || !shown[bone]) {
+        if (bone >= rig.bones.size() || !shown[bone] || (input.flags[0] & InvisibleFlag) != 0) {
             continue;
         }
         const world::ModelQuad& quad = rig.quads[index];
@@ -699,7 +701,8 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
     };
 
     uint32_t hurt = self.lastHurt > 0.0 && now - self.lastHurt < 0.5 ? 1u << 7 : 0u;
-    for (size_t index = 0; index < rig.quads.size(); ++index) {
+    bool invisible = (self.flags[0] & InvisibleFlag) != 0;
+    for (size_t index = 0; !invisible && index < rig.quads.size(); ++index) {
         size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : rig.bones.size();
         const world::ModelQuad& quad = rig.quads[index];
         auto place = [&](const Vec3& point) {
