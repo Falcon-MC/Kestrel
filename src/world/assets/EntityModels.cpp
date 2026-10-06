@@ -810,6 +810,12 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             readClientEntity(text, definitions);
         }
     }
+    for (const std::string& name : pack.archiveEntries("attachables")) {
+        std::string text;
+        if (pack.readBaseArchived("attachables", name, text)) {
+            readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+        }
+    }
     for (const std::string& name : pack.archiveEntries("render_controllers")) {
         std::string text;
         if (pack.readBaseArchived("render_controllers", name, text)) {
@@ -824,10 +830,6 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
         }
     }
-    for (const std::string& name : pack.archiveEntries("attachables")) {
-        std::string text;
-        if (pack.readBaseArchived("attachables", name, text)) readClientEntity(text, attachableDefinitions, "minecraft:attachable");
-    }
     std::error_code error;
     auto directory = pack.root().parent_path().parent_path() / "definitions" / "attachables";
     for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
@@ -836,6 +838,20 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         if (!file) continue;
         std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         readClientEntity(text, attachableDefinitions, "minecraft:attachable");
+    }
+    if (!attachableDefinitions.contains("minecraft:trident")) {
+        auto projectile = definitions.find("minecraft:thrown_trident");
+        if (projectile != definitions.end()) {
+            ClientEntity held = projectile->second;
+            auto scripts = std::make_shared<EntityScripts>();
+            scripts->aliases["wield"] = "controller.animation.trident.wield";
+            for (const char* name : { "wield_first_person", "wield_first_person_raise", "wield_first_person_riptide", "wield_third_person", "wield_third_person_raise" }) {
+                scripts->aliases[name] = std::string("animation.trident.") + name;
+            }
+            scripts->animate.emplace_back("wield", molang::Script {});
+            held.scripts = std::move(scripts);
+            attachableDefinitions.emplace("minecraft:trident", std::move(held));
+        }
     }
     for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
         for (const auto& path : (*layer)->paths()) {

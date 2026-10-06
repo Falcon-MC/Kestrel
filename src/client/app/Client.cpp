@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "client/HandVisibility.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
 
@@ -634,7 +635,9 @@ int Client::run()
                 appendParticles(deltaSeconds, entityOrigin, entityQuads, blendedQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 if (!menu.hudHidden()) {
-                    appendFirstPerson(entityOrigin, handQuads);
+                    if (handVisible(menu.hudHidden(), menu.option("hide_hand", 0) != 0)) {
+                        appendFirstPerson(entityOrigin, handQuads);
+                    }
                     lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
                     if (self) {
                         appendPaperDoll(*self, entityOrigin, handQuads);

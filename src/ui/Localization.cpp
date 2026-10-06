@@ -317,8 +317,8 @@ std::string Localization::translateMessage(const std::string& message, const std
     std::vector<std::string> translated;
     translated.reserve(parameters.size());
     for (const std::string& parameter : parameters) {
-        std::string key = !parameter.empty() && parameter.front() == '%' ? parameter.substr(1) : parameter;
-        translated.push_back(has(key) ? text(key, parameter) : parameter);
+        std::string key = !parameter.empty() && parameter.front() == '%' ? parameter.substr(1) : std::string();
+        translated.push_back(!key.empty() && has(key) ? text(key, parameter) : parameter);
     }
     if (has(message)) {
         return fill(text(message, message), translated);
@@ -365,7 +365,7 @@ std::string rawText(const json::Value& component)
         return text->string();
     }
     if (const json::Value* key = component.get("translate"); key && key->isString()) {
-        return trf(key->string(), key->string(), rawArguments(component.get("with")));
+        return Localization::shared().translateMessage(key->string(), rawArguments(component.get("with")));
     }
     std::string joined;
     if (const json::Value* parts = component.get("rawtext"); parts && parts->isArray()) {

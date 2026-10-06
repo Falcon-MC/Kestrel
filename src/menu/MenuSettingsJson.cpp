@@ -1,4 +1,5 @@
 #include "menu/Menu.h"
+#include "menu/SettingsSlider.h"
 #include "platform/Shell.h"
 #include "ui/Context.h"
 #include "ui/JsonUi.h"
@@ -388,7 +389,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             globals["#" + name] = UiValue::of(value != 0);
             break;
         case OptionKind::Slider: {
-            globals["#" + name] = UiValue::of(opacityOption(name) ? value / 100.0 : static_cast<double>(value - option.min));
+            globals["#" + name] = UiValue::of(settingsSliderBinding(name, value, option.min, option.max));
             globals["#" + name + "_steps"] = UiValue::of(static_cast<double>(option.max - option.min + 1));
             std::string shown;
             if (name == "field_of_view" || name == "render_distance") {
@@ -549,8 +550,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
         if (event.kind == UiEvent::Kind::Slider) {
             for (const Option& option : Options) {
                 if (option.kind == OptionKind::Slider && event.name == option.name) {
-                    int value = opacityOption(option.name) ? static_cast<int>(std::lround(event.value * 100.0))
-                        : option.max > option.min ? option.min + static_cast<int>(std::lround(event.value)) : option.min;
+                    int value = settingsSliderValue(option.name, event.value, option.min, option.max);
                     setOptionValue(option.name, value);
                     break;
                 }

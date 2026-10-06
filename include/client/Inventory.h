@@ -48,7 +48,7 @@ inline constexpr int SlotCount = Ui + 54;
 inline constexpr int AnyInventorySlot = -2;
 }
 
-enum class InventoryAction { Open, Close, Primary, Secondary, QuickMove, Drop, HotbarSwap, Collect, Distribute, Creative, Destroy, Craft, SelectRecipe, Enchant, Beacon, Rename, StationRecipe, NpcAction, BookPage, BookSign, ToggleCrafter };
+enum class InventoryAction { Open, Close, Primary, Secondary, QuickMove, Drop, HotbarSwap, Collect, Distribute, Creative, Destroy, Craft, SelectRecipe, Enchant, Beacon, Rename, StationRecipe, NpcAction, BookPage, BookSign, ToggleCrafter, CreativeDrop };
 
 struct InventoryCommand {
     InventoryAction action = InventoryAction::Primary;

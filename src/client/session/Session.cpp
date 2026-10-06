@@ -980,6 +980,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::CraftingData:
     case MinecraftPacketIds::InventoryContent:
     case MinecraftPacketIds::InventorySlot:
+    case MinecraftPacketIds::InventoryTransaction:
     case MinecraftPacketIds::MobEquipment:
     case MinecraftPacketIds::MobArmorEquipment:
     case MinecraftPacketIds::PlayerHotbar:

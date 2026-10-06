@@ -164,11 +164,11 @@ CommandHints commandHints(const std::vector<ChatCommand>& commands, const std::v
         std::string_view typed = words.empty() ? std::string_view() : words.front().text;
         hints.replaceFrom = 1;
         for (const ChatCommand& command : commands) {
-            if (startsWith(command.name, typed)) {
+            if (containsWord(command.name, typed)) {
                 hints.suggestions.push_back({ command.name, command.description });
             }
             for (const std::string& alias : command.aliases) {
-                if (startsWith(alias, typed)) {
+                if (containsWord(alias, typed)) {
                     hints.suggestions.push_back({ alias, command.description });
                 }
             }
