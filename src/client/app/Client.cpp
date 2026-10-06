@@ -568,6 +568,15 @@ int Client::run()
                 sky = submergedIn(sky, timeState.cameraMedium,
                     submergedSeconds, biomeColors.waterFog, biomeColors.waterFogStart * fogScale, biomeColors.waterFogEnd * fogScale,
                     lavaFog ? &*lavaFog : nullptr, renderDistance);
+                if (blockAssets && timeState.fogStack) {
+                    auto medium = timeState.cameraMedium == 1 ? world::FogMedium::Water
+                        : timeState.cameraMedium == 2 ? (fireResistance ? world::FogMedium::LavaResistance : world::FogMedium::Lava)
+                        : timeState.dimension == 0 && timeState.rainLevel > 0.0f ? world::FogMedium::Weather : world::FogMedium::Air;
+                    if (const auto* fog = blockAssets->biomeTints().commandFog(*timeState.fogStack, medium)) {
+                        sky = foggedBy(sky, *fog, renderDistance, submergedSeconds);
+                        if (timeState.cameraMedium != 0 || timeState.dimension == 1) sky.zenith = sky.horizon = sky.fogColor;
+                    }
+                }
                 if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
@@ -1377,6 +1386,7 @@ void Client::syncSession()
     timeState.worldClockPaused = snapshot.worldClockPaused;
     timeState.rainLevel = snapshot.rainLevel;
     timeState.thunderLevel = snapshot.thunderLevel;
+    timeState.fogStack = snapshot.fogStack;
     timeState.cameraMedium = snapshot.cameraMedium;
     timeState.dimension = snapshot.dimension;
     if (changed) {
