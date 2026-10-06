@@ -1748,6 +1748,19 @@ void JsonUiRuntime::paint(Node& node)
     }
     if (node.type == "custom" && renderer) {
         std::string name = text(node, "renderer");
+        if (name == "live_player_renderer") {
+            for (const Node* parent = node.parent; parent; parent = parent->parent) {
+                if (parent->name != "player_bg" || parent->type != "image") {
+                    continue;
+                }
+                // The model overflows its small control, but not the inventory preview background.
+                Rect bounds { parent->x, parent->y, parent->w, parent->h };
+                if (node.clipped) bounds = intersect(bounds, node.clip);
+                if (bounds.w <= 0.0f || bounds.h <= 0.0f) return;
+                ui->setClip(bounds);
+                break;
+            }
+        }
         UiLookup find = [&](const std::string& key) { return lookup(node, key); };
         renderer(*ui, name, rect, alpha, find);
     }
