@@ -215,23 +215,54 @@ target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
     enable_testing()
-    add_executable(KestrelInventoryTransactionTest
-        tests/InventoryTransaction.cpp
-        src/client/inventory/Inventory.cpp
+    add_executable(KestrelSettingsSliderTest tests/SettingsSlider.cpp)
+    target_include_directories(KestrelSettingsSliderTest PRIVATE include)
+    add_test(NAME settings-slider COMMAND KestrelSettingsSliderTest)
+    add_executable(KestrelChatCommandsTest
+        tests/ChatCommands.cpp
+        src/menu/ChatCommands.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelChatCommandsTest PRIVATE include)
+    target_link_libraries(KestrelChatCommandsTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME chat-commands COMMAND KestrelChatCommandsTest)
+    add_executable(KestrelBorderBlockTest
+        tests/BorderBlock.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
+    add_test(NAME border-block COMMAND KestrelBorderBlockTest)
+    add_executable(KestrelLocalizedTextTest
+        tests/LocalizedText.cpp
+        src/client/app/ChatText.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelLocalizedTextTest PRIVATE include)
+    target_link_libraries(KestrelLocalizedTextTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME localized-text COMMAND KestrelLocalizedTextTest)
+    add_executable(KestrelInventoryStackTest
+        tests/InventoryStack.cpp
         src/client/inventory/InventoryStack.cpp
-        src/client/inventory/InventoryAnvil.cpp
-        src/client/inventory/InventoryStations.cpp
-        src/client/inventory/InventoryTrades.cpp
-        src/client/inventory/ContainerLayout.cpp
         src/world/blocks/ItemInfo.cpp
         src/ui/Localization.cpp
         src/world/packs/PackSource.cpp
         src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp
         src/util/Text.cpp)
-    target_include_directories(KestrelInventoryTransactionTest PRIVATE include)
-    target_link_libraries(KestrelInventoryTransactionTest PRIVATE FalconNetwork ZLIB::ZLIB)
-    add_test(NAME inventory-transaction COMMAND KestrelInventoryTransactionTest)
+    target_include_directories(KestrelInventoryStackTest PRIVATE include)
+    target_link_libraries(KestrelInventoryStackTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME inventory-stack COMMAND KestrelInventoryStackTest)
     add_executable(KestrelCreativeDropTest
         tests/CreativeDrop.cpp
         src/client/inventory/Inventory.cpp
@@ -249,52 +280,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelCreativeDropTest PRIVATE include)
     target_link_libraries(KestrelCreativeDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME creative-drop COMMAND KestrelCreativeDropTest)
-    add_executable(KestrelInventoryStackTest
-        tests/InventoryStack.cpp
+    add_executable(KestrelInventoryTransactionTest
+        tests/InventoryTransaction.cpp
+        src/client/inventory/Inventory.cpp
         src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
         src/world/blocks/ItemInfo.cpp
         src/ui/Localization.cpp
         src/world/packs/PackSource.cpp
         src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp
         src/util/Text.cpp)
-    target_include_directories(KestrelInventoryStackTest PRIVATE include)
-    target_link_libraries(KestrelInventoryStackTest PRIVATE FalconNetwork ZLIB::ZLIB)
-    add_test(NAME inventory-stack COMMAND KestrelInventoryStackTest)
-    add_executable(KestrelSettingsSliderTest tests/SettingsSlider.cpp)
-    target_include_directories(KestrelSettingsSliderTest PRIVATE include)
-    add_test(NAME settings-slider COMMAND KestrelSettingsSliderTest)
-    add_executable(KestrelChatCommandsTest
-        tests/ChatCommands.cpp
-        src/menu/ChatCommands.cpp
-    add_executable(KestrelLocalizedTextTest
-        tests/LocalizedText.cpp
-        src/client/app/ChatText.cpp
-        src/ui/Localization.cpp
-        src/world/packs/PackSource.cpp
-        src/world/packs/ServerPack.cpp
-        src/util/JsonText.cpp
-        src/util/Text.cpp)
-<<<<<<< HEAD
-    target_include_directories(KestrelChatCommandsTest PRIVATE include)
-    target_link_libraries(KestrelChatCommandsTest PRIVATE FalconNetwork ZLIB::ZLIB)
-    add_test(NAME chat-commands COMMAND KestrelChatCommandsTest)
-    add_executable(KestrelBorderBlockTest
-        tests/BorderBlock.cpp
-        src/world/assets/BlockClassification.cpp
-        src/world/assets/BlockStates.cpp
-        src/world/assets/TextureKeys.cpp
-        src/world/assets/BlockShapes.cpp
-        src/world/mesh/BlockModels.cpp
-        src/util/Text.cpp)
-    target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
-    add_test(NAME border-block COMMAND KestrelBorderBlockTest)
-=======
-    target_include_directories(KestrelLocalizedTextTest PRIVATE include)
-    target_link_libraries(KestrelLocalizedTextTest PRIVATE FalconNetwork ZLIB::ZLIB)
-    add_test(NAME localized-text COMMAND KestrelLocalizedTextTest)
->>>>>>> a4577ce (fix(chat): localize rawtext translation arguments)
+    target_include_directories(KestrelInventoryTransactionTest PRIVATE include)
+    target_link_libraries(KestrelInventoryTransactionTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME inventory-transaction COMMAND KestrelInventoryTransactionTest)
     add_executable(KestrelHealthFeedbackTest tests/HealthFeedback.cpp)
     target_include_directories(KestrelHealthFeedbackTest PRIVATE include)
     add_test(NAME health-feedback COMMAND KestrelHealthFeedbackTest)
