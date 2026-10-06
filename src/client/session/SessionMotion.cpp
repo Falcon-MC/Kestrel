@@ -8,6 +8,7 @@
 #include "Protocol/Packets/RespawnPacket.h"
 #include "Protocol/Packets/SetActorMotionPacket.h"
 #include "Protocol/Packets/UpdateAbilitiesPacket.h"
+#include "Protocol/Packets/UpdateClientInputLocksPacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
 #include "world/BlockCollisions.h"
@@ -47,6 +48,14 @@ constexpr int16_t SwiftSneakEnchantment = 37;
 constexpr uint32_t FlyingAbility = 1u << 9;
 constexpr uint32_t MayFlyAbility = 1u << 10;
 constexpr uint32_t NoClipAbility = 1u << 17;
+constexpr uint32_t MovementInputLock = 1u << 2;
+constexpr uint32_t LateralInputLock = 1u << 4;
+constexpr uint32_t SneakInputLock = 1u << 5;
+constexpr uint32_t JumpInputLock = 1u << 6;
+constexpr uint32_t ForwardInputLock = 1u << 9;
+constexpr uint32_t BackwardInputLock = 1u << 10;
+constexpr uint32_t LeftInputLock = 1u << 11;
+constexpr uint32_t RightInputLock = 1u << 12;
 
 }
 
@@ -133,7 +142,9 @@ bool Session::motionAreaLoaded(const MotionVector& feet)
  */
 void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
 {
-    if (auto latency = std::dynamic_pointer_cast<NetworkStackLatencyPacket>(packet)) {
+    if (auto locks = std::dynamic_pointer_cast<UpdateClientInputLocksPacket>(packet)) {
+        movementInputLocks = static_cast<uint32_t>(locks->mLockComponentData);
+    } else if (auto latency = std::dynamic_pointer_cast<NetworkStackLatencyPacket>(packet)) {
         if (latency->mFromServer && connection) {
             NetworkStackLatencyPacket answer;
             answer.mTimestamp = latency->mTimestamp > std::numeric_limits<uint64_t>::max() / LatencyEchoScale ? std::numeric_limits<uint64_t>::max() : latency->mTimestamp * LatencyEchoScale;
@@ -325,6 +336,23 @@ void Session::runMotionTick(double now)
         std::lock_guard<std::mutex> guard(motionInputMutex);
         input = motionInput;
     }
+    // Filter before prediction so physics, replay history and the server's input agree.
+    if (movementInputLocks & (MovementInputLock | LateralInputLock)) {
+        input.forward = 0.0f;
+        input.sideways = 0.0f;
+        input.sprint = false;
+    } else {
+        if ((input.forward > 0.0f && (movementInputLocks & ForwardInputLock))
+            || (input.forward < 0.0f && (movementInputLocks & BackwardInputLock))) {
+            input.forward = 0.0f;
+        }
+        if ((input.sideways > 0.0f && (movementInputLocks & LeftInputLock))
+            || (input.sideways < 0.0f && (movementInputLocks & RightInputLock))) {
+            input.sideways = 0.0f;
+        }
+    }
+    if (movementInputLocks & (MovementInputLock | JumpInputLock)) input.jump = false;
+    if (movementInputLocks & (MovementInputLock | SneakInputLock)) input.sneak = false;
     {
         std::lock_guard<std::mutex> guard(mutex);
         input.usingItem = itemInUse.has_value();

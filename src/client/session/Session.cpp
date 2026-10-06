@@ -1004,6 +1004,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::CorrectPlayerMovePrediction:
     case MinecraftPacketIds::SetActorMotion:
     case MinecraftPacketIds::UpdateAbilities:
+    case MinecraftPacketIds::UpdateClientInputLocks:
     case MinecraftPacketIds::Text:
     case MinecraftPacketIds::SetTitle:
     case MinecraftPacketIds::ToastRequest:
@@ -1995,6 +1996,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     clientTick = 0;
     nextMotionTick = 0.0;
     lastMotionInput = MotionInput {};
+    movementInputLocks = 0;
     if (result.mConnection->isSpawnReceived()) {
         initializeLocalPlayer(*result.mConnection, result.mConnection->getStartGame() ? result.mConnection->getStartGame()->mRuntimeActorId : 0);
     }
