@@ -8,6 +8,8 @@
 
 namespace kestrel {
 
+namespace world { struct BiomeFog; }
+
 struct SkyFrame {
     std::array<float, 3> zenith {};
     std::array<float, 3> horizon {};
@@ -32,7 +34,8 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
  * unchanged.
  */
 SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds = 30.0f,
-    uint32_t waterColor = 0x44AFF5, float waterStart = 0.0f, float waterEnd = 60.0f);
+    uint32_t waterColor = 0x44AFF5, float waterStart = 0.0f, float waterEnd = 60.0f,
+    const world::BiomeFog* lavaFog = nullptr, float renderDistance = 1.0f);
 
 std::vector<SkyVertex> buildSkyBackground(const SkyFrame& frame, uint32_t sunLayer, uint32_t moonLayer);
 

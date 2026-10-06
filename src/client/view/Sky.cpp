@@ -1,4 +1,5 @@
 #include "client/Sky.h"
+#include "world/BiomeTints.h"
 
 #include <algorithm>
 #include <cmath>
@@ -151,7 +152,7 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
 }
 
 SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSeconds,
-    uint32_t waterColor, float waterStart, float waterEnd)
+    uint32_t waterColor, float waterStart, float waterEnd, const world::BiomeFog* lavaFog, float renderDistance)
 {
     std::array<float, 3> WaterFog { float((waterColor >> 16) & 255) / 255.0f,
         float((waterColor >> 8) & 255) / 255.0f, float(waterColor & 255) / 255.0f };
@@ -167,6 +168,13 @@ SkyFrame submergedIn(const SkyFrame& frame, uint8_t medium, float submergedSecon
     result.fogColor = medium == 1 ? WaterFog : LavaFog;
     result.fogStart = medium == 1 ? waterStart : 0.0f;
     result.fogEnd = medium == 1 ? waterEnd * fraction : LavaFogEnd;
+    if (medium == 2 && lavaFog) {
+        result.fogColor = { float((lavaFog->color >> 16) & 255) / 255.0f,
+            float((lavaFog->color >> 8) & 255) / 255.0f, float(lavaFog->color & 255) / 255.0f };
+        float scale = lavaFog->relative ? renderDistance : 1.0f;
+        result.fogStart = lavaFog->start * scale;
+        result.fogEnd = lavaFog->end * scale;
+    }
     result.zenith = result.fogColor;
     result.horizon = result.fogColor;
     return result;
