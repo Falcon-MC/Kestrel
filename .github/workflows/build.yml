@@ -39,7 +39,7 @@ jobs:
             binary: Kestrel
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -77,7 +77,7 @@ jobs:
             git
 
       - name: Cache compiler objects
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .ccache
           key: ccache-${{ matrix.name }}-${{ github.sha }}
@@ -159,7 +159,7 @@ jobs:
 
       - name: Upload the package
         if: inputs.package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kestrel-${{ matrix.name }}
           path: dist/*
