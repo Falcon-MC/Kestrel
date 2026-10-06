@@ -1125,6 +1125,7 @@ private:
     std::mutex motionInputMutex;
     MotionInput motionInput;
     MotionInput lastMotionInput;
+    uint32_t movementInputLocks = 0;
     bool motionStarted = false;
     bool teleportHandled = false;
     std::atomic<bool> missedSwing { false };
