@@ -58,6 +58,13 @@ int main()
     std::vector<EntityBone> bones(1);
     bones[0].name = "root";
     EntityAnimator animator;
+    auto axisDocument = json::parse(R"({"scripts":{"scaleX":2,"scaleY":3,"scaleZ":4}})");
+    auto axisScripts = readEntityScripts(*axisDocument);
+    animator.update(axisScripts.get(), nullptr, bones, AnimationInput {});
+    require(animator.matrices()[0][0] == 2 && animator.matrices()[0][5] == 3 && animator.matrices()[0][10] == 4,
+        "Entity scripts must apply independent model scale axes");
+    animator.update(nullptr, nullptr, bones, AnimationInput {});
+    require(animator.matrices()[0][0] == 1 && animator.matrices()[0][5] == 1, "Model axis scales must not leak between updates");
     auto inherited = molang::Script::compile("this * 0.5");
     require(animator.evaluateWithThis(inherited, 1.0) == 0.5, "Render colors must supply their inherited channel as this");
     require(animator.evaluateWithThis(inherited, 0.25) == 0.125, "The inherited color must be evaluated independently for every channel");
