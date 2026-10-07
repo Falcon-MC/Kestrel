@@ -1211,6 +1211,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         {"is_sheared", 31},
         {"is_gliding", 32},
         {"is_elder", 33},
+        {"show_bottom", 38},
         {"is_breathing", 35},
         {"is_chested", 36},
         {"is_stackable", 37},

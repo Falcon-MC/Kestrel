@@ -225,7 +225,8 @@ WorldOut placeModel(ModelIn input, float positionScale)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
-    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 47 : 0;
+    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 815 : 0;
+    if ((output.entity & 256u) != 0u) output.light.z = float((input.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (output.entity != 0) {
         output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0xc0ffffffu) : 0;
     }
@@ -434,7 +435,7 @@ float4 actorSurface(WorldOut input, float2 uv)
     float4 texel = actorTexture(input.actorTextures.x, input.actorGrid0, uv);
     uint mode = input.actorTextures.w;
     if (mode == 2u && texel.a * input.actorDissolve < 0.5) discard;
-    if (mode == 3u && texel.a < 0.5) discard;
+    if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard;
     if (mode == 1u && all(texel == float4(0,0,0,0))) discard;
     if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard;
     if (mode == 4u) texel.rgb = lerp(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
@@ -469,6 +470,8 @@ float4 surfaceTexel(WorldOut input)
             : page == 1 ? entitiesHigh.Load(at)
             : page == 2 ? entities2.Load(at)
             : entities3.Load(at);
+        if ((input.entity & 512u) != 0u && texel.a < 0.5) discard;
+        if ((input.entity & 256u) != 0u) texel.rgb *= input.light.z;
         if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
         else if ((input.entity & 32) != 0) texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2) != 0);
         if ((input.entity & 4) != 0) {
