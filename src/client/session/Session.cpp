@@ -423,6 +423,7 @@ void Session::resetSnapshot(std::string name, std::string target)
     current.name = std::move(name);
     current.target = std::move(target);
     ridingUnique = 0;
+    actorRiders.clear();
     pendingChat.clear();
     pendingActionbar.reset();
     pendingTitles.clear();
@@ -926,6 +927,34 @@ void Session::handleViolation(const PacketViolationWarningPacket& violation)
     current.packetError = std::move(details);
 }
 
+void Session::refreshActorRiders(int64_t vehicle)
+{
+    if (auto runtime = runtimeByUnique.find(vehicle); runtime != runtimeByUnique.end()) {
+        if (auto actor = actors.find(runtime->second); actor != actors.end()) actor->second.animationQueries["has_rider"] = actorRiders.hasRider(vehicle) ? 1.0 : 0.0;
+    }
+}
+
+void Session::updateActorLink(int64_t vehicle, int64_t rider, bool remove)
+{
+    if (auto previous = actorRiders.update(vehicle, rider, remove)) refreshActorRiders(*previous);
+    refreshActorRiders(vehicle);
+    if (rider == localUniqueId && !remove) {
+        ridingUnique = vehicle;
+        std::string identifier;
+        if (auto runtime = runtimeByUnique.find(vehicle); runtime != runtimeByUnique.end()) {
+            if (auto actor = actors.find(runtime->second); actor != actors.end()) {
+                identifier = actor->second.identifier;
+            }
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        current.riding = identifier.empty() ? "minecraft:unknown" : identifier;
+    } else if (rider == localUniqueId) {
+        ridingUnique = 0;
+        std::lock_guard<std::mutex> guard(mutex);
+        current.riding.clear();
+    }
+}
+
 void Session::handleWorldPacket(std::string& payload)
 {
     MinecraftPacketIds id;
@@ -1217,6 +1246,7 @@ void Session::handleWorldPacket(std::string& payload)
             applyActorMetadata(player->mMetadata, actor);
             actors[runtime] = actor;
             runtimeByUnique[player->mRuntimeActorId] = runtime;
+            refreshActorRiders(player->mRuntimeActorId);
             moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true, true);
         }
     } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
@@ -1235,6 +1265,8 @@ void Session::handleWorldPacket(std::string& payload)
         }
         actors[runtime] = actor;
         runtimeByUnique[added->mUniqueActorId] = runtime;
+        for (const auto& link : added->mActorLinks) updateActorLink(link.mFrom, link.mTo, link.mType == EntityLinkType::Remove);
+        refreshActorRiders(added->mUniqueActorId);
         moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
     } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
         uint64_t runtime = dropped->mRuntimeActorId;
@@ -1268,22 +1300,9 @@ void Session::handleWorldPacket(std::string& payload)
         }
     } else if (auto link = std::dynamic_pointer_cast<SetActorLinkPacket>(packet)) {
         const EntityLinkData& data = link->mActorLink;
-        if (data.mTo == localUniqueId && data.mType != EntityLinkType::Remove) {
-            ridingUnique = data.mFrom;
-            std::string identifier;
-            if (auto runtime = runtimeByUnique.find(data.mFrom); runtime != runtimeByUnique.end()) {
-                if (auto actor = actors.find(runtime->second); actor != actors.end()) {
-                    identifier = actor->second.identifier;
-                }
-            }
-            std::lock_guard<std::mutex> guard(mutex);
-            current.riding = identifier.empty() ? "minecraft:unknown" : identifier;
-        } else if (data.mTo == localUniqueId) {
-            ridingUnique = 0;
-            std::lock_guard<std::mutex> guard(mutex);
-            current.riding.clear();
-        }
+        updateActorLink(data.mFrom, data.mTo, data.mType == EntityLinkType::Remove);
     } else if (auto removed = std::dynamic_pointer_cast<RemoveActorPacket>(packet)) {
+        if (auto vehicle = actorRiders.erase(removed->mUniqueActorId)) refreshActorRiders(*vehicle);
         if (ridingUnique != 0 && removed->mUniqueActorId == ridingUnique) {
             ridingUnique = 0;
             std::lock_guard<std::mutex> guard(mutex);
@@ -1462,6 +1481,7 @@ void Session::handleWorldPacket(std::string& payload)
         motionStarted = false;
         actors.clear();
         runtimeByUnique.clear();
+        actorRiders.clear();
         std::vector<std::string> worn;
         for (const auto& [runtime, uuid] : uuidByRuntime) {
             worn.push_back(uuid);
@@ -2060,6 +2080,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         pendingSkins.clear();
         actors.clear();
         runtimeByUnique.clear();
+        actorRiders.clear();
         uuidByRuntime.clear();
         skinByUuid.clear();
         knownSkins.clear();
