@@ -1,5 +1,6 @@
 #include "client/session/SessionData.h"
 #include "client/RespawnAnchor.h"
+#include "client/RayBox.h"
 
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/AnimatePacket.h"
@@ -64,39 +65,6 @@ constexpr float DefaultActorWidth = 0.6f;
 constexpr float DefaultActorHeight = 1.8f;
 constexpr std::array<std::array<int32_t, 3>, 6> FaceOffsets { { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } } };
 
-/**
- * Where a ray first enters a box, as a distance along the ray, or nothing
- * when it misses or the box is behind. The axis it enters across is stored
- * in entryAxis, -1 when the ray starts inside.
- */
-std::optional<double> enterBox(const std::array<double, 3>& origin, const std::array<double, 3>& direction, const std::array<double, 3>& low, const std::array<double, 3>& high, int* entryAxis = nullptr)
-{
-    double entry = 0.0;
-    double exit = std::numeric_limits<double>::max();
-    int axisOfEntry = -1;
-    for (size_t axis = 0; axis < 3; ++axis) {
-        if (std::abs(direction[axis]) < 1.0e-12) {
-            if (origin[axis] < low[axis] || origin[axis] > high[axis]) {
-                return std::nullopt;
-            }
-            continue;
-        }
-        double first = (low[axis] - origin[axis]) / direction[axis];
-        double second = (high[axis] - origin[axis]) / direction[axis];
-        if (std::min(first, second) > entry) {
-            entry = std::min(first, second);
-            axisOfEntry = int(axis);
-        }
-        exit = std::min(exit, std::max(first, second));
-    }
-    if (entry > exit) {
-        return std::nullopt;
-    }
-    if (entryAxis) {
-        *entryAxis = axisOfEntry;
-    }
-    return entry;
-}
 
 }
 
@@ -199,9 +167,8 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
         }
         double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5 + ActorPickMargin;
         double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
-        int axis = -1;
-        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, &axis);
-        if (entry && axis >= 0 && *entry + ActorPickMargin < reach && *entry < distance) {
+        std::optional<double> entry = actorRayDistance(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, reach, ActorPickMargin);
+        if (entry && *entry < distance) {
             distance = *entry;
             target = &actor;
         }
