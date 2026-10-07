@@ -398,6 +398,10 @@ if(KESTREL_BUILD_TESTS)
         target_include_directories(KestrelD3D12ShadersTest PRIVATE include)
         target_link_libraries(KestrelD3D12ShadersTest PRIVATE d3dcompiler)
         add_test(NAME d3d12-shaders COMMAND KestrelD3D12ShadersTest)
+        add_executable(KestrelTerrainTintTest tests/TerrainTint.cpp)
+        target_include_directories(KestrelTerrainTintTest PRIVATE include)
+        target_link_libraries(KestrelTerrainTintTest PRIVATE d3d11 d3dcompiler)
+        add_test(NAME terrain-tint COMMAND KestrelTerrainTintTest)
     endif()
     add_executable(KestrelParticleEffectsTest
         tests/ParticleEffects.cpp

@@ -148,7 +148,8 @@ vec4 applyTint(vec4 texel, uint tint)
     }
     vec3 color = vec3(float((tint >> 16) & 0xffu), float((tint >> 8) & 0xffu), float(tint & 0xffu)) / 255.0;
     if ((tint & 0x40000000u) != 0u) {
-        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+        // Overlay alpha selects the tinted region, not surface coverage.
+        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
     }
     return vec4(texel.rgb * color, texel.a);
 }
