@@ -492,6 +492,9 @@ std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description)
         scripts->preAnimation = scriptList(body->get("pre_animation"));
         scripts->animate = namedScripts(body->get("animate"));
         scripts->scale = optionalScript(body->get("scale"));
+        for (size_t axis = 0; axis < 3; ++axis) {
+            scripts->axisScale[axis] = optionalScript(body->get(axis == 0 ? "scaleX" : axis == 1 ? "scaleY" : "scaleZ"));
+        }
     }
     if (!body || !body->get("animate")) {
         for (const std::string& controller : legacyControllers) {
@@ -1080,6 +1083,17 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
                 }
             }
             done[index] = 1;
+        }
+    }
+    if (scripts) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (scripts->axisScale[axis].empty()) continue;
+            scope.temps.clear();
+            double value = scripts->axisScale[axis].run(scope);
+            if (!std::isfinite(value) || value < 0.0) continue;
+            for (auto& matrix : boneMatrices) {
+                for (size_t column = 0; column < 4; ++column) matrix[axis * 4 + column] *= float(value);
+            }
         }
     }
     if (input.deathTicks > 0.0f && input.identifier != "minecraft:ender_dragon") {
