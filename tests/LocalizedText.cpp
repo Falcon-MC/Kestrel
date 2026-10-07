@@ -41,4 +41,8 @@ int main()
         require(kestrel::rawText(input) == "Mode: " + literal, "Rawtext arguments must preserve literal player names");
     }
     require(kestrel::rawText(R"({"rawtext":[{"text":"%audit.creative"}]})") == "%audit.creative", "Literal rawtext must not be localized");
+    require(localization.translateMessage("%audit.mode", { "%2", "literal" }) == "Mode: %2", "Embedded keys must not reinterpret placeholders inside arguments");
+    require(localization.translateMessage("%audit.mode / %audit.mode", { "100% %2" }) == "Mode: 100% %2 / Mode: 100% %2", "Every embedded key must preserve its argument independently");
+    require(localization.translateMessage("%audit.mode | %s", { "%2", "literal" }) == "Mode: %2 | %2", "Literal format slots must still work beside embedded keys");
+
 }
