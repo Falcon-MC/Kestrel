@@ -1260,6 +1260,7 @@ void Session::handleWorldPacket(std::string& payload)
         for (const auto& attribute : added->mAttributes) {
             if (attribute.mName == "minecraft:health" && std::isfinite(attribute.mValue)) {
                 actor.health = attribute.mValue;
+                actor.animationQueries["has_health"] = 1.0;
                 if (std::isfinite(attribute.mMaximum) && attribute.mMaximum > 0.0f) actor.maxHealth = attribute.mMaximum;
             }
         }

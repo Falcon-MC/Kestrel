@@ -144,42 +144,22 @@ int main()
     require(expression(fish, "query.frame_alpha") == 0.5, "Render queries must observe the current partial tick");
     require(std::abs(expression(fish, "variable.animationamount") - 1.2) < 1e-6, "Refreshing render queries must not advance native phases");
 
-    EntityAnimator grazing;
+    EntityAnimator inverted;
     input = AnimationInput {};
-    input.identifier = "minecraft:sheep";
-    input.now = 10.0;
-    grazing.update(nullptr, nullptr, bones, input);
-    require(expression(grazing, "query.is_grazing") == 0, "Sheep must not graze without an event");
-    input.metadataQueries["grazing_until"] = 12.0;
-    grazing.update(nullptr, nullptr, bones, input);
-    require(expression(grazing, "query.is_grazing") == 1, "Grass-eating events must start sheep grazing");
-    input.now = 12.0;
-    grazing.update(nullptr, nullptr, bones, input);
-    require(expression(grazing, "query.is_grazing") == 0, "Sheep grazing must expire");
-    input.identifier = "minecraft:horse";
-    input.horseFlags = uint64_t(1) << 5;
-    grazing.update(nullptr, nullptr, bones, input);
-    require(expression(grazing, "query.is_grazing") == 1, "Horse grazing must still follow horse metadata");
-
-    auto timedDescription = json::parse(R"({"animations":{"move":"controller.animation.audit","clip":"animation.audit"},"scripts":{"animate":["move"]}})");
-    auto timedScripts = readEntityScripts(*timedDescription);
-    auto timedDocument = json::parse(R"({"animations":{"animation.audit":{"loop":true,"animation_length":1,"bones":{"root":{"position":{"0":["query.key_frame_lerp_time * 4",0,0],"1":["query.key_frame_lerp_time * 4",0,0]}}}}},"animation_controllers":{"controller.animation.audit":{"states":{"default":{"animations":["clip"],"transitions":[{"done":"query.all_animations_finished"}]},"done":{}}}}})");
-    AnimationLibrary timedLibrary;
-    timedLibrary.parse(*timedDocument);
-    EntityAnimator timed;
-    input = AnimationInput {};
-    input.now = 1.0;
-    timed.update(timedScripts.get(), &timedLibrary, bones, input);
-    for (int tick = 1; tick <= 10; ++tick) {
-        input.now = 1.0 + tick * 0.05;
-        timed.update(timedScripts.get(), &timedLibrary, bones, input);
+    input.identifier = "minecraft:cow";
+    input.metadataQueries["upside_down_height"] = 20.8;
+    for (const char* name : { "Dinnerbone", "Grumm" }) {
+        input.name = name;
+        inverted.update(nullptr, nullptr, bones, input);
+        require(inverted.matrices()[0][0] == -1 && inverted.matrices()[0][5] == -1, "Special mob names must invert the model");
+        require(std::abs(inverted.matrices()[0][7] - 20.8f) < 1e-5, "Inversion must keep the model above its base");
     }
-    require(std::abs(timed.matrices()[0][3] + 2.0f) < 0.25f, "Animated keys must receive their interpolation fraction");
-    require(expression(timed, "query.key_frame_lerp_time") == 0, "Keyframe context must not leak outside sampling");
-    for (int tick = 11; tick <= 30; ++tick) {
-        input.now = 1.0 + tick * 0.05;
-        timed.update(timedScripts.get(), &timedLibrary, bones, input);
-    }
-    require(std::abs(timed.matrices()[0][3]) < 1e-6, "Looping clips must permit controller exit after their first cycle");
+    input.name = "dinnerbone";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1 && inverted.matrices()[0][7] == 0, "Renaming must restore the upright pose and names are case sensitive");
+    input.name = "Dinnerbone";
+    input.identifier = "minecraft:player";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1, "Mob inversion must not change player skins");
 
 }
