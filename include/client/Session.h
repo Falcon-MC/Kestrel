@@ -199,6 +199,7 @@ struct ActorView {
     std::string scoreTag;
     float nameplateDistance = 64.0f;
     std::array<uint64_t, 3> flags{};
+    std::array<int32_t, 3> crystalBeamTarget{};
     int variant = 0;
     bool fallingBlockLanded = false;
     int markVariant = 0;

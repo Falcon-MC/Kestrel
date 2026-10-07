@@ -1,5 +1,6 @@
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
+#include "world/CrystalBeam.h"
 
 #include "platform/Window.h"
 #include "render/Renderer.h"
@@ -788,6 +789,31 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             pose.tick = actorTickStart;
         }
         animator.setRenderContext(input, now, actorPartialTick);
+        if (!invisible && !cullFaces && actor.identifier == "minecraft:ender_crystal") {
+            if (auto layer = blockAssets->crystalBeamLayer()) {
+                double age = animator.evaluate(lifeTimeScript());
+                float scroll = float(std::fmod(std::max(age, 0.0) * TicksPerSecond * 0.01, 1.0));
+                world::crystalBeamQuads({ actor.x, actor.y, actor.z }, actor.crystalBeamTarget,
+                    [&](const world::CrystalBeamQuad& quad, float offset) {
+                        std::array<QuadCorner, 4> corners;
+                        uint32_t brightness = 0;
+                        for (size_t corner = 0; corner < 4; ++corner) {
+                            for (size_t axis = 0; axis < 3; ++axis) {
+                                double position = (axis == 0 ? dx : axis == 1 ? dy : dz) + quad.positions[corner][axis];
+                                if (std::abs(position) > 32700.0) return;
+                                corners[corner].position[axis] = float(position * 256.0);
+                            }
+                            corners[corner].uv = quad.uvs[corner];
+                            brightness |= uint32_t(std::lround(quad.brightness[corner] * 255.0f)) << (corner * 8);
+                        }
+                        auto gpu = packCorners(corners, *layer, EntityQuadFlag | FoggedQuadFlag | (1u << 13));
+                        gpu.words[12] = brightness;
+                        gpu.words[14] = uint32_t(toHalf(std::fmod(offset + scroll, 1.0f))) << 16;
+                        gpu.words[15] = uint32_t(toHalf(1.0f)) | (uint32_t(toHalf(1.0f)) << 16);
+                        out.push_back(gpu);
+                    });
+            }
+        }
         std::vector<world::BoneMatrix>& matrices = pose.interpolated;
         bool interpolated = false;
         auto interpolatePose = [&] {
@@ -977,6 +1003,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (!lit) shadeWord |= FoggedQuadFlag;
+            if (renderingController && renderingController->material == world::EntityMaterial::AlphaTest) shadeWord |= 1u << 14;
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();

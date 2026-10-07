@@ -1037,6 +1037,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                     controller.blend = blendOf(named->second);
                     controller.oneSided = named->second.find("one_sided") != std::string::npos;
                     if (named->second == "ender_dragon") controller.material = EntityMaterial::Dragon;
+                    else if (named->second == "ender_crystal") controller.material = EntityMaterial::AlphaTest;
                     else if (startsWith(named->second, "entity_dissolve_layer0")) controller.material = EntityMaterial::DissolveDepth;
                     else if (startsWith(named->second, "entity_dissolve_layer1")) controller.material = EntityMaterial::DissolveColor;
                     else if (named->second.find("change_color") != std::string::npos) controller.material = EntityMaterial::ColorMask;
@@ -1125,6 +1126,16 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             }
             armorLayers.emplace(path, *layer);
         }
+    }
+    std::string beamImage;
+    uint32_t beamWidth = 0, beamHeight = 0;
+    std::vector<uint8_t> beamPixels;
+    if (pack.readTexture("textures/entity/endercrystal/endercrystal_beam", beamImage)
+        && ui::decodeImage(beamImage, beamWidth, beamHeight, beamPixels) && beamWidth && beamHeight) {
+        // A repeating beam uses one layer so UV wrapping never crosses atlas tiles.
+        auto resized = resizeNearest(beamPixels, beamWidth, beamHeight, EntityTextureSize);
+        crystalBeamTexture = entityTextureLayers();
+        entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
     }
     geometries = std::make_shared<const GeometryLibrary>(std::move(library));
 }

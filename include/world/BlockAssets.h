@@ -348,7 +348,7 @@ enum class EntityBlend : uint8_t {
 };
 
 enum class EntityMaterial : uint8_t {
-    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture,
+    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest,
 };
 
 struct EntityRenderController {
@@ -532,6 +532,8 @@ public:
         return entityPixels;
     }
 
+    std::optional<uint32_t> crystalBeamLayer() const { return crystalBeamTexture; }
+
     uint32_t entityTextureLayers() const
     {
         return static_cast<uint32_t>(entityPixels.size() / (size_t(EntityTextureSize) * EntityTextureSize * 4));
@@ -669,6 +671,7 @@ private:
     std::unordered_map<std::string, uint32_t> armorLayers;
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
+    std::optional<uint32_t> crystalBeamTexture;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;

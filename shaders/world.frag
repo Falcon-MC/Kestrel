@@ -165,7 +165,7 @@ vec4 actorSurface(vec2 uv)
     vec4 texel = actorTexture(inActorTextures.x, inActorGrid0, uv);
     uint mode = inActorTextures.w;
     if (mode == 2u && texel.a * inActorDissolve < 0.5) discard;
-    if (mode == 3u && texel.a < 0.5) discard;
+    if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard;
     if (mode == 1u && all(equal(texel, vec4(0)))) discard;
     if (mode == 0u && texel.a < 0.1 && (inEntity & 128u) == 0u) discard;
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
@@ -213,6 +213,8 @@ void main()
         return;
     }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    if ((inEntity & 512u) != 0u && texel.a < 0.5) discard;
+    if ((inEntity & 256u) != 0u) texel.rgb *= inLight.z;
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
     else if ((inEntity & 32u) != 0u) texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
     if ((inEntity & 4u) != 0u) {

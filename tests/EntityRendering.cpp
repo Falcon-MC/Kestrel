@@ -62,6 +62,13 @@ int main()
     require(animator.evaluateWithThis(inherited, 1.0) == 0.5, "Render colors must supply their inherited channel as this");
     require(animator.evaluateWithThis(inherited, 0.25) == 0.125, "The inherited color must be evaluated independently for every channel");
     AnimationInput input;
+    EntityAnimator crystalBase;
+    input.flags[0] = uint64_t(1) << 38;
+    crystalBase.update(nullptr, nullptr, bones, input);
+    require(expression(crystalBase, "query.show_bottom") == 1, "Crystal base must follow server flag 38");
+    input.flags[0] = 0;
+    crystalBase.update(nullptr, nullptr, bones, input);
+    require(expression(crystalBase, "query.show_bottom") == 0, "Crystal base must hide when the server clears the flag");
     input.mainHandItem = "minecraft:iron_sword";
     input.offHandItem = "minecraft:shield";
     animator.update(nullptr, nullptr, bones, input);
