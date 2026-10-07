@@ -1128,7 +1128,7 @@ private:
     void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
-    void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false);
+    void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false, float rotation = 0.0f);
     void screenContent(ui::Context& ui, float width, float height, Screen which);
     void dialogContent(ui::Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled);
     void inventoryLayer(ui::Context& ui, float width, float height, std::chrono::steady_clock::time_point now);
@@ -1362,6 +1362,9 @@ private:
     std::string emoteEquipping;
     std::string emoteRoot;
     const ModelPose* modelPose = nullptr;
+    float titleModelRotation = 0.0f;
+    float titleModelDragX = 0.0f;
+    bool titleModelDragging = false;
     std::string lastEmoteOffered;
     bool emoteEquipOnly = false;
     int emoteHovered = -1;

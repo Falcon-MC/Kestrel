@@ -878,9 +878,7 @@ void Menu::logo(Context& ui, float centerX, float y, float maxWidth)
     ui.sprite({ centerX - w * 0.5f, y, w, w * word.height / word.width }, "kestrel/title");
 }
 
-// Kestrel doesn't have the player's skin, so the default Steve stands in, seen from the front.
-// Each part is its front face from the 64x64 skin layout, overlay layer on top.
-void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool inventoryPreview)
+void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool inventoryPreview, float rotation)
 {
     struct Part {
         std::array<float, 3> min;
@@ -953,7 +951,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             p = yaw(pitch(p, headPitch), headYaw - bodyYaw);
             p[1] += NeckY;
         }
-        return yaw(p, bodyYaw);
+        return yaw(p, bodyYaw + rotation);
     };
 
     struct Face {
@@ -1157,7 +1155,23 @@ void Menu::title(Context& ui, float width, float height)
     }
     float nameWidth = ui.measure(displayName, TextStyle::Pixel);
     backedLabel(ui, displayName, std::floor(dressingX + 41.0f - nameWidth * 0.5f), std::floor(dressingY - 97.67f));
-    playerModel(ui, dressingX + 41.0f, dressingY - 81.67f, 2.23f);
+    constexpr float ModelPixel = 2.23f;
+    float modelX = dressingX + 41.0f;
+    float modelY = dressingY - 81.67f;
+    auto model = ui.interact("title:player_model", { modelX - 9.0f * ModelPixel, modelY, 18.0f * ModelPixel, 33.0f * ModelPixel });
+    const InputState& input = ui.input();
+    if (!input.mouseDown || ui.isBlocked()) {
+        titleModelDragging = false;
+    } else if (input.mousePressed && model.pressed) {
+        titleModelDragging = true;
+        titleModelDragX = ui.mouseX();
+    }
+    if (titleModelDragging) {
+        constexpr float Degrees = 3.14159265f / 180.0f;
+        titleModelRotation = std::remainder(titleModelRotation + (ui.mouseX() - titleModelDragX) * Degrees, 2.0f * 3.14159265f);
+        titleModelDragX = ui.mouseX();
+    }
+    playerModel(ui, modelX, modelY, ModelPixel, false, titleModelRotation);
 
     backedLabel(ui, "Kestrel, not affiliated with Mojang", CornerMargin, labelY);
     constexpr std::string_view Version = "v1.26.51";
@@ -1906,6 +1920,7 @@ std::string* Menu::focusedText()
 
 void Menu::navigate(Screen target)
 {
+    titleModelDragging = false;
     if (target != screen) {
         leavingScreen = screen;
         screenChanged = std::chrono::steady_clock::now();
