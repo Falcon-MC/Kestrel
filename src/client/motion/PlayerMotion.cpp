@@ -234,7 +234,7 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
     swiftSneakLevel = std::max(input.swiftSneak, 0);
     updatePose(input, tick);
 
-    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !forcedSneak && !isCrawling && !isGliding && !input.usingItem && (gameType == GameCreative || hunger > 6.0f);
+    bool wantSprint = (input.sprint || isSprinting) && input.forward > 0.0f && !input.sneak && !forcedSneak && !isCrawling && !isGliding && !input.usingItem && (gameType == GameCreative || gameType == GameSpectator || hunger > 6.0f);
     bool startSprint = wantSprint && !isSprinting;
     bool stopSprint = !wantSprint && isSprinting;
     if (!startSprint && !stopSprint && !serverSprintApplied && serverSprint != isSprinting) {

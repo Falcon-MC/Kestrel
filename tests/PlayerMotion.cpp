@@ -93,15 +93,15 @@ void sprintHunger()
     kestrel::MotionInput input;
     input.forward = 1.0f;
     input.sprint = true;
-    for (int32_t mode : { 0, 1, 2 }) {
+    for (int32_t mode : { 0, 1, 2, 6 }) {
         for (float hunger : { 0.0f, 6.0f, 7.0f }) {
             kestrel::PlayerMotion motion;
             motion.reset({ 0.0f, 100.0f, 0.0f });
             motion.setGameType(mode);
             motion.setHunger(hunger);
-            bool expected = mode == 1 || hunger > 6.0f;
+            bool expected = mode == 1 || mode == 6 || hunger > 6.0f;
             require(motion.step(input, EmptyWorld).sprinting == expected,
-                "Only creative bypasses the sprint hunger threshold");
+                "Creative and spectator bypass the sprint hunger threshold");
         }
     }
     auto motion = flying();
