@@ -24,8 +24,11 @@ std::string chatLine(const ChatMessage& message, const std::string& body)
         return message.source.empty() ? body : ui::trf("chat.type.text", "<%s> %s", { message.source, body });
     case ChatMessage::Kind::Whisper:
         return message.source.empty() ? body : ui::trf("commands.message.display.incoming", "%1$s whispers to you: %2$s", { message.source, body });
-    case ChatMessage::Kind::Announcement:
-        return message.source.empty() ? body : ui::trf("chat.type.announcement", "[%s] %s", { message.source, body });
+    case ChatMessage::Kind::Announcement: {
+        if (message.source.empty()) return body;
+        std::string prefix = ui::trf("chat.type.announcement", "[%s] %s", { message.source, "" });
+        return body.starts_with(prefix) ? body : prefix + body;
+    }
     case ChatMessage::Kind::Translation:
         return ui::Localization::shared().translateMessage(message.message, message.parameters);
     case ChatMessage::Kind::Json:
