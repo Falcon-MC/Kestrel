@@ -1107,6 +1107,13 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
             }
         }
     }
+    if (input.identifier != "minecraft:player" && (input.name == "Dinnerbone" || input.name == "Grumm")) {
+        auto height = input.metadataQueries.find("upside_down_height");
+        if (height != input.metadataQueries.end() && std::isfinite(height->second) && height->second > 0.0 && std::isfinite(modelScale) && modelScale > 0.0f) {
+            Row upsideDown { -1, 0, 0, 0, 0, -1, 0, float(height->second / modelScale), 0, 0, 1, 0 };
+            for (auto& matrix : boneMatrices) matrix = multiply(upsideDown, matrix);
+        }
+    }
     if (input.deathTicks > 0.0f && input.identifier != "minecraft:ender_dragon") {
         float angle = std::sqrt(std::clamp(input.deathTicks / 20.0f, 0.0f, 1.0f)) * float(Pi * 0.5);
         Row tilt { std::cos(angle), -std::sin(angle), 0, 0, std::sin(angle), std::cos(angle), 0, 0, 0, 0, 1, 0 };
