@@ -336,6 +336,7 @@ std::string Client::agentSettings() const
         .field("maxFps", menu.maxFps())
         .field("fov", menu.fov())
         .field("interfaceScale", menu.interfaceScale())
+        .field("guiScaleModifier", menu.option("gui_scale", 0))
         .field("language", menu.language())
         .field("paperDollHidden", menu.paperDollHidden())
         .field("safeArea", menu.safeArea())

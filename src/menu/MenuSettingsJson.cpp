@@ -1,4 +1,5 @@
 #include "menu/Menu.h"
+#include "menu/GuiScale.h"
 #include "menu/SettingsSlider.h"
 #include "platform/Shell.h"
 #include "ui/Context.h"
@@ -156,6 +157,7 @@ const Option Options[] = {
     slider("render_distance", "options.renderDistance", MinRenderDistance, MaxRenderDistance, 8),
     slider("max_framerate", "options.framerateLimit", 0, MaxMaxFps, 0),
     slider("field_of_view", "options.fov", MinFov, MaxFov, 60),
+    slider("gui_scale", "options.guiScale.optionName.name", 0, 0, 0),
     slider("gamma", "options.gamma", MinBrightness, MaxBrightness, DefaultBrightness),
     slider("interface_opacity", "options.hudOpacity", 0, 100, 100),
     slider("damage_bob", "options.damageBobbing", 0, 100, 100),
@@ -380,7 +382,12 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
     data.hideUnboundVisibility = true;
     UiRow& globals = data.globals;
     globals["#radio:navigation_tab"] = UiValue::of(static_cast<double>(vanillaSettingsSection));
-    for (const Option& option : Options) {
+    const auto scaleRange = guiScaleRange(width * ui.pixelScale(), height * ui.pixelScale());
+    for (Option option : Options) {
+        if (std::string_view(option.name) == "gui_scale") {
+            option.min = scaleRange.minimum;
+            option.max = scaleRange.maximum;
+        }
         std::string name = option.name;
         int value = std::clamp(optionValue(option.name, option.fallback), option.min, option.max);
         globals["#" + name + "_enabled"] = UiValue::of(true);
@@ -392,7 +399,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             globals["#" + name] = UiValue::of(settingsSliderBinding(name, value, option.min, option.max));
             globals["#" + name + "_steps"] = UiValue::of(static_cast<double>(option.max - option.min + 1));
             std::string shown;
-            if (name == "field_of_view" || name == "render_distance") {
+            if (name == "gui_scale" || name == "field_of_view" || name == "render_distance") {
                 shown = std::to_string(value);
             } else if (name == "max_framerate") {
                 shown = value == 0 ? tr("options.framerateLimit.max", "Max") : std::to_string(value);
@@ -428,7 +435,7 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
     globals["#graphics_mode_radio_deferred_enabled"] = UiValue::of(false);
     globals["#graphics_mode_radio_ray_traced_enabled"] = UiValue::of(false);
     globals["#advanced_graphics_options_grid_visible"] = UiValue::of(advancedGraphicsShown);
-    globals["#gui_scale_visible"] = UiValue::of(false);
+    globals["#gui_scale_visible"] = UiValue::of(true);
     globals["#full_screen"] = UiValue::of(chrome.fullscreen);
     std::string title = sectionTitle(vanillaSettingsSection);
     globals["#section_title"] = UiValue::of(vanillaSettingsSection == ModsSection ? std::string("Mods") : tr(title, title));
@@ -548,7 +555,11 @@ bool Menu::vanillaSettings(Context& ui, float width, float height)
             continue;
         }
         if (event.kind == UiEvent::Kind::Slider) {
-            for (const Option& option : Options) {
+            for (Option option : Options) {
+                if (std::string_view(option.name) == "gui_scale") {
+                    option.min = scaleRange.minimum;
+                    option.max = scaleRange.maximum;
+                }
                 if (option.kind == OptionKind::Slider && event.name == option.name) {
                     int value = settingsSliderValue(option.name, event.value, option.min, option.max);
                     setOptionValue(option.name, value);

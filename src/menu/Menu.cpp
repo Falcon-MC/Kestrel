@@ -1,4 +1,5 @@
 #include "menu/Menu.h"
+#include "menu/TitleLayout.h"
 
 #include "client/DebugLog.h"
 
@@ -1072,7 +1073,8 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
 
 void Menu::title(Context& ui, float width, float height)
 {
-    logo(ui, width * 0.5f, 80.0f, width - 32.0f);
+    const auto layout = titleLayout(width, height);
+    logo(ui, width * 0.5f, layout.logoTop, layout.logoWidth);
     const auto& splashes = Localization::shared().splashes();
     if (splashText.empty() && !splashes.empty()) {
         std::mt19937 random(std::random_device {}());
@@ -1100,13 +1102,13 @@ void Menu::title(Context& ui, float width, float height)
         float magnify = pulse * std::min(1.0f, 130.0f / std::max(widest, 1.0f));
         const Sprite& serverArt = ui.skin().sprite("dynamic/title");
         bool customLogo = serverArt.valid && showsServerArt(session.status);
-        float logoWidth = std::min(width - 32.0f, customLogo ? 263.0f : 378.5f);
+        float logoWidth = std::min(layout.logoWidth, customLogo ? 263.0f : 378.5f);
         const Sprite& art = customLogo ? serverArt : ui.skin().sprite("kestrel/title");
         float logoHeight = art.valid ? logoWidth * art.height / art.width : 40.0f;
         float textHeight = (1.0f + static_cast<float>(std::count(text.begin(), text.end(), '\n'))) * 9.0f;
         float halfWidth = ((widest + 2.0f) * 0.93969262f + (textHeight + 2.0f) * 0.34202014f) * magnify * 0.5f;
         float centerX = std::min(width * 0.5f + logoWidth * 0.46f, width - 8.0f - halfWidth);
-        ui.rotatedPixelText(text, centerX, 80.0f + logoHeight * 0.65f, magnify, -0.34906585f, { 255, 255, 0, 255 });
+        ui.rotatedPixelText(text, centerX, layout.logoTop + logoHeight * 0.65f, magnify, -0.34906585f, { 255, 255, 0, 255 });
     }
 
     float x = std::floor((width - TitleButtonWidth) * 0.5f);
@@ -1147,8 +1149,8 @@ void Menu::title(Context& ui, float width, float height)
         }
     }
 
-    float dressingX = width - 158.0f;
-    float dressingY = height - 96.33f;
+    float dressingX = layout.dressingCenter - 41.0f;
+    float dressingY = layout.dressingTop;
     if (ui.classicButton("title:dressing", tr("profileScreen.header", "Dressing Room"), { dressingX, dressingY, 82.0f, CornerButtonHeight })) {
         returnScreen = Screen::Title;
         navigate(Screen::DressingRoom);

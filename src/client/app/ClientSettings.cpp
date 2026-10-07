@@ -130,7 +130,9 @@ void Client::saveSettings()
         }
     };
     mark(menu.fov() != savedFov, mod::SettingsChange::Fov);
-    mark(menu.interfaceScale() != savedScale, mod::SettingsChange::GuiScale);
+    auto savedModifier = savedExtraOptions.find("gui_scale");
+    mark(menu.interfaceScale() != savedScale || menu.option("gui_scale", 0)
+            != (savedModifier == savedExtraOptions.end() ? 0 : savedModifier->second), mod::SettingsChange::GuiScale);
     mark(menu.language() != savedLanguage, mod::SettingsChange::Language);
     mark(menu.renderDistance() != savedRenderDistance, mod::SettingsChange::RenderDistance);
     mark(menu.maxFps() != savedMaxFps, mod::SettingsChange::MaxFps);
