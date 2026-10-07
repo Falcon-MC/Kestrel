@@ -586,11 +586,20 @@ std::unordered_map<std::string, std::array<float, 3>> EntityAnimator::rotationsA
 
 std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, double time, const std::array<float, 3>& current)
 {
+    struct RestoreLerp {
+        double& value;
+        double previous;
+        ~RestoreLerp() { value = previous; }
+    };
+    double& lerp = variables["key_frame_lerp_time"];
+    RestoreLerp restore { lerp, lerp };
+    lerp = 0.0;
     const std::vector<AnimationKey>& keys = channel.keys;
     if (keys.size() == 1 || time <= keys.front().time) {
         return evaluateKey(keys.size() == 1 ? keys.front().post : keys.front().pre, current);
     }
     if (time >= keys.back().time) {
+        lerp = 1.0;
         return evaluateKey(keys.back().post, current);
     }
     size_t index = 0;
@@ -604,6 +613,7 @@ std::array<float, 3> EntityAnimator::sample(const AnimationChannel& channel, dou
     }
     float span = to.time - from.time;
     float t = span > 0.0f ? static_cast<float>((time - from.time) / span) : 0.0f;
+    lerp = t;
     std::array<float, 3> a = evaluateKey(from.post, current);
     std::array<float, 3> b = evaluateKey(to.pre, current);
     std::array<float, 3> out {};
@@ -659,6 +669,7 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
         } else {
             state.time += deltaTime;
         }
+        if (clip.length > 0.0f && state.time >= clip.length) state.finished = true;
         bool delayedLoop = clip.loop == LoopMode::Loop && !clip.loopDelay.empty() && clip.length > 0.0f;
         if (delayedLoop && state.loopWait <= 0.0 && state.time >= clip.length) {
             double delay = evaluate(clip.loopDelay, 0.0);
@@ -685,7 +696,7 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
         return false;
     }
     double sampleTime = state.time;
-    bool finished = false;
+    bool finished = clip.loop == LoopMode::Loop && state.finished;
     if (clip.length > 0.0f) {
         if (clip.loop == LoopMode::Loop) {
             sampleTime = state.loopWait > 0.0 ? static_cast<double>(clip.length) : std::fmod(state.time, static_cast<double>(clip.length));
@@ -1120,6 +1131,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return index < arguments.size() ? arguments[index] : 0.0;
     };
     double speed = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
+    if (name == "key_frame_lerp_time") return variables["key_frame_lerp_time"];
     if (name == "anim_time") {
         return animTime;
     }
@@ -1272,6 +1284,10 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         {"timer_flag_2", 116},
         {"timer_flag_3", 117},
     };
+    if (name == "is_grazing" && current.identifier == "minecraft:sheep") {
+        auto until = current.metadataQueries.find("grazing_until");
+        return until != current.metadataQueries.end() && current.now < until->second ? 1.0 : 0.0;
+    }
     if (name == "is_grazing" && (current.identifier == "minecraft:horse" || current.identifier == "minecraft:donkey" || current.identifier == "minecraft:mule"
         || current.identifier == "minecraft:zombie_horse" || current.identifier == "minecraft:skeleton_horse")) return (current.horseFlags >> 5) & 1;
     if (auto found = flagQueries.find(name); found != flagQueries.end()) {

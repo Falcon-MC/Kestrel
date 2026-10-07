@@ -1088,6 +1088,7 @@ void Session::handleWorldPacket(std::string& payload)
             if (event->mEventId == static_cast<uint8_t>(EntityEventType::DeathAnimation)
                 || event->mEventId == static_cast<uint8_t>(EntityEventType::EnderDragonDeath)) actor->second.diedAt = now;
             if (event->mEventId == static_cast<uint8_t>(EntityEventType::Respawn)) actor->second.diedAt = 0.0;
+            if (event->mEventId == static_cast<uint8_t>(EntityEventType::EatGrass)) actor->second.animationQueries["grazing_until"] = now + 2.0;
         }
     }
     if (auto attributes = std::dynamic_pointer_cast<UpdateAttributesPacket>(packet)) {
