@@ -336,7 +336,12 @@ std::string Localization::translateMessage(const std::string& message, const std
         }
         std::string key = message.substr(i + 1, end - i - 1);
         if (!key.empty() && has(key)) {
-            out += fill(text(key, key), translated);
+            std::string localized = fill(text(key, key), translated);
+            for (char c : localized) {
+                out += c;
+                // The outer format pass must not interpret inserted arguments again.
+                if (c == '%' && !parameters.empty()) out += '%';
+            }
             i = end;
         } else {
             out += message[i++];
