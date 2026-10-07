@@ -35,6 +35,11 @@ public:
 
     void play(const ResolvedSound& sound, const std::array<double, 3>& position, bool positional);
     bool playNamed(const std::string& name, const std::array<double, 3>& position, bool positional, float volume = 1.0f, float pitch = 1.0f);
+    uint64_t playTracked(const std::string& name, const std::array<double, 3>& position, bool positional, float volume, float pitch, bool loop);
+    bool playing(uint64_t handle) const;
+    bool stopVoice(uint64_t handle);
+    bool moveVoice(uint64_t handle, const std::array<double, 3>& position);
+    bool setVoiceVolume(uint64_t handle, float volume);
     void setLoop(const std::string& name, bool enabled);
     void playMusic(const ResolvedSound& sound);
     bool musicPlaying() const;
@@ -49,6 +54,7 @@ public:
 
 private:
     struct Impl;
+    uint64_t playVoice(const ResolvedSound& sound, const std::array<double, 3>& position, bool positional, float volume, bool loop, bool tracked);
 
     std::unique_ptr<Impl> impl;
     std::shared_ptr<SoundLibrary> sounds;

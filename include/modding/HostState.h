@@ -7,6 +7,7 @@
 #include "modding/PacketFilters.h"
 #include "modding/ShaderStore.h"
 #include "modding/TaskScheduler.h"
+#include "modding/ModUi.h"
 
 #include "modding/ModManager.h"
 
@@ -30,6 +31,8 @@ struct HostState {
         , bridge(std::move(bridge))
         , errors(errors)
         , events(errors)
+        , effects(this->bridge.effects)
+        , textures(this->bridge.textures)
         , packets(std::make_shared<PacketFilters>(std::move(threadErrors)))
         , shaders(renderer)
     {
@@ -60,6 +63,9 @@ struct HostState {
     std::vector<mod::ModInfo> loaded;
 
     EventDispatcher events;
+    LocalEffects effects;
+    TextureStore textures;
+    ModUi ui;
     CommandRegistry commands;
     EmoteRegistry emotes;
     KeyBindRegistry keyBinds;

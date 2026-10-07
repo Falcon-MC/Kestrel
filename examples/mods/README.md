@@ -42,6 +42,45 @@ Kestrel down, though the handler that threw stops for that call.
 
 ## Services
 
+`particles()` and `audio()` are optional extensions on API 3. Call
+`supported()` before using them on an older host; unsupported operations return
+false or handle 0. Existing mod interfaces and their ABI are unchanged.
+
+```cpp
+auto effect = particles().spawn({
+    .identifier = "minecraft:basic_flame_particle",
+    .position = player().eyePosition(),
+    .attachedEntity = player().runtimeId()
+});
+bool alive = particles().active(effect);
+particles().move(effect, player().eyePosition()); // detaches from the entity
+particles().remove(effect);                     // removes children too
+
+auto sound = audio().play({
+    .name = "random.click",
+    .position = player().eyePosition(), // omit for a flat interface sound
+    .volume = 0.5f,
+    .loop = true
+});
+audio().setVolume(sound, 0.25f);
+audio().setPosition(sound, player().eyePosition());
+audio().stop(sound);
+```
+
+Effects use definitions from the loaded resource packs. All calls run on the
+main thread; use `scheduler().post(...)` from a worker. Each mod controls only
+its own handles, with at most 128 active handles per mod and 1024 across mods.
+The engines can evict effects earlier when their own budgets are reached.
+Handles expire naturally and are invalidated on unload or world changes;
+volume/category settings still apply. `particles().clear()` and
+`audio().stopAll()` affect only the calling mod. Particle movement updates
+emitters; already emitted world-space particles retain their simulated position.
+
+The `effects_example` mod provides `.effects particle <id>`, `.effects follow <id>`,
+`.effects sound <name>` (looping), `.effects once <name>`,
+`.effects flat <name>`, `.effects move`, `.effects volume <0..4>`,
+`.effects status`, and `.effects stop` to exercise the extension.
+
 | Call | What it does |
 | --- | --- |
 | `events()` | subscribe to any event by type, post your own events to other mods |
@@ -133,3 +172,74 @@ now; elsewhere `event.chain.supported()` is false and passes are skipped.
 
 Use the context from the main thread only. The exceptions are packet filters, which run on the network
 thread, and `Scheduler::post`, which any thread may call.
+
+## Native mod screens
+
+`ui_example` opens with F8, including on the title screen. It demonstrates a UTF-8
+text field, a slider, buttons, and keyboard focus. Escape closes the top screen.
+
+`context().ui()` (or `ui()` in a `Mod`) provides `supported()`, `open(id)`,
+`close(id)` and `isOpen(id)`. Listen for `UiRenderEvent` to draw the active screen.
+Its `canvas` uses GUI coordinates and its `controls` provides:
+
+- `button(id, label, rect, enabled)` returns true on activation.
+- `slider(id, rect, value, minimum, maximum, step, enabled)` returns true on change.
+  Step zero allows continuous dragging; arrow keys change by one percent.
+- `textField(id, rect, value, placeholder, maxBytes, enabled)` edits a single-line
+  UTF-8 string, returning true on change. Left/right move the caret, Backspace
+  erases a codepoint, and Ctrl+A selects all. Clicking focuses at the end.
+- `focus(id)` and `focused(id)` manage focus explicitly. Tab and Shift+Tab cycle
+  through enabled controls in their declaration order.
+
+Declare controls each frame with stable, unique IDs. Only the topmost screen's
+owner receives its render event. Screens capture keyboard and pointer input,
+release the cursor, and close automatically when their owner unloads. Hidden or
+disabled controls lose focus. Screen references are valid only during the event;
+all calls must run on the main thread. Use Canvas directly for labels and art.
+
+This optional extension keeps API version 3 and existing interface layouts.
+Older hosts return false from `supported()` and screen operations. Each mod may
+open eight screens, with 32 total, 256 controls per screen and IDs up to 256 bytes.
+Text fields accept at most 65,536 bytes. Clipboard, multiline editing and IME
+composition are not provided by this extension.
+
+## Images and editable textures
+
+`context().textures()` (or `textures()` in a Mod) is an optional API 3 service;
+`supported()` returns false on older hosts. Existing mod interfaces are unchanged.
+
+- `load(path)` imports a PNG, JPEG or TGA file. Use `dataDirectory() / filename`
+  for a mod's own files. Relative paths otherwise use the client's working directory.
+- `decode(bytes)` imports encoded image bytes in memory.
+- `create(Image)` creates a texture from row-major RGBA8 pixels with straight alpha.
+- `info(handle)` reads dimensions and validity without copying pixels.
+- `read(handle)` returns a pixel copy; edit it and call `update(handle, image)`
+  to replace or resize the texture. `updateRegion(handle, x, y, image)` patches
+  a rectangle without changing the remaining pixels.
+- `draw(canvas, handle, rect, tint)` draws into a HUD or mod-screen render callback,
+  respecting the Canvas clip and GUI scale. Tint multiplies RGBA, including alpha.
+- `destroy(handle)` and `clear()` release textures. Unloading releases them automatically.
+
+All calls run on the main thread. Handles are owner scoped; zero, false or an empty
+image indicate failure. Invalid updates leave the old image intact. Images are limited
+to 1024 x 1024, encoded files to 16 MiB, 32 handles / 8 MiB RGBA per mod and 128 handles /
+16 MiB RGBA overall. Import is synchronous: load once rather than every frame.
+Textures share the existing nearest-filtered UI atlas across all render backends.
+Atlas pressure can reduce their resolution. Pixel changes become visible at the next
+atlas upload, normally the next frame. No block/entity texture overrides are provided.
+
+`textures_example` opens with F9 and demonstrates procedural pixels, region updates
+and file import; it also draws the images in the HUD. Place your own image at `mods/textures_example/image.png` next to
+settings.txt, open the screen and click **Import file**. **Paint centre** changes
+an 8 x 8 region of the procedural image without replacing its border.
+
+`api_audit` opens with F10, including on the title screen. Its four tabs exercise
+native controls and focus, imported/editable textures, particles, and audio.
+Checks append PASS/FAIL rows to `mods/api_audit/results.tsv` next to settings.txt.
+For the image import checks, place synthetic 32 x 32 fixtures named `image.png`,
+`image.jpg`, and `image.tga` in that directory. No game assets are bundled.
+Particle checks require a joined world and the vanilla particle pack; audio checks
+use `random.pop`. The live volume slider is on Controls. Sound state checks do not
+verify perceived volume or spatialization; listen while moving around the source.
+Use Escape to close a screen and Clear effects / stop all to clean up explicitly.
+Disabling the mod also releases its resources. This example uses API 3.

@@ -434,7 +434,22 @@ void ModManager::request(menu::ModAction action)
 
 bool ModManager::wantsCursor() const
 {
-    return !host->cursorOwners.empty();
+    return host->ui.open() || !host->cursorOwners.empty();
+}
+
+void ModManager::restoreInput(InputState& input)
+{
+    host->ui.restoreInput(input);
+}
+
+void ModManager::captureUiInput(InputState& input, float scale)
+{
+    host->ui.capture(input, scale);
+}
+
+bool ModManager::uiOpen() const
+{
+    return host->ui.open();
 }
 
 bool ModManager::hidesHud(mod::HudElement element) const
@@ -519,6 +534,10 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
     host->inGame = inGame;
     host->uiScale = uiScale > 0.0f ? uiScale : 1.0f;
     if (slots.empty()) {
+        return;
+    }
+    if (host->ui.open()) {
+        host->ui.capture(input, host->uiScale);
         return;
     }
     if (input.pressedKey != Key::None) {
@@ -608,6 +627,11 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
             input.wheel = 0.0f;
         }
     }
+    if (host->ui.open()) {
+        host->ui.capture(input, host->uiScale);
+        if (auto screen = host->ui.top()) screen->controls.begin({}, host->uiScale);
+    }
+
 }
 
 void ModManager::observe(const SessionSnapshot& snapshot)
@@ -616,6 +640,9 @@ void ModManager::observe(const SessionSnapshot& snapshot)
         seenActors.clear();
         inventorySeen = false;
         return;
+    }
+    if (snapshot.state != host->snapshot.state || snapshot.joinCount != host->snapshot.joinCount || snapshot.dimension != host->snapshot.dimension) {
+        host->effects.clear();
     }
     host->snapshot = snapshot;
     if (snapshot.state != lastState) {

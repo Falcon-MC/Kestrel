@@ -5,6 +5,9 @@
 #include "mod/Commands.h"
 #include "mod/Config.h"
 #include "mod/Emotes.h"
+#include "mod/Effects.h"
+#include "mod/Ui.h"
+#include "mod/Textures.h"
 #include "mod/Event.h"
 #include "mod/Hud.h"
 #include "mod/Input.h"
@@ -28,6 +31,10 @@ namespace kestrel::mod {
  */
 class ModContext {
 public:
+    Particles particles() { return Particles(events()); }
+    Audio audio() { return Audio(events()); }
+    Ui ui() { return Ui(events()); }
+    Textures textures() { return Textures(events()); }
     virtual ~ModContext() = default;
 
     virtual EventBus& events() = 0;

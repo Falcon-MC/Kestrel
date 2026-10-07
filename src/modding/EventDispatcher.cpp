@@ -52,6 +52,17 @@ void EventDispatcher::dispatch(mod::Event& event)
     }
 }
 
+void EventDispatcher::dispatchTo(size_t owner, mod::Event& event)
+{
+    auto found = listeners.find(event.type());
+    if (found == listeners.end()) return;
+    Listeners snapshot = found->second;
+    for (const auto& listener : snapshot) {
+        if (listener->owner != owner || !listener->handle->active() || (event.isCancelled() && !listener->options.receiveCancelled)) continue;
+        guarded(errors, owner, [&] { listener->handler(event); });
+    }
+}
+
 bool EventDispatcher::listening(std::string_view type) const
 {
     auto found = listeners.find(type);

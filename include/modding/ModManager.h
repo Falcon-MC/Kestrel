@@ -4,6 +4,8 @@
 #include "menu/Menu.h"
 #include "mod/Hud.h"
 #include "mod/Types.h"
+#include "modding/LocalEffects.h"
+#include "modding/TextureStore.h"
 #include "modding/EmoteRegistry.h"
 #include "render/Renderer.h"
 
@@ -80,6 +82,8 @@ struct VisualRequest {
  * What only the client knows how to do, handed to the mods' services.
  */
 struct ClientBridge {
+    LocalEffects::Backend effects;
+    TextureStore::Backend textures;
     std::function<void(std::string title, std::string subtitle)> showTitle;
     std::function<void(std::string text)> showActionbar;
     std::function<mod::Vec3()> eyePosition;
@@ -121,6 +125,10 @@ public:
      * Whether a mod has freed the mouse, so play should give the cursor back.
      */
     bool wantsCursor() const;
+    bool uiOpen() const;
+    void restoreInput(InputState& input);
+    void captureUiInput(InputState& input, float scale);
+    void drawUi(ui::Context& context, float width, float height);
     // Whether any mod hides this element of the game's HUD.
     bool hidesHud(mod::HudElement element) const;
 

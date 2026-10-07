@@ -2,6 +2,9 @@
 
 #include "mod/Context.h"
 #include "mod/Events.h"
+#include "mod/Effects.h"
+#include "mod/Ui.h"
+#include "mod/Textures.h"
 
 #include <cassert>
 #include <functional>
@@ -64,6 +67,10 @@ protected:
     Emotes& emotes() const { return context().emotes(); }
     Hud& hud() const { return context().hud(); }
     Visuals& visuals() const { return context().visuals(); }
+    Particles particles() const { return Particles(events()); }
+    Audio audio() const { return Audio(events()); }
+    Ui ui() const { return Ui(events()); }
+    Textures textures() const { return Textures(events()); }
 
     Subscription emote(EmoteSpec spec)
     {

@@ -296,7 +296,7 @@ void Skin::setDynamic(const std::string& name, Bitmap bitmap, NineSlice slice)
     entry.sprite.frames.clear();
     entry.placed = keepSlot;
     entry.pixelsDirty = true;
-    entry.downsample = 0;
+    if (!keepSlot) entry.downsample = 0;
     entry.lastUse = useClock;
     changed = true;
 }

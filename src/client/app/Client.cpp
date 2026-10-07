@@ -176,6 +176,7 @@ int Client::run()
         profiler.beginFrame();
         {
             Profiler::Section section(profiler, "window events");
+            mods->restoreInput(window->input());
             if (!window->pump()) {
                 break;
             }
@@ -227,6 +228,7 @@ int Client::run()
                 mods->request(std::move(action));
             }
             mods->update(deltaSeconds);
+            mods->captureUiInput(window->input(), guiScale());
             visuals = mods->visuals();
             if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
                 session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
@@ -411,17 +413,10 @@ int Client::run()
         skin.beginFrame();
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
-        context.recordWidgets(agentServer != nullptr);
+        context.recordWidgets(agentServer != nullptr && !mods->uiOpen());
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
-            if (padCursorShown && window->input().gamepad.connected && !menu.capturesMouse()) {
-                const InputState& pointer = window->input();
-                context.sprite({ pointer.mouseX / scale, pointer.mouseY / scale, 16.0f, 16.0f }, "ui/cursor");
-            }
-            if (agentServer) {
-                agentWidgets = context.widgets();
-            }
             if (menu.worldVisible() && !menu.hudHidden()) {
                 mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
@@ -429,6 +424,13 @@ int Client::run()
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
             }
+            context.recordWidgets(agentServer != nullptr);
+            mods->drawUi(context, window->width() / scale, window->height() / scale);
+            if (padCursorShown && (!menu.capturesMouse() || mods->uiOpen())) {
+                const InputState& pointer = window->input();
+                context.sprite({ pointer.mouseX / scale, pointer.mouseY / scale, 16.0f, 16.0f }, "ui/cursor");
+            }
+            if (agentServer) agentWidgets = context.widgets();
             context.endFrame();
         }
 

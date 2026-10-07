@@ -21,6 +21,7 @@ struct ImageRef {
 };
 
 bool decodeImage(const std::string& encoded, uint32_t& width, uint32_t& height, std::vector<uint8_t>& outRgba);
+bool decodeImageLimited(const std::string& encoded, uint32_t maxDimension, uint32_t& width, uint32_t& height, std::vector<uint8_t>& outRgba);
 bool decodeSquareImage(const std::string& encoded, uint32_t size, std::vector<uint8_t>& outRgba);
 
 /**
