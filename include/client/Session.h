@@ -3,6 +3,7 @@
 #include "Protocol/PacketCodecContext.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/ActorRiders.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
 #include "client/PacketHook.h"
@@ -864,6 +865,8 @@ private:
     bool localTerrainReady();
     void initializeLocalPlayer(BedrockConnection& target, uint64_t runtimeId);
     void moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition = false);
+    void refreshActorRiders(int64_t vehicle);
+    void updateActorLink(int64_t vehicle, int64_t rider, bool remove);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
     void tickProjectiles(double tickTime);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
@@ -993,6 +996,7 @@ private:
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
     std::map<int64_t, uint64_t> runtimeByUnique;
+    ActorRiders actorRiders;
     int64_t ridingUnique = 0;
     std::map<uint64_t, std::string> uuidByRuntime;
     std::map<std::string, std::pair<uint32_t, bool>> skinByUuid;
