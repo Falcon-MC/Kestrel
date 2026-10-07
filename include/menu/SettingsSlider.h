@@ -8,7 +8,7 @@ namespace kestrel::menu {
 
 inline bool steppedSettingsSlider(std::string_view name)
 {
-    return name == "render_distance" || name == "max_framerate";
+    return name == "gui_scale" || name == "render_distance" || name == "max_framerate";
 }
 
 inline double settingsSliderBinding(std::string_view name, int value, int minimum, int maximum)

@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "menu/GuiScale.h"
 #include "client/HandVisibility.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
@@ -998,12 +999,8 @@ void Client::syncSocial()
 // Keep enough logical space for the interface at every scale and window size.
 float Client::guiScale() const
 {
-    float byHeight = std::floor(static_cast<float>(window->height()) / 360.0f);
-    float byWidth = std::floor(static_cast<float>(window->width()) / 660.0f);
-    float automatic = std::max(1.0f, std::min(byHeight, byWidth));
-    float fit = std::min(static_cast<float>(window->width()) / 360.0f,
-        static_cast<float>(window->height()) / 240.0f);
-    return std::max(0.01f, std::min(automatic * visuals.interfaceScale.value_or(menu.interfaceScale()), fit));
+    return menu::effectiveGuiScale(static_cast<float>(window->width()), static_cast<float>(window->height()),
+        menu.option("gui_scale", 0), visuals.interfaceScale.value_or(menu.interfaceScale()));
 }
 
 /**
