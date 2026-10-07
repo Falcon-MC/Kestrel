@@ -312,9 +312,9 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelActorInterpolationTest tests/ActorInterpolation.cpp)
     target_include_directories(KestrelActorInterpolationTest PRIVATE include)
     add_test(NAME actor-interpolation COMMAND KestrelActorInterpolationTest)
-    add_executable(KestrelRayBoxTest tests/RayBox.cpp)
-    target_include_directories(KestrelRayBoxTest PRIVATE include)
-    add_test(NAME actor-ray-box COMMAND KestrelRayBoxTest)
+    add_executable(KestrelActorExtentTest tests/ActorExtent.cpp)
+    target_include_directories(KestrelActorExtentTest PRIVATE include)
+    add_test(NAME actor-extent COMMAND KestrelActorExtentTest)
     add_executable(KestrelPlayerMotionTest
         tests/PlayerMotion.cpp
         src/client/motion/PlayerMotion.cpp
