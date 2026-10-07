@@ -44,6 +44,7 @@ struct Particle {
 };
 
 struct Emitter {
+    uint64_t group = 0;
     const ParticleEffect* effect = nullptr;
     Vec3 position {};
     Vec3 origin {};
@@ -70,6 +71,7 @@ struct Emitter {
  * events deep it is.
  */
 struct EventSpawn {
+    uint64_t group = 0;
     ParticleSpawn request;
     int depth = 0;
 };
@@ -172,6 +174,7 @@ bool listsBlock(const std::vector<std::string>& blocks, const std::string& name)
 
 struct ParticleSystem::State {
     std::list<Emitter> emitters;
+    uint64_t nextGroup = 0;
     std::vector<EventSpawn> eventSpawns;
     std::mt19937 random { std::random_device {}() };
     size_t live = 0;
@@ -196,6 +199,7 @@ struct ParticleSystem::State {
                 return;
             }
             EventSpawn spawn;
+            spawn.group = emitter.group;
             spawn.depth = emitter.depth + 1;
             spawn.request.identifier = action.effect;
             spawn.request.position = position;
@@ -860,17 +864,18 @@ void ParticleSystem::spawn(const ParticleSpawn& request)
  * Starts an effect depth events away from the one the client asked for, and
  * fires its emitter creation events.
  */
-void ParticleSystem::start(const ParticleSpawn& request, int depth)
+bool ParticleSystem::start(const ParticleSpawn& request, int depth, uint64_t group)
 {
     const ParticleEffect* effect = library.find(request.identifier);
     if (!effect) {
-        return;
+        return false;
     }
     if (state->emitters.size() >= MaxEmitters) {
         state->live -= state->emitters.front().particles.size();
         state->emitters.pop_front();
     }
     Emitter& emitter = state->emitters.emplace_back();
+    emitter.group = group;
     emitter.effect = effect;
     emitter.position = request.position;
     emitter.origin = request.position;
@@ -885,6 +890,55 @@ void ParticleSystem::start(const ParticleSpawn& request, int depth)
     if (!effect->events.emitterCreation.empty()) {
         state->fireAll(emitter, effect->events.emitterCreation, emitter.position, Vec3 {}, emitter.variables);
     }
+    return true;
+}
+
+uint64_t ParticleSystem::spawnTracked(const ParticleSpawn& request)
+{
+    if (state->nextGroup == UINT64_MAX) return 0;
+    uint64_t group = ++state->nextGroup;
+    return start(request, 0, group) ? group : 0;
+}
+
+bool ParticleSystem::active(uint64_t handle) const
+{
+    if (!handle) return false;
+    return std::any_of(state->emitters.begin(), state->emitters.end(), [handle](const Emitter& emitter) { return emitter.group == handle; })
+        || std::any_of(state->eventSpawns.begin(), state->eventSpawns.end(), [handle](const EventSpawn& spawn) { return spawn.group == handle; });
+}
+
+bool ParticleSystem::move(uint64_t handle, const Vec3& position)
+{
+    if (!handle) return false;
+    auto root = std::find_if(state->emitters.begin(), state->emitters.end(), [handle](const Emitter& emitter) { return emitter.group == handle; });
+    if (root == state->emitters.end()) return false;
+    Vec3 delta = sub(position, root->position);
+    for (Emitter& emitter : state->emitters) {
+        if (emitter.group != handle) continue;
+        emitter.position = add(emitter.position, delta);
+        emitter.origin = add(emitter.origin, delta);
+        emitter.actor.reset();
+    }
+    for (EventSpawn& spawn : state->eventSpawns) {
+        if (spawn.group != handle) continue;
+        spawn.request.position = add(spawn.request.position, delta);
+        spawn.request.attachedActor.reset();
+    }
+    return true;
+}
+
+bool ParticleSystem::remove(uint64_t handle)
+{
+    if (!handle) return false;
+    bool removed = false;
+    std::erase_if(state->emitters, [&](const Emitter& emitter) {
+        if (emitter.group != handle) return false;
+        state->live -= emitter.particles.size();
+        removed = true;
+        return true;
+    });
+    removed |= std::erase_if(state->eventSpawns, [handle](const EventSpawn& spawn) { return spawn.group == handle; }) != 0;
+    return removed;
 }
 
 void ParticleSystem::detach(uint64_t runtimeId)
@@ -923,7 +977,7 @@ void ParticleSystem::tick(double seconds, const ParticleWorld& world)
         std::vector<EventSpawn> spawns = std::move(state->eventSpawns);
         state->eventSpawns.clear();
         for (const EventSpawn& pending : spawns) {
-            start(pending.request, pending.depth);
+            start(pending.request, pending.depth, pending.group);
         }
         remaining -= dt;
     }

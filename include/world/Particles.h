@@ -346,6 +346,10 @@ public:
      * Starts an effect; an identifier the library does not know is ignored.
      */
     void spawn(const ParticleSpawn& request);
+    uint64_t spawnTracked(const ParticleSpawn& request);
+    bool active(uint64_t handle) const;
+    bool move(uint64_t handle, const std::array<double, 3>& position);
+    bool remove(uint64_t handle);
 
     /**
      * Stops every emitter attached to the entity, letting its particles
@@ -369,7 +373,7 @@ public:
 private:
     struct State;
 
-    void start(const ParticleSpawn& request, int depth);
+    bool start(const ParticleSpawn& request, int depth, uint64_t group = 0);
 
     const ParticleLibrary& library;
     std::unique_ptr<State> state;

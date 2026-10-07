@@ -165,6 +165,9 @@ bool ModSlot::enable()
 
 void ModSlot::releaseAll()
 {
+    host.effects.release(id);
+    host.ui.release(id);
+    host.textures.release(id);
     host.events.release(id);
     host.commands.release(id);
     host.emotes.release(id);

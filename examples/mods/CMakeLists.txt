@@ -13,3 +13,9 @@ elseif(NOT WIN32 AND NOT APPLE)
 endif()
 
 kestrel_add_mod(emotes_example emotes/EmotesMod.cpp)
+kestrel_add_mod(effects_example effects/EffectsMod.cpp)
+
+kestrel_add_mod(ui_example ui/UiMod.cpp)
+
+kestrel_add_mod(textures_example textures/TexturesMod.cpp)
+kestrel_add_mod(api_audit api_audit/ApiAuditMod.cpp)
