@@ -104,7 +104,8 @@ float4 applyTint(float4 texel, uint tint)
     }
     float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
     if ((tint & 0x40000000u) != 0) {
-        return float4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+        // Overlay alpha selects the tinted region, not surface coverage.
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
     }
     return float4(texel.rgb * color, texel.a);
 }
