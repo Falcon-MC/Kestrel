@@ -82,6 +82,13 @@ int main()
     require(expression(animator, "query.is_item_name_any('slot.weapon.offhand', 'minecraft:shield')") == 1.0, "Shield animation must read the offhand item");
     require(expression(animator, "query.is_item_name_any('slot.weapon.mainhand', 0, 'minecraft:iron_sword')") == 1.0, "Item matching must accept the native slot index argument");
     require(expression(animator, "query.is_item_name_any('slot.weapon.mainhand', 'minecraft:shield')") == 0.0, "Item matching must keep both hands separate");
+    require(expression(animator, "query.is_item_equipped") == 1.0, "Equipment query defaults to the main hand");
+    require(expression(animator, "query.is_item_equipped('off_hand')") == 1.0, "Offhand equipment must select its animation controller state");
+    require(expression(animator, "query.is_item_equipped('invalid')") == 0.0, "Unknown hand names must not report equipment");
+    require(expression(animator, "query.is_item_equipped(0)") == 1.0 && expression(animator, "query.is_item_equipped(1)") == 1.0, "Equipment queries must accept numeric hand slots");
+    input.offHandItem.clear();
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.is_item_equipped('off_hand')") == 0.0, "Removing offhand equipment must clear the query");
     input.identifier = "minecraft:wolf";
     input.now = 1.0;
     animator.update(nullptr, nullptr, bones, input);
