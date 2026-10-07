@@ -1,3 +1,4 @@
+#include "client/ActorExtent.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
 #include "world/CrystalBeam.h"
@@ -621,8 +622,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         } else if (std::abs(actor.x - camera.x()) > ActorCandidateRadius || std::abs(actor.y - camera.y()) > ActorCandidateRadius || std::abs(actor.z - camera.z()) > ActorCandidateRadius) {
             continue;
         }
-        float boxWidth = actor.width > 0.0f ? actor.width : (player ? PlayerWidth : DefaultActorWidth) * actor.scale;
-        float boxHeight = actor.height > 0.0f ? actor.height : (player ? PlayerHeight : DefaultActorHeight) * actor.scale;
+        float boxWidth = actorExtent(actor.width, player ? PlayerWidth : DefaultActorWidth, actor.scale);
+        float boxHeight = actorExtent(actor.height, player ? PlayerHeight : DefaultActorHeight, actor.scale);
         float halfWidth = boxWidth * 0.5f + PoseMargin;
         float halfHeight = boxHeight * 0.5f + PoseMargin;
         // Collision bounds need not enclose custom skins or animated geometry.
@@ -1636,7 +1637,7 @@ std::vector<menu::NameTag> Client::buildNameTags() const
         if (lines.empty()) {
             continue;
         }
-        double box = actor.height > 0.0f ? actor.height : (sneaking ? SneakingHeight : StandingHeight) * actor.scale;
+        double box = actorExtent(actor.height, sneaking ? SneakingHeight : StandingHeight, actor.scale);
         double lift = box + HeadClearance + ExtraLineRaise * static_cast<double>(lines.size() - 1);
         auto anchor = project(matrix, fx, fy + lift, fz);
         if (!anchor) {

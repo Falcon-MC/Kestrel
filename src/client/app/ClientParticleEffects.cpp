@@ -1,3 +1,4 @@
+#include "client/ActorExtent.h"
 #include "client/Client.h"
 
 #include "Core/NBT/Tag.h"
@@ -227,8 +228,8 @@ void Client::appendParticles(double deltaSeconds, const std::array<int32_t, 3>& 
         ClientParticleEmitters::ActorState state;
         state.runtimeId = actor.runtimeId;
         state.position = { actor.x, actor.y, actor.z };
-        state.width = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale;
-        state.height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
+        state.width = actorExtent(actor.width, DefaultActorWidth, actor.scale);
+        state.height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
         state.sprinting = ((actor.flags[0] >> SprintingFlag) & 1) != 0;
         state.onGround = actor.onGround;
         if (actor.effectColor != 0) {

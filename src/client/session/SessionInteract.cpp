@@ -1,3 +1,4 @@
+#include "client/ActorExtent.h"
 #include "client/session/SessionData.h"
 #include "client/RespawnAnchor.h"
 #include "client/RayBox.h"
@@ -165,8 +166,8 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
         if (runtimeId == localRuntimeId || !pickable(actor)) {
             continue;
         }
-        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5 + ActorPickMargin;
-        double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
+        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5 + ActorPickMargin;
+        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
         std::optional<double> entry = actorRayDistance(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, reach, ActorPickMargin);
         if (entry && *entry < distance) {
             distance = *entry;
@@ -671,8 +672,8 @@ bool Session::placeableAt(const std::array<int32_t, 3>& cell)
         if (runtimeId == localRuntimeId || !pickable(actor)) {
             continue;
         }
-        double half = (actor.width > 0.0f ? actor.width : DefaultActorWidth) * actor.scale * 0.5;
-        double height = actor.height > 0.0f ? actor.height : DefaultActorHeight * actor.scale;
+        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5;
+        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
         if (overlaps(actor.x, actor.y, actor.z, half, height)) {
             return false;
         }
