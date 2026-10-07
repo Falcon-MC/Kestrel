@@ -1403,6 +1403,11 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         }
         return 0.0;
     }
+    if (name == "is_item_equipped") {
+        if (arguments.empty() || argument(0) == 0.0 || argument(0) == molang::internString("main_hand")) return !current.mainHandItem.empty();
+        if (argument(0) == 1.0 || argument(0) == molang::internString("off_hand")) return !current.offHandItem.empty();
+        return 0.0;
+    }
     if (name == "get_equipped_item_name") {
         bool offHand = argument(0) == molang::internString("off_hand") || argument(0) == 1.0;
         const std::string& item = offHand ? current.offHandItem : current.mainHandItem;
