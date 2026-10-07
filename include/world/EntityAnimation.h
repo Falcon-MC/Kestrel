@@ -122,6 +122,7 @@ struct EntityScripts {
     std::vector<std::pair<std::string, molang::Script>> animate;
     std::unordered_map<std::string, std::string> aliases;
     molang::Script scale;
+    std::array<molang::Script, 3> axisScale;
 };
 
 std::shared_ptr<EntityScripts> readEntityScripts(const json::Value& description);
