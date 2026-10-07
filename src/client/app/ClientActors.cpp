@@ -678,6 +678,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.skinId = actor.skinId;
         input.identifier = actor.identifier;
         input.name = actor.name;
+        if (!player && (actor.name == "Dinnerbone" || actor.name == "Grumm") && actor.animationQueries.contains("has_health")
+            && actor.identifier.find("minecart") == std::string::npos && actor.identifier.find("boat") == std::string::npos && !actor.identifier.ends_with(":raft") && !actor.identifier.ends_with("_raft")) {
+            float height = std::isfinite(actor.height) && actor.height > 0.0f ? actor.height : DefaultActorHeight;
+            input.metadataQueries["upside_down_height"] = height * 16.0;
+        }
         input.onGround = actor.onGround;
         if (world::projectileEntity(actor.identifier)) {
             input.tickPositionDelta = actor.projectilePositionDelta;

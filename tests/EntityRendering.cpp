@@ -130,4 +130,22 @@ int main()
     require(expression(fish, "query.frame_alpha") == 0.5, "Render queries must observe the current partial tick");
     require(std::abs(expression(fish, "variable.animationamount") - 1.2) < 1e-6, "Refreshing render queries must not advance native phases");
 
+    EntityAnimator inverted;
+    input = AnimationInput {};
+    input.identifier = "minecraft:cow";
+    input.metadataQueries["upside_down_height"] = 20.8;
+    for (const char* name : { "Dinnerbone", "Grumm" }) {
+        input.name = name;
+        inverted.update(nullptr, nullptr, bones, input);
+        require(inverted.matrices()[0][0] == -1 && inverted.matrices()[0][5] == -1, "Special mob names must invert the model");
+        require(std::abs(inverted.matrices()[0][7] - 20.8f) < 1e-5, "Inversion must keep the model above its base");
+    }
+    input.name = "dinnerbone";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1 && inverted.matrices()[0][7] == 0, "Renaming must restore the upright pose and names are case sensitive");
+    input.name = "Dinnerbone";
+    input.identifier = "minecraft:player";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1, "Mob inversion must not change player skins");
+
 }
