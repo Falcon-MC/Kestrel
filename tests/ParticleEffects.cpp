@@ -2,12 +2,15 @@
 #include "world/Particles.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace kestrel::world;
@@ -190,8 +193,103 @@ const char* lifetimeName(ParticleEmitterRules::Lifetime lifetime)
 
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--tracked-effects") {
+        const auto root = std::filesystem::temp_directory_path()
+            / ("kestrel-particle-lifetime-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(root / "__brarchive");
+        const std::array<std::string, 3> identifiers {
+            "minecraft:huge_explosion_emitter",
+            "minecraft:huge_explosion_lab_misc_emitter",
+            "test:continuous",
+        };
+        std::string archive(16 + identifiers.size() * 256, '\0');
+        auto writeNumber = [&](size_t offset, uint64_t value, size_t bytes) {
+            for (size_t i = 0; i < bytes; ++i) {
+                archive[offset + i] = static_cast<char>(value >> (i * 8));
+            }
+        };
+        writeNumber(0, 0x267052A0B125277Dull, 8);
+        writeNumber(8, identifiers.size(), 4);
+        const size_t dataStart = archive.size();
+        for (size_t i = 0; i < identifiers.size(); ++i) {
+            const std::string name = "effect" + std::to_string(i) + ".json";
+            std::string definition = "{\"particle_effect\":{\"description\":{\"identifier\":\"" + identifiers[i]
+                + "\"},\"components\":{\"minecraft:emitter_lifetime_looping\":{\"active_time\":0.4,\"sleep_time\":0},"
+                  "\"minecraft:emitter_rate_steady\":{\"spawn_rate\":20,\"max_particles\":50},"
+                  "\"minecraft:particle_lifetime_expression\":{\"max_lifetime\":0.5},"
+                  "\"minecraft:particle_appearance_billboard\":{\"size\":[1,1]}}}}";
+            if (i == 2 && std::string_view(argv[1]) == "--tracked-effects") {
+                definition.resize(definition.size() - 3);
+                definition += ",\"minecraft:emitter_lifetime_events\":{\"creation_event\":\"child\"}},"
+                    "\"events\":{\"child\":{\"particle_effect\":{\"effect\":\"minecraft:huge_explosion_emitter\",\"type\":\"emitter\"}}}}}";
+            }
+            const size_t entry = 16 + i * 256;
+            archive[entry] = static_cast<char>(name.size());
+            archive.replace(entry + 1, name.size(), name);
+            writeNumber(entry + 248, archive.size() - dataStart, 4);
+            writeNumber(entry + 252, definition.size(), 4);
+            archive += definition;
+        }
+        {
+            std::ofstream file(root / "__brarchive/particles.brarchive", std::ios::binary);
+            file.write(archive.data(), static_cast<std::streamsize>(archive.size()));
+        }
+        PackSource pack(root);
+        ParticleLibrary library;
+        library.load(pack, {});
+        std::filesystem::remove_all(root);
+        if (library.size() != identifiers.size()) {
+            std::printf("FAIL synthetic particle library\n");
+            return 1;
+        }
+        FlatWorld world;
+        if (std::string_view(argv[1]) == "--tracked-effects") {
+            ParticleSystem system(library);
+            ParticleSpawn spawn;
+            spawn.identifier = "test:continuous";
+            auto queued = system.spawnTracked(spawn);
+            if (!system.remove(queued)) return 1;
+            system.tick(0.2, world);
+            if (system.liveParticles() != 0) return 1;
+            auto handle = system.spawnTracked(spawn);
+            if (!handle || !system.active(handle) || system.active(0)) return 1;
+            if (!system.move(handle, { 10.0, 2.0, 3.0 })) return 1;
+            system.tick(0.2, world);
+            std::vector<ParticleQuad> quads;
+            system.collect(fixedCamera(), quads);
+            if (quads.empty() || std::abs(quads.front().center[0] - 10.0) > 0.01) return 1;
+            if (!system.remove(handle) || system.liveParticles() != 0) return 1;
+            handle = system.spawnTracked(spawn);
+            system.spawn(spawn);
+            system.tick(0.2, world);
+            if (!system.remove(handle) || system.active(handle) || system.remove(handle) || system.liveParticles() == 0) return 1;
+            auto next = system.spawnTracked(spawn);
+            system.clear();
+            auto afterClear = system.spawnTracked(spawn);
+            if (!afterClear || afterClear == next || system.active(next) || system.remove(next)) return 1;
+            system.clear();
+            class MovingWorld : public FlatWorld {
+            public:
+                std::array<double, 3> position {};
+                std::optional<std::array<double, 3>> actorPosition(uint64_t) const override { return position; }
+            } moving;
+            spawn.attachedActor = 7;
+            handle = system.spawnTracked(spawn);
+            system.tick(0.1, moving);
+            moving.position = { 20.0, 0.0, 0.0 };
+            system.tick(0.2, moving);
+            quads.clear();
+            system.collect(fixedCamera(), quads);
+            if (std::none_of(quads.begin(), quads.end(), [](const ParticleQuad& quad) { return quad.center[0] > 19.9; })) return 1;
+            if (!system.remove(handle) || system.liveParticles() != 0) return 1;
+            spawn.identifier = "test:missing";
+            if (system.spawnTracked(spawn)) return 1;
+            std::printf("PASS tracked particle movement, removal, isolation and stale handles\n");
+            return 0;
+        }
+    }
     std::filesystem::path root = PackSource::locateVanilla();
     if (root.empty()) {
         std::printf("FAIL vanilla resource pack not found (set KESTREL_VANILLA_PACK)\n");

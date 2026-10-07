@@ -19,6 +19,7 @@ public:
 
     mod::Subscription subscribe(size_t owner, std::string_view type, mod::EventBus::Handler handler, mod::ListenOptions options);
     void dispatch(mod::Event& event);
+    void dispatchTo(size_t owner, mod::Event& event);
     bool listening(std::string_view type) const;
     void release(size_t owner);
 

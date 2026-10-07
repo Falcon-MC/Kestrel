@@ -11,6 +11,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace kestrel::ui {
 
@@ -29,6 +30,15 @@ bool decodeImage(const std::string& encoded, uint32_t& width, uint32_t& height, 
     outRgba.assign(pixels, pixels + static_cast<size_t>(w) * h * 4);
     stbi_image_free(pixels);
     return true;
+}
+
+bool decodeImageLimited(const std::string& encoded, uint32_t maxDimension, uint32_t& width, uint32_t& height, std::vector<uint8_t>& outRgba)
+{
+    if (encoded.empty() || encoded.size() > static_cast<size_t>(std::numeric_limits<int>::max())) return false;
+    int w = 0, h = 0, channels = 0;
+    if (!stbi_info_from_memory(reinterpret_cast<const stbi_uc*>(encoded.data()), static_cast<int>(encoded.size()), &w, &h, &channels)
+        || w <= 0 || h <= 0 || static_cast<uint32_t>(w) > maxDimension || static_cast<uint32_t>(h) > maxDimension) return false;
+    return decodeImage(encoded, width, height, outRgba);
 }
 
 bool decodeSquareImage(const std::string& encoded, uint32_t size, std::vector<uint8_t>& outRgba)

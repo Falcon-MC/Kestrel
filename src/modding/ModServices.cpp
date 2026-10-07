@@ -74,6 +74,18 @@ mod::Subscription EventBusService::subscribe(std::string_view type, Handler hand
 
 void EventBusService::post(mod::Event& event)
 {
+    if (event.type() == mod::detail::TextureRequest::Type) {
+        host.textures.process(owner, static_cast<mod::detail::TextureRequest&>(event));
+        return;
+    }
+    if (event.type() == mod::detail::UiRequest::Type) {
+        host.ui.process(owner, static_cast<mod::detail::UiRequest&>(event));
+        return;
+    }
+    if (event.type() == mod::detail::EffectRequest::Type) {
+        host.effects.process(owner, static_cast<mod::detail::EffectRequest&>(event));
+        return;
+    }
     host.events.dispatch(event);
 }
 

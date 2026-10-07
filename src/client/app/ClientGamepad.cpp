@@ -46,7 +46,7 @@ void Client::driveGamepad()
     float dt = static_cast<float>(std::clamp(now - padClock, 0.0, 0.1));
     padClock = now;
 
-    bool playing = menu.capturesMouse();
+    bool playing = menu.capturesMouse() && !mods->uiOpen();
     auto sync = [&](PadButton button, Key key, bool active) {
         size_t index = static_cast<size_t>(button);
         bool down = active && pad.connected && pad.isHeld(button);
