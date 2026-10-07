@@ -181,5 +181,22 @@ int main()
         timed.update(timedScripts.get(), &timedLibrary, bones, input);
     }
     require(std::abs(timed.matrices()[0][3]) < 1e-6, "Looping clips must permit controller exit after their first cycle");
+    EntityAnimator inverted;
+    input = AnimationInput {};
+    input.identifier = "minecraft:cow";
+    input.metadataQueries["upside_down_height"] = 20.8;
+    for (const char* name : { "Dinnerbone", "Grumm" }) {
+        input.name = name;
+        inverted.update(nullptr, nullptr, bones, input);
+        require(inverted.matrices()[0][0] == -1 && inverted.matrices()[0][5] == -1, "Special mob names must invert the model");
+        require(std::abs(inverted.matrices()[0][7] - 20.8f) < 1e-5, "Inversion must keep the model above its base");
+    }
+    input.name = "dinnerbone";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1 && inverted.matrices()[0][7] == 0, "Renaming must restore the upright pose and names are case sensitive");
+    input.name = "Dinnerbone";
+    input.identifier = "minecraft:player";
+    inverted.update(nullptr, nullptr, bones, input);
+    require(inverted.matrices()[0][5] == 1, "Mob inversion must not change player skins");
 
 }
