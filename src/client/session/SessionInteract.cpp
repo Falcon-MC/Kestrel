@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/RespawnAnchor.h"
 
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/AnimatePacket.h"
@@ -172,7 +173,7 @@ std::optional<BlockHit> Session::traceBlock(const std::array<double, 3>& lookOri
                 for (int i = 0; i < 3; ++i) {
                     hit.point[i] = std::clamp(lookOrigin[i] + direction[i] * *entry, low[i], high[i]);
                 }
-                hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
+                hit.name = assets->blockName(value, ids.hashed, ids.sequential.get());
                 return hit;
             }
         }
@@ -376,6 +377,10 @@ std::vector<uint64_t> Session::takeAttacks()
 Session::BlockUse Session::localUse(const BlockHit& block, const ItemStack& item)
 {
     bool holding = !item.isAir();
+    if ((block.name == "minecraft:respawn_anchor" || block.name == "respawn_anchor")
+        && usesRespawnAnchor(assets ? assets->blockStates(block.value, ids.hashed, ids.sequential.get()) : nullptr, item, tickSneaking)) {
+        return BlockUse::Interact;
+    }
     if (usableBlock(block.name) && !(tickSneaking && holding)) {
         return BlockUse::Interact;
     }
@@ -526,7 +531,7 @@ std::optional<BlockHit> Session::bridgeHit()
                 BlockHit hit;
                 hit.cell = against;
                 hit.value = value;
-                hit.name = assets->describe(value, ids.hashed, ids.sequential.get());
+                hit.name = assets->blockName(value, ids.hashed, ids.sequential.get());
                 hit.face = int32_t(face);
                 hit.distance = travelled;
                 for (int axis = 0; axis < 3; ++axis) {

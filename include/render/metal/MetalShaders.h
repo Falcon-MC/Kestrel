@@ -216,7 +216,8 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
-    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 47u : 0u;
+    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
+    if ((out.entity & 256u) != 0u) out.light.z = float((in.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (out.entity != 0u) {
         out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0xc0ffffffu) : 0u;
     }
@@ -420,7 +421,7 @@ float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> enti
     float4 texel = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.x, input.actorGrid0, uv);
     uint mode = input.actorTextures.w;
     if (mode == 2u && texel.a * input.actorDissolve < 0.5) discard_fragment();
-    if (mode == 3u && texel.a < 0.5) discard_fragment();
+    if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard_fragment();
     if (mode == 1u && all(texel == float4(0,0,0,0))) discard_fragment();
     if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard_fragment();
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
@@ -450,6 +451,8 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
         return float4(actor.rgb * actor.a, (in.entity & 2u) != 0u ? 0.0 : actor.a);
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if ((in.entity & 4u) != 0u) {
@@ -533,6 +536,8 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
         return actor;
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
     else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if ((in.entity & 4u) != 0u) {

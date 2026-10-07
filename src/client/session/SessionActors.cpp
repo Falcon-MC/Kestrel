@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/CrystalMetadata.h"
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"
@@ -232,6 +233,7 @@ float metadataScale(const EntityDataMap& metadata, float fallback)
 void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
 {
     for (const EntityDataEntry& entry : metadata.mEntries) {
+        applyCrystalBeamTarget(entry, actor.crystalBeamTarget);
         switch (entry.mId) {
         case 0:
             if ((actor.flags[0] ^ static_cast<uint64_t>(entry.mLongValue)) & 1u) actor.fireChangedAt = secondsNow();
