@@ -126,6 +126,7 @@ class ProgressScreen {
 public:
     ProgressScreen()
     {
+        SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
         if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
             throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
