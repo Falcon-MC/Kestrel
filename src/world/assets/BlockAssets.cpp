@@ -8,6 +8,7 @@
 #include "ui/Image.h"
 #include "world/BlockEntityModels.h"
 #include "world/BlockModels.h"
+#include "world/DoorState.h"
 #include "world/Geometry.h"
 #include "world/Molang.h"
 #include "world/PackSource.h"
@@ -303,6 +304,21 @@ int32_t BlockAssets::indexOf(uint32_t networkValue, bool hashed, const Sequentia
         index = custom == customByHash.end() ? -1 : static_cast<int32_t>(custom->second);
     }
     return index;
+}
+
+std::optional<CollisionBox> BlockAssets::doorBox(uint32_t value, uint32_t other, bool hashed, const SequentialMap* sequential) const
+{
+    const BlockVisual& own = visual(value, hashed, sequential);
+    if (!(templateFlags(own) & TemplateDoor)) return std::nullopt;
+    uint8_t state = own.doorState;
+    const BlockVisual& partner = visual(other, hashed, sequential);
+    if ((templateFlags(partner) & TemplateDoor) && partner.faces == own.faces
+        && ((state ^ partner.doorState) & DoorUpper)) {
+        state = resolveDoorState(state, partner.doorState);
+    }
+    auto [min, max] = models::doorBounds(state & 3, (state >> 2) & 1, (state >> 3) & 1);
+    return CollisionBox { min[0] / 256.0f, min[1] / 256.0f, min[2] / 256.0f,
+        max[0] / 256.0f, max[1] / 256.0f, max[2] / 256.0f };
 }
 
 const BlockVisual& BlockAssets::visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
@@ -903,13 +919,17 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 if (material == DiagnosticMaterial) {
                     break;
                 }
-                auto [min, max] = models::doorBounds(cardinal(), flag("open_bit"), flag("door_hinge_bit"));
                 models::Materials same;
                 same.fill(material);
-                modelTemplate = intern(keyOf("cuboid", same, { uint32_t(min[0]), uint32_t(min[1]), uint32_t(min[2]), uint32_t(max[0]), uint32_t(max[1]), uint32_t(max[2]) }), [&] {
-                    auto faces = models::cuboid(same, min, max);
-                    pushTemplate({ faces.begin(), faces.end() }, 0);
+                modelTemplate = intern(keyOf("door", same, {}), [&] {
+                    for (uint32_t state = 0; state < 16; ++state) {
+                        auto [min, max] = models::doorBounds(state & 3, (state >> 2) & 1, (state >> 3) & 1);
+                        auto faces = models::cuboid(same, min, max);
+                        pushTemplate({ faces.begin(), faces.end() }, TemplateDoor);
+                    }
                 });
+                visual.doorState = uint8_t(cardinal() | (flag("open_bit") ? 4 : 0)
+                    | (flag("door_hinge_bit") ? 8 : 0) | (upper ? DoorUpper : 0));
                 break;
             }
             case ModelKind::Trapdoor: {

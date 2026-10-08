@@ -286,6 +286,12 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
     add_test(NAME border-block COMMAND KestrelBorderBlockTest)
+    add_executable(KestrelDoorStatesTest
+        tests/DoorStates.cpp
+        src/world/mesh/BlockModels.cpp)
+    target_include_directories(KestrelDoorStatesTest PRIVATE include)
+    target_link_libraries(KestrelDoorStatesTest PRIVATE FalconProtocol)
+    add_test(NAME door-states COMMAND KestrelDoorStatesTest)
     add_executable(KestrelLocalizedTextTest
         tests/LocalizedText.cpp
         src/client/app/ChatText.cpp

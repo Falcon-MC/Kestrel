@@ -3,6 +3,7 @@
 #include "Protocol/Packets/LevelEventPacket.h"
 #include "Protocol/Packets/PlayerAuthInputPacket.h"
 #include "world/BlockBreaking.h"
+#include "world/DoorState.h"
 
 #include <algorithm>
 #include <cmath>
@@ -138,6 +139,11 @@ std::vector<world::CollisionBox> Session::shapeBoxes(uint32_t value, int32_t x, 
  */
 world::CollisionBox Session::selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z)
 {
+    const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+    if (assets->templateFlags(visual) & world::TemplateDoor) {
+        uint32_t other = blockAt(x, y + ((visual.doorState & world::DoorUpper) ? -1 : 1), z);
+        if (auto box = assets->doorBox(value, other, ids.hashed, ids.sequential.get())) return *box;
+    }
     return session::selectionBounds(*assets, ids, value, shapeBoxes(value, x, y, z));
 }
 
