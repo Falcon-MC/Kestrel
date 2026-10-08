@@ -52,6 +52,11 @@ constexpr Named<menu::Dialog> DialogNames[] = {
     { "realm_invites", menu::Dialog::RealmInvites },
     { "join_realm", menu::Dialog::JoinRealm },
     { "confirm_remove_friend", menu::Dialog::ConfirmRemoveFriend },
+    { "realm_add_menu", menu::Dialog::RealmAddMenu },
+    { "reveal_server_address", menu::Dialog::RevealServerAddress },
+    { "server_form_error", menu::Dialog::ServerFormError },
+    { "online_play_warning", menu::Dialog::OnlinePlayWarning },
+    { "discard_server_changes", menu::Dialog::DiscardServerChanges },
 };
 
 constexpr Named<menu::SettingsPage> PageNames[] = {
@@ -72,6 +77,7 @@ constexpr Named<menu::SettingsPage> PageNames[] = {
 };
 
 constexpr Named<menu::PlayTab> TabNames[] = {
+    { "worlds", menu::PlayTab::Worlds },
     { "realms", menu::PlayTab::Realms },
     { "servers", menu::PlayTab::Servers },
 };

@@ -143,6 +143,9 @@ Transition transitionOf(Dialog dialog)
     case Dialog::Emotes:
     case Dialog::ProfileOptions:
     case Dialog::ConfirmDelete:
+    case Dialog::RevealServerAddress:
+    case Dialog::ServerFormError:
+    case Dialog::DiscardServerChanges:
         return Transition::None;
     default:
         return Transition::Wipe;
@@ -652,11 +655,18 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
         break;
     case Dialog::ConfirmDelete: {
         std::optional<ServerRow> row = selectedRow();
-        messageDialog(ui, width, height, tr("selectServer.delete", "Delete Server"), tr("selectServer.deleteQuestion", "Are you sure you want to remove this server?"), tr("selectServer.deleteButton", "Delete"), tr("gui.cancel", "Cancel"), confirmed, cancelled);
+        bool closed = false;
+        serverFormModal(ui, width, height, tr("hbui.PlayScreen.serverTab.confirmDeletion.title", "Deleting server"),
+            tr("hbui.PlayScreen.serverTab.confirmDeletion.message", "If you delete this server you can still add it again later."),
+            tr("hbui.PlayScreen.serverTab.confirmDeletion.goBackButton", "Go back"), tr("hbui.PlayScreen.serverTab.confirmDeletion.deleteButton", "Delete server"),
+            "pressableElevatedDestructive", cancelled, confirmed, closed);
+        cancelled = cancelled || closed;
         if (confirmed && row && row->group == ServerGroup::Saved) {
             store.remove(row->index);
             selection.reset();
+            notify(tr("hbui.PlayScreen.serverTab.serverForm.serverDeletedNotification", "Server deleted"));
             navigate(Screen::Play);
+            screenDirection = -1.0f;
         }
         break;
     }
@@ -671,6 +681,21 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
         break;
     case Dialog::JoinRealm:
         joinRealmDialog(ui, width, height);
+        break;
+    case Dialog::RealmAddMenu:
+        realmAddDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::RevealServerAddress:
+        revealAddressDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::ServerFormError:
+        serverFormErrorDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::OnlinePlayWarning:
+        onlinePlayWarningDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::DiscardServerChanges:
+        discardServerChangesDialog(ui, width, height, cancelled);
         break;
     case Dialog::ConfirmRemoveFriend:
         messageDialog(ui, width, height, tr("hbui.SocialDrawer.PlayerOptionsMenu.removeFriend", "Remove friend"),
@@ -1112,7 +1137,7 @@ void Menu::title(Context& ui, float width, float height)
     float x = std::floor((width - TitleButtonWidth) * 0.5f);
     float y = std::round(height * 0.5f + 13.67f);
     if (ui.classicButton("title:play", tr("menu.play", "Play"), { x, y, TitleButtonWidth, TitleButtonHeight })) {
-        playTab = PlayTab::Servers;
+        playTab = PlayTab::Worlds;
         navigate(Screen::Play);
     }
     if (ui.classicButton("title:settings", tr("menu.settings", "Settings"), { x, y + TitleButtonStep, TitleButtonWidth, TitleButtonHeight })) {
@@ -2021,6 +2046,10 @@ std::vector<std::string> Menu::chatLog() const
 void Menu::goBack()
 {
     if (screen == Screen::ServerForm) {
+        if (serverFormChanged()) {
+            dialog = Dialog::DiscardServerChanges;
+            return;
+        }
         navigate(Screen::Play);
     } else if (screen == Screen::Settings || screen == Screen::DressingRoom || screen == Screen::Marketplace || screen == Screen::Profile) {
         navigate(returnScreen);
@@ -2033,9 +2062,20 @@ void Menu::goBack()
     screenDirection = -1.0f;
 }
 
+/**
+ * Saved servers are the game's external servers, which warn with the IP
+ * safety text, and partner servers its third party ones with the generic
+ * online play text. Proceeding through either one stops both.
+ */
 void Menu::connect(const ServerRow& row)
 {
-    if (row.group == ServerGroup::Saved) {
+    bool external = row.group == ServerGroup::Saved;
+    if (option(external ? IpSafetyWarningOption : OnlineSafetyWarningOption, 0) == 0) {
+        warnedRow = row;
+        dialog = Dialog::OnlinePlayWarning;
+        return;
+    }
+    if (external) {
         store.markJoined(row.index);
     }
     pending = ConnectRequest { row.name, row.address };
@@ -2050,12 +2090,9 @@ void Menu::openServerForm(std::optional<size_t> index)
     if (index && *index < store.servers().size()) {
         const SavedServer& server = store.servers()[*index];
         editName = server.name;
-        editAddress = server.address;
-        size_t colon = editAddress.rfind(':');
-        if (colon != std::string::npos && editAddress.find(':') == colon) {
-            editPort = editAddress.substr(colon + 1);
-            editAddress.resize(colon);
-        }
+        auto [host, port] = splitAddress(server.address, "19132");
+        editAddress = std::move(host);
+        editPort = std::move(port);
     } else {
         editing.reset();
     }
@@ -2063,28 +2100,47 @@ void Menu::openServerForm(std::optional<size_t> index)
     field = Field::ServerName;
 }
 
+/**
+ * Checks the form the way the game's addExternalServerWorld and
+ * editExternalServerWorld do, opening its error modal on the first problem,
+ * and shows the game's snackbar once the server is saved.
+ */
 bool Menu::saveServerForm(bool andPlay)
 {
+    editPort = clampPort(editPort);
     std::string address = editAddress;
-    if (!editPort.empty() && address.find(':') == std::string::npos) {
+    if (address.find(':') == std::string::npos) {
         address += ":" + editPort;
     }
-    if (normalizeAddress(address).empty()) {
-        notify("Enter a server address");
-        field = Field::ServerAddress;
+    std::string port = splitAddress(normalizeAddress(address), "19132").second;
+    std::optional<ServerFormProblem> problem;
+    if (editName.find_first_not_of(" \t") == std::string::npos) {
+        problem = ServerFormProblem::NameIsEmpty;
+    } else if (editAddress.find_first_not_of(" \t") == std::string::npos) {
+        problem = ServerFormProblem::AddressIsEmpty;
+    } else if (clampPort(port) != port) {
+        problem = ServerFormProblem::InvalidPortNumber;
+    } else if (store.hasAddress(address, editing)) {
+        problem = ServerFormProblem::DuplicateAddressAndPort;
+    }
+    if (problem) {
+        serverFormProblem = *problem;
+        dialog = Dialog::ServerFormError;
         return false;
     }
-    std::string name = editName.empty() ? editAddress : editName;
     size_t index = 0;
     if (editing) {
-        store.update(*editing, name, address);
+        store.update(*editing, editName, address);
         index = *editing;
+        notify(tr("hbui.PlayScreen.serverTab.serverForm.serverEditedNotification", "Changes saved"));
     } else {
-        index = store.add(name, address);
+        index = store.add(editName, address);
+        notify(tr("hbui.PlayScreen.serverTab.serverForm.serverAddedNotification", "Server added"));
     }
     selection = Selection { ServerGroup::Saved, index };
     playTab = PlayTab::Servers;
     navigate(Screen::Play);
+    screenDirection = -1.0f;
     if (andPlay) {
         const SavedServer& server = store.servers()[index];
         connect({ ServerGroup::Saved, index, server.name, server.address, {}, {} });
