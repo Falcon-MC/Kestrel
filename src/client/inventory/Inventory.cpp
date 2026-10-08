@@ -358,6 +358,55 @@ const InventoryRecipe* InventoryModel::matchingRecipe(std::vector<std::pair<int,
     return nullptr;
 }
 
+bool InventoryModel::furnaceRecipe(const InventoryRecipe& entry) const
+{
+    if (!furnace(type) || empty(entry.output) || entry.recipe.mInputs.size() != 1
+        || !entry.recipe.mInputs.front().mHasItem) return false;
+    const char* station = type == ContainerType::Smoker ? "smoker"
+        : type == ContainerType::BlastFurnace ? "blast_furnace" : "furnace";
+    return entry.recipe.mBlockName == station || entry.recipe.mBlockName == std::string("minecraft:") + station;
+}
+
+static bool recipeComponent(const Tag& tag, const char* name, int depth = 0)
+{
+    if (depth > 6 || tag.getType() != Tag::Type::Compound) return false;
+    if (tag.get(name)) return true;
+    for (const char* child : { "components", "item_properties" }) {
+        if (const Tag* value = tag.get(child); value && recipeComponent(*value, name, depth + 1)) return true;
+    }
+    return false;
+}
+
+std::vector<InventoryCatalogItem> InventoryModel::furnaceCatalog() const
+{
+    std::vector<InventoryCatalogItem> catalog;
+    auto foods = itemTags.find("minecraft:is_food");
+    for (const auto& entry : recipes) {
+        if (!furnaceRecipe(entry)) continue;
+        InventoryCatalogItem item;
+        item.item = hudItemOf(entry.output);
+        item.networkId = entry.recipe.mRecipeNetId;
+        const Tag& components = entry.output.mDefinition->getComponentData();
+        bool food = recipeComponent(components, "minecraft:food")
+            || (foods != itemTags.end() && std::find(foods->second.begin(), foods->second.end(), item.item.identifier) != foods->second.end());
+        bool block = entry.output.mBlockDefinition || recipeComponent(components, "minecraft:block_placer")
+            || (!entry.recipe.mOutputs.empty() && entry.recipe.mOutputs.front().mBlockRuntimeId != 0);
+        item.category = food ? 0 : block ? 2 : 1;
+        auto existing = std::find_if(catalog.begin(), catalog.end(), [&](const auto& other) {
+            return other.item.identifier == item.item.identifier && other.item.aux == item.item.aux && other.item.count == item.item.count;
+        });
+        if (existing == catalog.end()) {
+            catalog.push_back(std::move(item));
+        } else if (canCraft(entry)) {
+            auto previous = std::find_if(recipes.begin(), recipes.end(), [&](const auto& recipe) {
+                return recipe.recipe.mRecipeNetId == existing->networkId;
+            });
+            if (previous == recipes.end() || !canCraft(*previous)) *existing = std::move(item);
+        }
+    }
+    return catalog;
+}
+
 bool InventoryModel::fitsGrid(const InventoryRecipe& entry) const
 {
     if (entry.recipe.mBlockName != "crafting_table" && entry.recipe.mBlockName != "minecraft:crafting_table") {
@@ -376,7 +425,7 @@ int InventoryModel::recipeCell(const InventoryRecipe& entry, int index) const
 bool InventoryModel::recipeGhost(int recipeNetId, std::array<HudItem, 9>& cells, HudItem& output) const
 {
     auto found = std::find_if(recipes.begin(), recipes.end(), [&](const auto& r) { return r.recipe.mRecipeNetId == recipeNetId; });
-    if (found == recipes.end() || !fitsGrid(*found)) return false;
+    if (found == recipes.end() || (furnace(type) ? !furnaceRecipe(*found) : !fitsGrid(*found))) return false;
     cells = {};
     int index = 0;
     for (const auto& ingredient : found->recipe.mInputs) {
@@ -401,6 +450,22 @@ bool InventoryModel::recipeGhost(int recipeNetId, std::array<HudItem, 9>& cells,
 
 bool InventoryModel::canCraft(const InventoryRecipe& entry) const
 {
+    if (furnaceRecipe(entry)) {
+        auto ingredient = entry.recipe.mInputs.front();
+        int needed = std::max(1, ingredient.mCount);
+        ingredient.mCount = 1;
+        for (int candidate = 0; candidate <= 36; ++candidate) {
+            const auto& item = slots[candidate == 36 ? Container : candidate];
+            if (!ingredientMatches(ingredient, item) || needed > maxStack(item)) continue;
+            int owned = same(item, slots[Container]) ? slots[Container].mCount : 0;
+            for (int slot = 0; slot < 36; ++slot) {
+                if (same(item, slots[slot])) owned += slots[slot].mCount;
+            }
+            if (owned >= needed) return true;
+        }
+        return false;
+    }
+    if (furnace(type)) return false;
     if (!fitsGrid(entry)) {
         return false;
     }
@@ -509,11 +574,8 @@ bool InventoryModel::craft(ItemStackRequest& request, const InventoryRecipe& ent
     slots[Output] = entry.output;
     slots[Output].mCount = perCraft * repetitions;
     slots[Output].mNetId = request.mRequestId;
-    if (!toInventory) {
-        move(request, Output, Cursor, slots[Output].mCount);
-        return true;
-    }
-    placeInInventory(request);
+    if (toInventory) placeInInventory(request);
+    else move(request, Output, Cursor, slots[Output].mCount);
     slots[Output] = ItemStack::air();
     return true;
 }
@@ -602,6 +664,48 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
     if (command.action == InventoryAction::SelectRecipe) {
         auto found = std::find_if(recipes.begin(), recipes.end(), [&](const auto& r) { return r.recipe.mRecipeNetId == command.value; });
         if (found == recipes.end()) return request;
+        if (furnaceRecipe(*found)) {
+            stationRecipe = command.value;
+            if (!canCraft(*found)) return request;
+            auto ingredient = found->recipe.mInputs.front();
+            int needed = std::max(1, ingredient.mCount);
+            ingredient.mCount = 1;
+            ItemStack chosen = ItemStack::air();
+            for (int candidate = 36; candidate >= 0; --candidate) {
+                const auto& item = slots[candidate == 36 ? Container : candidate];
+                if (!ingredientMatches(ingredient, item) || needed > maxStack(item)) continue;
+                int owned = same(item, slots[Container]) ? slots[Container].mCount : 0;
+                for (int slot = 0; slot < 36; ++slot) {
+                    if (same(item, slots[slot])) owned += slots[slot].mCount;
+                }
+                if (owned >= needed) {
+                    chosen = item;
+                    break;
+                }
+            }
+            auto before = slots;
+            if (!empty(slots[Container]) && !same(chosen, slots[Container])) {
+                if (inventoryRoom(slots[Container]) < slots[Container].mCount) return request;
+                for (int pass = 0; pass < 2; ++pass) {
+                    for (int slot = 0; slot < 36 && !empty(slots[Container]); ++slot) {
+                        if ((pass == 0 && same(slots[slot], slots[Container])) || (pass == 1 && empty(slots[slot]))) {
+                            move(request, Container, slot, slots[Container].mCount);
+                        }
+                    }
+                }
+            }
+            int required = needed;
+            needed = maxStack(chosen) - (empty(slots[Container]) ? 0 : slots[Container].mCount);
+            for (int slot = 0; slot < 36 && needed > 0; ++slot) {
+                if (same(chosen, slots[slot])) needed -= move(request, slot, Container, needed);
+            }
+            if (empty(slots[Container]) || slots[Container].mCount < required) {
+                slots = std::move(before);
+                request.mActions.clear();
+            }
+            return request;
+        }
+        if (furnace(type)) return request;
         if (!fitsGrid(*found)) return request;
         returnItems(request);
         int index = 0;
