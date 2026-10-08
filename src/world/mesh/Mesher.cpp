@@ -1,4 +1,5 @@
 #include "world/Mesher.h"
+#include "world/DoorState.h"
 
 #include <algorithm>
 #include <bit>
@@ -1041,6 +1042,15 @@ public:
     {
         uint32_t flags = flagsOf(visual);
         count = 1;
+        if (flags & TemplateDoor) {
+            uint8_t state = visual.doorState;
+            const BlockVisual& other = adjacent(x, y, z, (state & DoorUpper) ? Face::NegativeY : Face::PositiveY);
+            if ((flagsOf(other) & TemplateDoor) && other.faces == visual.faces
+                && ((state ^ other.doorState) & DoorUpper)) {
+                state = resolveDoorState(state, other.doorState);
+            }
+            return { visual.modelTemplate + (state & 15), NoModelTemplate };
+        }
         if (flags & TemplatePane) {
             return { visual.modelTemplate + connectedMask(x, y, z, TemplatePane), NoModelTemplate };
         }
