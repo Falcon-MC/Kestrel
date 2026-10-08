@@ -228,7 +228,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 815 : 0;
     if ((output.entity & 256u) != 0u) output.light.z = float((input.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (output.entity != 0) {
-        output.tint = input.d.w == 0 && (input.d.z & 0x80000000u) != 0 ? (input.d.z & 0xc0ffffffu) : 0;
+        output.tint = input.d.w == 0 && ((input.d.z | output.material) & 0x80000000u) != 0 ? input.d.z : 0;
     }
     if (output.entity != 0 && input.d.w != 0) {
         float2 uvOffset = float2(f16tof32(input.d.z), f16tof32(input.d.z >> 16));
@@ -365,6 +365,10 @@ float4 applyTint(float4 texel, uint tint)
         return texel;
     }
     float3 color = float3((tint >> 16) & 0xff, (tint >> 8) & 0xff, tint & 0xff) / 255.0;
+    if ((tint & 0x20000000) != 0) {
+        // Leather alpha is both a dye mask and cutout coverage.
+        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+    }
     if ((tint & 0x40000000) != 0) {
         // Overlay alpha selects the tinted region, not surface coverage.
         return float4(lerp(texel.rgb, texel.rgb * color, texel.a), 1.0);
@@ -431,6 +435,21 @@ float4 actorTexture(uint layer, float4 grid, float2 uv)
     return sampleEntity(layer + tile.y * uint(grid.x) + tile.x, frac(coordinate));
 }
 
+float4 applyGlint(float4 texel, float2 uv, uint material, uint tint)
+{
+    if ((material & 0x80000000u) == 0u || texel.a == 0.0) return texel;
+    uint layer = (material >> 13) & 0x1fffu;
+    float frame = float((material >> 26) & 31u);
+    float strength = float((tint >> 24) & 31u) / 31.0;
+    float2 pixel = uv * 64.0;
+    for (uint glintPass = 0u; glintPass < 2u; ++glintPass) {
+        float2 shifted = float2(pixel.x + (glintPass != 0u ? pixel.y : 64.0 - pixel.y) + frame * (glintPass != 0u ? 3.0 : 5.0), pixel.y + frame * (glintPass != 0u ? 5.0 : 2.0)) / 128.0;
+        float4 glint = sampleEntity(layer, frac(shifted));
+        texel.rgb = min(float3(1.0, 1.0, 1.0), texel.rgb + glint.rgb * float3(0.5, 0.25, 0.8) * glint.a * 0.35 * strength);
+    }
+    return texel;
+}
+
 float4 actorSurface(WorldOut input, float2 uv)
 {
     float4 texel = actorTexture(input.actorTextures.x, input.actorGrid0, uv);
@@ -439,8 +458,27 @@ float4 actorSurface(WorldOut input, float2 uv)
     if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard;
     if (mode == 1u && all(texel == float4(0,0,0,0))) discard;
     if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard;
+    if ((mode == 7u && texel.a == 0.0) || (mode == 8u && texel.a < 0.1)) discard;
+    if (mode == 7u) {
+        texel.rgb = lerp(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 cracks = actorTexture(input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = lerp(texel.rgb, cracks.rgb, cracks.a);
+        }
+    }
+    if (mode == 8u) {
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 markings = actorTexture(input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = lerp(texel.rgb, markings.rgb, markings.a);
+        }
+        if (input.actorTextures.z != 0xffffffffu) {
+            float4 armor = actorTexture(input.actorTextures.z, input.actorGrid2, uv);
+            float3 dyed = lerp(armor.rgb, armor.rgb * input.actorColor.rgb, armor.a);
+            texel.rgb = lerp(texel.rgb, dyed, armor.a > 0.0 ? 1.0 : 0.0);
+        }
+    }
     if (mode == 4u) texel.rgb = lerp(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
-    else if (mode != 5u) texel.rgb *= input.actorColor.rgb;
+    else if (mode != 5u && mode != 7u && mode != 8u) texel.rgb *= input.actorColor.rgb;
     texel.a *= input.actorColor.a;
     if (mode == 5u && input.actorTextures.y != 0xffffffffu && input.actorTextures.z != 0xffffffffu) {
         float4 second = actorTexture(input.actorTextures.y, input.actorGrid1, uv);
@@ -480,7 +518,7 @@ float4 surfaceTexel(WorldOut input)
             float4 flash = hit == 0 ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255, (hit >> 8) & 255, (hit >> 16) & 255, hit >> 24) / 255.0;
             texel.rgb = lerp(texel.rgb, flash.rgb, flash.a);
         }
-        return applyTint(texel, input.tint);
+        return applyGlint(applyTint(texel, input.tint), input.uv, input.material, input.tint);
     }
     return applyTint(sampleMaterial(input.material, input.uv), input.tint);
 }

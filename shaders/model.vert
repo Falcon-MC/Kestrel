@@ -92,7 +92,7 @@ void main()
     outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
     if ((outEntity & 256u) != 0u) outLight.z = float((inD.x >> (corner * 8u)) & 255u) / 255.0;
     if (outEntity != 0u) {
-        outTint = inD.w == 0u && (inD.z & 0x80000000u) != 0u ? (inD.z & 0xc0ffffffu) : 0u;
+        outTint = inD.w == 0u && ((inD.z | outMaterial) & 0x80000000u) != 0u ? inD.z : 0u;
     }
     if (outEntity != 0u && inD.w != 0u) {
         outUv = unpackHalf2x16(inD.z) + outUv * unpackHalf2x16(inD.w);

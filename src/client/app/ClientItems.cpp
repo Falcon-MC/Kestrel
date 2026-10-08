@@ -67,6 +67,7 @@ const Client::DroppedItemMesh* Client::droppedItemMesh(const HudItem& item)
         return nullptr;
     }
     std::string key = item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    if (item.customColor) key += "#color" + std::to_string(*item.customColor);
     if (auto found = droppedMeshes.find(key); found != droppedMeshes.end()) {
         return &found->second;
     }

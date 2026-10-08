@@ -348,7 +348,7 @@ enum class EntityBlend : uint8_t {
 };
 
 enum class EntityMaterial : uint8_t {
-    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest,
+    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest, DyedArmor, Horse,
 };
 
 struct EntityRenderController {
@@ -394,6 +394,7 @@ struct EntityModel {
     std::vector<EntityRenderController> controllers;
     std::shared_ptr<const EntityScripts> scripts;
     uint32_t layer = 0;
+    bool wearable = false;
     EntityRig combined;
     std::vector<CombinedQuadSource> combinedSources;
 };
@@ -498,6 +499,8 @@ public:
         return found == attachableModels.end() ? nullptr : &found->second;
     }
 
+    uint32_t armorGlintLayer() const { return armorGlintTexture; }
+
     /**
      * How armor in the given slot looks, or no rig for items without an
      * armor texture (elytra, heads, pumpkins).
@@ -554,7 +557,7 @@ public:
         return found == entityTiles.end() ? EntityTileGrid {} : found->second;
     }
 
-    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
+    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt) const;
 
     /**
      * The look of the default state of the block an item places, when it is
@@ -672,6 +675,7 @@ private:
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::optional<uint32_t> crystalBeamTexture;
+    uint32_t armorGlintTexture = NoEntityChoice;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
@@ -680,6 +684,7 @@ private:
     std::unordered_map<std::string, uint32_t> blockByName;
     std::unordered_map<std::string, BlockVisual> carriedVisuals;
     std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
+    std::unordered_map<std::string, std::vector<uint8_t>> dyeItemFiles;
     std::unordered_map<std::string, std::string> itemIconNames;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};
