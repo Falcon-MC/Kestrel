@@ -446,10 +446,11 @@ if(KESTREL_BUILD_TESTS)
         src/client/motion/MotionWorld.cpp
         src/client/motion/MotionCollision.cpp
         src/client/motion/MotionLiquid.cpp
-        src/world/blocks/BlockCollisions.cpp)
+        src/world/blocks/BlockCollisions.cpp
+        src/util/Text.cpp)
     target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
-    add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp)
+    add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp src/util/Text.cpp)
     target_include_directories(KestrelModCollisionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME mod-collision COMMAND KestrelModCollisionTest)
     add_executable(KestrelModWorldLiveTest
