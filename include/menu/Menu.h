@@ -1408,6 +1408,9 @@ private:
     bool chatSettingsOpen = false;
     // The settings closed this frame, so the key that closed them is used up.
     bool chatSettingsClosed = false;
+    // The chat screen closes itself on Escape before the key handling runs,
+    // which must then not take the same press to open the pause menu.
+    bool chatClosedByScreen = false;
     ChatSettings chatOptions;
     uint64_t chatStyleRevision = 0;
     std::shared_ptr<const std::vector<ChatCommand>> commands;

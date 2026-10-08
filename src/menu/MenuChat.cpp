@@ -304,7 +304,7 @@ void Menu::closeChat()
  */
 void Menu::submitChat()
 {
-    bool command = !chatDraft.empty() && chatDraft.front() == '/';
+    bool command = !chatDraft.empty() && (chatDraft.front() == '/' || chatDraft.front() == '.');
     if (!blank(chatDraft)) {
         if (chatHistory.empty() || chatHistory.back() != chatDraft) {
             chatHistory.push_back(chatDraft);
@@ -683,6 +683,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
             }
         } else if (event.name == "button.menu_exit" || event.name == "button.chat_menu_cancel") {
             closeChat();
+            chatClosedByScreen = ui.input().escape;
         } else if (event.name == "button.click_autocomplete" && event.index >= 0 && static_cast<size_t>(event.index) < rows.size()) {
             if (const std::optional<std::string>& pick = rows[static_cast<size_t>(event.index)].pick) {
                 chatDraft = *pick;
