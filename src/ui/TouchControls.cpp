@@ -125,20 +125,29 @@ void TouchControls::draw(Context& ui, GameAssets& assets, const menu::Menu& menu
                 if (visibility == 1 || (visibility == 2 && !pressed)) return;
             }
             uint8_t opacity = uint8_t(std::clamp(alpha * menu.option("touch_control_opacity", 70) / 100.0f, 0.0f, 1.0f) * 255);
-            context.fill(rect, { uint8_t(pressed ? 100 : 25), uint8_t(pressed ? 100 : 25), uint8_t(pressed ? 100 : 25), opacity });
-            context.outline(rect, { 230, 230, 230, opacity }, 1);
+            Color tint { 255, 255, 255, opacity };
             if (action == "move") {
-                Rect knob { rect.x + rect.w * (0.375f + stickX * 0.3f), rect.y + rect.h * (0.375f + stickY * 0.3f), rect.w * 0.25f, rect.h * 0.25f };
-                context.fill(knob, { 220, 220, 220, opacity });
+                context.sprite(rect, "ui/joystick_frame", tint);
+                Rect knob { rect.x + rect.w * (0.25f + stickX * 0.25f), rect.y + rect.h * (0.25f + stickY * 0.25f), rect.w * 0.5f, rect.h * 0.5f };
+                context.sprite(knob, "ui/joystick_knob", tint);
                 return;
             }
-            static const std::map<std::string, std::string> Icons {
+            static const std::map<std::string, std::string> Buttons {
                 {"jump", "jump"}, {"sneak", "sneak"}, {"sprint", "sprint"}, {"attack", "attack"},
-                {"use", "interact"}, {"inventory", "inventory_icon"}, {"chat", "chat_send"}, {"pause", "pause_icon"},
-                {"forward", "up_arrow"}, {"back", "down_arrow"}, {"left", "arrowLeft"}, {"right", "arrowRight"},
-                {"perspective", "camera-small"}, {"pick", "pick_block"}
+                {"use", "interact"}, {"pick", "pick_block"}
             };
-            if (auto icon = Icons.find(action); icon != Icons.end()) context.sprite(rect.inset(rect.w * 0.2f), "ui/" + icon->second, { 255, 255, 255, opacity });
+            if (auto button = Buttons.find(action); button != Buttons.end()) {
+                context.sprite(rect, "ui/" + button->second + (pressed ? "_pressed" : ""), tint);
+                return;
+            }
+            context.fill(rect, { uint8_t(pressed ? 100 : 25), uint8_t(pressed ? 100 : 25), uint8_t(pressed ? 100 : 25), opacity });
+            context.outline(rect, { 230, 230, 230, opacity }, 1);
+            static const std::map<std::string, std::string> Icons {
+                {"inventory", "inventory_icon"}, {"chat", "chat_send"}, {"pause", "pause_icon"},
+                {"forward", "up_arrow"}, {"back", "down_arrow"}, {"left", "arrowLeft"}, {"right", "arrowRight"},
+                {"perspective", "camera-small"}
+            };
+            if (auto icon = Icons.find(action); icon != Icons.end()) context.sprite(rect.inset(rect.w * 0.2f), "ui/" + icon->second, tint);
         });
     }
     areas.clear();
