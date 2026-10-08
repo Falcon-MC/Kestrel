@@ -1202,6 +1202,7 @@ private:
     std::set<int> inventoryChangedSlots;
     int32_t inventoryRequestId = -1;
     int32_t pendingInventoryRequest = 0;
+    std::set<int32_t> pendingInventoryRequests;
     double inventoryRequestTime = 0.0;
     bool inventoryClosing = false;
     std::atomic<int> requestedSlot { -1 };

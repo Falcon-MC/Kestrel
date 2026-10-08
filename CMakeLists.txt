@@ -362,6 +362,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelHotbarDropTest PRIVATE include)
     target_link_libraries(KestrelHotbarDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME hotbar-drop COMMAND KestrelHotbarDropTest)
+    add_executable(KestrelBulkCraftingTest
+        tests/BulkCrafting.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBulkCraftingTest PRIVATE include)
+    target_link_libraries(KestrelBulkCraftingTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME bulk-crafting COMMAND KestrelBulkCraftingTest)
     add_executable(KestrelInventoryTransactionTest
         tests/InventoryTransaction.cpp
         src/client/inventory/Inventory.cpp

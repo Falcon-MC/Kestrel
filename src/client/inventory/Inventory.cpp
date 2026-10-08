@@ -550,7 +550,7 @@ bool InventoryModel::craft(ItemStackRequest& request, const InventoryRecipe& ent
         return true;
     }
     if (toInventory) {
-        repetitions = MaxCraftRepetitions;
+        repetitions = std::min(MaxCraftRepetitions, maxStack(entry.output) / perCraft);
         for (auto [slot, count] : consumption) repetitions = std::min(repetitions, slots[slot].mCount / std::max(1, count));
         repetitions = std::min(repetitions, inventoryRoom(entry.output) / perCraft);
         if (repetitions < 1) return false;
