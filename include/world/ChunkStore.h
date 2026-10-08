@@ -103,6 +103,15 @@ public:
      */
     std::set<SubChunkKey> takeUrgent();
 
+    /**
+     * Counts every change to the stored sub-chunks or columns, so a reader
+     * can tell in one comparison that nothing moved since it last looked.
+     */
+    uint64_t revision() const
+    {
+        return changes;
+    }
+
 private:
     struct Column {
         std::map<int32_t, std::shared_ptr<const SubChunk>> subChunks;
@@ -119,6 +128,7 @@ private:
     std::set<SubChunkKey> dirty;
     std::set<SubChunkKey> urgent;
     size_t storedSubChunks = 0;
+    uint64_t changes = 0;
 };
 
 }

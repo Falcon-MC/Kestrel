@@ -1,11 +1,17 @@
 #pragma once
 
 #include "mod/Textures.h"
+#include "modding/LegacyRequests.h"
 
 #include <functional>
 #include <map>
 
 namespace kestrel::modding {
+
+/**
+ * One operation on a mod's textures, posted as an event by older mods.
+ */
+using TextureRequest = mod::detail::TextureRequest;
 
 class TextureStore {
 public:
@@ -13,7 +19,7 @@ public:
     using Backend = std::function<void(const std::string&, const mod::Image*)>;
     explicit TextureStore(Backend backend) : backend(std::move(backend)) { }
     ~TextureStore();
-    void process(size_t owner, mod::detail::TextureRequest& request);
+    void process(size_t owner, TextureRequest& request);
     void release(size_t owner);
 private:
     struct Entry { size_t owner; std::string name; mod::Image image; };

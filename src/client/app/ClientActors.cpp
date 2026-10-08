@@ -1,6 +1,7 @@
 #include "client/ActorExtent.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
+#include "client/motion/MotionMath.h"
 #include "world/CrystalBeam.h"
 
 #include "platform/Window.h"
@@ -32,6 +33,7 @@ constexpr uint32_t AdditiveQuadFlag = 1u << 6;
 constexpr uint32_t FoggedQuadFlag = 1u << 10;
 constexpr uint32_t FullSkyLight = 0xF0F0F0F0u;
 constexpr int SwimmingFlag = 57;
+constexpr int GlidingFlag = 32;
 constexpr double HeadClearance = 0.7;
 constexpr double ExtraLineRaise = 0.125;
 constexpr double StandingHeight = 1.8;
@@ -889,6 +891,24 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         float radians = (180.0f - actorWorldYaw(actor)) * 3.14159265f / 180.0f;
         float cosine = std::cos(radians);
         float sine = std::sin(radians);
+        std::optional<std::array<float, 2>> glide = glideRotation(actor, now, actorPartialTick);
+        auto tilt = [&](float& x, float& y, float& z) {
+            if (!glide) {
+                return;
+            }
+            constexpr float Radians = 0.017453292f;
+            float bankSine = std::sin((*glide)[1] * Radians);
+            float bankCosine = std::cos((*glide)[1] * Radians);
+            float turnedX = bankCosine * x + bankSine * z;
+            float turnedZ = -bankSine * x + bankCosine * z;
+            float pitchSine = std::sin((*glide)[0] * Radians);
+            float pitchCosine = std::cos((*glide)[0] * Radians);
+            float pitchedY = pitchCosine * y - pitchSine * turnedZ;
+            float pitchedZ = pitchSine * y + pitchCosine * turnedZ;
+            x = turnedX;
+            y = pitchedY;
+            z = pitchedZ;
+        };
         float baseX = static_cast<float>(dx * 256.0);
         float baseY = static_cast<float>(dy * 256.0);
         float baseZ = static_cast<float>(dz * 256.0);
@@ -961,6 +981,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 x *= scale;
                 y *= scale;
                 z *= scale;
+                tilt(x, y, z);
                 return std::array<float, 3> { baseX + cosine * x + sine * z, baseY + y, baseZ - sine * x + cosine * z };
             };
             std::array<QuadCorner, 4> corners;
@@ -1272,10 +1293,39 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     emitWorn(*cape, wornBones(*cape, rig), hidden, blockAssets->skinLayerBase() + skinView->cape.layer, 0.0f, false);
                 }
             }
+            const world::EntityModel* elytra = actor.armor[1] == "minecraft:elytra" ? blockAssets->attachableModel("minecraft:elytra") : nullptr;
+            int32_t body = -1;
+            for (size_t bone = 0; elytra && bone < rig.bones.size(); ++bone) {
+                if (lowercase(rig.bones[bone].name) == "body") {
+                    body = static_cast<int32_t>(bone);
+                }
+            }
+            if (elytra && !elytra->rigs.empty() && body >= 0) {
+                const world::EntityRig& wings = elytra->rigs.front();
+                HeldAttachable& worn = actorElytras[actor.runtimeId];
+                worn.identifier = "minecraft:elytra";
+                worn.bones = wings.bones;
+                worn.animator.update(elytra->scripts.get(), &blockAssets->animationLibrary(), worn.bones, input);
+                const std::vector<world::BoneMatrix>& wingMatrices = worn.animator.matrices();
+                interpolatePose();
+                if (wingMatrices.size() == wings.bones.size() && size_t(body) < matrices.size()) {
+                    // A player with a cape wears it on the elytra, as the game does.
+                    uint32_t layer = skinView && skinView->cape.present ? blockAssets->skinLayerBase() + skinView->cape.layer : elytra->layer;
+                    for (size_t index = 0; index < wings.quads.size(); ++index) {
+                        size_t bone = index < wings.quadBones.size() ? wings.quadBones[index] : wings.bones.size();
+                        if (bone >= wingMatrices.size()) {
+                            continue;
+                        }
+                        world::BoneMatrix placed = compose(matrices[size_t(body)], wingMatrices[bone]);
+                        emitQuad(wings.quads[index], &placed, layer, world::EntityBlend::Opaque, false, true, {}, 0.0f);
+                    }
+                }
+            }
         }
         size_t firstWorn = out.size();
         auto toWorld = [&](const std::array<float, 3>& posed) {
             std::array<float, 3> p { posed[0] * scale, posed[1] * scale, posed[2] * scale };
+            tilt(p[0], p[1], p[2]);
             return std::array<float, 3> { baseX + cosine * p[0] + sine * p[2], baseY + p[1], baseZ - sine * p[0] + cosine * p[2] };
         };
         if (std::any_of(actor.armor.begin(), actor.armor.end(), [](const std::string& item) { return !item.empty(); })) {
@@ -1329,6 +1379,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
     }
     std::erase_if(actorOffhandAttachables, [&](const auto& entry) { return !present.count(entry.first); });
+    std::erase_if(actorElytras, [&](const auto& entry) { return !present.count(entry.first); });
     for (auto it = actorItemUseSince.begin(); it != actorItemUseSince.end();) {
         if (present.count(it->first)) {
             ++it;
@@ -1699,8 +1750,9 @@ ActorView Client::localActorView(float deltaSeconds)
     self.headYaw = localLookYaw;
     self.pitch = localLookPitch;
     if (seenSessionSnapshot) self.flags = seenSessionSnapshot->localActorFlags;
-    self.flags[0] &= ~((1ull << 1) | (1ull << 3) | (1ull << SwimmingFlag));
-    self.flags[0] |= (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0);
+    self.flags[0] &= ~((1ull << 1) | (1ull << 3) | (1ull << SwimmingFlag) | (1ull << GlidingFlag));
+    self.flags[0] |= (playerView.sneaking ? 1ull << 1 : 0) | (playerView.sprinting ? 1ull << 3 : 0) | (swimming ? 1ull << SwimmingFlag : 0)
+        | (playerView.gliding ? 1ull << GlidingFlag : 0);
     self.skinSlot = localSkinSlot;
     self.slim = localSlim;
     for (size_t slot = 0; slot < self.armor.size(); ++slot) {
@@ -1711,7 +1763,54 @@ ActorView Client::localActorView(float deltaSeconds)
     double dz = playerView.current[2] - playerView.previous[2];
     localBodyYaw = trailBody(localBodyYaw, self.headYaw, dx, dz, deltaSeconds * 20.0f);
     self.yaw = localBodyYaw;
+    self.velocity = { float(dx), float(playerView.current[1] - playerView.previous[1]), float(dz) };
+    if (!playerView.gliding) {
+        localGlideSince = 0.0;
+    } else if (localGlideSince == 0.0) {
+        localGlideSince = secondsNow();
+    }
     return self;
+}
+
+/**
+ * The whole-body tilt of a gliding actor, in degrees: pitched toward lying
+ * along the look direction, easing in over its first ten gliding ticks, and
+ * turned toward its horizontal motion. Only the local player counts its
+ * gliding ticks, so other players ease in by the frame fraction alone and
+ * stay nearly upright, as in the game. The view vector keeps its horizontal
+ * length, which the game does not normalise.
+ */
+std::optional<std::array<float, 2>> Client::glideRotation(const ActorView& actor, double now, float alpha) const
+{
+    if ((actor.flags[0] & (1ull << GlidingFlag)) == 0) {
+        return std::nullopt;
+    }
+    bool local = actor.runtimeId == LocalActorId;
+    if (local && perspective == PerspectiveFirst && !cameraDetached) {
+        return std::nullopt;
+    }
+    float ticks = local && localGlideSince > 0.0 ? float((now - localGlideSince) * TicksPerSecond) + 1.0f : alpha;
+    float ease = std::clamp(ticks * ticks / 100.0f, 0.0f, 1.0f);
+    float pitch = (-90.0f - actor.pitch) * ease;
+
+    constexpr float Radians = 0.017453292f;
+    constexpr float Degrees = 57.295776f;
+    constexpr float DeadZone = 0.0625f;
+    float yawAngle = -3.14159265f - actor.headYaw * Radians;
+    float horizontal = -motion::cosine(-(actor.pitch * Radians));
+    float viewZ = motion::cosine(yawAngle) * horizontal;
+    float viewX = horizontal * motion::sine(yawAngle);
+    float deltaX = actor.velocity[0];
+    float deltaZ = actor.velocity[2];
+    float moving = deltaZ * deltaZ + deltaX * deltaX;
+    float turn = 0.0f;
+    if (viewZ * viewZ + viewX * viewX > 0.0f && moving > 0.0f) {
+        float cross = viewZ * deltaX - viewX * deltaZ;
+        float side = std::abs(cross) < DeadZone ? 0.0f : (cross > 0.0f ? 1.0f : -1.0f);
+        float angle = std::acos((viewZ * deltaZ + viewX * deltaX) / std::sqrt(moving)) * side;
+        turn = std::isfinite(angle) ? angle * Degrees : 0.0f;
+    }
+    return std::array<float, 2> { pitch, turn };
 }
 
 void Client::interpolateActors(double now)

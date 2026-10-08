@@ -189,7 +189,9 @@ bool ChunkStore::isDirty(const SubChunkKey& key) const
 
 void ChunkStore::markLoaded(const ChunkKey& key)
 {
-    columnsByKey.try_emplace(key);
+    if (columnsByKey.try_emplace(key).second) {
+        ++changes;
+    }
 }
 
 void ChunkStore::commit(const SubChunkKey& key, SubChunk subChunk)
@@ -210,6 +212,7 @@ void ChunkStore::commit(const SubChunkKey& key, SubChunk subChunk)
         column.subChunks.emplace(key.y, std::make_shared<const SubChunk>(std::move(subChunk)));
         ++storedSubChunks;
     }
+    ++changes;
     markDirty(key);
 }
 
@@ -281,6 +284,7 @@ void ChunkStore::evict(const std::vector<ChunkKey>& keys)
         auto node = columnsByKey.extract(key);
         if (node.empty()) continue;
         storedSubChunks -= node.mapped().subChunks.size();
+        ++changes;
         if (!retirement) retirement = std::make_unique<Retirement>();
         retirement->enqueue(std::move(node.mapped()));
     }

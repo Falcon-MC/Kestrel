@@ -4,6 +4,11 @@
 
 #include "mod/Canvas.h"
 #include "ui/Context.h"
+#include "ui/DrawList.h"
+#include "ui/Font.h"
+
+#include <array>
+#include <utility>
 
 namespace kestrel::modding {
 
@@ -53,15 +58,26 @@ private:
  */
 class WorldCanvas final : public mod::WorldPainter {
 public:
-    WorldCanvas(ShaderStore& shaders, const mod::Vec3& camera);
+    WorldCanvas(ShaderStore& shaders, const ui::Font* font, const mod::Vec3& camera, const std::array<float, 16>& viewProjection);
 
     mod::Vec3 camera() const override;
     void triangles(const mod::Shader& shader, const std::vector<mod::WorldVertex>& vertices, const mod::ShaderParams& params) override;
+    void lines(const std::vector<std::pair<mod::Vec3, mod::Vec3>>& segments, mod::Color color, float width, bool throughWalls) override;
+    void wireBox(const mod::Vec3& min, const mod::Vec3& max, mod::Color color, float width, bool throughWalls) override;
+    void filledBox(const mod::Vec3& min, const mod::Vec3& max, mod::Color color, bool throughWalls) override;
+    void text3d(const mod::Vec3& position, std::string_view text, mod::Color color, float scale, bool throughWalls) override;
 
 private:
+    void pushSolid(float x, float y, float z, uint32_t color);
+    void queueSolid(bool throughWalls);
+
     ShaderStore& shaders;
+    const ui::Font* font;
     mod::Vec3 eye;
+    std::array<float, 3> right {};
+    std::array<float, 3> up {};
     std::vector<CustomVertex> scratch;
+    ui::DrawList label;
 };
 
 }

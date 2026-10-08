@@ -198,11 +198,6 @@ world::CollisionBox offset(const world::CollisionBox& box, const MotionVector& v
     return { box.minX + vector.x, box.minY + vector.y, box.minZ + vector.z, box.maxX + vector.x, box.maxY + vector.y, box.maxZ + vector.z };
 }
 
-world::CollisionBox grow(const world::CollisionBox& box, float x, float y, float z)
-{
-    return { box.minX - x, box.minY - y, box.minZ - z, box.maxX + x, box.maxY + y, box.maxZ + z };
-}
-
 world::CollisionBox extend(const world::CollisionBox& box, const MotionVector& vector)
 {
     return {

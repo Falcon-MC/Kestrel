@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace kestrel::modding {
 
@@ -46,9 +48,8 @@ bool splitAbi(std::string_view abi, long& version, std::string_view& toolchain)
  * API version or an older one: the interfaces only grow at their end, so
  * what an older mod calls is still where it expects it.
  */
-bool compatibleAbi(std::string_view built, std::string_view host)
+bool compatibleAbi(std::string_view built, std::string_view host, long& builtVersion)
 {
-    long builtVersion = 0;
     long hostVersion = 0;
     std::string_view builtToolchain;
     std::string_view hostToolchain;
@@ -83,7 +84,8 @@ std::unique_ptr<ModSlot> ModSlot::load(const std::filesystem::path& file, HostSt
     }
     const char* wanted = KESTREL_MOD_ABI;
     const char* built = abi();
-    if (!built || !compatibleAbi(built, wanted)) {
+    long version = 0;
+    if (!built || !compatibleAbi(built, wanted, version)) {
         error = std::string("built for ") + (built ? built : "?") + " but this Kestrel runs " + wanted + " and older API versions";
         return nullptr;
     }
@@ -106,21 +108,37 @@ std::unique_ptr<ModSlot> ModSlot::load(const std::filesystem::path& file, HostSt
         destroy(instance);
         return nullptr;
     }
-    return std::unique_ptr<ModSlot>(new ModSlot(std::move(library), host, owner, instance, destroy));
+    std::vector<std::string> needs;
+    if (version >= 4) {
+        try {
+            needs = instance->dependencies();
+        } catch (const std::exception& failure) {
+            error = std::string("its dependencies() threw: ") + failure.what();
+        } catch (...) {
+            error = "its dependencies() threw";
+        }
+        if (!error.empty()) {
+            destroy(instance);
+            return nullptr;
+        }
+    }
+    return std::unique_ptr<ModSlot>(new ModSlot(std::move(library), host, owner, instance, destroy, version, std::move(needs)));
 }
 
-ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::Mod* instance, Destroy destroy)
+ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::Mod* instance, Destroy destroy, long api, std::vector<std::string> needs)
     : library(std::move(library))
     , host(host)
     , id(owner)
     , instance(instance)
     , destroy(destroy)
+    , api(api)
+    , needs(std::move(needs))
     , eventService(host, owner)
     , chatService(host)
     , playerService(host)
     , worldService(host, owner)
     , networkService(host, owner)
-    , commandService(host, owner)
+    , commandService(host, owner, api)
     , loggerService(instance->info().id)
     , schedulerService(host, owner)
     , shaderService(host, owner)
@@ -130,6 +148,10 @@ ModSlot::ModSlot(platform::Library library, HostState& host, size_t owner, mod::
     , emoteService(host, owner)
     , hudService(host, owner)
     , visualsService(host, owner)
+    , particleService(host, owner)
+    , audioService(host, owner)
+    , uiService(host, owner)
+    , textureService(host, owner)
 {
 }
 
@@ -185,6 +207,9 @@ void ModSlot::releaseAll()
     if (host.visibleBlocks.erase(id)) {
         host.hiddenChanged = true;
     }
+    host.settings.erase(id);
+    std::erase_if(host.notices, [this](const HudNotice& notice) { return notice.owner == id; });
+    std::erase_if(host.services, [this](const auto& entry) { return entry.second.first == id; });
 }
 
 mod::EventBus& ModSlot::events()
@@ -262,6 +287,26 @@ mod::Visuals& ModSlot::visuals()
     return visualsService;
 }
 
+mod::Particles& ModSlot::particles()
+{
+    return particleService;
+}
+
+mod::Audio& ModSlot::audio()
+{
+    return audioService;
+}
+
+mod::Ui& ModSlot::ui()
+{
+    return uiService;
+}
+
+mod::Textures& ModSlot::textures()
+{
+    return textureService;
+}
+
 std::filesystem::path ModSlot::dataDirectory()
 {
     std::filesystem::path folder = host.root / info().id;
@@ -273,6 +318,34 @@ std::filesystem::path ModSlot::dataDirectory()
 std::vector<mod::ModInfo> ModSlot::loadedMods() const
 {
     return host.loaded;
+}
+
+void ModSlot::provideService(std::string_view name, std::shared_ptr<void> service)
+{
+    if (name.empty() || name.size() > 256) {
+        throw std::invalid_argument("A service id is 1 to 256 bytes");
+    }
+    auto found = host.services.find(name);
+    if (found != host.services.end() && found->second.first != id) {
+        throw std::invalid_argument("The service \"" + std::string(name) + "\" belongs to another mod");
+    }
+    if (!service) {
+        if (found != host.services.end()) {
+            host.services.erase(found);
+        }
+        return;
+    }
+    if (found != host.services.end()) {
+        found->second.second = std::move(service);
+        return;
+    }
+    host.services.emplace(std::string(name), std::make_pair(id, std::move(service)));
+}
+
+std::shared_ptr<void> ModSlot::findService(std::string_view name) const
+{
+    auto found = host.services.find(name);
+    return found == host.services.end() ? nullptr : found->second.second;
 }
 
 }

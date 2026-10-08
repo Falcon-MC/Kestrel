@@ -243,6 +243,8 @@ menu::HudView Client::buildHudView()
     view.tip = hudText(tipMessage, 1.0f);
     view.actionbar = hudText(actionbarMessage, 0.0f);
     view.title = titleView;
+    view.titleUpdates = std::move(titleUiUpdates);
+    titleUiUpdates.clear();
     view.gameTip = gameTip.view;
 
     view.health = state.health;

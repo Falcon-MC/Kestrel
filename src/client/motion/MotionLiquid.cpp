@@ -288,16 +288,4 @@ void PlayerMotion::updateSwimTravel()
     velocity.y += (targetY - velocity.y) * rate;
 }
 
-void PlayerMotion::applyBubbleColumn(const Fluid& fluid)
-{
-    if (fluid.bubbleDirection == 0) {
-        return;
-    }
-    if (fluid.bubbleDirection < 0) {
-        velocity.y = std::max(fluid.bubbleSurface ? -0.9f : -0.3f, velocity.y - 0.03f);
-    } else {
-        velocity.y = fluid.bubbleSurface ? std::min(1.8f, velocity.y + 0.1f) : std::min(0.7f, velocity.y + 0.06f);
-    }
-}
-
 }

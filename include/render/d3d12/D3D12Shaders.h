@@ -366,7 +366,8 @@ float4 applyTint(float4 texel, uint tint)
     }
     float3 color = float3((tint >> 16) & 0xff, (tint >> 8) & 0xff, tint & 0xff) / 255.0;
     if ((tint & 0x40000000) != 0) {
-        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+        // Overlay alpha selects the tinted region, not surface coverage.
+        return float4(lerp(texel.rgb, texel.rgb * color, texel.a), 1.0);
     }
     return float4(texel.rgb * color, texel.a);
 }
@@ -575,6 +576,44 @@ float4 ps_sky(SkyOut input) : SV_Target
         return float4(color.rgb * color.a, 0.0);
     }
     return float4(color.rgb * color.a, color.a);
+}
+)";
+
+inline constexpr char PrimitiveShader[] = R"(
+cbuffer Draw : register(b0)
+{
+    float4x4 transform;
+};
+
+struct VertexIn
+{
+    float3 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+struct VertexOut
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+Texture2D atlas : register(t0);
+SamplerState atlasSampler : register(s0);
+
+VertexOut vs_primitive(VertexIn input)
+{
+    VertexOut output;
+    output.position = mul(transform, float4(input.position, 1.0));
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+float4 ps_primitive(VertexOut input) : SV_Target
+{
+    return input.color * atlas.Sample(atlasSampler, input.uv);
 }
 )";
 

@@ -87,6 +87,11 @@ public:
         return &cube;
     }
     const std::string& name(const CollisionState& state) const;
+
+    /**
+     * Every known state of a block, by its name without namespace.
+     */
+    std::vector<const CollisionState*> statesNamed(std::string_view name) const;
     bool named(const CollisionState* state, std::string_view name) const;
 
     /**

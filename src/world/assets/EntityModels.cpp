@@ -853,6 +853,21 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             attachableDefinitions.emplace("minecraft:trident", std::move(held));
         }
     }
+    // The game draws the elytra itself: the packs only carry its geometry, texture and animations.
+    if (!attachableDefinitions.contains("minecraft:elytra")) {
+        ClientEntity worn;
+        worn.geometry = "geometry.elytra";
+        worn.texture = "textures/models/armor/elytra";
+        worn.textures["default"] = worn.texture;
+        auto scripts = std::make_shared<EntityScripts>();
+        scripts->aliases["elytra"] = "controller.animation.elytra.default";
+        for (const char* state : { "default", "gliding", "sneaking", "sleeping", "swimming" }) {
+            scripts->aliases[state] = std::string("animation.elytra.") + state;
+        }
+        scripts->animate.emplace_back("elytra", molang::Script {});
+        worn.scripts = std::move(scripts);
+        attachableDefinitions.emplace("minecraft:elytra", std::move(worn));
+    }
     for (auto layer = packs.rbegin(); layer != packs.rend(); ++layer) {
         for (const auto& path : (*layer)->paths()) {
             if (!endsWith(path, ".json")) {

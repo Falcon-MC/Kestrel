@@ -3,7 +3,36 @@
 #include "mod/Canvas.h"
 #include "mod/Event.h"
 
+#include <string>
+#include <vector>
+
 namespace kestrel::mod {
+
+/**
+ * One line of a mod's generated settings page, bound to key in the mod's
+ * Config. Toggle stores "true" or "false", Range a number from minimum to
+ * maximum in steps of step (0 for any value), Choice one of choices, Key a
+ * key name as key binds store it and Text any single line. defaultValue is
+ * shown until the player changes the setting.
+ */
+struct SettingSpec {
+    enum class Kind {
+        Toggle,
+        Range,
+        Choice,
+        Key,
+        Text,
+    };
+
+    std::string key;
+    std::string label;
+    Kind kind = Kind::Toggle;
+    double minimum = 0.0;
+    double maximum = 1.0;
+    double step = 0.0;
+    std::vector<std::string> choices;
+    std::string defaultValue;
+};
 
 // Main-thread only. Coordinates use Canvas units; IDs must be stable within a screen.
 class Controls {
@@ -27,35 +56,27 @@ struct UiRenderEvent : Event {
     Controls& controls;
 };
 
-namespace detail {
-struct UiRequest : Event {
-    KESTREL_EVENT("kestrel:ui_request/v1")
-    enum class Action { Supported, Open, Close, IsOpen };
-    Action action = Action::Supported;
-    std::string id;
-    bool result = false;
-};
-}
-
-// Optional API 3 extension. Older hosts report unsupported and safely ignore requests.
 // Screens are modal, Escape closes the top screen, and unloading closes the owner's screens.
 class Ui {
 public:
-    explicit Ui(EventBus& events) : events(events) { }
-    bool supported() const { return request(detail::UiRequest::Action::Supported, {}); }
-    bool open(std::string_view id) const { return request(detail::UiRequest::Action::Open, id); }
-    bool close(std::string_view id) const { return request(detail::UiRequest::Action::Close, id); }
-    bool isOpen(std::string_view id) const { return request(detail::UiRequest::Action::IsOpen, id); }
-private:
-    bool request(detail::UiRequest::Action action, std::string_view id) const
-    {
-        detail::UiRequest event;
-        event.action = action;
-        event.id = id;
-        events.post(event);
-        return event.result;
-    }
-    EventBus& events;
+    virtual ~Ui() = default;
+
+    virtual bool supported() const = 0;
+    virtual bool open(std::string_view id) = 0;
+    virtual bool close(std::string_view id) = 0;
+    virtual bool isOpen(std::string_view id) const = 0;
+
+    // Added in API 4 and kept last so older mods still find everything above.
+    /**
+     * Gives the mod a settings page built from settings, opened from its
+     * entry in the Mods settings page or with ".mods settings <id>". Changes
+     * are saved to the mod's Config right away and announced with a
+     * ConfigReloadEvent for this mod. Calling it again replaces the page, an
+     * empty list removes it. Throws std::invalid_argument for a setting
+     * without a key, a key used twice, a Range whose bounds are not finite
+     * and increasing, or a Choice without choices.
+     */
+    virtual void addSettings(std::vector<SettingSpec> settings) = 0;
 };
 
 }

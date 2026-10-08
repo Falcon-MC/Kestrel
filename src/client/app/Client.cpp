@@ -1,5 +1,6 @@
 #include "client/Client.h"
 #include "menu/GuiScale.h"
+#include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
@@ -255,6 +256,24 @@ int Client::run()
                 const KeyBindings& bindings = menu.keyBindings();
                 camera.look(keys, captured);
                 MotionInput input;
+                bool sneakHeld = keys.isHeld(bindings.down());
+                if (captured && sneakHeld && !sneakWasHeld) {
+                    sneakFromPad = padKeys[static_cast<size_t>(PadButton::B)] != Key::None;
+                    if (menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0) {
+                        sneakToggled = !sneakToggled;
+                    } else {
+                        sneakToggled = false;
+                    }
+                }
+                sneakWasHeld = sneakHeld;
+                if (captured) {
+                    bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                    sneakActive = toggleMode ? sneakToggled : sneakHeld;
+                } else if (!sneakFromPad) {
+                    sneakToggled = false;
+                    sneakActive = false;
+                }
+                input.sneak = sneakActive;
                 if (captured) {
                     input.forward = float(keys.isHeld(bindings.forward())) - float(keys.isHeld(bindings.back()));
                     input.sideways = float(keys.isHeld(bindings.left())) - float(keys.isHeld(bindings.right()));
@@ -263,7 +282,6 @@ int Client::run()
                         input.sideways *= 0.70710677f;
                     }
                     input.jump = keys.isHeld(bindings.up());
-                    input.sneak = keys.isHeld(bindings.down());
                     input.sprint = keys.isHeld(Key::Control);
                     if (padMove[0] != 0.0f || padMove[1] != 0.0f) {
                         input.forward = padMove[1];
@@ -674,7 +692,14 @@ int Client::run()
             environment.moonPhase = sky.moonPhase;
             mods->setEnvironment(environment);
             renderer->drawWorld(view);
-            mods->drawWorld(view.viewProjection, environment.camera);
+            std::shared_ptr<const SessionSnapshot> shapesSnapshot = seenSessionSnapshot;
+            std::function<void(mod::WorldPainter&)> serverShapes;
+            if (shapesSnapshot && !shapesSnapshot->debugShapes.empty()) {
+                serverShapes = [shapesSnapshot](mod::WorldPainter& painter) {
+                    drawDebugShapes(painter, *shapesSnapshot, secondsNow());
+                };
+            }
+            mods->drawWorld(view.viewProjection, environment.camera, serverShapes);
             mods->drawPost(view.viewProjection);
             if (soundEngine && soundEngine->ready() && !serverCamera.playerListener())
                 soundEngine->setListener({ camera.x(), camera.y(), camera.z() }, camera.forward());
@@ -1301,6 +1326,7 @@ void Client::syncSession()
         tipMessage = {};
         actionbarMessage = {};
         titleView = {};
+        titleUiUpdates.clear();
         gameTip = {};
         renderer->clearChunkMeshes();
         opaqueChunks.clear();

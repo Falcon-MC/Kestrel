@@ -104,7 +104,8 @@ float4 applyTint(float4 texel, uint tint)
     }
     float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
     if ((tint & 0x40000000u) != 0) {
-        return float4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+        // Overlay alpha selects the tinted region, not surface coverage.
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
     }
     return float4(texel.rgb * color, texel.a);
 }
@@ -554,6 +555,41 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
         discard_fragment();
     }
     return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
+}
+)";
+
+inline constexpr char PrimitiveShader[] = R"(
+#include <metal_stdlib>
+using namespace metal;
+
+struct PrimitiveIn {
+    float3 position [[attribute(0)]];
+    float2 uv [[attribute(1)]];
+    float4 color [[attribute(2)]];
+};
+
+struct PrimitiveData {
+    float4x4 transform;
+};
+
+struct PrimitiveOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+
+vertex PrimitiveOut primitive_vertex(PrimitiveIn in [[stage_in]], constant PrimitiveData& draw [[buffer(1)]])
+{
+    PrimitiveOut out;
+    out.position = draw.transform * float4(in.position, 1.0);
+    out.uv = in.uv;
+    out.color = in.color;
+    return out;
+}
+
+fragment float4 primitive_fragment(PrimitiveOut in [[stage_in]], texture2d<float> atlas [[texture(0)]], sampler atlasSampler [[sampler(0)]])
+{
+    return in.color * atlas.sample(atlasSampler, in.uv);
 }
 )";
 

@@ -1,13 +1,33 @@
 #include "modding/ModManager.h"
 #include "modding/HostState.h"
+#include "modding/ModSlot.h"
 #include "modding/Painters.h"
+
+#include "mod/Events.h"
+#include "platform/Keys.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <string>
 
 namespace kestrel::modding {
 
 namespace {
+
+/**
+ * A Range setting's value as the settings page stores and shows it, without
+ * trailing zeros.
+ */
+std::string settingNumber(double value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%g", value);
+    return buffer;
+}
+
 class Controls final : public mod::Controls {
 public:
     Controls(UiControlState& state, ui::Context& context, mod::Canvas& canvas, std::string prefix)
@@ -96,10 +116,148 @@ void ModManager::drawUi(ui::Context& context, float width, float height)
     context.fill({ 0, 0, width, height }, { 0, 0, 0, 180 });
     UiCanvas canvas(context, host->shaders, width, height);
     Controls controls(screen->controls, context, canvas, "mod-ui:" + std::to_string(screen->owner) + ":" + screen->id + ":");
-    mod::UiRenderEvent event(screen->id, canvas, controls);
-    host->events.dispatchTo(screen->owner, event);
+    if (screen->id == SettingsScreenId) {
+        drawSettings(screen->owner, canvas, controls, screen->controls.input, width, height);
+    } else {
+        mod::UiRenderEvent event(screen->id, canvas, controls);
+        host->events.dispatchTo(screen->owner, event);
+    }
     screen->controls.end();
     context.clearClip();
+}
+
+/**
+ * The page built from a mod's Ui::addSettings: a row per setting with its
+ * label on the left and a control bound to the mod's Config on the right,
+ * scrolled with the wheel when it does not fit. A drag is saved once the
+ * mouse is let go, everything else right away.
+ */
+void ModManager::drawSettings(size_t owner, mod::Canvas& canvas, mod::Controls& controls, const InputState& input, float width, float height)
+{
+    constexpr float RowHeight = 26.0f;
+    constexpr float FieldWidth = 140.0f;
+    constexpr size_t MaxTextBytes = 256;
+    constexpr mod::Color White { 255, 255, 255, 255 };
+    constexpr mod::Color Muted { 170, 170, 170, 255 };
+    ModSlot* running = slot(owner);
+    auto found = host->settings.find(owner);
+    if (!running || found == host->settings.end()) {
+        UiRequest close;
+        close.action = UiRequest::Action::Close;
+        close.id = std::string(SettingsScreenId);
+        host->ui.process(owner, close);
+        return;
+    }
+    std::vector<mod::SettingSpec> specs = found->second;
+    ModConfig& config = running->configStore();
+    const mod::ModInfo& info = running->info();
+    float panelWidth = std::min(360.0f, width - 16.0f);
+    float listHeight = static_cast<float>(specs.size()) * RowHeight;
+    float panelHeight = std::min(listHeight + 70.0f, height - 16.0f);
+    mod::Rect panel { std::floor((width - panelWidth) / 2.0f), std::floor((height - panelHeight) / 2.0f), panelWidth, panelHeight };
+    canvas.fill(panel, { 35, 39, 45, 245 });
+    canvas.textCentered((info.name.empty() ? info.id : info.name) + " settings", { panel.x, panel.y + 6.0f, panel.w, 16.0f }, White, mod::TextStyle::Ui);
+    mod::Rect list { panel.x + 10.0f, panel.y + 28.0f, panel.w - 20.0f, panel.h - 64.0f };
+    float& scroll = settingsScroll[owner];
+    scroll = std::clamp(scroll - input.wheel * RowHeight, 0.0f, std::max(0.0f, listHeight - list.h));
+    float textOffset = std::floor((RowHeight - canvas.lineHeight(mod::TextStyle::Ui)) / 2.0f);
+    for (const mod::SettingSpec& spec : specs) {
+        float y = list.y + static_cast<float>(&spec - specs.data()) * RowHeight - scroll;
+        if (y < list.y - 0.5f || y + RowHeight > list.bottom() + 0.5f) {
+            continue;
+        }
+        canvas.setClip({ list.x, y, list.w - FieldWidth - 6.0f, RowHeight });
+        canvas.text(spec.label.empty() ? spec.key : spec.label, list.x, y + textOffset, White, mod::TextStyle::Ui, false);
+        canvas.clearClip();
+        mod::Rect field { list.right() - FieldWidth, y + 3.0f, FieldWidth, RowHeight - 6.0f };
+        std::string id = "setting:" + spec.key;
+        std::string value = config.find(spec.key).value_or(spec.defaultValue);
+        std::optional<std::string> changed;
+        switch (spec.kind) {
+        case mod::SettingSpec::Kind::Toggle: {
+            bool on = value == "true" || value == "1";
+            if (controls.button(id, on ? "On" : "Off", field)) {
+                changed = on ? "false" : "true";
+            }
+            break;
+        }
+        case mod::SettingSpec::Kind::Range: {
+            float number = static_cast<float>(spec.minimum);
+            char* end = nullptr;
+            double parsed = std::strtod(value.c_str(), &end);
+            if (end != value.c_str() && std::isfinite(parsed)) {
+                number = static_cast<float>(std::clamp(parsed, spec.minimum, spec.maximum));
+            }
+            mod::Rect bar { field.x, field.y + 3.0f, field.w - 44.0f, field.h - 6.0f };
+            if (controls.slider(id, bar, number, static_cast<float>(spec.minimum), static_cast<float>(spec.maximum), static_cast<float>(spec.step))) {
+                changed = settingNumber(number);
+            }
+            canvas.text(settingNumber(number), bar.right() + 6.0f, y + textOffset, Muted, mod::TextStyle::Ui, false);
+            break;
+        }
+        case mod::SettingSpec::Kind::Choice: {
+            auto current = std::find(spec.choices.begin(), spec.choices.end(), value);
+            if (controls.button(id, current == spec.choices.end() ? spec.choices.front() : *current, field)) {
+                bool wraps = current == spec.choices.end() || current + 1 == spec.choices.end();
+                changed = wraps ? spec.choices.front() : *(current + 1);
+            }
+            break;
+        }
+        case mod::SettingSpec::Kind::Key: {
+            std::string tag = std::to_string(owner) + ":" + spec.key;
+            bool listening = settingsListening == tag;
+            bool bound = false;
+            if (listening && input.pressedKey != Key::None) {
+                changed = keyName(input.pressedKey);
+                settingsListening.clear();
+                listening = false;
+                bound = true;
+            }
+            if (controls.button(id, listening ? "Press a key" : (value.empty() ? "None" : value), field) && !listening && !bound) {
+                settingsListening = tag;
+            }
+            break;
+        }
+        case mod::SettingSpec::Kind::Text: {
+            std::string text = value;
+            if (controls.textField(id, field, text, spec.defaultValue, MaxTextBytes)) {
+                changed = std::move(text);
+            }
+            break;
+        }
+        }
+        if (changed) {
+            config.put(spec.key, std::move(*changed));
+            settingsUnsaved = true;
+        }
+    }
+    if (settingsUnsaved && !input.mouseDown) {
+        commitSettings(owner);
+    }
+    if (controls.button("done", "Done", { panel.x + std::floor((panel.w - 100.0f) / 2.0f), panel.bottom() - 30.0f, 100.0f, 22.0f })) {
+        UiRequest close;
+        close.action = UiRequest::Action::Close;
+        close.id = std::string(SettingsScreenId);
+        host->ui.process(owner, close);
+        settingsListening.clear();
+    }
+}
+
+/**
+ * Saves what the settings page changed and tells the mod, which reads its
+ * Config again on ConfigReloadEvent.
+ */
+void ModManager::commitSettings(size_t owner)
+{
+    settingsUnsaved = false;
+    ModSlot* running = slot(owner);
+    if (!running) {
+        return;
+    }
+    running->configStore().save();
+    mod::ConfigReloadEvent event;
+    event.modId = running->info().id;
+    host->events.dispatchTo(owner, event);
 }
 
 }

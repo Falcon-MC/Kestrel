@@ -124,6 +124,21 @@ void ShaderStore::queue(CustomLayer layer, const mod::Shader& shader, const Cust
     batch.draws.push_back(draw);
 }
 
+void ShaderStore::queueBuiltin(CustomLayer layer, CustomBuiltin builtin, const CustomVertex* vertices, size_t count)
+{
+    uint32_t pipeline = renderer.builtinShader(builtin);
+    if (pipeline == 0 || count < 3) {
+        return;
+    }
+    Batch& batch = batches[static_cast<size_t>(layer)];
+    CustomDraw draw;
+    draw.shader = pipeline;
+    draw.firstVertex = static_cast<uint32_t>(batch.vertices.size());
+    draw.vertexCount = static_cast<uint32_t>(count - count % 3);
+    batch.vertices.insert(batch.vertices.end(), vertices, vertices + count);
+    batch.draws.push_back(draw);
+}
+
 void ShaderStore::submit(CustomLayer layer, const std::array<float, 16>& transform, float seconds)
 {
     Batch& batch = batches[static_cast<size_t>(layer)];

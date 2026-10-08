@@ -73,6 +73,15 @@ struct CommandSpec {
     // Shown by .help after the name, like "<player> [seconds]".
     std::string usage;
     std::vector<std::string> aliases;
+
+    /**
+     * Added in API 4, after the fields above so older mods still pass a spec
+     * the client reads correctly. Suggests values for the argument under the
+     * caret when Tab is pressed in chat: args holds the finished arguments,
+     * then the one being typed, which may be empty. Only suggestions that
+     * start with what is typed are shown.
+     */
+    std::function<std::vector<std::string>(const CommandContext&)> complete;
 };
 
 /**

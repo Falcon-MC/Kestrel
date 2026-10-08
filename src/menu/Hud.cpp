@@ -408,6 +408,9 @@ ui::UiData hudData(const HudView& view)
 
     g["#hud_title_text_string"] = text(view.title.title);
     g["#hud_subtitle_text_string"] = text(view.title.subtitle);
+    for (const HudTitle& update : view.titleUpdates) {
+        data.bindingUpdates.push_back({ { "#hud_title_text_string", text(update.title) }, { "#hud_subtitle_text_string", text(update.subtitle) } });
+    }
     if (view.title.serial != 0) {
         data.factories["hud_title_text_factory"].push_back({ "hud_title_text", {
             { "$title_fade_in_time", number(view.title.fadeIn) },

@@ -85,7 +85,7 @@ void idleFlight()
     kestrel::MotionInput both;
     both.jump = true;
     both.sneak = true;
-    near(opposing.step(both, EmptyWorld).movement.y, 1.0f, "Opposing vertical inputs preserve existing cancellation");
+    near(opposing.step(both, EmptyWorld).movement.y, 0.0f, "Opposing vertical inputs stop vertical flight");
 }
 
 void sprintHunger()
