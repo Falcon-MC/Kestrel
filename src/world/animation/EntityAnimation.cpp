@@ -725,18 +725,29 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
         return finished;
     }
     float w = static_cast<float>(blend);
+    // These legacy wolf clips set absolute bone coordinates relative to the
+    // old 24-pixel model origin, rather than offsets from the geometry.
+    bool legacyWolfPose = current.identifier == "minecraft:wolf" && activeLibrary
+        && (&clip == activeLibrary->clip("animation.wolf.setup") || &clip == activeLibrary->clip("animation.wolf.sitting"));
     for (const AnimationBone& track : clip.bones) {
         auto found = boneIndex.find(track.bone);
         if (found == boneIndex.end()) {
             continue;
         }
         BonePose& pose = poses[found->second];
+        const EntityBone& bone = (*activeBones)[found->second];
         if (clip.overridePrevious) {
             pose = BonePose {};
         }
         if (track.rotation.present()) {
             // "this" is the value the earlier animations left, in the pack's own signs.
-            std::array<float, 3> value = sample(track.rotation, sampleTime, { -pose.rotation[0], -pose.rotation[1], pose.rotation[2] });
+            std::array<float, 3> inherited { -pose.rotation[0], -pose.rotation[1], pose.rotation[2] };
+            if (legacyWolfPose) {
+                inherited[0] -= bone.rotation[0];
+                inherited[1] -= bone.rotation[1];
+                inherited[2] += bone.rotation[2];
+            }
+            std::array<float, 3> value = sample(track.rotation, sampleTime, inherited);
             pose.rotation[0] -= value[0] * w;
             pose.rotation[1] -= value[1] * w;
             pose.rotation[2] += value[2] * w;
@@ -745,7 +756,13 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
             }
         }
         if (track.position.present()) {
-            std::array<float, 3> value = sample(track.position, sampleTime, { -pose.position[0], pose.position[1], pose.position[2] });
+            std::array<float, 3> inherited { -pose.position[0], pose.position[1], pose.position[2] };
+            if (legacyWolfPose) {
+                inherited[0] -= bone.pivot[0];
+                inherited[1] += bone.pivot[1] - 24.0f;
+                inherited[2] += bone.pivot[2];
+            }
+            std::array<float, 3> value = sample(track.position, sampleTime, inherited);
             pose.position[0] -= value[0] * w;
             pose.position[1] += value[1] * w;
             pose.position[2] += value[2] * w;
@@ -1397,11 +1414,13 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     if (name == "get_name" || name == "get_nametag") {
         return molang::internString(current.name);
     }
-    if (name == "armor_texture_slot" || name == "armor_color_slot") {
+    if (name == "armor_texture_slot" || name == "armor_color_slot" || name == "armor_damage_slot") {
         double slotValue = argument(0);
-        if (arguments.empty() || !std::isfinite(slotValue) || slotValue < 0.0 || slotValue >= 4.0) return 0.0;
+        if (arguments.empty() || !std::isfinite(slotValue) || slotValue < 0.0 || slotValue >= current.armorItems.size()) return 0.0;
         size_t slot = static_cast<size_t>(slotValue);
+        if (slot == 1 && current.identifier == "minecraft:wolf") slot = 4;
         const std::string& item = current.armorItems[slot];
+        if (name == "armor_damage_slot") return std::max(current.armorDamage[slot], 0);
         if (name == "armor_color_slot") {
             double channel = argument(1);
             if (arguments.size() < 2 || !std::isfinite(channel)) return 0.0;
@@ -1422,6 +1441,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         const std::string* item = nullptr;
         if (argument(0) == molang::internString("slot.weapon.mainhand")) item = &current.mainHandItem;
         if (argument(0) == molang::internString("slot.weapon.offhand")) item = &current.offHandItem;
+        if (argument(0) == molang::internString("slot.armor.body")) item = &current.armorItems[4];
         if (!item || item->empty()) return 0.0;
         const double value = molang::internString(*item);
         for (size_t i = 1; i < arguments.size(); ++i) {

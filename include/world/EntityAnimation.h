@@ -184,8 +184,9 @@ struct AnimationInput {
     std::string name;
     std::string mainHandItem;
     std::string offHandItem;
-    std::array<std::string, 4> armorItems;
-    std::array<std::optional<uint32_t>, 4> armorColors;
+    std::array<std::string, 5> armorItems;
+    std::array<std::optional<uint32_t>, 5> armorColors;
+    std::array<int32_t, 5> armorDamage {};
     // Ticks the main hand item has been held in use, like a bow being drawn, 0 when it is not.
     double itemUseTicks = 0.0;
     std::vector<std::pair<std::string, double>> engineVariables;

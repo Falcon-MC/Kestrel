@@ -147,6 +147,10 @@ vec4 applyTint(vec4 texel, uint tint)
         return texel;
     }
     vec3 color = vec3(float((tint >> 16) & 0xffu), float((tint >> 8) & 0xffu), float(tint & 0xffu)) / 255.0;
+    if ((tint & 0x20000000u) != 0u) {
+        // Leather alpha is both a dye mask and cutout coverage.
+        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+    }
     if ((tint & 0x40000000u) != 0u) {
         // Overlay alpha selects the tinted region, not surface coverage.
         return vec4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
@@ -161,6 +165,21 @@ vec4 actorTexture(uint layer, vec4 grid, vec2 uv)
     return sampleEntity(fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
 }
 
+vec4 applyGlint(vec4 texel, vec2 uv, uint material, uint tint)
+{
+    if ((material & 0x80000000u) == 0u || texel.a == 0.0) return texel;
+    uint layer = (material >> 13) & 0x1fffu;
+    float frame = float((material >> 26) & 31u);
+    float strength = float((tint >> 24) & 31u) / 31.0;
+    vec2 pixel = uv * 64.0;
+    for (uint glintPass = 0u; glintPass < 2u; ++glintPass) {
+        vec2 shifted = vec2(pixel.x + (glintPass != 0u ? pixel.y : 64.0 - pixel.y) + frame * (glintPass != 0u ? 3.0 : 5.0), pixel.y + frame * (glintPass != 0u ? 5.0 : 2.0)) / 128.0;
+        vec4 glint = sampleEntity(fract(shifted), layer);
+        texel.rgb = min(vec3(1.0, 1.0, 1.0), texel.rgb + glint.rgb * vec3(0.5, 0.25, 0.8) * glint.a * 0.35 * strength);
+    }
+    return texel;
+}
+
 vec4 actorSurface(vec2 uv)
 {
     vec4 texel = actorTexture(inActorTextures.x, inActorGrid0, uv);
@@ -169,8 +188,27 @@ vec4 actorSurface(vec2 uv)
     if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard;
     if (mode == 1u && all(equal(texel, vec4(0)))) discard;
     if (mode == 0u && texel.a < 0.1 && (inEntity & 128u) == 0u) discard;
+    if ((mode == 7u && texel.a == 0.0) || (mode == 8u && texel.a < 0.1)) discard;
+    if (mode == 7u) {
+        texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
+        if (inActorTextures.y != 0xffffffffu) {
+            vec4 cracks = actorTexture(inActorTextures.y, inActorGrid1, uv);
+            texel.rgb = mix(texel.rgb, cracks.rgb, cracks.a);
+        }
+    }
+    if (mode == 8u) {
+        if (inActorTextures.y != 0xffffffffu) {
+            vec4 markings = actorTexture(inActorTextures.y, inActorGrid1, uv);
+            texel.rgb = mix(texel.rgb, markings.rgb, markings.a);
+        }
+        if (inActorTextures.z != 0xffffffffu) {
+            vec4 armor = actorTexture(inActorTextures.z, inActorGrid2, uv);
+            vec3 dyed = mix(armor.rgb, armor.rgb * inActorColor.rgb, armor.a);
+            texel.rgb = mix(texel.rgb, dyed, armor.a > 0.0 ? 1.0 : 0.0);
+        }
+    }
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
-    else if (mode != 5u) texel.rgb *= inActorColor.rgb;
+    else if (mode != 5u && mode != 7u && mode != 8u) texel.rgb *= inActorColor.rgb;
     texel.a *= inActorColor.a;
     if (mode == 5u && inActorTextures.y != 0xffffffffu && inActorTextures.z != 0xffffffffu) {
         vec4 second = actorTexture(inActorTextures.y, inActorGrid1, uv);
@@ -214,6 +252,7 @@ void main()
         return;
     }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    if (inEntity != 0u) texel = applyGlint(texel, inUv, inMaterial, inTint);
     if ((inEntity & 512u) != 0u && texel.a < 0.5) discard;
     if ((inEntity & 256u) != 0u) texel.rgb *= inLight.z;
     if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
