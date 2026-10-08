@@ -329,7 +329,10 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
             if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, image.width, image.height, image.rgba) || image.width == 0 || image.height == 0) {
                 image = Decoded {};
             } else if (path.rfind("textures/items/leather_", 0) == 0) {
+                dyeItemFiles.emplace(path.substr(std::string("textures/items/").size()), resizeNearest(image.rgba, image.width, image.height, ItemIconSize));
                 ui::applyDyeMask(image.rgba, ui::LeatherColor);
+            } else if (path == "textures/items/wolf_armor_dyed") {
+                dyeItemFiles.emplace("wolf_armor", resizeNearest(image.rgba, image.width, image.height, ItemIconSize));
             }
             found = decoded.emplace(path, std::move(image)).first;
         }
@@ -438,7 +441,7 @@ static int32_t potionVariant(const std::string& shortName, int32_t aux)
  * block items an isometric cube of the block's default state. Empty when the
  * item has neither.
  */
-std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const
+std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor) const
 {
     static const std::pair<const char*, const char*> Renames[] = {
         { "totem_of_undying", "totem" },
@@ -612,6 +615,15 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         }
     }
     for (const std::string& name : names) {
+        std::string shortName = name.starts_with("minecraft:") ? name.substr(10) : name;
+        if (customColor) {
+            if (auto dye = dyeItemFiles.find(shortName); dye != dyeItemFiles.end()) {
+                std::vector<uint8_t> pixels = dye->second;
+                uint32_t rgb = *customColor;
+                ui::applyDyeMask(pixels, { uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb) });
+                return pixels;
+            }
+        }
         auto found = itemTextures.find(name.find(':') == std::string::npos ? "minecraft:" + name : name);
         if (found == itemTextures.end() || found->second.empty()) {
             continue;

@@ -36,6 +36,7 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
     slot.filled = true;
     slot.count = item.count;
     std::string name = "item/" + item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    if (item.customColor) name += "#color" + std::to_string(*item.customColor);
     int shimmerFrame = 0;
     if (item.enchanted) {
         double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -44,7 +45,7 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
     }
     auto known = itemIcons.find(name);
     if (known == itemIcons.end() || (item.enchanted && itemIconFrames[name] != shimmerFrame)) {
-        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon);
+        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon, item.customColor);
         bool rendered = pixels.size() == size_t(world::ItemIconSize) * world::ItemIconSize * 4;
         if (rendered && item.enchanted) {
             const ui::Bitmap* glint = skin.bitmap("textures/misc/enchanted_item_glint");

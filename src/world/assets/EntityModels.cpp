@@ -858,6 +858,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         ClientEntity worn;
         worn.geometry = "geometry.elytra";
         worn.texture = "textures/models/armor/elytra";
+        worn.materials["default"] = "elytra";
         worn.textures["default"] = worn.texture;
         auto scripts = std::make_shared<EntityScripts>();
         scripts->aliases["elytra"] = "controller.animation.elytra.default";
@@ -1056,6 +1057,8 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                     else if (startsWith(named->second, "entity_dissolve_layer0")) controller.material = EntityMaterial::DissolveDepth;
                     else if (startsWith(named->second, "entity_dissolve_layer1")) controller.material = EntityMaterial::DissolveColor;
                     else if (named->second.find("change_color") != std::string::npos) controller.material = EntityMaterial::ColorMask;
+                    else if (named->second == "wolf_armor") controller.material = EntityMaterial::DyedArmor;
+                    else if (named->second == "horse" || named->second == "horse_leather_armor") controller.material = EntityMaterial::Horse;
                     else if (named->second.find("multitexture") != std::string::npos) controller.material = EntityMaterial::Multitexture;
                 }
             }
@@ -1088,8 +1091,37 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             continue;
         }
         if (std::optional<EntityModel> model = modelOf(definition.geometry, definition, *layer)) {
+            auto material = definition.materials.find("default");
+            model->wearable = material != definition.materials.end()
+                && (material->second == "armor" || material->second == "armor_leather"
+                    || material->second == "elytra" || material->second == "wolf_armor");
             attachableModels.emplace(identifier, std::move(*model));
         }
+    }
+
+    auto wolf = entityModels.find("minecraft:wolf");
+    auto wolfArmor = attachableModels.find("minecraft:wolf_armor");
+    if (wolf != entityModels.end() && wolfArmor != attachableModels.end()) {
+        EntityModel& wearer = wolf->second;
+        const EntityModel& armor = wolfArmor->second;
+        uint32_t firstRig = static_cast<uint32_t>(wearer.rigs.size());
+        wearer.rigs.insert(wearer.rigs.end(), armor.rigs.begin(), armor.rigs.end());
+        for (EntityRenderController controller : armor.controllers) {
+            for (uint32_t& choice : controller.geometryChoices) {
+                if (choice != NoEntityChoice) choice += firstRig;
+            }
+            controller.condition = molang::Script::compile("query.is_item_name_any('slot.armor.body', 'minecraft:wolf_armor')");
+            for (size_t channel = 0; channel < 4; ++channel) {
+                controller.color[channel] = molang::Script::compile("query.armor_color_slot(4, " + std::to_string(channel) + ")");
+            }
+            wearer.controllers.push_back(std::move(controller));
+        }
+        auto scripts = wearer.scripts ? std::make_shared<EntityScripts>(*wearer.scripts) : std::make_shared<EntityScripts>();
+        if (armor.scripts) scripts->preAnimation.insert(scripts->preAnimation.end(), armor.scripts->preAnimation.begin(), armor.scripts->preAnimation.end());
+        wearer.scripts = std::move(scripts);
+        wearer.combined = {};
+        wearer.combinedSources.clear();
+        combineRigs(wearer);
     }
 
     static constexpr const char* ArmorGeometries[] = {
@@ -1142,6 +1174,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             armorLayers.emplace(path, *layer);
         }
     }
+    armorGlintTexture = textureLayer("textures/misc/enchanted_actor_glint").value_or(NoEntityChoice);
     std::string beamImage;
     uint32_t beamWidth = 0, beamHeight = 0;
     std::vector<uint8_t> beamPixels;

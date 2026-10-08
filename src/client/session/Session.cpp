@@ -1143,6 +1143,7 @@ void Session::handleWorldPacket(std::string& payload)
     if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
             actor->second.armorItems = { hudItemOf(equipment->mHelmet), hudItemOf(equipment->mChestplate), hudItemOf(equipment->mLeggings), hudItemOf(equipment->mBoots) };
+            actor->second.bodyArmor = hudItemOf(equipment->mBody);
             actor->second.armor = {
                 actor->second.armorItems[0].identifier,
                 actor->second.armorItems[1].identifier,

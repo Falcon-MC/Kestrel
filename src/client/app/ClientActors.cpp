@@ -3,6 +3,7 @@
 #include "client/AttachableFrame.h"
 #include "client/motion/MotionMath.h"
 #include "world/CrystalBeam.h"
+#include "world/ItemGlint.h"
 
 #include "platform/Window.h"
 #include "render/Renderer.h"
@@ -717,7 +718,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         for (size_t slot = 0; slot < armorItems.size(); ++slot) {
             input.armorItems[slot] = armorItems[slot].identifier;
             input.armorColors[slot] = armorItems[slot].customColor;
+            input.armorDamage[slot] = armorItems[slot].damage;
         }
+        input.armorItems[4] = actor.bodyArmor.identifier;
+        input.armorColors[4] = actor.bodyArmor.customColor;
+        input.armorDamage[4] = actor.bodyArmor.damage;
         input.itemUseTicks = actorItemUseTicks(actor, now);
         if (input.itemUseTicks > 0.0) {
             input.flags[0] |= UsingItemFlag;
@@ -1317,7 +1322,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                             continue;
                         }
                         world::BoneMatrix placed = compose(matrices[size_t(body)], wingMatrices[bone]);
+                        size_t first = out.size();
                         emitQuad(wings.quads[index], &placed, layer, world::EntityBlend::Opaque, false, true, {}, 0.0f);
+                        const HudItem& chest = actor.runtimeId == LocalActorId ? hudState.armor[1] : actor.armorItems[1];
+                        if (chest.enchanted) for (size_t q = first; q < out.size(); ++q) {
+                            world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                        }
                     }
                 }
             }
@@ -1448,8 +1458,13 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
             appendTiled(corners, look.layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | shadeFlags, out);
             if (armor[slot].starts_with("minecraft:leather_")) {
                 constexpr uint32_t defaultColor = (uint32_t(ui::LeatherColor[0]) << 16) | (uint32_t(ui::LeatherColor[1]) << 8) | ui::LeatherColor[2];
-                uint32_t tint = 0xc0000000u | (items ? (*items)[slot].customColor.value_or(defaultColor) : defaultColor);
+                uint32_t tint = 0xa0000000u | ((items ? (*items)[slot].customColor.value_or(defaultColor) : defaultColor) & 0xffffffu);
                 for (size_t q = first; q < out.size(); ++q) out[q].words[14] = tint;
+            }
+            if (items && (*items)[slot].enchanted) {
+                for (size_t q = first; q < out.size(); ++q) {
+                    world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                }
             }
         }
     }
@@ -1492,7 +1507,7 @@ double Client::actorItemUseTicks(const ActorView& actor, double now)
 bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
-    if (!model || model->rigs.empty()) {
+    if (!model || model->wearable || model->rigs.empty()) {
         return false;
     }
     int32_t itemBone = -1;

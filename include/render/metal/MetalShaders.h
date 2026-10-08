@@ -103,6 +103,10 @@ float4 applyTint(float4 texel, uint tint)
         return texel;
     }
     float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
+    if ((tint & 0x20000000u) != 0u) {
+        // Leather alpha is both a dye mask and cutout coverage.
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+    }
     if ((tint & 0x40000000u) != 0) {
         // Overlay alpha selects the tinted region, not surface coverage.
         return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
@@ -220,7 +224,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
     if ((out.entity & 256u) != 0u) out.light.z = float((in.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (out.entity != 0u) {
-        out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0xc0ffffffu) : 0u;
+        out.tint = in.d.w == 0u && ((in.d.z | out.material) & 0x80000000u) != 0u ? in.d.z : 0u;
     }
     if (out.entity != 0u && in.d.w != 0u) {
         float2 uvOffset = float2(as_type<half2>(in.d.z));
@@ -417,6 +421,21 @@ float4 actorTexture(texture2d_array<float> entities, texture2d_array<float> enti
     return sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
 }
 
+float4 applyGlint(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, float4 texel, float2 uv, uint material, uint tint)
+{
+    if ((material & 0x80000000u) == 0u || texel.a == 0.0) return texel;
+    uint layer = (material >> 13) & 0x1fffu;
+    float frame = float((material >> 26) & 31u);
+    float strength = float((tint >> 24) & 31u) / 31.0;
+    float2 pixel = uv * 64.0;
+    for (uint glintPass = 0u; glintPass < 2u; ++glintPass) {
+        float2 shifted = float2(pixel.x + (glintPass != 0u ? pixel.y : 64.0 - pixel.y) + frame * (glintPass != 0u ? 3.0 : 5.0), pixel.y + frame * (glintPass != 0u ? 5.0 : 2.0)) / 128.0;
+        float4 glint = sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, fract(shifted), layer);
+        texel.rgb = min(float3(1.0, 1.0, 1.0), texel.rgb + glint.rgb * float3(0.5, 0.25, 0.8) * glint.a * 0.35 * strength);
+    }
+    return texel;
+}
+
 float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, constant DrawData& draw, WorldOut input, float2 uv)
 {
     float4 texel = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.x, input.actorGrid0, uv);
@@ -425,8 +444,27 @@ float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> enti
     if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard_fragment();
     if (mode == 1u && all(texel == float4(0,0,0,0))) discard_fragment();
     if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard_fragment();
+    if ((mode == 7u && texel.a == 0.0) || (mode == 8u && texel.a < 0.1)) discard_fragment();
+    if (mode == 7u) {
+        texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 cracks = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = mix(texel.rgb, cracks.rgb, cracks.a);
+        }
+    }
+    if (mode == 8u) {
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 markings = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = mix(texel.rgb, markings.rgb, markings.a);
+        }
+        if (input.actorTextures.z != 0xffffffffu) {
+            float4 armor = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.z, input.actorGrid2, uv);
+            float3 dyed = mix(armor.rgb, armor.rgb * input.actorColor.rgb, armor.a);
+            texel.rgb = mix(texel.rgb, dyed, armor.a > 0.0 ? 1.0 : 0.0);
+        }
+    }
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
-    else if (mode != 5u) texel.rgb *= input.actorColor.rgb;
+    else if (mode != 5u && mode != 7u && mode != 8u) texel.rgb *= input.actorColor.rgb;
     texel.a *= input.actorColor.a;
     if (mode == 5u && input.actorTextures.y != 0xffffffffu && input.actorTextures.z != 0xffffffffu) {
         float4 second = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
@@ -452,6 +490,7 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
         return float4(actor.rgb * actor.a, (in.entity & 2u) != 0u ? 0.0 : actor.a);
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if (in.entity != 0) texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in.uv, in.material, in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
@@ -537,6 +576,7 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
         return actor;
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    if (in.entity != 0) texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in.uv, in.material, in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
     if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);

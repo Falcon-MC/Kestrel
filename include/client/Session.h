@@ -229,6 +229,7 @@ struct ActorView {
     // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
     std::array<std::string, 4> armor {};
     std::array<HudItem, 4> armorItems {};
+    HudItem bodyArmor;
     HudItem held;
     HudItem offhand;
     uint32_t effectColor = 0;

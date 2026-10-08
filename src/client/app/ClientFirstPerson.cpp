@@ -4,6 +4,7 @@
 #include "render/Renderer.h"
 #include "world/BlockAssets.h"
 #include "world/ItemInfo.h"
+#include "world/ItemGlint.h"
 
 #include <algorithm>
 #include <cctype>
@@ -815,6 +816,7 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
     }
     std::string mapKey = mapMeshKey(held);
     std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon + mapKey;
+    if (held.customColor) meshKey += "#color" + std::to_string(*held.customColor);
     auto found = heldMeshes.find(meshKey);
     if (found == heldMeshes.end()) {
         uint32_t slot = static_cast<uint32_t>(heldMeshes.size());
@@ -872,6 +874,9 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
             return place(point, mesh.block);
         });
         out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace));
+        if (held.enchanted && !mesh.block) {
+            world::applyItemGlint(out.back(), blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+        }
     }
 }
 
@@ -936,7 +941,7 @@ std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uin
             return mesh;
         }
 
-        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
+        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor);
         std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
         if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
             for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {

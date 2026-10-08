@@ -2,6 +2,7 @@
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/Geometry.h"
+#include "world/ItemGlint.h"
 #include "Core/Json/Json.h"
 
 #include <cmath>
@@ -26,6 +27,18 @@ int main()
     using namespace kestrel;
     using namespace kestrel::world;
     static_assert(sizeof(ActorDraw::constants) == 240);
+    ModelQuadGpu glintQuad;
+    glintQuad.words[10] = 8191;
+    glintQuad.words[14] = 0xa0123456u;
+    applyItemGlint(glintQuad, 8191, 1.0, 100.0f, 100.0f);
+    require((glintQuad.words[10] & 0x1fffu) == 8191, "Glint metadata must preserve the base texture layer");
+    require(((glintQuad.words[10] >> 13) & 0x1fffu) == 8191, "Glint must address all entity texture pages");
+    require((glintQuad.words[14] & 0xe0ffffffu) == 0xa0123456u, "Glint must preserve leather dye and cutout mode");
+    ModelQuadGpu unchanged;
+    applyItemGlint(unchanged, NoEntityChoice, 1.0, 100.0f, 100.0f);
+    require(unchanged.words[10] == 0, "Missing glint textures must leave the base material intact");
+    applyItemGlint(unchanged, 1, 1.0, 0.0f, 100.0f);
+    require(unchanged.words[10] == 0, "Disabling glint must preserve the base material");
     static_assert(actorEquipmentIsOffhand("minecraft:armor_stand", 0, 1));
     static_assert(!actorEquipmentIsOffhand("minecraft:armor_stand", 0, 0));
     static_assert(!actorEquipmentIsOffhand("minecraft:player", 0, 1));
@@ -106,11 +119,50 @@ int main()
     animator.update(nullptr, nullptr, bones, input);
     require(expression(animator, "query.is_alive") == 0, "A dying actor must not animate as alive");
     require(std::abs(animator.matrices()[0][0]) < 1e-6 && std::abs(animator.matrices()[0][4] - 1.0f) < 1e-6, "Generic death tilt must reach a quarter turn");
+    input = AnimationInput {};
+    input.identifier = "minecraft:horse";
     input.armorItems[1] = "minecraft:leather_horse_armor";
     input.armorColors[1] = 0x123456;
     animator.update(nullptr, nullptr, bones, input);
     require(expression(animator, "query.armor_texture_slot(1)") == 1, "Horse armor must select its authored leather texture");
     require(std::abs(expression(animator, "query.armor_color_slot(1, 0)") - 18.0 / 255) < 1e-6, "Authored armor colors must read the equipped stack dye");
+    input.armorItems[4] = "minecraft:diamond_horse_armor";
+    input.armorColors[4] = 0x123456;
+    input.armorDamage[4] = 20;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.armor_texture_slot(4)") == 4, "Body armor must select the native horse armor layer");
+    require(expression(animator, "query.is_item_name_any('slot.armor.body', 'minecraft:diamond_horse_armor')") == 1, "Body attachables must see their equipped item");
+    require(std::abs(expression(animator, "query.armor_color_slot(4, 2)") - 86.0 / 255) < 1e-6, "Body armor must preserve its dye channels");
+    require(expression(animator, "query.armor_damage_slot(4)") == 20, "Wolf armor cracks must read the body item's damage");
+    input.armorItems[4].clear();
+    input.armorDamage[4] = 0;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.is_item_name_any('slot.armor.body', 'minecraft:diamond_horse_armor')") == 0, "Removing body armor must hide the attachable");
+    require(expression(animator, "query.armor_texture_slot(5)") == 0, "Out-of-range armor slots must remain invalid");
+
+    input.identifier = "minecraft:wolf";
+    input.armorItems[4] = "minecraft:wolf_armor";
+    input.armorColors[4] = 0x123456u;
+    input.armorDamage[4] = 20;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.armor_damage_slot(1)") == 20, "Legacy wolf armor queries must address the body equipment");
+    require(std::abs(expression(animator, "query.armor_color_slot(1, 0)") - 18.0 / 255.0) < 1e-6, "Wolf armor dye must come from body equipment");
+
+    auto wolfDescription = json::parse(R"({"animations":{"audit_setup":"animation.wolf.setup"},"scripts":{"animate":["audit_setup"]}})");
+    auto wolfScripts = readEntityScripts(*wolfDescription);
+    auto wolfDocument = json::parse(R"({"animations":{"animation.wolf.setup":{"loop":true,"bones":{"root":{"position":["3-this","-12-this","7-this"],"rotation":["45-this",0,0]}}}}})");
+    AnimationLibrary wolfLibrary;
+    wolfLibrary.parse(*wolfDocument);
+    std::vector<EntityBone> wolfBones(1);
+    wolfBones[0].name = "root";
+    wolfBones[0].pivot = { -3, 12, 7 };
+    wolfBones[0].rotation = { -45, 0, 0 };
+    EntityAnimator absoluteWolf;
+    absoluteWolf.update(wolfScripts.get(), &wolfLibrary, wolfBones, input);
+    const BoneMatrix& wolfMatrix = absoluteWolf.matrices()[0];
+    require(std::abs(wolfMatrix[3]) < 1e-6, "Absolute wolf setup must preserve the horizontal bone origin");
+    require(std::abs(wolfMatrix[5] - std::cos(45.0 * 3.14159265359 / 180.0)) < 1e-6, "Wolf setup must not apply its bind rotation twice");
+    require(std::abs(wolfMatrix[7] + wolfMatrix[4] * -3 + wolfMatrix[5] * 12 + wolfMatrix[6] * 7 - 12) < 1e-5, "Wolf setup must leave its body above the feet");
 
     EntityAnimator walking;
     input = AnimationInput {};
