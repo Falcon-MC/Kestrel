@@ -290,6 +290,16 @@ enum class CustomLayer {
     AboveUi,
 };
 
+/**
+ * Custom shaders the client brings itself: the vertex color times the
+ * interface atlas at the vertex uv, alpha blended and depth tested, or with
+ * Overlay drawn over everything already in the frame.
+ */
+enum class CustomBuiltin {
+    Primitive,
+    PrimitiveOverlay,
+};
+
 inline constexpr size_t CustomLayerCount = 3;
 inline constexpr size_t CustomParamCount = 12;
 
@@ -354,6 +364,12 @@ public:
      */
     virtual uint32_t createShader(const ShaderSource& source, CustomBlend blend, bool post, std::string& error) = 0;
     virtual void destroyShader(uint32_t shader) = 0;
+
+    /**
+     * The id of a built in pipeline for CustomDraw::shader; it lives as long
+     * as the renderer and is never destroyed through destroyShader.
+     */
+    virtual uint32_t builtinShader(CustomBuiltin builtin) const = 0;
 
     /**
      * Draws triangle lists with custom shaders. transform takes positions to

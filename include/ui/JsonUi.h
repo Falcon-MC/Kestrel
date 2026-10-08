@@ -72,6 +72,7 @@ struct UiFactoryItem {
  */
 struct UiData {
     UiRow globals;
+    std::vector<UiRow> bindingUpdates;
     std::unordered_map<std::string, std::vector<UiRow>> collections;
     std::unordered_map<std::string, std::vector<UiFactoryItem>> factories;
     bool hideUnboundVisibility = false;

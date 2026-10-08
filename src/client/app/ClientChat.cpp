@@ -85,7 +85,9 @@ void Client::syncChat()
             agentEvents.add("title", writer.take());
         }
         if (mods->filterTitle(request)) {
+            bool textChanged = request.kind != TitleRequest::Kind::Times;
             applyTitle(std::move(request));
+            if (textChanged && titleUiUpdates.size() < 64) titleUiUpdates.push_back(titleView);
         }
     }
     for (ToastRequest& toast : session.takeToasts()) {

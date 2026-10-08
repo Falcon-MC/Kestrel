@@ -62,6 +62,7 @@
 #include "Protocol/Packets/PlayerFogPacket.h"
 #include "Protocol/Packets/LevelChunkPacket.h"
 #include "Protocol/Packets/ClientboundMapItemDataPacket.h"
+#include "Protocol/Packets/PrimitiveShapesPacket.h"
 #include "Protocol/Packets/MovePlayerPacket.h"
 #include "Protocol/Packets/NetworkChunkPublisherUpdatePacket.h"
 #include "Protocol/Packets/StartGamePacket.h"
@@ -1052,6 +1053,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
     case MinecraftPacketIds::SpawnParticleEffect:
+    case MinecraftPacketIds::PrimitiveShapes:
     case MinecraftPacketIds::ClientboundMapItemData:
     case MinecraftPacketIds::UpdateTrade:
         break;
@@ -1178,22 +1180,43 @@ void Session::handleWorldPacket(std::string& payload)
             const Vector3i& at = updateBlock->mBlockPosition;
             answerPredictedBreak({ at.x, at.y, at.z }, updateBlock->mRuntimeId);
         }
+        const Vector3i& at = updateBlock->mBlockPosition;
+        std::vector<BlockChangeView> changes;
+        if (updateBlock->mDataLayer == 0 && assets) {
+            changes.push_back({ { at.x, at.y, at.z }, blockNameAt(at.x, at.y, at.z), assets->blockName(updateBlock->mRuntimeId, ids.hashed, ids.sequential.get()), false });
+        }
         world.handle(*updateBlock);
+        recordBlockChanges(std::move(changes));
+        publishLoaded();
     } else if (auto synced = std::dynamic_pointer_cast<UpdateBlockSyncedPacket>(packet)) {
         if (synced->mDataLayer == 0) {
             const auto& at = synced->mBlockPosition;
             answerPredictedBreak({ at.x, at.y, at.z }, synced->mRuntimeId);
         }
+        const auto& at = synced->mBlockPosition;
+        std::vector<BlockChangeView> changes;
+        if (synced->mDataLayer == 0 && assets) {
+            changes.push_back({ { at.x, at.y, at.z }, blockNameAt(at.x, at.y, at.z), assets->blockName(synced->mRuntimeId, ids.hashed, ids.sequential.get()), false });
+        }
         world.handle(*synced);
+        recordBlockChanges(std::move(changes));
+        publishLoaded();
         if (synced->mDataLayer == 0 && (synced->mEntityBlockSyncType == BlockSyncType::Create || synced->mEntityBlockSyncType == BlockSyncType::Destroy))
             syncFallingBlock(synced->mRuntimeActorId, synced->mEntityBlockSyncType == BlockSyncType::Destroy);
     } else if (auto updateSubChunk = std::dynamic_pointer_cast<UpdateSubChunkBlocksPacket>(packet)) {
+        std::vector<BlockChangeView> changes;
         for (const BlockChangeEntry& entry : updateSubChunk->mStandardBlocks) {
             answerPredictedBreak({ entry.mPosition.x, entry.mPosition.y, entry.mPosition.z }, entry.mRuntimeId);
             if (entry.mMessageType == BlockChangeMessageType::Create || entry.mMessageType == BlockChangeMessageType::Destroy)
                 syncFallingBlock(entry.mMessageEntityId, entry.mMessageType == BlockChangeMessageType::Destroy);
+            if (assets) {
+                changes.push_back({ { entry.mPosition.x, entry.mPosition.y, entry.mPosition.z }, blockNameAt(entry.mPosition.x, entry.mPosition.y, entry.mPosition.z),
+                    assets->blockName(entry.mRuntimeId, ids.hashed, ids.sequential.get()), false });
+            }
         }
         world.handle(updateSubChunk);
+        recordBlockChanges(std::move(changes));
+        publishLoaded();
     } else if (auto publisher = std::dynamic_pointer_cast<NetworkChunkPublisherUpdatePacket>(packet)) {
         world.handle(*publisher);
     } else if (auto dimensions = std::dynamic_pointer_cast<DimensionDataPacket>(packet)) {
@@ -1286,6 +1309,10 @@ void Session::handleWorldPacket(std::string& payload)
         if (auto item = actors.find(taken->mItemRuntimeActorId); item != actors.end() && item->second.pickedUpAt == 0.0) {
             item->second.pickedUpBy = taken->mRuntimeActorId;
             item->second.pickedUpAt = secondsNow();
+            SoundRequest pop;
+            pop.name = "pop";
+            pop.position = { item->second.x, item->second.y, item->second.z };
+            queueSound(std::move(pop));
         }
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (static_cast<uint64_t>(data->mRuntimeActorId) == localRuntimeId) {
@@ -1293,6 +1320,7 @@ void Session::handleWorldPacket(std::string& payload)
                 if (entry.mFormat != EntityDataFormat::Long) continue;
                 if (entry.mId == 0) current.localActorFlags[0] = static_cast<uint64_t>(entry.mLongValue);
                 if (entry.mId == 92) current.localActorFlags[1] = static_cast<uint64_t>(entry.mLongValue);
+                if (entry.mId == 139) current.localActorFlags[2] = static_cast<uint64_t>(entry.mLongValue);
             }
         }
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
@@ -1425,6 +1453,8 @@ void Session::handleWorldPacket(std::string& payload)
         }
     } else if (auto map = std::dynamic_pointer_cast<ClientboundMapItemDataPacket>(packet)) {
         handleMapPacket(*map);
+    } else if (auto shapes = std::dynamic_pointer_cast<PrimitiveShapesPacket>(packet)) {
+        handlePrimitiveShapes(*shapes);
     } else if (auto effect = std::dynamic_pointer_cast<SpawnParticleEffectPacket>(packet)) {
         if (effect->mDimensionId != motionDimension || effect->mIdentifier.empty()) {
             return;
@@ -2037,6 +2067,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     codecContext = std::make_unique<PacketCodecContext>(blockDefinitions, itemDefinitions);
     result.mConnection->setCodecContext(codecContext.get());
+    if (packetHook) {
+        packetHook->attachCodec(codecContext.get());
+    }
     inventoryModel = {};
     inventoryBefore.reset();
     inventoryChangedSlots.clear();
@@ -2060,6 +2093,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     missedSwing = false;
     clientTick = 0;
     nextMotionTick = 0.0;
+    lastMotionFrame = 0.0;
+    glideBoost = {};
+    dolphinBoost = {};
     lastMotionInput = MotionInput {};
     movementInputLocks = 0;
     if (result.mConnection->isSpawnReceived()) {
@@ -2081,6 +2117,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         pendingSkins.clear();
         actors.clear();
         runtimeByUnique.clear();
+        debugShapes.clear();
+        current.debugShapes.clear();
         actorRiders.clear();
         uuidByRuntime.clear();
         skinByUuid.clear();
@@ -2338,6 +2376,12 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             std::lock_guard<std::mutex> guard(mutex);
             raw.swap(rawOutgoing);
         }
+        if (packetHook) {
+            for (std::string& payload : packetHook->takeOutgoing()) {
+                raw.push_back(std::move(payload));
+            }
+        }
+        latency = connection->getNetworkStatus().mAveragePing;
         for (const std::string& payload : raw) {
             MinecraftPacketIds rawId;
             journal.record(true, BedrockConnection::peekPacketId(payload, rawId) ? static_cast<int>(rawId) : -1, payload);

@@ -1,4 +1,6 @@
 #include "ui/JsonUiInternal.h"
+#include "ui/BindingVisibility.h"
+#include "ui/BindingLookup.h"
 
 #include <algorithm>
 #include <iterator>
@@ -1121,26 +1123,31 @@ void JsonUiRuntime::bind(Node& node)
             detailsCollection = named && named->isString() ? named->mString : std::string();
         }
     }
-    for (const std::unique_ptr<json::Value>& binding : bindings->mArray) {
-        if (!binding->isObject()) {
-            continue;
+    auto visible = [&] {
+        for (const Node* at = &node; at; at = at->parent) {
+            auto bound = at->bound.find("#visible");
+            bool shown = bound != at->bound.end() ? bound->second.truthy() : flag(*at, "visible", true);
+            if (!shown && !at->forced) return false;
         }
-        if (binding->get("ignored") && ignores(node, binding->get("ignored"))) {
-            continue;
+        return true;
+    };
+    visitBindings(*bindings, [&](const json::Value* value) { return resolve(node, value); }, visible, [&](const json::Value& binding) {
+        if (binding.get("ignored") && ignores(node, binding.get("ignored"))) {
+            return;
         }
-        const json::Value* typeValue = resolve(node, binding->get("binding_type"));
+        const json::Value* typeValue = resolve(node, binding.get("binding_type"));
         std::string type = typeValue && typeValue->isString() ? typeValue->mString : detailsGiven ? "collection" : "global";
         if (type == "view") {
-            const json::Value* source = resolve(node, binding->get("source_property_name"));
-            const json::Value* target = resolve(node, binding->get("target_property_name"));
+            const json::Value* source = resolve(node, binding.get("source_property_name"));
+            const json::Value* target = resolve(node, binding.get("target_property_name"));
             if (!source || !source->isString() || !target || !target->isString()) {
-                continue;
+                return;
             }
             Node* from = &node;
-            if (const json::Value* control = resolve(node, binding->get("source_control_name")); control && control->isString() && !control->mString.empty()) {
+            if (const json::Value* control = resolve(node, binding.get("source_control_name")); control && control->isString() && !control->mString.empty()) {
                 std::string name = control->mString.front() == '(' ? evaluate(node, control->mString).toText() : control->mString;
-                const json::Value* sibling = resolve(node, binding->get("resolve_sibling_scope"));
-                const json::Value* ancestor = resolve(node, binding->get("resolve_ancestor_scope"));
+                const json::Value* sibling = resolve(node, binding.get("resolve_sibling_scope"));
+                const json::Value* ancestor = resolve(node, binding.get("resolve_ancestor_scope"));
                 if (sibling && sibling->boolean(false)) {
                     from = find(node.parent ? *node.parent : node, name);
                 } else if (ancestor && ancestor->boolean(false)) {
@@ -1156,8 +1163,8 @@ void JsonUiRuntime::bind(Node& node)
                 }
             }
             if (from) {
-                UiLookup find = [&](const std::string& key) { return bindingLookup(*from, key, [&](const std::string& name) { return lookup(*from, name); }); };
-                UiValue value = source->mString.front() == '(' ? jsonui::evaluate(source->mString, find) : lookup(*from, source->mString);
+                UiLookup find = [&](const std::string& key) { return bindingLookup(node, key, [&](const std::string& name) { return lookup(*from, name); }); };
+                UiValue value = source->mString.front() == '(' ? jsonui::evaluate(source->mString, find) : find(source->mString);
                 if (source->mString.front() == '$' && value.kind == UiValue::Kind::String && !value.text.empty() && value.text.front() == '(') {
                     value = jsonui::evaluate(value.text, find);
                 }
@@ -1168,22 +1175,22 @@ void JsonUiRuntime::bind(Node& node)
             } else if (target->mString == "#visible" && data && data->hideUnboundVisibility) {
                 node.bound[target->mString] = UiValue::of(false);
             }
-            continue;
+            return;
         }
         // "none" bindings are never read; a property naming the binding still finds the
         // screen's value through lookup.
         if (type == "collection_details" || type == "none") {
-            continue;
+            return;
         }
-        const json::Value* nameValue = resolve(node, binding->get("binding_name"));
+        const json::Value* nameValue = resolve(node, binding.get("binding_name"));
         if (!nameValue || !nameValue->isString() || nameValue->mString.empty()) {
-            continue;
+            return;
         }
         std::string name = nameValue->mString;
-        const json::Value* overrideValue = resolve(node, binding->get("binding_name_override"));
+        const json::Value* overrideValue = resolve(node, binding.get("binding_name_override"));
         std::string target = overrideValue && overrideValue->isString() && !overrideValue->mString.empty() ? overrideValue->mString : name;
         UiValue value;
-        const json::Value* collectionValue = resolve(node, binding->get("binding_collection_name"));
+        const json::Value* collectionValue = resolve(node, binding.get("binding_collection_name"));
         std::string collection = collectionValue && collectionValue->isString() ? collectionValue->mString : !typeValue && detailsGiven ? detailsCollection : std::string();
         auto read = [&](const std::string& key) -> UiValue {
             if (type == "collection") {
@@ -1237,7 +1244,7 @@ void JsonUiRuntime::bind(Node& node)
             if (value.kind == UiValue::Kind::String && value.text.size() > 1 && value.text.front() == '#') {
                 value = read(value.text);
                 if (target == name) {
-                    continue;
+                    return;
                 }
             }
         } else if (name.front() == '#') {
@@ -1250,7 +1257,7 @@ void JsonUiRuntime::bind(Node& node)
             node.dataToggle = node.dataToggle || target == "#toggle_state";
             node.bound[target] = std::move(value);
         }
-    }
+    });
 }
 
 /**
@@ -1260,14 +1267,7 @@ void JsonUiRuntime::bind(Node& node)
  */
 UiValue JsonUiRuntime::bindingLookup(const Node& node, const std::string& key, const UiLookup& binding) const
 {
-    if (key.front() == '#') {
-        return binding(key);
-    }
-    UiValue value = lookup(node, key);
-    if (key.front() == '$' && value.kind == UiValue::Kind::String && value.text.size() > 1 && value.text.front() == '#') {
-        return binding(value.text);
-    }
-    return value;
+    return resolveBindingValue(key, [&](const std::string& name) { return lookup(node, name); }, binding);
 }
 
 void JsonUiRuntime::animate(Node& node)

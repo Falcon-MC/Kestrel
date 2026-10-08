@@ -143,6 +143,8 @@ struct ModEntry {
     bool loaded = false;
     std::string error;
     std::vector<std::pair<std::string, std::string>> config;
+    // Whether the mod built a settings page with Ui::addSettings.
+    bool hasSettings = false;
 };
 
 /**
@@ -159,6 +161,7 @@ struct ModAction {
         Rescan,
         OpenFolder,
         ReloadConfigs,
+        OpenSettings,
     };
 
     Kind kind = Kind::Rescan;
@@ -842,6 +845,15 @@ public:
         modEntries = std::move(entries);
     }
 
+    /**
+     * Where Tab and the list above the chat box get completions for a draft
+     * starting with the mod command prefix.
+     */
+    void setModCompletions(std::function<CommandHints(std::string_view)> complete)
+    {
+        modCompletions = std::move(complete);
+    }
+
     void setGlobalResources(std::vector<world::GlobalPackEntry> entries) { globalPacks = std::move(entries); globalPackScreens.clear(); }
     void setGlobalResourceStatus(bool busy, std::string status) { globalPacksBusy = busy; globalPacksStatus = std::move(status); }
     std::vector<world::GlobalPackAction> takeGlobalPackActions() { return std::exchange(globalPackActions, {}); }
@@ -1325,6 +1337,7 @@ private:
     std::vector<ModKeyBind> modBinds;
     std::function<void(const std::string&, Key)> onModKeyBind;
     std::vector<ModEntry> modEntries;
+    std::function<CommandHints(std::string_view)> modCompletions;
     std::vector<ModAction> modActions;
     std::vector<world::GlobalPackEntry> globalPacks;
     std::map<std::string, std::unique_ptr<ui::JsonUiScreen>> globalPackScreens;
@@ -1398,6 +1411,9 @@ private:
     bool chatSettingsOpen = false;
     // The settings closed this frame, so the key that closed them is used up.
     bool chatSettingsClosed = false;
+    // The chat screen closes itself on Escape before the key handling runs,
+    // which must then not take the same press to open the pause menu.
+    bool chatClosedByScreen = false;
     ChatSettings chatOptions;
     uint64_t chatStyleRevision = 0;
     std::shared_ptr<const std::vector<ChatCommand>> commands;

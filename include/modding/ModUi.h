@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mod/Ui.h"
+#include "modding/LegacyRequests.h"
 #include "platform/Input.h"
 
 #include <memory>
@@ -26,10 +27,21 @@ struct UiControlState {
     void end();
 };
 
+/**
+ * One operation on a mod's screens, posted as an event by older mods.
+ */
+using UiRequest = mod::detail::UiRequest;
+
+/**
+ * The screen id of the settings page the client builds from a mod's
+ * Ui::addSettings; it is opened as one of that mod's screens.
+ */
+inline constexpr std::string_view SettingsScreenId = "kestrel:settings";
+
 class ModUi {
 public:
     struct Screen { size_t owner; std::string id; UiControlState controls; };
-    void process(size_t owner, mod::detail::UiRequest& request);
+    void process(size_t owner, UiRequest& request);
     bool open() const { return !screens.empty(); }
     std::shared_ptr<Screen> top() const { return screens.empty() ? nullptr : screens.back(); }
     void capture(InputState& input, float scale);

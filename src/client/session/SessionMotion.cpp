@@ -3,6 +3,7 @@
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/CorrectPlayerMovePredictionPacket.h"
 #include "Protocol/Packets/MovePlayerPacket.h"
+#include "Protocol/Packets/MovementEffectPacket.h"
 #include "Protocol/Packets/NetworkStackLatencyPacket.h"
 #include "Protocol/Packets/PlayerAuthInputPacket.h"
 #include "Protocol/Packets/RespawnPacket.h"
@@ -12,6 +13,7 @@
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
 #include "world/BlockCollisions.h"
+#include "world/ItemInfo.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,15 +29,17 @@ using session::ScaleDataId;
 using session::enchantmentLevel;
 
 constexpr double TickSeconds = 0.05;
-constexpr int32_t MaxCatchUpTicks = 8;
-constexpr double MaxCatchUpSeconds = 1.0;
+constexpr double MaxFrameSeconds = 0.1;
+constexpr int32_t MaxFrameTicks = 10;
 constexpr size_t MotionHistoryTicks = 32;
 constexpr uint64_t NearbyRefreshTicks = 10;
-constexpr uint64_t LoadedRefreshTicks = 20;
 constexpr int32_t FlagsDataId = 0;
 constexpr int SprintingFlag = 3;
 constexpr int NoAiFlag = 16;
 constexpr int HasGravityFlag = 49;
+constexpr int32_t ThirdFlagsDataId = 139;
+constexpr int ThirdFlagsFirstFlag = 128;
+constexpr int UsesUniformAirDragFlag = 128;
 constexpr int32_t JumpBoostEffect = 8;
 constexpr int32_t LevitationEffect = 24;
 // Servers read the echoed probe time back in millions of the time they sent.
@@ -59,10 +63,20 @@ constexpr uint32_t RightInputLock = 1u << 12;
 
 }
 
+/**
+ * Takes the input of a frame. The glide and flight requests a mod makes are
+ * kept until a movement tick takes them, so a frame between two ticks cannot
+ * lose one.
+ */
 void Session::setMotionInput(const MotionInput& input)
 {
     std::lock_guard<std::mutex> guard(motionInputMutex);
-    motionInput = input;
+    MotionInput latched = input;
+    latched.startGlide = input.startGlide || motionInput.startGlide;
+    latched.stopGlide = input.stopGlide || motionInput.stopGlide;
+    latched.startFlying = input.startFlying || motionInput.startFlying;
+    latched.stopFlying = input.stopFlying || motionInput.stopFlying;
+    motionInput = latched;
 }
 
 /**
@@ -240,7 +254,32 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         for (const AttributeData& attribute : attributes->mAttributes) {
             if (attribute.mName == "minecraft:movement") {
                 motion.setMovementSpeed(attribute.mValue, attribute.mDefaultValue);
+            } else if (attribute.mName == "minecraft:underwater_movement") {
+                motion.setUnderwaterSpeed(attribute.mValue);
+            } else if (attribute.mName == "minecraft:lava_movement") {
+                motion.setLavaSpeed(attribute.mValue);
+            } else if (attribute.mName == "minecraft:air_drag_modifier") {
+                motion.setAirDragModifier(attribute.mValue);
             }
+        }
+    } else if (auto effect = std::dynamic_pointer_cast<MovementEffectPacket>(packet)) {
+        if (effect->mActorRuntimeId != localRuntimeId) {
+            return;
+        }
+        MotionBoost* boost = effect->mEffectType == MovementEffectType::GlideBoost ? &glideBoost
+            : effect->mEffectType == MovementEffectType::DolphinBoost ? &dolphinBoost : nullptr;
+        if (!boost) {
+            return;
+        }
+        int32_t duration = static_cast<int32_t>(effect->mDuration);
+        uint64_t start = (effect->mTick == 0 ? clientTick : effect->mTick) + 1;
+        boost->start = start;
+        boost->end = duration == -1 ? std::numeric_limits<uint64_t>::max() : start + static_cast<uint64_t>(std::max(duration, 1));
+        auto from = std::find_if(motionHistory.begin(), motionHistory.end(), [start](const SentMotionTick& sent) {
+            return sent.tick + 1 == start;
+        });
+        if (from != motionHistory.end()) {
+            replayFrom(static_cast<size_t>(from - motionHistory.begin()));
         }
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (static_cast<uint64_t>(data->mRuntimeActorId) != localRuntimeId) {
@@ -252,6 +291,9 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
                 motion.setServerSprint((flags >> SprintingFlag) & 1);
                 motion.setImmobile((flags >> NoAiFlag) & 1);
                 motion.setGravity((flags >> HasGravityFlag) & 1);
+            } else if (entry.mId == ThirdFlagsDataId && entry.mFormat == EntityDataFormat::Long) {
+                uint64_t flags = static_cast<uint64_t>(entry.mLongValue);
+                motion.setUniformAirDrag((flags >> (UsesUniformAirDragFlag - ThirdFlagsFirstFlag)) & 1);
             } else if (entry.mId == ScaleDataId && entry.mFormat == EntityDataFormat::Float) {
                 motion.setScale(entry.mFloatValue);
             }
@@ -285,14 +327,17 @@ void Session::handleMotionPacket(const std::shared_ptr<Packet>& packet)
         motion.setAbilities(mayFly, flying, noClip, flySpeed, verticalFlySpeed);
         std::lock_guard<std::mutex> guard(mutex);
         current.player.mayFly = mayFly;
+        if (flySpeed > 0.0f) {
+            current.player.flySpeed = flySpeed;
+        }
         current.player.operatorCommands = abilities->mAbilities.mCommandPermission > 0;
     }
 }
 
 /**
- * Runs every movement tick that fell due since the last call, 50 ms apart,
- * catching up to eight ticks at once after a stall; ticks further behind
- * than that are dropped.
+ * Runs every movement tick that fell due since the last call, 50 ms apart.
+ * Like the game's timer, each call counts at most 100 ms of elapsed time and
+ * the rest is lost, so a stall runs two ticks instead of catching up.
  */
 void Session::tickMotion()
 {
@@ -302,20 +347,23 @@ void Session::tickMotion()
     double now = secondsNow();
     if (nextMotionTick == 0.0) {
         nextMotionTick = now;
+        lastMotionFrame = now;
     }
-    if (now - nextMotionTick > MaxCatchUpSeconds) {
-        nextMotionTick = now - TickSeconds * MaxCatchUpTicks;
+    double elapsed = now - lastMotionFrame;
+    lastMotionFrame = now;
+    if (elapsed > MaxFrameSeconds) {
+        nextMotionTick += elapsed - MaxFrameSeconds;
     }
     int32_t due = 0;
-    while (now >= nextMotionTick) {
+    while (now >= nextMotionTick && due < MaxFrameTicks) {
         nextMotionTick += TickSeconds;
         ++due;
     }
-    int32_t run = std::min(due, MaxCatchUpTicks);
-    for (int32_t index = 0; index < run; ++index) {
-        tickProjectiles(nextMotionTick - TickSeconds * (due - index));
+    for (int32_t index = 0; index < due; ++index) {
+        double stamp = nextMotionTick - TickSeconds * (due - index);
+        tickProjectiles(stamp);
         // stamp the tick with when it was due, not when this loop got around to it, or the camera hitches by the delay
-        runMotionTick(nextMotionTick - TickSeconds * (run - index));
+        runMotionTick(stamp);
     }
     if (due > 0) {
         sendMapRequests();
@@ -335,6 +383,10 @@ void Session::runMotionTick(double now)
     {
         std::lock_guard<std::mutex> guard(motionInputMutex);
         input = motionInput;
+        motionInput.startGlide = false;
+        motionInput.stopGlide = false;
+        motionInput.startFlying = false;
+        motionInput.stopFlying = false;
     }
     // Filter before prediction so physics, replay history and the server's input agree.
     if (movementInputLocks & (MovementInputLock | LateralInputLock)) {
@@ -357,6 +409,9 @@ void Session::runMotionTick(double now)
         std::lock_guard<std::mutex> guard(mutex);
         input.usingItem = itemInUse.has_value();
         input.raining = current.rainLevel > 0.0f;
+        if (input.swimDown && current.player.inWater && !(movementInputLocks & (MovementInputLock | SneakInputLock))) {
+            input.sneak = true;
+        }
         int32_t jumpBoost = 0;
         int32_t levitation = 0;
         bool slowFalling = false;
@@ -381,11 +436,22 @@ void Session::runMotionTick(double now)
     const ItemStack& chest = inventoryModel.slots[inventory::Armor + 1];
     const ItemStack& legs = inventoryModel.slots[inventory::Armor + 2];
     const ItemStack& feetSlot = inventoryModel.slots[inventory::Armor + 3];
-    input.elytra = !chest.isAir() && chest.mDefinition->getIdentifier() == "minecraft:elytra";
+    if (!chest.isAir() && chest.mDefinition->getIdentifier() == "minecraft:elytra") {
+        int32_t damage = chest.mTag.isCompound() ? chest.mTag.getInt("Damage", chest.mDamage) : chest.mDamage;
+        input.elytra = damage < world::itemMaxDurability("minecraft:elytra") - 1;
+    }
+    input.leatherBoots = !feetSlot.isAir() && feetSlot.mDefinition->getIdentifier() == "minecraft:leather_boots";
+    applyMotionBoosts(input, clientTick + 1);
     input.depthStrider = enchantmentLevel(feetSlot, DepthStriderEnchantment);
     input.soulSpeed = enchantmentLevel(feetSlot, SoulSpeedEnchantment);
     input.swiftSneak = enchantmentLevel(legs, SwiftSneakEnchantment);
     input.riptide = pendingRiptide.exchange(0);
+    if (std::optional<BlockHit> target = input.rotationOverridden ? std::nullopt : modBreakHit()) {
+        MotionVector eye = motion.position();
+        std::array<float, 2> look = lookRotation({ eye.x, eye.y + EyeHeight, eye.z }, target->point);
+        input.yaw = look[0];
+        input.pitch = look[1];
+    }
 
     bool waitingForWorld = false;
     if (!motionStarted) {
@@ -437,14 +503,19 @@ void Session::runMotionTick(double now)
         tick.onGround = motion.grounded();
     }
 
-    float yaw = std::remainder(input.yaw, 360.0f);
+    float yaw = std::fmod(input.yaw + 180.0f, 360.0f);
+    if (yaw < 0.0f) {
+        yaw += 360.0f;
+    }
+    yaw -= 180.0f;
+    float headYaw = yaw > 90.0f ? yaw - 360.0f : yaw;
     float pitch = std::clamp(input.pitch, -90.0f, 90.0f);
     float rawSideways = frozen ? 0.0f : std::clamp(input.sideways, -1.0f, 1.0f);
     float rawForward = frozen ? 0.0f : std::clamp(input.forward, -1.0f, 1.0f);
     PlayerAuthInputPacket packet;
     float eyeY = tick.position.y + EyeHeight;
     packet.mPosition = Vector3f(tick.position.x, eyeY, tick.position.z);
-    packet.mRotation = Vector3f(pitch, yaw, yaw);
+    packet.mRotation = Vector3f(pitch, yaw, headYaw);
     packet.mMotionX = tick.moveSideways;
     packet.mMotionY = tick.moveForward;
     packet.mAnalogMoveVectorX = 0.0f;
@@ -528,9 +599,6 @@ void Session::runMotionTick(double now)
     if (tick.stopSneaking) {
         flag(PlayerAuthInputData::StopSneaking);
     }
-    if (tick.forcedSneak) {
-        flag(PlayerAuthInputData::PersistSneak);
-    }
     if (input.sprint || tick.sprinting) {
         flag(PlayerAuthInputData::SprintDown);
     }
@@ -592,6 +660,7 @@ void Session::runMotionTick(double now)
     if (missedSwing.exchange(false)) {
         flag(PlayerAuthInputData::MissedSwing);
     }
+    runModActions();
     if (useRequested.exchange(false)) {
         lastItemRepeatTick = clientTick;
         interact(true);
@@ -625,10 +694,19 @@ void Session::runMotionTick(double now)
     if (clientTick % NearbyRefreshTicks == 0) {
         publishNearby();
     }
-    if (clientTick % LoadedRefreshTicks == 0) {
-        publishLoaded();
-    }
+    publishLoaded();
+    recordPlayerTick({ clientTick, { feet.x, feet.y, feet.z }, { tick.velocity.x, tick.velocity.y, tick.velocity.z }, tick.onGround });
     std::lock_guard<std::mutex> guard(mutex);
+    current.player.velocity = { tick.velocity.x, tick.velocity.y, tick.velocity.z };
+    current.player.inWater = tick.inWater;
+    current.player.inLava = tick.inLava;
+    current.player.onClimbable = tick.onClimbable;
+    current.player.gliding = tick.gliding;
+    current.player.horizontalCollision = tick.horizontalCollision;
+    current.player.verticalCollision = tick.verticalCollision;
+    current.player.fallDistance = tick.fallDistance;
+    current.player.bbWidth = tick.width;
+    current.player.bbHeight = tick.height;
     current.player.active = true;
     current.player.previous = current.player.current;
     current.player.current = { feet.x, feet.y, feet.z };
@@ -637,8 +715,11 @@ void Session::runMotionTick(double now)
     current.player.onGround = tick.onGround;
     current.player.sprinting = tick.sprinting;
     current.player.swimming = tick.swimming;
+    current.player.gliding = tick.gliding;
     current.player.flying = tick.flying;
     current.player.movementSpeed = motion.speed();
+    current.motion = std::make_shared<const PlayerMotion>(motion);
+    current.motionInput = input;
 }
 
 /**
@@ -664,6 +745,29 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     }
     MotionVector kept = velocity ? *velocity : corrected->after.currentVelocity();
     corrected->after.correct(position, kept, onGround);
+    size_t index = static_cast<size_t>(corrected - motionHistory.begin());
+    replayFrom(index);
+    motionHistory.erase(motionHistory.begin(), motionHistory.begin() + static_cast<std::ptrdiff_t>(index));
+}
+
+/**
+ * Turns on the server movement boosts that cover the given tick.
+ */
+void Session::applyMotionBoosts(MotionInput& input, uint64_t tick) const
+{
+    input.glideBoost = tick >= glideBoost.start && tick < glideBoost.end;
+    input.dolphinBoost = tick >= dolphinBoost.start && tick < dolphinBoost.end;
+}
+
+/**
+ * Runs every tick sent after the one at the given history index again from
+ * the state that tick ended with, each with its own input, the boosts the
+ * server has stamped on it since and the knockback it took, and makes the
+ * result the present.
+ */
+void Session::replayFrom(size_t index)
+{
+    auto corrected = motionHistory.begin() + static_cast<std::ptrdiff_t>(index);
     PlayerMotion replay = corrected->after;
     std::vector<std::pair<std::array<int32_t, 3>, std::shared_ptr<const world::SubChunk>>> subChunks;
     PlayerMotion::CellLookup lookup = [this, &subChunks](int32_t x, int32_t y, int32_t z) {
@@ -688,6 +792,7 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
     };
     for (auto sent = std::next(corrected); sent != motionHistory.end(); ++sent) {
         replay.takeSettings(sent->after);
+        applyMotionBoosts(sent->input, sent->tick);
         for (const ServerMotion& impulse : serverMotions) {
             if (impulse.tick == sent->tick) {
                 replay.knockback(impulse.velocity);
@@ -699,7 +804,6 @@ void Session::replayCorrection(uint64_t tick, const MotionVector& position, cons
         replay.anchor({ result.position.x, eyeY - EyeHeight, result.position.z });
         sent->after = replay;
     }
-    motionHistory.erase(motionHistory.begin(), corrected);
     replay.keepPendingKnockback(motion);
     replay.takeSettings(motion);
     motion = replay;

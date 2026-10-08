@@ -132,6 +132,7 @@ private:
     void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
     ActorView localActorView(float deltaSeconds);
+    std::optional<std::array<float, 2>> glideRotation(const ActorView& actor, double now, float alpha) const;
     void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     uint32_t heldItemLayer() const;
 
@@ -248,6 +249,10 @@ private:
     double padClock = 0.0;
     float padScroll = 0.0f;
     std::array<float, 2> padMove {};
+    bool sneakWasHeld = false;
+    bool sneakFromPad = false;
+    bool sneakToggled = false;
+    bool sneakActive = false;
     void loadShownTips();
     void markTipShown(const std::string& id);
     void showGameTip(const std::string& id, const std::string& text, const std::string& animation, double now);
@@ -368,6 +373,7 @@ private:
     HudMessage tipMessage;
     HudMessage actionbarMessage;
     menu::HudTitle titleView;
+    std::vector<menu::HudTitle> titleUiUpdates;
     uint64_t titleSerial = 0;
 
     /**
@@ -431,6 +437,7 @@ private:
     float localSwimAmount = 0.0f;
     std::unordered_map<uint64_t, HeldAttachable> actorAttachables;
     std::unordered_map<uint64_t, HeldAttachable> actorOffhandAttachables;
+    std::unordered_map<uint64_t, HeldAttachable> actorElytras;
     // When each other player's using item flag came on, since servers only send the flag.
     std::unordered_map<uint64_t, double> actorItemUseSince;
     double lastActorTime = 0.0;
@@ -449,6 +456,7 @@ private:
     std::array<double, 3> eyePosition {};
     double boomFraction = 0.0;
     float localBodyYaw = 0.0f;
+    double localGlideSince = 0.0;
     // What the server was last told the player faces, which a mod may have turned away from the camera.
     float localLookYaw = 0.0f;
     float localLookPitch = 0.0f;

@@ -579,4 +579,42 @@ float4 ps_sky(SkyOut input) : SV_Target
 }
 )";
 
+inline constexpr char PrimitiveShader[] = R"(
+cbuffer Draw : register(b0)
+{
+    float4x4 transform;
+};
+
+struct VertexIn
+{
+    float3 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+struct VertexOut
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR;
+};
+
+Texture2D atlas : register(t0);
+SamplerState atlasSampler : register(s0);
+
+VertexOut vs_primitive(VertexIn input)
+{
+    VertexOut output;
+    output.position = mul(transform, float4(input.position, 1.0));
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+float4 ps_primitive(VertexOut input) : SV_Target
+{
+    return input.color * atlas.Sample(atlasSampler, input.uv);
+}
+)";
+
 }

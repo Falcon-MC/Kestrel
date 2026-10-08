@@ -52,6 +52,13 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "ps_main") {
             return spirv(shaders::UiFragment);
         }
+    } else if (library == ShaderLibrary::Primitive) {
+        if (entry == "vs_primitive") {
+            return spirv(shaders::PrimitiveVertex);
+        }
+        if (entry == "ps_primitive") {
+            return spirv(shaders::PrimitiveFragment);
+        }
     } else {
         if (entry == "vs_world") {
             return spirv(shaders::WorldVertex);
@@ -577,7 +584,7 @@ public:
         VkPipelineDepthStencilStateCreateInfo depthState { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
         depthState.depthTestEnable = VK_TRUE;
         depthState.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
-        depthState.depthCompareOp = desc.depthCompare == DepthCompare::Equal ? VK_COMPARE_OP_EQUAL : desc.depthCompare == DepthCompare::Less ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthState.depthCompareOp = desc.depthCompare == DepthCompare::Always ? VK_COMPARE_OP_ALWAYS : desc.depthCompare == DepthCompare::Equal ? VK_COMPARE_OP_EQUAL : desc.depthCompare == DepthCompare::Less ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
 
         VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
         VkPipelineDynamicStateCreateInfo dynamic { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };

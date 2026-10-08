@@ -20,6 +20,8 @@
 #include "mod/World.h"
 
 #include <filesystem>
+#include <memory>
+#include <string_view>
 #include <vector>
 
 namespace kestrel::mod {
@@ -31,10 +33,6 @@ namespace kestrel::mod {
  */
 class ModContext {
 public:
-    Particles particles() { return Particles(events()); }
-    Audio audio() { return Audio(events()); }
-    Ui ui() { return Ui(events()); }
-    Textures textures() { return Textures(events()); }
     virtual ~ModContext() = default;
 
     virtual EventBus& events() = 0;
@@ -64,6 +62,42 @@ public:
     virtual Emotes& emotes() = 0;
     virtual Hud& hud() = 0;
     virtual Visuals& visuals() = 0;
+
+    // Added in API 4 and kept last so older mods still find everything above.
+    virtual Particles& particles() = 0;
+    virtual Audio& audio() = 0;
+    virtual Ui& ui() = 0;
+    virtual Textures& textures() = 0;
+
+    /**
+     * Shares service with other mods under id until this mod unloads, or
+     * until it provides null under the same id. An id another mod provides
+     * cannot be taken (std::invalid_argument). A mod that keeps a service
+     * should name its provider in Mod::dependencies, so it is unloaded first
+     * and lets go of the object before the provider's code goes away.
+     */
+    virtual void provideService(std::string_view id, std::shared_ptr<void> service) = 0;
+
+    /**
+     * The service some mod provides under id, null when none does.
+     */
+    virtual std::shared_ptr<void> findService(std::string_view id) const = 0;
+
+    template <class T>
+    void provide(std::string_view id, std::shared_ptr<T> service)
+    {
+        provideService(id, std::move(service));
+    }
+
+    /**
+     * The service under id as a T, null when none is provided. Nothing checks
+     * the type, both mods must agree on T.
+     */
+    template <class T>
+    std::shared_ptr<T> service(std::string_view id) const
+    {
+        return std::static_pointer_cast<T>(findService(id));
+    }
 };
 
 }

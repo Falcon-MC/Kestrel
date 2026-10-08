@@ -51,9 +51,9 @@ void TextureStore::release(size_t owner)
     }
 }
 
-void TextureStore::process(size_t owner, mod::detail::TextureRequest& request)
+void TextureStore::process(size_t owner, TextureRequest& request)
 {
-    using Action = mod::detail::TextureRequest::Action;
+    using Action = TextureRequest::Action;
     request.result = false;
     if (!backend) return;
     if (request.action == Action::Supported) { request.result = true; return; }

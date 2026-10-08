@@ -56,10 +56,14 @@ enum class BlendMode {
     Multiply,
 };
 
+/**
+ * Always passes every fragment, for draws meant to show through the world.
+ */
 enum class DepthCompare {
     Less,
     LessEqual,
     Equal,
+    Always,
 };
 
 /**
@@ -74,11 +78,14 @@ enum class SamplerMode {
 
 /**
  * The shader source a pipeline takes its entry points from; each backend
- * keeps its own translation of every library.
+ * keeps its own translation of every library. Primitive draws custom vertices
+ * in the vertex color times the interface atlas, with the custom draw
+ * constants.
  */
 enum class ShaderLibrary {
     Ui,
     World,
+    Primitive,
 };
 
 /**

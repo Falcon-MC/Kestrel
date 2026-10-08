@@ -141,7 +141,8 @@ int InventoryModel::responseSlot(ContainerSlotType container, int slot) const
 ItemStackRequestSlotData InventoryModel::networkSlot(int slot) const
 {
     ItemStackRequestSlotData data;
-    data.mContainer = ContainerSlotType::HotbarAndInventory;
+    // The game names player cells by row; without an open screen the server only accepts the hotbar name.
+    data.mContainer = slot < 9 ? ContainerSlotType::Hotbar : ContainerSlotType::Inventory;
     data.mSlot = slot;
     if (slot >= Armor && slot < Offhand) { data.mContainer = ContainerSlotType::Armor; data.mSlot -= Armor; }
     else if (slot == Offhand) { data.mContainer = ContainerSlotType::Offhand; data.mSlot = 0; }
@@ -654,6 +655,11 @@ ItemStackRequest InventoryModel::plan(const InventoryCommand& command, int reque
         break;
     case InventoryAction::QuickMove: quickMove(request, slot); break;
     case InventoryAction::HotbarSwap: if (command.value >= 0 && command.value < 9) swap(request, slot, command.value); break;
+    case InventoryAction::Move:
+        if (slot < 36 && command.value >= 0 && command.value < 36) {
+            move(request, slot, command.value, command.count > 0 ? command.count : slots[slot].mCount);
+        }
+        break;
     case InventoryAction::Drop: remove(request, slot, command.all ? slots[slot].mCount : 1, ItemStackRequestActionType::Drop); break;
     case InventoryAction::Collect:
         if (!empty(slots[Cursor])) for (int i = 0; i < SlotCount; ++i) {

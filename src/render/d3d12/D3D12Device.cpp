@@ -76,6 +76,10 @@ ComPtr<ID3DBlob> compile(const PipelineDesc& desc, bool vertex)
     const char* target = vertex ? "vs_5_0" : "ps_5_0";
     const char* source = desc.library == ShaderLibrary::Ui ? d3d12::UiShader : d3d12::WorldShader;
     size_t size = desc.library == ShaderLibrary::Ui ? sizeof(d3d12::UiShader) - 1 : sizeof(d3d12::WorldShader) - 1;
+    if (desc.library == ShaderLibrary::Primitive) {
+        source = d3d12::PrimitiveShader;
+        size = sizeof(d3d12::PrimitiveShader) - 1;
+    }
     if (desc.source) {
         if (desc.source->hlsl.empty()) {
             throw std::runtime_error("The shader has no HLSL, which Direct3D 12 needs");
@@ -555,7 +559,7 @@ public:
         pipelineDesc.RasterizerState.DepthClipEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthWriteMask = desc.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
-        pipelineDesc.DepthStencilState.DepthFunc = desc.depthCompare == DepthCompare::Equal ? D3D12_COMPARISON_FUNC_EQUAL : desc.depthCompare == DepthCompare::Less ? D3D12_COMPARISON_FUNC_LESS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pipelineDesc.DepthStencilState.DepthFunc = desc.depthCompare == DepthCompare::Always ? D3D12_COMPARISON_FUNC_ALWAYS : desc.depthCompare == DepthCompare::Equal ? D3D12_COMPARISON_FUNC_EQUAL : desc.depthCompare == DepthCompare::Less ? D3D12_COMPARISON_FUNC_LESS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
         pipelineDesc.DepthStencilState.StencilEnable = FALSE;
         pipelineDesc.InputLayout = { layout.data(), static_cast<UINT>(layout.size()) };
         pipelineDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;

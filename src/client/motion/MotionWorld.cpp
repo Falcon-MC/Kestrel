@@ -1,6 +1,8 @@
 #include "client/motion/MotionMath.h"
 
+#include <algorithm>
 #include <cfloat>
+#include <cmath>
 
 namespace kestrel {
 
@@ -11,7 +13,8 @@ namespace {
 /**
  * How far below a scaffolding top the feet may sit and still stand on it.
  * Scaffolding is solid only under the feet of a player standing on it who is
- * not sneaking down; from the sides and below it lets the player through.
+ * not descending through it; from the sides and below it lets the player
+ * through.
  */
 constexpr float ScaffoldingTopTolerance = 1.0e-3f;
 
@@ -92,7 +95,7 @@ bool PlayerMotion::scanCollisions(const world::CollisionBox& area, std::vector<w
                 table->boxes(*state, x, y, z, neighbours, boxes);
                 bool scaffolding = named(state, "scaffolding");
                 for (const world::CollisionBox& box : boxes) {
-                    if (scaffolding && (pressingSneak || feet.y < box.maxY - ScaffoldingTopTolerance)) {
+                    if (scaffolding && (descendingScaffold || feet.y < box.maxY - ScaffoldingTopTolerance)) {
                         continue;
                     }
                     if (box.intersects(area)) {
@@ -138,7 +141,11 @@ float PlayerMotion::friction(const world::CollisionState* state) const
     if (!state) {
         return 0.6f;
     }
-    const std::string& name = table->name(*state);
+    return blockFriction(table->name(*state));
+}
+
+float PlayerMotion::blockFriction(std::string_view name)
+{
     if (name == "blue_ice") {
         return 0.989f;
     }
@@ -154,6 +161,9 @@ float PlayerMotion::friction(const world::CollisionState* state) const
 bool PlayerMotion::climbable(int32_t x, int32_t y, int32_t z) const
 {
     MotionCell here = cell(x, y, z);
+    if (named(here.primary, "scaffolding")) {
+        return false;
+    }
     return (here.primary && (here.primary->flags & world::CollisionClimbable)) || (here.extra && (here.extra->flags & world::CollisionClimbable));
 }
 
@@ -170,15 +180,12 @@ PlayerMotion::Fluid PlayerMotion::fluidState(const world::CollisionBox& area) co
         minY = (area.minY + area.maxY) * 0.5f;
         maxY = minY;
     }
-    auto kind = [&](const world::CollisionState* state, bool& water, bool& lava, int& bubble) {
+    auto kind = [&](const world::CollisionState* state, bool& water, bool& lava) {
         if (!state) {
             return;
         }
         const std::string& name = table->name(*state);
-        if (name == "bubble_column") {
-            water = true;
-            bubble = state->face > 0 ? -1 : 1;
-        } else if (name.find("water") != std::string::npos) {
+        if (name == "bubble_column" || name.find("water") != std::string::npos) {
             water = true;
         }
         if (name.find("lava") != std::string::npos) {
@@ -191,18 +198,10 @@ PlayerMotion::Fluid PlayerMotion::fluidState(const world::CollisionBox& area) co
                 MotionCell here = cell(x, y, z);
                 bool water = false;
                 bool lava = false;
-                int bubble = 0;
-                kind(here.primary, water, lava, bubble);
-                kind(here.extra, water, lava, bubble);
-                if (!water && !lava) {
-                    continue;
-                }
+                kind(here.primary, water, lava);
+                kind(here.extra, water, lava);
                 fluid.water = fluid.water || water;
                 fluid.lava = fluid.lava || lava;
-                if (bubble != 0 && fluid.bubbleDirection == 0) {
-                    fluid.bubbleDirection = bubble;
-                    fluid.bubbleSurface = blockView(x, y + 1, z) == nullptr;
-                }
             }
         }
     }
@@ -245,14 +244,90 @@ float PlayerMotion::jumpPreventionMultiplier() const
     if (!onGround) {
         return 1.0f;
     }
-    world::CollisionBox box = boundingBox();
     int32_t x = floorInt(feet.x);
     int32_t z = floorInt(feet.z);
-    int32_t feetY = floorInt(box.minY);
+    int32_t feetY = floorInt(feet.y);
     auto prevents = [&](const world::CollisionState* state) {
         return named(state, "honey") || named(state, "honey_block");
     };
-    return prevents(blockView(x, feetY, z)) || prevents(blockView(x, feetY - 1, z)) ? HoneyJumpFactor : 1.0f;
+    bool aligned = feet.y == std::floor(feet.y);
+    return prevents(blockView(x, feetY, z)) || (aligned && prevents(blockView(x, feetY - 1, z))) ? HoneyJumpFactor : 1.0f;
+}
+
+/**
+ * The cells the body occupies for the effects of the blocks it is inside:
+ * the box shrunk by 0.001 on every side.
+ */
+void PlayerMotion::insideCells(const world::CollisionBox& box, std::array<int32_t, 3>& low, std::array<int32_t, 3>& high) const
+{
+    constexpr float Shrink = 0.001f;
+    low = { floorInt(box.minX + Shrink), floorInt(box.minY + Shrink), floorInt(box.minZ + Shrink) };
+    high = { floorInt(box.maxX - Shrink), floorInt(box.maxY - Shrink), floorInt(box.maxZ - Shrink) };
+}
+
+/**
+ * The move multiplier of the blocks the body is stuck in: cobweb, powder
+ * snow and sweet berry bushes. Overlapping blocks keep the smallest factor on
+ * each axis. Returns whether any applies.
+ */
+bool PlayerMotion::stuckMultiplier(MotionVector& multiplier) const
+{
+    bool any = false;
+    auto merge = [&](MotionVector factor) {
+        multiplier = any ? MotionVector { std::min(multiplier.x, factor.x), std::min(multiplier.y, factor.y), std::min(multiplier.z, factor.z) } : factor;
+        any = true;
+    };
+    std::array<int32_t, 3> low {};
+    std::array<int32_t, 3> high {};
+    insideCells(boundingBox(), low, high);
+    for (int32_t x = low[0]; x <= high[0]; ++x) {
+        for (int32_t y = low[1]; y <= high[1]; ++y) {
+            for (int32_t z = low[2]; z <= high[2]; ++z) {
+                const world::CollisionState* state = blockView(x, y, z);
+                if (named(state, "powder_snow")) {
+                    merge({ 0.9f, 1.5f, 0.9f });
+                } else if (named(state, "sweet_berry_bush")) {
+                    merge({ 0.8f, 0.75f, 0.8f });
+                }
+            }
+        }
+    }
+    if (insideBlockNamed("web")) {
+        merge(weaving ? MotionVector { 0.5f, 0.25f, 0.5f } : MotionVector { 0.25f, 0.05f, 0.25f });
+    }
+    return any;
+}
+
+/**
+ * Scaffolding in every column under the body, at the feet layer and, only
+ * while sneaking since only then it matters, at the layer below and on what
+ * that layer rests on.
+ */
+PlayerMotion::ScaffoldContact PlayerMotion::scaffoldContact() const
+{
+    ScaffoldContact contact;
+    world::CollisionBox box = boundingBox();
+    int32_t feetY = floorInt(box.minY);
+    int32_t belowY = floorInt(box.minY - 1.0f);
+    for (int32_t x = floorInt(box.minX); x <= floorInt(box.maxX); ++x) {
+        for (int32_t z = floorInt(box.minZ); z <= floorInt(box.maxZ); ++z) {
+            if (named(cellState(x, feetY, z), "scaffolding")) {
+                contact.inside = true;
+            }
+            if (!isSneaking || !named(cellState(x, belowY, z), "scaffolding")) {
+                continue;
+            }
+            contact.over = true;
+            const world::CollisionState* support = cellState(x, belowY - 1, z);
+            if (!support) {
+                continue;
+            }
+            const std::string& name = table->name(*support);
+            bool water = name.find("water") != std::string::npos;
+            contact.overSupported = contact.overSupported || !water;
+        }
+    }
+    return contact;
 }
 
 bool PlayerMotion::canClimbOut(float boxBottom) const

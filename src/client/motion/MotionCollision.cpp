@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace kestrel {
 
@@ -25,15 +26,25 @@ float towardZero(float value, float limit)
 
 void PlayerMotion::move()
 {
+    MotionVector stuck;
+    stuckInBlock = !(isFlying && gameType == GameCreative) && stuckMultiplier(stuck);
+    if (stuckInBlock) {
+        velocity = { velocity.x * stuck.x, velocity.y * stuck.y, velocity.z * stuck.z };
+    }
     MotionVector requested = velocity;
     if (!boundedQuery(extend(boundingBox(), requested))) {
         velocity = {};
         collideX = collideY = collideZ = true;
         return;
     }
-    if (isSneaking && !isCrawling && onGround && requested.y <= 0.0f) {
+    MotionVector kept = velocity;
+    bool keepX = false;
+    bool keepZ = false;
+    if (isSneaking && !isCrawling && onGround) {
         requested = avoidEdge(boundingBox(), requested);
-        velocity = requested;
+        constexpr float FloatEpsilon = std::numeric_limits<float>::epsilon();
+        keepX = requested.x != kept.x && std::abs(requested.x) > FloatEpsilon;
+        keepZ = requested.z != kept.z && std::abs(requested.z) > FloatEpsilon;
     }
 
     world::CollisionBox original = boundingBox();
@@ -90,8 +101,7 @@ void PlayerMotion::move()
     bool xCollision = requested.x != resolved.x;
     bool yCollision = requested.y != resolved.y;
     bool zCollision = requested.z != resolved.z;
-    bool mayStep = onGround || (yCollision && requested.y < 0.0f);
-    if (mayStep && (xCollision || zCollision)) {
+    if (onGround && (xCollision || zCollision)) {
         Resolution stepped = autoStep(stuckInCollider);
         bool stepBlocked = anyCollision(stepped.box);
         if (!stepBlocked && resolved.horizontalLengthSquared() < stepped.movement.horizontalLengthSquared()) {
@@ -109,6 +119,15 @@ void PlayerMotion::move()
     collideZ = zCollision;
     onGround = (yCollision && requested.y < 0.0f) || (onGround && !yCollision && std::abs(requested.y) <= CollisionEpsilon);
     velocity = resolved;
+    if (keepX && !xCollision) {
+        velocity.x = kept.x;
+    }
+    if (keepZ && !zCollision) {
+        velocity.z = kept.z;
+    }
+    if (stuckInBlock) {
+        velocity = {};
+    }
     updateSupportingBlock(requested);
 }
 
@@ -139,7 +158,7 @@ MotionVector PlayerMotion::avoidEdge(const world::CollisionBox& box, MotionVecto
         if (--remainingZ == 0) { z = 0.0f; break; }
         z = reduce(z);
     }
-    while (x != 0.0f && z != 0.0f && !supported(x, z)) {
+    while ((x != 0.0f || z != 0.0f) && !supported(x, z)) {
         if (--remainingBoth == 0) { x = z = 0.0f; break; }
         x = reduce(x);
         z = reduce(z);

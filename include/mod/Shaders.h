@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace kestrel::mod {
@@ -207,6 +208,25 @@ public:
             quad(shader, { c[face[0]], c[face[1]], c[face[2]], c[face[3]] }, params, color);
         }
     }
+
+    // Added in API 4 and kept last so older mods still find everything above.
+    /**
+     * Line segments drawn with Kestrel's own shader, no Shader needed. Each
+     * is a quad turned to face the camera, width blocks wide. throughWalls
+     * draws them over everything instead of depth testing.
+     */
+    virtual void lines(const std::vector<std::pair<Vec3, Vec3>>& segments, Color color, float width, bool throughWalls = false) = 0;
+
+    // The twelve edges of a box, as lines.
+    virtual void wireBox(const Vec3& min, const Vec3& max, Color color, float width, bool throughWalls = false) = 0;
+    virtual void filledBox(const Vec3& min, const Vec3& max, Color color, bool throughWalls = false) = 0;
+
+    /**
+     * Text in the pixel font, centered on position and always facing the
+     * camera. Formatting codes work. At scale 1 a font pixel is as big as on
+     * a name tag, 1/37.5 block.
+     */
+    virtual void text3d(const Vec3& position, std::string_view text, Color color, float scale = 1.0f, bool throughWalls = false) = 0;
 };
 
 }

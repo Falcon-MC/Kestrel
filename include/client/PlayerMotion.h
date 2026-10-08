@@ -65,11 +65,26 @@ struct MotionInput {
     float yaw = 0.0f;
     float pitch = 0.0f;
     bool elytra = false;
+    bool leatherBoots = false;
+    bool glideBoost = false;
+    bool dolphinBoost = false;
     int32_t depthStrider = 0;
     int32_t soulSpeed = 0;
     int32_t swiftSneak = 0;
     int32_t riptide = 0;
     bool raining = false;
+
+    /**
+     * Requests a mod adds to the keys: open or close the elytra and start or
+     * stop flying as the jump key would, sink in water as sneaking does, and
+     * whether a mod chose the rotation.
+     */
+    bool startGlide = false;
+    bool stopGlide = false;
+    bool startFlying = false;
+    bool stopFlying = false;
+    bool swimDown = false;
+    bool rotationOverridden = false;
 };
 
 /**
@@ -95,7 +110,6 @@ struct MotionTick {
     bool stopCrawling = false;
     bool gliding = false;
     bool crawling = false;
-    bool forcedSneak = false;
     bool startSpinAttack = false;
     bool stopSpinAttack = false;
     bool startSprinting = false;
@@ -110,6 +124,12 @@ struct MotionTick {
     bool sprinting = false;
     bool flying = false;
     bool swimming = false;
+    bool inWater = false;
+    bool inLava = false;
+    bool onClimbable = false;
+    float fallDistance = 0.0f;
+    float width = 0.6f;
+    float height = 1.8f;
 };
 
 /**
@@ -121,6 +141,11 @@ struct MotionTick {
 class PlayerMotion {
 public:
     using CellLookup = std::function<MotionCell(int32_t x, int32_t y, int32_t z)>;
+
+    /**
+     * How slippery a block is underfoot, by its name without namespace.
+     */
+    static float blockFriction(std::string_view name);
 
     PlayerMotion();
 
@@ -156,6 +181,10 @@ public:
     void takeSettings(const PlayerMotion& other);
 
     void setMovementSpeed(float current, float base);
+    void setUniformAirDrag(bool value);
+    void setAirDragModifier(float value);
+    void setUnderwaterSpeed(float value);
+    void setLavaSpeed(float value);
     void setServerSprint(bool sprinting);
     void setGravity(bool affected);
     void setImmobile(bool value);
@@ -202,12 +231,27 @@ public:
         return isSwimming;
     }
 
+    /**
+     * A copy with scratch space of its own, so it can be stepped on another
+     * thread while this one keeps moving.
+     */
+    PlayerMotion detached() const;
+
 private:
     struct Fluid {
         bool water = false;
         bool lava = false;
-        int bubbleDirection = 0;
-        bool bubbleSurface = false;
+    };
+
+    /**
+     * Scaffolding across the body footprint: at the feet layer, at the layer
+     * below the feet, and below the feet resting on something other than air
+     * or water.
+     */
+    struct ScaffoldContact {
+        bool inside = false;
+        bool over = false;
+        bool overSupported = false;
     };
 
     struct CellHash {
@@ -259,8 +303,11 @@ private:
     void applyLiquidFlow(const std::vector<std::array<int32_t, 3>>& blocks, bool lava);
     void updateSwimming(bool inWater, MotionTick& tick);
     void updateSwimTravel();
-    void applyBubbleColumn(const Fluid& fluid);
     bool insideBlockNamed(std::string_view name) const;
+    float verticalRetention(float retention) const;
+    void insideCells(const world::CollisionBox& box, std::array<int32_t, 3>& low, std::array<int32_t, 3>& high) const;
+    bool stuckMultiplier(MotionVector& multiplier) const;
+    ScaffoldContact scaffoldContact() const;
     const world::CollisionState* blockUnder(float distance) const;
     float jumpPreventionMultiplier() const;
     bool canClimbOut(float boxBottom) const;
@@ -280,17 +327,17 @@ private:
     void updateSpinAttack(MotionTick& tick);
     void simulate();
     void runGroundAndAir();
-    void runWater(const Fluid& fluid);
+    void runWater();
     void runLava();
     void runFlight(const MotionInput& input);
     void runGlide();
     void moveRelative(float speed);
     void applyKnockback();
     void applyJump();
-    void applyClimbable();
+    void applyClimbable(bool scaffoldJump);
     void applyPowderSnowTraversal();
-    void applyHoneyWallSlide();
-    void walkOnBlock(const world::CollisionState* block);
+    void standOnBlock(const world::CollisionState* block);
+    void applyInsideBlocks();
     void postCollisionMotion(const MotionVector& oldVelocity, bool oldOnGround, const world::CollisionState* blockUnderFeet);
     void move();
     MotionVector avoidEdge(const world::CollisionBox& box, MotionVector movement) const;
@@ -311,6 +358,8 @@ private:
     bool stoppedSwimmingThisTick = false;
     float impulseSideways = 0.0f;
     float impulseForward = 0.0f;
+    float moveSideways = 0.0f;
+    float moveForward = 0.0f;
     float width = 0.6f;
     float height = 1.8f;
     float scale = 1.0f;
@@ -321,6 +370,16 @@ private:
     float airSpeed = 0.02f;
     float flySpeed = 0.05f;
     float verticalFlySpeed = 1.0f;
+    bool uniformAirDrag = false;
+    float airDragModifier = 1.0f;
+    float underwaterSpeed = 0.02f;
+    float lavaSpeed = 0.02f;
+    float previousYaw = 0.0f;
+    float previousPitch = 0.0f;
+    bool hasPreviousRotation = false;
+    bool glideBoost = false;
+    bool dolphinBoost = false;
+    uint32_t glideTicks = 0;
     float hunger = 20.0f;
     int32_t jumpDelay = 0;
     int32_t jumpBoostLevel = 0;
@@ -357,11 +416,15 @@ private:
     bool isCrawling = false;
     bool forcedSneak = false;
     bool wearsElytra = false;
+    bool descendingScaffold = false;
+    bool startedInWater = false;
+    bool stuckInBlock = false;
     int32_t depthStriderLevel = 0;
     int32_t soulSpeedLevel = 0;
     int32_t swiftSneakLevel = 0;
     int32_t flyToggleTicks = 0;
     int32_t spinAttackTicks = 0;
+    float fallen = 0.0f;
 };
 
 }

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
+
+class PacketCodecContext;
 
 namespace kestrel {
 
@@ -21,6 +24,18 @@ public:
      * session skips unless this says someone looks.
      */
     virtual bool wantsOutbound() const = 0;
+
+    /**
+     * The codec the connection encodes and decodes with, handed over each
+     * time the session joins a server; it stays valid until the next one.
+     */
+    virtual void attachCodec(const PacketCodecContext* context) = 0;
+
+    /**
+     * Payloads, header included, the hook wants sent; taken on the network
+     * thread, where they go out as they are.
+     */
+    virtual std::vector<std::string> takeOutgoing() = 0;
 };
 
 }

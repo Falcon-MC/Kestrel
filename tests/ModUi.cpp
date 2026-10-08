@@ -7,43 +7,82 @@
 
 using namespace kestrel;
 using namespace kestrel::modding;
-using Request = mod::detail::UiRequest;
-
 void check(bool condition, const char* message)
 {
     if (!condition) { std::cerr << message << '\n'; std::exit(1); }
 }
 
-struct Bus : mod::EventBus {
-    ModUi* ui = nullptr;
+struct RenderEvent : mod::Event {
+    KESTREL_EVENT("kestrel:test_render/v1")
+};
+
+class Api final : public mod::Ui {
+public:
+    explicit Api(ModUi& ui) : ui(ui) { }
+
     size_t owner = 1;
-    mod::Subscription subscribe(std::string_view, Handler, mod::ListenOptions) override { return {}; }
-    void post(mod::Event& event) override
+
+    bool supported() const override
     {
-        if (ui && event.type() == Request::Type) ui->process(owner, static_cast<Request&>(event));
+        return request(UiRequest::Action::Supported, {});
     }
+
+    bool open(std::string_view id) override
+    {
+        return request(UiRequest::Action::Open, id);
+    }
+
+    bool close(std::string_view id) override
+    {
+        return request(UiRequest::Action::Close, id);
+    }
+
+    bool isOpen(std::string_view id) const override
+    {
+        return request(UiRequest::Action::IsOpen, id);
+    }
+
+    void addSettings(std::vector<mod::SettingSpec>) override
+    {
+    }
+
+private:
+    bool request(UiRequest::Action action, std::string_view id) const
+    {
+        UiRequest request;
+        request.action = action;
+        request.id = id;
+        ui.process(owner, request);
+        return request.result;
+    }
+
+    ModUi& ui;
 };
 
 int main()
 {
     EventDispatcher dispatcher([](size_t, std::string_view) { });
     int first = 0, second = 0;
-    auto listener1 = dispatcher.subscribe(1, Request::Type, [&](mod::Event&) { ++first; }, {});
-    auto listener2 = dispatcher.subscribe(2, Request::Type, [&](mod::Event&) { ++second; }, {});
-    Request render;
+    auto listener1 = dispatcher.subscribe(1, RenderEvent::Type, [&](mod::Event&) { ++first; }, {});
+    auto listener2 = dispatcher.subscribe(2, RenderEvent::Type, [&](mod::Event&) { ++second; }, {});
+    RenderEvent render;
     dispatcher.dispatchTo(1, render);
     check(first == 1 && second == 0, "render events reach only screen owner");
     dispatcher.release(1);
     dispatcher.dispatchTo(1, render);
     check(first == 1, "unloaded owner receives no callbacks");
-    Bus bus;
-    mod::Ui api(bus);
-    check(!api.supported() && !api.open("test"), "old host fallback");
     ModUi ui;
-    bus.ui = &ui;
-    check(api.supported() && api.open("test"), "open UI extension");
+    Api api(ui);
+    check(api.supported() && api.open("test"), "open UI screen");
+    mod::detail::UiRequest legacy;
+    legacy.action = UiRequest::Action::IsOpen;
+    legacy.id = "test";
+    mod::Event& posted = legacy;
+    check(posted.type() == "kestrel:ui_request/v1", "legacy request keeps its event type");
+    ui.process(1, static_cast<UiRequest&>(posted));
+    check(legacy.result, "legacy request shares the API 4 screens");
     check(!api.open(""), "reject empty IDs");
-    bus.owner = 2;
+    api.owner = 2;
     check(!api.close("test") && !api.isOpen("test"), "owner isolation");
     check(api.open("test") && ui.top()->owner == 2, "same ID is owner scoped");
     InputState input;
@@ -61,7 +100,7 @@ int main()
     ui.release(1);
     check(!ui.open(), "unload closes screens");
 
-    bus.owner = 3;
+    api.owner = 3;
     for (int i = 0; i < 8; ++i) check(api.open(std::to_string(i)), "owner screen limit accepts eight");
     check(!api.open("overflow"), "owner screen limit rejects ninth");
     auto retained = ui.top();

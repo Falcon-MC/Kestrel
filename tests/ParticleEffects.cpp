@@ -195,7 +195,7 @@ const char* lifetimeName(ParticleEmitterRules::Lifetime lifetime)
 
 int main(int argc, char** argv)
 {
-    if (argc == 2 && std::string_view(argv[1]) == "--tracked-effects") {
+    if (argc == 2 && (std::string_view(argv[1]) == "--explosion-lifetime" || std::string_view(argv[1]) == "--tracked-effects")) {
         const auto root = std::filesystem::temp_directory_path()
             / ("kestrel-particle-lifetime-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root / "__brarchive");
@@ -289,6 +289,37 @@ int main(int argc, char** argv)
             std::printf("PASS tracked particle movement, removal, isolation and stale handles\n");
             return 0;
         }
+        for (size_t i = 0; i < identifiers.size(); ++i) {
+            ParticleSystem system(library);
+            ParticleSpawn spawn;
+            spawn.identifier = identifiers[i];
+            system.spawn(spawn);
+            system.tick(0.2, world);
+            if (system.liveParticles() == 0) {
+                std::printf("FAIL missing initial burst: %s\n", identifiers[i].c_str());
+                return 1;
+            }
+            system.tick(0.25, world);
+            if (system.liveParticles() == 0) {
+                std::printf("FAIL particles removed before their lifetime: %s\n", identifiers[i].c_str());
+                return 1;
+            }
+            for (int tick = 0; tick < 100; ++tick) {
+                system.tick(TickSeconds, world);
+                if (tick >= 20 && i < 2 && system.liveParticles() != 0) {
+                    std::printf("FAIL explosion keeps emitting: %s\n", identifiers[i].c_str());
+                    return 1;
+                }
+            }
+            std::vector<ParticleQuad> quads;
+            system.collect(fixedCamera(), quads);
+            if ((i < 2 && !quads.empty()) || (i == 2 && quads.empty())) {
+                std::printf("FAIL explosion drain or continuous emitter: %s\n", identifiers[i].c_str());
+                return 1;
+            }
+        }
+        std::printf("PASS explosion lifetime and continuous emitter\n");
+        return 0;
     }
     std::filesystem::path root = PackSource::locateVanilla();
     if (root.empty()) {
@@ -318,6 +349,11 @@ int main(int argc, char** argv)
     std::map<std::string, std::set<std::string>> unsupported;
     for (const ParticleEffect* effect : effects) {
         EffectReport report = runEffect(library, *effect, world);
+        if ((effect->identifier == "minecraft:huge_explosion_emitter"
+                || effect->identifier == "minecraft:huge_explosion_lab_misc_emitter")
+            && report.finalParticles != 0) {
+            report.fail("explosion keeps emitting");
+        }
         for (const std::string& component : effect->unsupported) {
             unsupported[component].insert(effect->identifier);
         }

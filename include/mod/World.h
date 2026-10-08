@@ -37,8 +37,8 @@ public:
 
     /**
      * Whether the chunk holding the position is loaded. The world mods read
-     * is refreshed once a second, so a block changed a moment ago may still
-     * read as before.
+     * is refreshed every tick and right after the server changes a block or
+     * the player breaks one.
      */
     virtual bool isLoaded(const BlockPos& position) const = 0;
     virtual std::optional<BlockInfo> block(const BlockPos& position) const = 0;
@@ -74,8 +74,8 @@ public:
     /**
      * Loaded blocks of these names within radius blocks of center, nearest
      * first, at most limit of them. It reads the same world as block, a
-     * second old at most, and scans whole sub-chunks, so call it now and
-     * then rather than every frame.
+     * tick old at most, and scans whole sub-chunks, so call it now and then
+     * rather than every frame.
      */
     virtual std::vector<FoundBlock> findBlocks(const std::vector<std::string>& names, const Vec3& center, double radius, size_t limit) const = 0;
 
@@ -87,6 +87,35 @@ public:
      * the client has looked it up.
      */
     virtual std::string serverEndpoint() const = 0;
+
+    // Added in API 4 and kept last so older mods still find everything above.
+    /**
+     * The block's collision boxes, joined to neighbouring stairs, fences,
+     * walls and panes the way the player collides with them; empty for air,
+     * liquids and unloaded blocks.
+     */
+    virtual std::vector<Box> collision(const BlockPos& position) const = 0;
+
+    /**
+     * The box the crosshair aims at and outlines, empty for blocks the look
+     * ray passes through.
+     */
+    virtual std::vector<Box> outline(const BlockPos& position) const = 0;
+    virtual std::optional<BlockProps> properties(const BlockPos& position) const = 0;
+
+    /**
+     * Like findBlocks by name, with the blocks chosen by what they are.
+     * accept runs once per distinct block state, not once per block.
+     */
+    virtual std::vector<FoundBlock> findBlocksMatching(const std::function<bool(const BlockProps&)>& accept, const Vec3& center, double radius, size_t limit) const = 0;
+
+    /**
+     * Roughly how many ticks of holding attack, from the first hit, break
+     * the loaded block at position with the item held and the effects,
+     * enchantments and footing of the last tick: 1 for one that breaks at
+     * the first hit, -1 for one that never breaks or is not loaded.
+     */
+    virtual int breakTicks(const BlockPos& position) const = 0;
 
     std::optional<Entity> nearestEntity(const Vec3& from, double radius, const std::function<bool(const Entity&)>& accept = {}) const
     {

@@ -16,25 +16,121 @@ void check(bool value, const char* description)
     if (!value) { std::fprintf(stderr, "FAIL %s\n", description); std::exit(1); }
 }
 
-class Bus : public mod::EventBus {
-public:
-    modding::LocalEffects* effects = nullptr;
+struct Owner {
+    modding::LocalEffects& effects;
     size_t owner = 1;
-    mod::Subscription subscribe(std::string_view, Handler, mod::ListenOptions) override { return {}; }
-    void post(mod::Event& event) override
+
+    bool request(Request::Kind kind, Request::Action action, uint64_t handle = 0, mod::Vec3 position = {}, float volume = 1.0f) const
     {
-        if (effects && event.type() == Request::Type) effects->process(owner, static_cast<Request&>(event));
+        Request request;
+        request.kind = kind;
+        request.action = action;
+        request.handle = handle;
+        request.position = position;
+        request.volume = volume;
+        effects.process(owner, request);
+        return request.result;
     }
+
+    uint64_t create(Request& request) const
+    {
+        request.action = Request::Action::Create;
+        effects.process(owner, request);
+        return request.result ? request.handle : 0;
+    }
+};
+
+class Particles final : public mod::Particles {
+public:
+    explicit Particles(Owner& host) : host(host) { }
+
+    bool supported() const override
+    {
+        return host.request(Request::Kind::Particle, Request::Action::Supported);
+    }
+
+    mod::ParticleHandle spawn(mod::ParticleOptions options) override
+    {
+        Request request;
+        request.kind = Request::Kind::Particle;
+        request.particle = std::move(options);
+        return host.create(request);
+    }
+
+    bool active(mod::ParticleHandle handle) const override
+    {
+        return host.request(Request::Kind::Particle, Request::Action::Active, handle);
+    }
+
+    bool move(mod::ParticleHandle handle, mod::Vec3 position) override
+    {
+        return host.request(Request::Kind::Particle, Request::Action::Move, handle, position);
+    }
+
+    bool remove(mod::ParticleHandle handle) override
+    {
+        return host.request(Request::Kind::Particle, Request::Action::Remove, handle);
+    }
+
+    void clear() override
+    {
+        host.request(Request::Kind::Particle, Request::Action::Clear);
+    }
+
+private:
+    Owner& host;
+};
+
+class Audio final : public mod::Audio {
+public:
+    explicit Audio(Owner& host) : host(host) { }
+
+    bool supported() const override
+    {
+        return host.request(Request::Kind::Sound, Request::Action::Supported);
+    }
+
+    mod::SoundHandle play(mod::SoundOptions options) override
+    {
+        Request request;
+        request.kind = Request::Kind::Sound;
+        request.sound = std::move(options);
+        return host.create(request);
+    }
+
+    bool playing(mod::SoundHandle handle) const override
+    {
+        return host.request(Request::Kind::Sound, Request::Action::Active, handle);
+    }
+
+    bool stop(mod::SoundHandle handle) override
+    {
+        return host.request(Request::Kind::Sound, Request::Action::Remove, handle);
+    }
+
+    bool setVolume(mod::SoundHandle handle, float volume) override
+    {
+        return host.request(Request::Kind::Sound, Request::Action::Volume, handle, {}, volume);
+    }
+
+    bool setPosition(mod::SoundHandle handle, mod::Vec3 position) override
+    {
+        return host.request(Request::Kind::Sound, Request::Action::Move, handle, position);
+    }
+
+    void stopAll() override
+    {
+        host.request(Request::Kind::Sound, Request::Action::Clear);
+    }
+
+private:
+    Owner& host;
 };
 
 }
 
 int main()
 {
-    Bus oldHost;
-    check(!mod::Particles(oldHost).supported() && !mod::Audio(oldHost).supported(), "older host has no effects extension");
-    check(mod::Audio(oldHost).play({ .name = "test:sound" }) == 0, "older host rejects creation safely");
-
     uint64_t next = 0;
     std::set<uint64_t> active;
     size_t creates = 0;
@@ -49,11 +145,18 @@ int main()
         default: break;
         }
     });
-    Bus bus;
-    bus.effects = &effects;
-    mod::Particles particles(bus);
-    mod::Audio audio(bus);
-    check(particles.supported() && audio.supported(), "extension supported");
+    Owner bus { effects };
+    Particles particles(bus);
+    Audio audio(bus);
+    check(particles.supported() && audio.supported(), "effects supported");
+    mod::detail::EffectRequest legacy;
+    legacy.kind = Request::Kind::Sound;
+    legacy.action = Request::Action::Create;
+    legacy.sound.name = "test:sound";
+    mod::Event& posted = legacy;
+    check(posted.type() == "kestrel:local_effect_request/v1", "legacy request keeps its event type");
+    effects.process(1, static_cast<Request&>(posted));
+    check(legacy.result && legacy.handle && audio.playing(legacy.handle) && audio.stop(legacy.handle), "legacy request shares the API 4 store");
     auto particle = particles.spawn({ .identifier = "test:particle" });
     auto sound = audio.play({ .name = "test:sound", .position = mod::Vec3 { 1, 2, 3 }, .loop = true });
     check(particle && sound && particle != sound, "distinct particle and sound handles");
@@ -88,5 +191,5 @@ int main()
     check(audio.play({ .name = "test:sound" }) != 0, "finished effects reclaim capacity");
     effects.clear();
     check(active.empty(), "world reset clears all effects");
-    std::puts("PASS local effects ownership, lifetime, validation and API 3 fallback");
+    std::puts("PASS local effects ownership, lifetime, validation");
 }

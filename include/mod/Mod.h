@@ -40,6 +40,17 @@ public:
     virtual void onEnable() { }
     virtual void onDisable() { }
 
+    // Added in API 4 and kept last so older mods still find everything above.
+    /**
+     * Ids of the mods this one needs. They start before it, it is refused
+     * when one is missing, and it is unloaded whenever one of them is. It is
+     * asked once, right after the constructor, before the context exists.
+     */
+    virtual std::vector<std::string> dependencies() const
+    {
+        return {};
+    }
+
     const ModInfo& info() const
     {
         return details;
@@ -67,10 +78,10 @@ protected:
     Emotes& emotes() const { return context().emotes(); }
     Hud& hud() const { return context().hud(); }
     Visuals& visuals() const { return context().visuals(); }
-    Particles particles() const { return Particles(events()); }
-    Audio audio() const { return Audio(events()); }
-    Ui ui() const { return Ui(events()); }
-    Textures textures() const { return Textures(events()); }
+    Particles& particles() const { return context().particles(); }
+    Audio& audio() const { return context().audio(); }
+    Ui& ui() const { return context().ui(); }
+    Textures& textures() const { return context().textures(); }
 
     Subscription emote(EmoteSpec spec)
     {

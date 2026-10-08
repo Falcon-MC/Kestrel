@@ -11,14 +11,27 @@
 
 #include "modding/ModManager.h"
 
+#include <array>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace kestrel::modding {
+
+/**
+ * A notification a mod put over the HUD with Hud::notify, shown until the
+ * host clock reaches until.
+ */
+struct HudNotice {
+    size_t owner = 0;
+    std::string text;
+    double until = 0.0;
+};
 
 /**
  * Everything the mods' services share: the client's pieces, the latest
@@ -61,6 +74,14 @@ struct HostState {
     mod::Environment environment;
     std::filesystem::path root;
     std::vector<mod::ModInfo> loaded;
+    // The last drawn world's camera relative view projection, for Hud::project.
+    std::optional<std::array<float, 16>> worldViewProjection;
+    mod::Vec3 worldCamera;
+    float interfaceWidth = 0.0f;
+    float interfaceHeight = 0.0f;
+    std::map<size_t, std::vector<mod::SettingSpec>> settings;
+    std::vector<HudNotice> notices;
+    std::map<std::string, std::pair<size_t, std::shared_ptr<void>>, std::less<>> services;
 
     EventDispatcher events;
     LocalEffects effects;

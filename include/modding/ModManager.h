@@ -4,12 +4,14 @@
 #include "menu/Menu.h"
 #include "mod/Hud.h"
 #include "mod/Types.h"
+#include "mod/Ui.h"
 #include "modding/LocalEffects.h"
 #include "modding/TextureStore.h"
 #include "modding/EmoteRegistry.h"
 #include "render/Renderer.h"
 
 #include <array>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -26,6 +28,7 @@ class Menu;
 }
 namespace ui {
 class Context;
+class Font;
 }
 }
 
@@ -90,6 +93,8 @@ struct ClientBridge {
     std::function<mod::Rotation()> rotation;
     std::function<void(mod::Rotation rotation)> setRotation;
     std::function<void(std::string name, std::string address)> connect;
+    // The interface font, for text mods draw into the world.
+    const ui::Font* font = nullptr;
 };
 
 /**
@@ -205,13 +210,20 @@ public:
      */
     void request(menu::ModAction action);
 
+    /**
+     * What Tab can complete in a chat draft typed up to the caret that
+     * starts with the mod command prefix.
+     */
+    menu::CommandHints completeCommand(std::string_view draft);
+
     void drawHud(ui::Context& context, float width, float height, bool screenOpen);
 
     /**
      * Collects the mods' world draws and draws them; viewProjection works on
-     * positions relative to camera.
+     * positions relative to camera. client draws the client's own world
+     * shapes through the same painter, before the mods.
      */
-    void drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera);
+    void drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(mod::WorldPainter&)>& client = {});
 
     /**
      * Runs the mods' post processing passes over the world just drawn.
@@ -237,6 +249,7 @@ private:
         size_t owner = 0;
         mod::ModInfo info;
         std::string error;
+        std::vector<std::string> dependencies;
     };
 
     /**
@@ -251,7 +264,20 @@ private:
 
     void scan();
     void loadRecord(Record& record);
-    void unloadRecord(Record& record);
+    void startRecords(const std::vector<std::string>& files);
+    std::unique_ptr<ModSlot> openRecord(Record& record);
+    void startRecord(Record& record, std::unique_ptr<ModSlot> loaded);
+
+    /**
+     * Stops the mod and, first, every running mod that depends on it; returns
+     * the files of those dependents so a reload can start them again.
+     */
+    std::vector<std::string> unloadRecord(Record& record);
+    void stopFaulted();
+    void openSettings(size_t owner);
+    void drawSettings(size_t owner, mod::Canvas& canvas, mod::Controls& controls, const InputState& input, float width, float height);
+    void commitSettings(size_t owner);
+    void drawNotices(mod::Canvas& canvas, float width);
     void applyActions();
     void loadDisabled();
     void saveDisabled() const;
@@ -264,6 +290,12 @@ private:
     void trackActors(const SessionSnapshot& snapshot);
     void forgetActors();
     void trackInventory(const SessionSnapshot& snapshot);
+    void trackBlockChanges(const SessionSnapshot& snapshot);
+    void trackChunks(const SessionSnapshot& snapshot);
+    void forgetChunks();
+    void trackPlayerTicks(const SessionSnapshot& snapshot);
+    void trackBreakProgress(const SessionSnapshot& snapshot);
+    void trackContainer(const SessionSnapshot& snapshot);
     void dispatchText(InputState& input);
     std::string modName(size_t owner) const;
 
@@ -275,6 +307,12 @@ private:
     std::vector<menu::ModAction> pending;
     size_t nextOwner = 1;
     std::set<size_t> warned;
+    // When each mod's recent errors happened, to turn off a mod that keeps failing.
+    std::map<size_t, std::deque<double>> errorTimes;
+    std::set<size_t> faulted;
+    std::map<size_t, float> settingsScroll;
+    std::string settingsListening;
+    bool settingsUnsaved = false;
     double started = 0.0;
     double tickClock = 0.0;
     uint64_t ticks = 0;
@@ -295,6 +333,14 @@ private:
     HudItem seenOffhand;
     HudItem seenCursor;
     bool inventorySeen = false;
+    uint64_t seenBlockChangeSerial = 0;
+    uint64_t seenPlayerTickSerial = 0;
+    uint64_t seenBreakProgressSerial = 0;
+    uint64_t seenLoadedRevision = 0;
+    int seenColumnsDimension = 0;
+    std::vector<std::array<int32_t, 2>> seenColumns;
+    uint64_t seenContainerOpen = 0;
+    std::vector<HudItem> seenContainer;
 };
 
 }

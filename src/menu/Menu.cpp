@@ -1632,6 +1632,7 @@ void Menu::drawHudScreen(Context& ui, float width, float height)
     bool blocked = ui.isBlocked();
     ui.setBlocked(true);
     hudScreen->draw(ui, { 0.0f, 0.0f, width, height }, data);
+    hud.titleUpdates.clear();
     ui.setBlocked(blocked);
     hudScreen->takeEvents();
 }
@@ -1812,7 +1813,7 @@ void Menu::handleKeys(Context& ui)
         socialSelected.clear();
         requestSocial(SocialAction::Search, socialSearch);
     }
-    if (!input.escape) {
+    if (std::exchange(chatClosedByScreen, false) || !input.escape) {
         return;
     }
     if (dialog == Dialog::JoinRealm) {

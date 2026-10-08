@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace kestrel::mod {
 
@@ -360,6 +361,52 @@ struct InventoryChangeEvent : Event {
 };
 
 /**
+ * A block changed: the server set it, or predicted is set when the player
+ * broke it ahead of the server. Names are full, "minecraft:air" for air.
+ */
+struct BlockChangeEvent : Event {
+    KESTREL_EVENT("kestrel:block_change")
+    BlockPos position;
+    std::string oldName;
+    std::string newName;
+    bool predicted = false;
+};
+
+/**
+ * A chunk column of the player's dimension arrived; x and z count chunks.
+ */
+struct ChunkLoadEvent : Event {
+    KESTREL_EVENT("kestrel:chunk_load")
+    int32_t x = 0;
+    int32_t z = 0;
+    int dimension = 0;
+};
+
+/**
+ * A chunk column went away, out of range or because the player left the
+ * world or its dimension.
+ */
+struct ChunkUnloadEvent : Event {
+    KESTREL_EVENT("kestrel:chunk_unload")
+    int32_t x = 0;
+    int32_t z = 0;
+    int dimension = 0;
+};
+
+/**
+ * One movement tick of the local player ran: where its feet ended, its
+ * velocity in blocks per tick and whether it stands on the ground. Sent
+ * once per tick, several in one frame after a slow one.
+ */
+struct PlayerTickEvent : Event {
+    KESTREL_EVENT("kestrel:player_tick")
+    uint64_t tick = 0;
+    Vec3 position;
+    Vec3 velocity;
+    bool onGround = false;
+};
+
+/**
  * The movement the player's keys ask for this frame, before it reaches the
  * physics. forward and sideways run from -1 to 1.
  */
@@ -377,6 +424,33 @@ struct MovementEvent : Event {
      */
     bool overrideRotation = false;
     Rotation rotation;
+
+    /**
+     * Added in API 4. startGlide and stopGlide open and close the elytra
+     * the way pressing jump in the air does, and only when that would;
+     * startFlying and stopFlying toggle flight for a player allowed to fly;
+     * swimDown sinks in water the way sneaking does. A request set in one
+     * frame waits for the next movement tick.
+     */
+    bool startGlide = false;
+    bool stopGlide = false;
+    bool startFlying = false;
+    bool stopFlying = false;
+    bool swimDown = false;
+};
+
+/**
+ * The local player's breaking of a block moved on one tick: progress from 0
+ * to 1, finished once it broke, aborted when it was given up or the player
+ * turned to another block. Sent on the main thread after the fact, several
+ * in one frame after a slow one.
+ */
+struct BlockBreakProgressEvent : Event {
+    KESTREL_EVENT("kestrel:block_break_progress")
+    BlockPos position;
+    float progress = 0.0f;
+    bool finished = false;
+    bool aborted = false;
 };
 
 /**
@@ -440,6 +514,17 @@ struct PacketSentEvent : Event {
     int id = 0;
     std::string name;
     std::string payload;
+};
+
+/**
+ * The container open on screen opened or holds something else. containerType
+ * is the client's ContainerType value, as ScreenOpenEvent gives it, and slots
+ * holds every slot of the container from 0, empty ones included.
+ */
+struct ContainerContentEvent : Event {
+    KESTREL_EVENT("kestrel:container_content")
+    int containerType = -1;
+    std::vector<ItemStack> slots;
 };
 
 }

@@ -142,6 +142,8 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32/*.rc
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/d3d12/*.cpp
     )
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32/Kestrel.rc
+        PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/icon.ico)
 elseif(APPLE)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/*.mm
@@ -206,6 +208,8 @@ if(NOT WIN32 AND NOT APPLE)
     kestrel_vulkan_shader(SkyFragment sky.frag)
     kestrel_vulkan_shader(OverlayVertex model.vert -DOVERLAY)
     kestrel_vulkan_shader(OverlayFragment world.frag -DOVERLAY)
+    kestrel_vulkan_shader(PrimitiveVertex primitive.vert)
+    kestrel_vulkan_shader(PrimitiveFragment primitive.frag)
     file(GENERATE OUTPUT "${KESTREL_SHADER_DIRECTORY}/UiShaders.h" CONTENT "${KESTREL_SHADER_HEADER}}\n")
     add_custom_target(KestrelVulkanShaders DEPENDS ${KESTREL_SHADER_OUTPUTS})
     add_dependencies(Kestrel KestrelVulkanShaders)
@@ -222,6 +226,15 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelModUiTest PRIVATE include)
     add_test(NAME mod-ui COMMAND KestrelModUiTest)
 
+    add_executable(KestrelModSchedulerTest tests/ModScheduler.cpp src/modding/TaskScheduler.cpp)
+    target_include_directories(KestrelModSchedulerTest PRIVATE include)
+    target_link_libraries(KestrelModSchedulerTest PRIVATE Threads::Threads)
+    add_test(NAME mod-scheduler COMMAND KestrelModSchedulerTest)
+
+    add_executable(KestrelModDependenciesTest tests/ModDependencies.cpp src/modding/ModDependencies.cpp)
+    target_include_directories(KestrelModDependenciesTest PRIVATE include)
+    add_test(NAME mod-dependencies COMMAND KestrelModDependenciesTest)
+
     add_executable(KestrelModTexturesTest tests/ModTextures.cpp src/modding/TextureStore.cpp src/ui/Image.cpp)
     target_include_directories(KestrelModTexturesTest PRIVATE include ${stb_SOURCE_DIR})
     add_test(NAME mod-textures COMMAND KestrelModTexturesTest)
@@ -234,6 +247,10 @@ if(KESTREL_BUILD_TESTS)
     target_link_libraries(KestrelModTextureAtlasTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME mod-texture-atlas COMMAND KestrelModTextureAtlasTest)
     set_tests_properties(mod-texture-atlas PROPERTIES ENVIRONMENT "KESTREL_VANILLA_PACK=${CMAKE_CURRENT_BINARY_DIR}/missing-mod-textures-assets")
+    add_executable(KestrelJsonUiBindingsTest tests/JsonUiBindings.cpp src/ui/JsonUi.cpp src/ui/JsonUiExpression.cpp src/ui/JsonUiReader.cpp)
+    target_include_directories(KestrelJsonUiBindingsTest PRIVATE include)
+    target_link_libraries(KestrelJsonUiBindingsTest PRIVATE FalconProtocol)
+    add_test(NAME json-ui-bindings COMMAND KestrelJsonUiBindingsTest)
     add_executable(KestrelUiClippingTest tests/UiClipping.cpp src/ui/DrawList.cpp)
     target_include_directories(KestrelUiClippingTest PRIVATE include)
     add_test(NAME ui-clipping COMMAND KestrelUiClippingTest)
@@ -309,6 +326,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelCreativeDropTest PRIVATE include)
     target_link_libraries(KestrelCreativeDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME creative-drop COMMAND KestrelCreativeDropTest)
+    add_executable(KestrelHotbarDropTest
+        tests/HotbarDrop.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelHotbarDropTest PRIVATE include)
+    target_link_libraries(KestrelHotbarDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME hotbar-drop COMMAND KestrelHotbarDropTest)
     add_executable(KestrelInventoryTransactionTest
         tests/InventoryTransaction.cpp
         src/client/inventory/Inventory.cpp
@@ -351,6 +385,21 @@ if(KESTREL_BUILD_TESTS)
         src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
+    add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp)
+    target_include_directories(KestrelModCollisionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    add_test(NAME mod-collision COMMAND KestrelModCollisionTest)
+    add_executable(KestrelModWorldLiveTest
+        tests/ModWorldLive.cpp
+        src/world/chunks/ChunkStore.cpp
+        src/world/chunks/SubChunk.cpp
+        src/world/chunks/PalettedStorage.cpp
+        src/world/chunks/ByteReader.cpp)
+    target_include_directories(KestrelModWorldLiveTest PRIVATE include)
+    target_link_libraries(KestrelModWorldLiveTest PRIVATE FalconProtocol Threads::Threads)
+    add_test(NAME mod-world-live COMMAND KestrelModWorldLiveTest)
+    add_executable(KestrelModBreakTest tests/ModBreak.cpp)
+    target_include_directories(KestrelModBreakTest PRIVATE include)
+    add_test(NAME mod-break COMMAND KestrelModBreakTest)
     add_executable(KestrelMeshPriorityTest tests/MeshPriority.cpp)
     target_include_directories(KestrelMeshPriorityTest PRIVATE include)
     add_test(NAME mesh-priority COMMAND KestrelMeshPriorityTest)
@@ -416,6 +465,7 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelParticleEffectsTest PRIVATE include)
     target_link_libraries(KestrelParticleEffectsTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME particle-effects COMMAND KestrelParticleEffectsTest)
+    add_test(NAME particle-explosion-lifetime COMMAND KestrelParticleEffectsTest --explosion-lifetime)
     add_test(NAME particle-handles COMMAND KestrelParticleEffectsTest --tracked-effects)
 endif()
 option(KESTREL_BUILD_EXAMPLE_MODS "Build the example mods" OFF)

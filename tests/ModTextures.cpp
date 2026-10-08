@@ -8,21 +8,120 @@
 #include <limits>
 
 using namespace kestrel;
-using Request = mod::detail::TextureRequest;
+using Request = modding::TextureRequest;
+using Action = Request::Action;
 
 void check(bool condition, const char* message)
 {
     if (!condition) { std::cerr << message << '\n'; std::exit(1); }
 }
 
-struct Bus : mod::EventBus {
-    modding::TextureStore* textures = nullptr;
+class Api final : public mod::Textures {
+public:
+    explicit Api(modding::TextureStore& store) : store(store) { }
+
     size_t owner = 1;
-    mod::Subscription subscribe(std::string_view, Handler, mod::ListenOptions) override { return {}; }
-    void post(mod::Event& event) override
+
+    bool supported() const override
     {
-        if (textures && event.type() == Request::Type) textures->process(owner, static_cast<Request&>(event));
+        return send(Action::Supported).result;
     }
+
+    mod::TextureHandle load(const std::filesystem::path& path) override
+    {
+        Request request;
+        request.path = path;
+        return created(Action::Load, request);
+    }
+
+    mod::TextureHandle decode(std::span<const uint8_t> encoded) override
+    {
+        Request request;
+        request.encoded = encoded;
+        return created(Action::Decode, request);
+    }
+
+    mod::TextureHandle create(mod::Image image) override
+    {
+        Request request;
+        request.image = std::move(image);
+        return created(Action::Create, request);
+    }
+
+    mod::TextureInfo info(mod::TextureHandle handle) const override
+    {
+        Request request = send(Action::Info, handle);
+        return { request.image.width, request.image.height, request.result };
+    }
+
+    mod::Image read(mod::TextureHandle handle) const override
+    {
+        Request request = send(Action::Read, handle);
+        return request.result ? std::move(request.image) : mod::Image {};
+    }
+
+    bool update(mod::TextureHandle handle, mod::Image image) override
+    {
+        return write(Action::Update, handle, std::move(image), 0, 0);
+    }
+
+    bool updateRegion(mod::TextureHandle handle, uint32_t x, uint32_t y, mod::Image image) override
+    {
+        return write(Action::Patch, handle, std::move(image), x, y);
+    }
+
+    bool draw(mod::Canvas& canvas, mod::TextureHandle handle, mod::Rect rect, mod::Color tint = { 255, 255, 255, 255 }) override
+    {
+        Request request;
+        request.action = Action::Draw;
+        request.handle = handle;
+        request.canvas = &canvas;
+        request.rect = rect;
+        request.tint = tint;
+        store.process(owner, request);
+        return request.result;
+    }
+
+    bool destroy(mod::TextureHandle handle) override
+    {
+        return send(Action::Destroy, handle).result;
+    }
+
+    void clear() override
+    {
+        send(Action::Clear);
+    }
+
+private:
+    Request send(Action action, mod::TextureHandle handle = 0) const
+    {
+        Request request;
+        request.action = action;
+        request.handle = handle;
+        store.process(owner, request);
+        return request;
+    }
+
+    mod::TextureHandle created(Action action, Request& request)
+    {
+        request.action = action;
+        store.process(owner, request);
+        return request.result ? request.handle : 0;
+    }
+
+    bool write(Action action, mod::TextureHandle handle, mod::Image image, uint32_t x, uint32_t y)
+    {
+        Request request;
+        request.action = action;
+        request.handle = handle;
+        request.image = std::move(image);
+        request.x = x;
+        request.y = y;
+        store.process(owner, request);
+        return request.result;
+    }
+
+    modding::TextureStore& store;
 };
 
 struct Canvas : mod::Canvas {
@@ -52,16 +151,20 @@ mod::Image solid(uint32_t width, uint32_t height, uint8_t value)
 
 int main()
 {
-    Bus bus;
-    mod::Textures api(bus);
-    check(!api.supported() && !api.create(solid(1, 1, 255)), "old host fallback");
     std::map<std::string, mod::Image> uploaded;
     modding::TextureStore store([&](const std::string& name, const mod::Image* image) {
         if (image) uploaded[name] = *image;
         else uploaded.erase(name);
     });
-    bus.textures = &store;
-    check(api.supported(), "supported extension");
+    Api api(store);
+    check(api.supported(), "supported textures");
+    mod::detail::TextureRequest legacy;
+    legacy.action = Action::Create;
+    legacy.image = solid(2, 2, 255);
+    mod::Event& posted = legacy;
+    check(posted.type() == "kestrel:texture_request/v1", "legacy request keeps its event type");
+    store.process(1, static_cast<Request&>(posted));
+    check(legacy.result && api.info(legacy.handle).width == 2 && api.destroy(legacy.handle) && uploaded.empty(), "legacy request shares the API 4 store");
     check(!api.create({}) && !api.create({ 1, 1, { 0 } }), "invalid pixel sizes");
     check(!api.create({ UINT32_MAX, UINT32_MAX, {} }), "overflow dimensions");
     auto handle = api.create(solid(4, 4, 255));
@@ -80,7 +183,7 @@ int main()
     check(api.draw(canvas, handle, { 10, 20, 30, 40 }, { 10, 20, 30, 80 }), "draw accepted");
     check(canvas.draws == 1 && canvas.rect.w == 30 && canvas.tint.a == 80 && uploaded.contains(canvas.name), "draw uses uploaded sprite and tint");
     check(!api.draw(canvas, handle, { 0, 0, std::numeric_limits<float>::infinity(), 10 }), "reject nonfinite drawing");
-    bus.owner = 2;
+    api.owner = 2;
     check(!api.info(handle).valid && api.read(handle).pixels.empty() && !api.destroy(handle)
         && !api.update(handle, solid(1, 1, 0)) && !api.draw(canvas, handle, { 0, 0, 10, 10 }), "owner isolation");
     auto second = api.create(solid(1, 1, 0));

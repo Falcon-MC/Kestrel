@@ -1,11 +1,13 @@
 #include "modding/ModServices.h"
 
 #include "client/DebugLog.h"
+#include "client/session/SessionData.h"
 #include "mod/Config.h"
 #include "menu/Menu.h"
 #include "mod/Events.h"
 #include "platform/Input.h"
 #include "platform/Keys.h"
+#include "world/BlockBreaking.h"
 #include "world/ItemInfo.h"
 
 #include "Protocol/MinecraftPacketIds.h"
@@ -72,18 +74,22 @@ mod::Subscription EventBusService::subscribe(std::string_view type, Handler hand
     return host.events.subscribe(owner, type, std::move(handler), options);
 }
 
+/**
+ * Mods built against API 3 reach effects, screens and textures by posting
+ * request events; they go to the same stores the API 4 services use.
+ */
 void EventBusService::post(mod::Event& event)
 {
-    if (event.type() == mod::detail::TextureRequest::Type) {
-        host.textures.process(owner, static_cast<mod::detail::TextureRequest&>(event));
+    if (event.type() == TextureRequest::Type) {
+        host.textures.process(owner, static_cast<TextureRequest&>(event));
         return;
     }
-    if (event.type() == mod::detail::UiRequest::Type) {
-        host.ui.process(owner, static_cast<mod::detail::UiRequest&>(event));
+    if (event.type() == UiRequest::Type) {
+        host.ui.process(owner, static_cast<UiRequest&>(event));
         return;
     }
-    if (event.type() == mod::detail::EffectRequest::Type) {
-        host.effects.process(owner, static_cast<mod::detail::EffectRequest&>(event));
+    if (event.type() == EffectRequest::Type) {
+        host.effects.process(owner, static_cast<EffectRequest&>(event));
         return;
     }
     host.events.dispatch(event);
@@ -325,6 +331,322 @@ int32_t PlayerService::maxDurability(const std::string& identifier) const
     return world::itemMaxDurability(identifier);
 }
 
+mod::Vec3 PlayerService::tickPosition() const
+{
+    const std::array<double, 3>& feet = host.snapshot.player.current;
+    return { feet[0], feet[1], feet[2] };
+}
+
+mod::Vec3 PlayerService::velocity() const
+{
+    const std::array<float, 3>& motion = host.snapshot.player.velocity;
+    return { motion[0], motion[1], motion[2] };
+}
+
+mod::Box PlayerService::boundingBox() const
+{
+    const PlayerView& view = host.snapshot.player;
+    double half = view.bbWidth * 0.5;
+    return { { view.current[0] - half, view.current[1], view.current[2] - half }, { view.current[0] + half, view.current[1] + view.bbHeight, view.current[2] + half } };
+}
+
+float PlayerService::fallDistance() const
+{
+    return host.snapshot.player.fallDistance;
+}
+
+bool PlayerService::inWater() const
+{
+    return host.snapshot.player.inWater;
+}
+
+bool PlayerService::inLava() const
+{
+    return host.snapshot.player.inLava;
+}
+
+bool PlayerService::gliding() const
+{
+    return host.snapshot.player.gliding;
+}
+
+bool PlayerService::onClimbable() const
+{
+    return host.snapshot.player.onClimbable;
+}
+
+bool PlayerService::collidedHorizontally() const
+{
+    return host.snapshot.player.horizontalCollision;
+}
+
+bool PlayerService::collidedVertically() const
+{
+    return host.snapshot.player.verticalCollision;
+}
+
+mod::Player::Abilities PlayerService::abilities() const
+{
+    const PlayerView& view = host.snapshot.player;
+    return { view.mayFly, view.flying, view.movementSpeed, view.flySpeed };
+}
+
+bool PlayerService::clickSlot(int container, int slot, int button)
+{
+    if (!inWorld() || button < ClickLeft || button > ClickShift) {
+        return false;
+    }
+    const InventoryState& open = host.snapshot.hud.container;
+    int local = -1;
+    if (container == SlotsInventory && slot >= 0 && slot < InventorySize) {
+        local = slot;
+    } else if (container == SlotsArmor && slot >= 0 && slot < 4) {
+        local = inventory::Armor + slot;
+    } else if (container == SlotsOffhand && slot == 0) {
+        local = inventory::Offhand;
+    } else if (container == SlotsCursor && slot == 0) {
+        local = inventory::Cursor;
+    } else if (container == SlotsContainer && open.windowId != 0 && slot >= 0 && slot < std::min(open.containerSize, inventory::Ui - inventory::Container)) {
+        local = inventory::Container + slot;
+    }
+    if (local < 0) {
+        return false;
+    }
+    InventoryAction action = button == ClickRight ? InventoryAction::Secondary : button == ClickShift ? InventoryAction::QuickMove : InventoryAction::Primary;
+    host.session.requestInventory({ action, local });
+    return true;
+}
+
+bool PlayerService::moveItem(int fromSlot, int toSlot, int count)
+{
+    const auto& items = host.snapshot.hud.inventory;
+    if (!inWorld() || fromSlot < 0 || fromSlot >= InventorySize || toSlot < 0 || toSlot >= InventorySize || fromSlot == toSlot) {
+        return false;
+    }
+    const HudItem& source = items[static_cast<size_t>(fromSlot)];
+    const HudItem& destination = items[static_cast<size_t>(toSlot)];
+    if (source.empty() || (!destination.empty() && (destination.identifier != source.identifier || destination.aux != source.aux))) {
+        return false;
+    }
+    InventoryCommand command;
+    command.action = InventoryAction::Move;
+    command.slot = fromSlot;
+    command.value = toSlot;
+    command.count = count;
+    host.session.requestInventory(std::move(command));
+    return true;
+}
+
+bool PlayerService::swapHotbar(int slot, int hotbarSlot)
+{
+    if (!inWorld() || slot < 0 || slot >= InventorySize || hotbarSlot < 0 || hotbarSlot >= HotbarSize || slot == hotbarSlot) {
+        return false;
+    }
+    host.session.requestInventory({ InventoryAction::HotbarSwap, slot, hotbarSlot });
+    return true;
+}
+
+int PlayerService::findItem(const std::function<bool(const mod::ItemStack&)>& accept) const
+{
+    if (!accept) {
+        return -1;
+    }
+    const auto& items = host.snapshot.hud.inventory;
+    for (int slot = 0; slot < static_cast<int>(items.size()); ++slot) {
+        const HudItem& item = items[static_cast<size_t>(slot)];
+        if (!item.empty() && accept(itemOf(item))) {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Rates each hotbar item with the same dig speed the client mines with.
+ * Effects and the player's footing slow every item alike, so only the item
+ * and its efficiency enchantment decide.
+ */
+int PlayerService::bestToolFor(const mod::BlockPos& position) const
+{
+    constexpr int EfficiencyEnchantment = 15;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z) || area->properties(position.x, position.y, position.z).air) {
+        return -1;
+    }
+    std::string name = area->name(position.x, position.y, position.z);
+    const auto& items = host.snapshot.hud.inventory;
+    auto speedOf = [&](int slot) {
+        const HudItem& item = items[static_cast<size_t>(slot)];
+        world::MiningConditions conditions;
+        conditions.heldItem = item.empty() ? std::string() : item.identifier;
+        for (const auto& [id, level] : item.enchantments) {
+            if (id == EfficiencyEnchantment) {
+                conditions.efficiency = level;
+            }
+        }
+        return world::destroyProgressPerTick(name, conditions);
+    };
+    int selected = host.snapshot.hud.selectedSlot;
+    int best = selected >= 0 && selected < HotbarSize ? selected : 0;
+    float bestSpeed = speedOf(best);
+    for (int slot = 0; slot < HotbarSize; ++slot) {
+        float speed = speedOf(slot);
+        if (speed > bestSpeed) {
+            best = slot;
+            bestSpeed = speed;
+        }
+    }
+    return bestSpeed > 0.0f ? best : -1;
+}
+
+/**
+ * Clicks the middle of the block's face turned toward the player's eye, the
+ * face a player looking at the block from there would hit.
+ */
+bool PlayerService::openContainer(const mod::BlockPos& position)
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!inWorld() || !area || !area->loaded(position.x, position.y, position.z) || area->properties(position.x, position.y, position.z).air) {
+        return false;
+    }
+    mod::Vec3 eye = eyePosition();
+    std::array<double, 3> toward { eye.x - (position.x + 0.5), eye.y - (position.y + 0.5), eye.z - (position.z + 0.5) };
+    size_t axis = 0;
+    for (size_t i = 1; i < 3; ++i) {
+        if (std::abs(toward[i]) > std::abs(toward[axis])) {
+            axis = i;
+        }
+    }
+    static constexpr int32_t Faces[3][2] = { { 4, 5 }, { 0, 1 }, { 2, 3 } };
+    bool positive = toward[axis] > 0.0;
+    std::array<double, 3> click { 0.5, 0.5, 0.5 };
+    click[axis] = positive ? 1.0 : 0.0;
+    host.session.requestUseOn({ position.x, position.y, position.z }, Faces[axis][positive ? 1 : 0], click);
+    return true;
+}
+
+mod::ContainerView PlayerService::openContainerContents() const
+{
+    mod::ContainerView view;
+    const InventoryState& open = host.snapshot.hud.container;
+    if (!inWorld() || open.windowId == 0) {
+        return view;
+    }
+    view.open = true;
+    view.type = static_cast<int>(open.type);
+    view.windowId = open.windowId;
+    view.position = { open.blockPosition[0], open.blockPosition[1], open.blockPosition[2] };
+    int size = std::clamp(open.containerSize, 0, inventory::Ui - inventory::Container);
+    view.slots.reserve(static_cast<size_t>(size));
+    for (int slot = 0; slot < size; ++slot) {
+        view.slots.push_back({ slot, itemOf(open.slots[static_cast<size_t>(inventory::Container + slot)]) });
+    }
+    return view;
+}
+
+void PlayerService::closeContainer()
+{
+    if (host.snapshot.hud.container.windowId == 0) {
+        return;
+    }
+    if (host.menu.inventoryOpen()) {
+        host.menu.inventoryPanel().close();
+        return;
+    }
+    host.session.requestInventory({ InventoryAction::Close });
+}
+
+void PlayerService::startBreaking(const mod::BlockPos& position, int face)
+{
+    if (face >= 0 && face <= 5) {
+        host.session.requestBreaking({ position.x, position.y, position.z }, face);
+    }
+}
+
+void PlayerService::stopBreaking()
+{
+    host.session.cancelBreaking();
+}
+
+std::optional<mod::BlockPos> PlayerService::breakingTarget() const
+{
+    const std::optional<std::array<int32_t, 3>>& cell = host.snapshot.breakingCell;
+    if (!joined(host) || !cell) {
+        return std::nullopt;
+    }
+    return mod::BlockPos { (*cell)[0], (*cell)[1], (*cell)[2] };
+}
+
+float PlayerService::breakingProgress() const
+{
+    return joined(host) && host.snapshot.breakingCell ? host.snapshot.breakingProgress : 0.0f;
+}
+
+void PlayerService::useOn(const mod::BlockPos& position, int face, const mod::Vec3& clickPoint)
+{
+    host.session.requestUseOn({ position.x, position.y, position.z }, face, { clickPoint.x, clickPoint.y, clickPoint.z });
+}
+
+void PlayerService::useItem()
+{
+    host.session.requestItemUse(true);
+}
+
+void PlayerService::releaseUse()
+{
+    host.session.requestItemUse(false);
+}
+
+void PlayerService::attackEntity(uint64_t runtimeId)
+{
+    host.session.requestAttack(runtimeId);
+}
+
+void PlayerService::setAttackHeld(bool held)
+{
+    host.session.setModAttackHeld(held);
+}
+
+void PlayerService::setUseHeld(bool held)
+{
+    host.session.setModUseHeld(held);
+}
+
+/**
+ * Steps a copy of the motion state the last movement tick published, with
+ * scratch space of its own, against the loaded world the snapshot shares.
+ * The session's own state is never touched, and the requests a mod makes for
+ * one tick are left out of the repeated input.
+ */
+std::vector<mod::Vec3> PlayerService::predictPath(int ticks) const
+{
+    constexpr int MaxPredictedTicks = 200;
+    std::vector<mod::Vec3> path;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!inWorld() || !host.snapshot.motion || !area || ticks <= 0) {
+        return path;
+    }
+    PlayerMotion copy = host.snapshot.motion->detached();
+    MotionInput input = host.snapshot.motionInput;
+    input.riptide = 0;
+    input.startGlide = false;
+    input.stopGlide = false;
+    input.startFlying = false;
+    input.stopFlying = false;
+    PlayerMotion::CellLookup lookup = [&area](int32_t x, int32_t y, int32_t z) {
+        return area->motionCell(x, y, z);
+    };
+    int count = std::min(ticks, MaxPredictedTicks);
+    path.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        MotionTick tick = copy.step(input, lookup);
+        float eyeY = tick.position.y + session::EyeHeight;
+        copy.anchor({ tick.position.x, eyeY - session::EyeHeight, tick.position.z });
+        path.push_back({ tick.position.x, eyeY - session::EyeHeight, tick.position.z });
+    }
+    return path;
+}
+
 WorldService::WorldService(HostState& host, size_t owner)
     : host(host)
     , owner(owner)
@@ -483,6 +805,23 @@ std::string_view NetworkService::gameVersion() const
     return Session::gameVersion();
 }
 
+mod::Subscription NetworkService::addTypedFilter(std::shared_ptr<mod::TypedPacketFilter> filter)
+{
+    return host.packets->addTyped(owner, std::move(filter));
+}
+
+void NetworkService::sendTyped(const mod::PacketView& packet)
+{
+    if (joined(host)) {
+        host.packets->sendTyped(packet);
+    }
+}
+
+int NetworkService::ping() const
+{
+    return joined(host) ? host.session.latencyMs() : -1;
+}
+
 InputService::InputService(HostState& host, size_t owner, mod::Config& config)
     : host(host)
     , owner(owner)
@@ -564,9 +903,10 @@ mod::Subscription InputService::bind(mod::KeyBindSpec spec, std::function<void()
     }, {});
 }
 
-CommandService::CommandService(HostState& host, size_t owner)
+CommandService::CommandService(HostState& host, size_t owner, long api)
     : host(host)
     , owner(owner)
+    , api(api)
 {
 }
 
@@ -574,6 +914,14 @@ mod::Subscription CommandService::add(mod::CommandSpec spec, Handler handler)
 {
     if (spec.name.empty() || spec.name.find(' ') != std::string::npos) {
         throw std::invalid_argument("A command name is one word, got \"" + spec.name + "\"");
+    }
+    if (api < 4) {
+        mod::CommandSpec known;
+        known.name = spec.name;
+        known.description = spec.description;
+        known.usage = spec.usage;
+        known.aliases = spec.aliases;
+        return host.commands.add(owner, std::move(known), std::move(handler));
     }
     return host.commands.add(owner, std::move(spec), std::move(handler));
 }
@@ -610,6 +958,11 @@ mod::Subscription SchedulerService::every(double seconds, Task task)
 void SchedulerService::post(Task task)
 {
     host.scheduler.post(owner, std::move(task));
+}
+
+mod::Subscription SchedulerService::async(Task task, Task onDone)
+{
+    return host.scheduler.async(owner, std::move(task), std::move(onDone));
 }
 
 ShaderService::ShaderService(HostState& host, size_t owner)
@@ -878,6 +1231,165 @@ std::vector<mod::FoundBlock> WorldService::findBlocks(const std::vector<std::str
     return found;
 }
 
+namespace {
+
+mod::Box boxOf(const world::CollisionBox& box)
+{
+    return { { box.minX, box.minY, box.minZ }, { box.maxX, box.maxY, box.maxZ } };
+}
+
+mod::BlockProps propsOf(const LoadedBlocks::Properties& properties)
+{
+    mod::BlockProps props;
+    props.air = properties.air;
+    props.solid = properties.solid;
+    props.fullCube = properties.fullCube;
+    props.liquid = properties.liquid;
+    props.water = properties.water;
+    props.lava = properties.lava;
+    props.climbable = properties.climbable;
+    props.hazard = properties.hazard;
+    props.replaceable = properties.replaceable;
+    props.gravity = properties.gravity;
+    props.liquidLevel = properties.liquidLevel;
+    props.hardness = properties.hardness;
+    props.friction = properties.friction;
+    return props;
+}
+
+}
+
+std::vector<mod::Box> WorldService::collision(const mod::BlockPos& position) const
+{
+    std::vector<mod::Box> boxes;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z)) {
+        return boxes;
+    }
+    for (const world::CollisionBox& box : area->collision(position.x, position.y, position.z)) {
+        boxes.push_back(boxOf(box));
+    }
+    return boxes;
+}
+
+std::vector<mod::Box> WorldService::outline(const mod::BlockPos& position) const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z)) {
+        return {};
+    }
+    std::optional<world::CollisionBox> box = area->outline(position.x, position.y, position.z);
+    if (!box) {
+        return {};
+    }
+    return { boxOf(*box) };
+}
+
+std::optional<mod::BlockProps> WorldService::properties(const mod::BlockPos& position) const
+{
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z)) {
+        return std::nullopt;
+    }
+    return propsOf(area->properties(position.x, position.y, position.z));
+}
+
+/**
+ * Walks the loaded blocks within radius of the center, asking accept about
+ * each block state once, at the first block of that state it meets.
+ */
+std::vector<mod::FoundBlock> WorldService::findBlocksMatching(const std::function<bool(const mod::BlockProps&)>& accept, const mod::Vec3& center, double radius, size_t limit) const
+{
+    std::vector<mod::FoundBlock> found;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    if (!joined(host) || !area || !area->assets || !accept || radius <= 0.0 || limit == 0) {
+        return found;
+    }
+    std::unordered_map<uint32_t, bool> verdicts;
+
+    struct Candidate {
+        double distance = 0.0;
+        mod::BlockPos position;
+    };
+    std::vector<Candidate> candidates;
+    double reach = radius * radius;
+    double subChunkReach = (radius + 14.0) * (radius + 14.0);
+    for (const auto& [key, subChunk] : area->subChunks) {
+        if (!subChunk || subChunk->storages().empty()) {
+            continue;
+        }
+        double cx = key.x * 16.0 + 8.0 - center.x;
+        double cy = key.y * 16.0 + 8.0 - center.y;
+        double cz = key.z * 16.0 + 8.0 - center.z;
+        if (cx * cx + cy * cy + cz * cz > subChunkReach) {
+            continue;
+        }
+        for (uint32_t y = 0; y < 16; ++y) {
+            for (uint32_t z = 0; z < 16; ++z) {
+                for (uint32_t x = 0; x < 16; ++x) {
+                    mod::BlockPos position { key.x * 16 + int32_t(x), key.y * 16 + int32_t(y), key.z * 16 + int32_t(z) };
+                    double dx = position.x + 0.5 - center.x;
+                    double dy = position.y + 0.5 - center.y;
+                    double dz = position.z + 0.5 - center.z;
+                    double distance = dx * dx + dy * dy + dz * dz;
+                    if (distance > reach) {
+                        continue;
+                    }
+                    uint32_t value = subChunk->runtimeId(0, x, y, z);
+                    auto verdict = verdicts.find(value);
+                    if (verdict == verdicts.end()) {
+                        verdict = verdicts.emplace(value, accept(propsOf(area->properties(position.x, position.y, position.z)))).first;
+                    }
+                    if (verdict->second) {
+                        candidates.push_back({ distance, position });
+                    }
+                }
+            }
+        }
+    }
+    size_t kept = std::min(limit, candidates.size());
+    std::partial_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(kept), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.distance < b.distance;
+    });
+    found.reserve(kept);
+    for (size_t i = 0; i < kept; ++i) {
+        found.push_back({ candidates[i].position, area->name(candidates[i].position.x, candidates[i].position.y, candidates[i].position.z) });
+    }
+    return found;
+}
+
+/**
+ * Counts the hit that starts the break, then the ticks the dig speed needs
+ * to fill the progress, with the conditions the last breaking tick used.
+ */
+int WorldService::breakTicks(const mod::BlockPos& position) const
+{
+    constexpr int32_t SurvivalMode = 0;
+    constexpr int32_t CreativeMode = 1;
+    constexpr double MaxTicks = 1.0e6;
+    const std::shared_ptr<const LoadedBlocks>& area = host.snapshot.loaded;
+    int32_t gameType = host.snapshot.hud.gameType;
+    if (!joined(host) || !area || !area->loaded(position.x, position.y, position.z) || (gameType != SurvivalMode && gameType != CreativeMode)) {
+        return -1;
+    }
+    std::string name = area->name(position.x, position.y, position.z);
+    if (name == "minecraft:air") {
+        return -1;
+    }
+    const world::MiningConditions& conditions = host.snapshot.mining;
+    if (gameType == CreativeMode) {
+        return world::preventsCreativeBreaking(conditions.heldItem) ? -1 : 1;
+    }
+    float speed = world::destroyProgressPerTick(name, conditions);
+    if (speed <= 0.0f) {
+        return -1;
+    }
+    if (speed >= 1.0f) {
+        return 1;
+    }
+    return static_cast<int>(std::min(std::ceil(1.0 / double(speed)), MaxTicks)) + 1;
+}
+
 CameraService::CameraService(HostState& host, size_t owner)
     : host(host)
     , owner(owner)
@@ -1081,6 +1593,53 @@ bool HudService::hidden(mod::HudElement element) const
     return found != host.hiddenHud.end() && ((found->second >> static_cast<uint32_t>(element)) & 1u) != 0;
 }
 
+std::optional<std::pair<float, float>> HudService::project(const mod::Vec3& world) const
+{
+    if (!host.worldViewProjection || host.interfaceWidth <= 0.0f || host.interfaceHeight <= 0.0f) {
+        return std::nullopt;
+    }
+    const std::array<float, 16>& matrix = *host.worldViewProjection;
+    const double relative[3] = { world.x - host.worldCamera.x, world.y - host.worldCamera.y, world.z - host.worldCamera.z };
+    double clip[4] {};
+    for (size_t row = 0; row < 4; ++row) {
+        clip[row] = matrix[12 + row];
+        for (size_t column = 0; column < 3; ++column) {
+            clip[row] += matrix[column * 4 + row] * relative[column];
+        }
+    }
+    if (!(clip[3] > 1e-6) || !std::isfinite(clip[0]) || !std::isfinite(clip[1])) {
+        return std::nullopt;
+    }
+    double x = (clip[0] / clip[3] + 1.0) * 0.5 * host.interfaceWidth;
+    double y = (1.0 - clip[1] / clip[3]) * 0.5 * host.interfaceHeight;
+    return std::pair<float, float> { static_cast<float>(x), static_cast<float>(y) };
+}
+
+/**
+ * Keeps the text to a few hundred bytes, cut before a whole UTF-8 sequence,
+ * and only the newest notifications, so a mod in a loop cannot fill the
+ * screen.
+ */
+void HudService::notify(std::string_view text, double seconds)
+{
+    constexpr size_t MaxNoticeBytes = 256;
+    constexpr size_t MaxNotices = 6;
+    constexpr double MaxNoticeSeconds = 60.0;
+    if (text.empty() || !std::isfinite(seconds) || seconds <= 0.0) {
+        return;
+    }
+    size_t end = std::min(text.size(), MaxNoticeBytes);
+    if (end < text.size()) {
+        while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) {
+            --end;
+        }
+    }
+    host.notices.push_back({ owner, std::string(text.substr(0, end)), host.seconds + std::min(seconds, MaxNoticeSeconds) });
+    if (host.notices.size() > MaxNotices) {
+        host.notices.erase(host.notices.begin());
+    }
+}
+
 EmoteService::EmoteService(HostState& host, size_t owner)
     : host(host)
     , owner(owner)
@@ -1105,6 +1664,291 @@ void EmoteService::stop()
 std::optional<std::string> EmoteService::playing() const
 {
     return host.emotes.playing;
+}
+
+ParticleService::ParticleService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+bool ParticleService::request(EffectRequest::Action action, mod::ParticleHandle handle, mod::Vec3 position) const
+{
+    EffectRequest request;
+    request.kind = EffectRequest::Kind::Particle;
+    request.action = action;
+    request.handle = handle;
+    request.position = position;
+    host.effects.process(owner, request);
+    return request.result;
+}
+
+bool ParticleService::supported() const
+{
+    return request(EffectRequest::Action::Supported);
+}
+
+mod::ParticleHandle ParticleService::spawn(mod::ParticleOptions options)
+{
+    EffectRequest request;
+    request.kind = EffectRequest::Kind::Particle;
+    request.action = EffectRequest::Action::Create;
+    request.particle = std::move(options);
+    host.effects.process(owner, request);
+    return request.result ? request.handle : 0;
+}
+
+bool ParticleService::active(mod::ParticleHandle handle) const
+{
+    return request(EffectRequest::Action::Active, handle);
+}
+
+bool ParticleService::move(mod::ParticleHandle handle, mod::Vec3 position)
+{
+    return request(EffectRequest::Action::Move, handle, position);
+}
+
+bool ParticleService::remove(mod::ParticleHandle handle)
+{
+    return request(EffectRequest::Action::Remove, handle);
+}
+
+void ParticleService::clear()
+{
+    request(EffectRequest::Action::Clear);
+}
+
+AudioService::AudioService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+bool AudioService::request(EffectRequest::Action action, mod::SoundHandle handle, mod::Vec3 position, float volume) const
+{
+    EffectRequest request;
+    request.kind = EffectRequest::Kind::Sound;
+    request.action = action;
+    request.handle = handle;
+    request.position = position;
+    request.volume = volume;
+    host.effects.process(owner, request);
+    return request.result;
+}
+
+bool AudioService::supported() const
+{
+    return request(EffectRequest::Action::Supported);
+}
+
+mod::SoundHandle AudioService::play(mod::SoundOptions options)
+{
+    EffectRequest request;
+    request.kind = EffectRequest::Kind::Sound;
+    request.action = EffectRequest::Action::Create;
+    request.sound = std::move(options);
+    host.effects.process(owner, request);
+    return request.result ? request.handle : 0;
+}
+
+bool AudioService::playing(mod::SoundHandle handle) const
+{
+    return request(EffectRequest::Action::Active, handle);
+}
+
+bool AudioService::stop(mod::SoundHandle handle)
+{
+    return request(EffectRequest::Action::Remove, handle);
+}
+
+bool AudioService::setVolume(mod::SoundHandle handle, float volume)
+{
+    return request(EffectRequest::Action::Volume, handle, {}, volume);
+}
+
+bool AudioService::setPosition(mod::SoundHandle handle, mod::Vec3 position)
+{
+    return request(EffectRequest::Action::Move, handle, position);
+}
+
+void AudioService::stopAll()
+{
+    request(EffectRequest::Action::Clear);
+}
+
+UiService::UiService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+bool UiService::request(UiRequest::Action action, std::string_view id) const
+{
+    UiRequest request;
+    request.action = action;
+    request.id = id;
+    host.ui.process(owner, request);
+    return request.result;
+}
+
+bool UiService::supported() const
+{
+    return request(UiRequest::Action::Supported, {});
+}
+
+bool UiService::open(std::string_view id)
+{
+    return request(UiRequest::Action::Open, id);
+}
+
+bool UiService::close(std::string_view id)
+{
+    return request(UiRequest::Action::Close, id);
+}
+
+bool UiService::isOpen(std::string_view id) const
+{
+    return request(UiRequest::Action::IsOpen, id);
+}
+
+void UiService::addSettings(std::vector<mod::SettingSpec> settings)
+{
+    constexpr size_t MaxSettings = 128;
+    constexpr size_t MaxKeyBytes = 128;
+    if (settings.size() > MaxSettings) {
+        throw std::invalid_argument("A settings page holds at most " + std::to_string(MaxSettings) + " settings");
+    }
+    std::set<std::string, std::less<>> keys;
+    for (const mod::SettingSpec& setting : settings) {
+        if (setting.key.empty() || setting.key.size() > MaxKeyBytes) {
+            throw std::invalid_argument("A setting needs a key of 1 to " + std::to_string(MaxKeyBytes) + " bytes");
+        }
+        if (!keys.insert(setting.key).second) {
+            throw std::invalid_argument("The setting key \"" + setting.key + "\" is used twice");
+        }
+        bool bounded = std::isfinite(setting.minimum) && std::isfinite(setting.maximum) && setting.maximum > setting.minimum
+            && std::isfinite(setting.step) && setting.step >= 0.0;
+        if (setting.kind == mod::SettingSpec::Kind::Range && !bounded) {
+            throw std::invalid_argument("The range \"" + setting.key + "\" needs finite bounds, minimum below maximum, and a step of 0 or more");
+        }
+        if (setting.kind == mod::SettingSpec::Kind::Choice && setting.choices.empty()) {
+            throw std::invalid_argument("The choice \"" + setting.key + "\" has no choices");
+        }
+    }
+    if (settings.empty()) {
+        host.settings.erase(owner);
+        return;
+    }
+    host.settings[owner] = std::move(settings);
+}
+
+TextureService::TextureService(HostState& host, size_t owner)
+    : host(host)
+    , owner(owner)
+{
+}
+
+bool TextureService::request(TextureRequest::Action action, mod::TextureHandle handle) const
+{
+    TextureRequest request;
+    request.action = action;
+    request.handle = handle;
+    host.textures.process(owner, request);
+    return request.result;
+}
+
+bool TextureService::write(TextureRequest::Action action, mod::TextureHandle handle, mod::Image image, uint32_t x, uint32_t y)
+{
+    TextureRequest request;
+    request.action = action;
+    request.handle = handle;
+    request.image = std::move(image);
+    request.x = x;
+    request.y = y;
+    host.textures.process(owner, request);
+    return request.result;
+}
+
+bool TextureService::supported() const
+{
+    return request(TextureRequest::Action::Supported);
+}
+
+mod::TextureHandle TextureService::load(const std::filesystem::path& path)
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Load;
+    request.path = path;
+    host.textures.process(owner, request);
+    return request.result ? request.handle : 0;
+}
+
+mod::TextureHandle TextureService::decode(std::span<const uint8_t> encoded)
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Decode;
+    request.encoded = encoded;
+    host.textures.process(owner, request);
+    return request.result ? request.handle : 0;
+}
+
+mod::TextureHandle TextureService::create(mod::Image image)
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Create;
+    request.image = std::move(image);
+    host.textures.process(owner, request);
+    return request.result ? request.handle : 0;
+}
+
+mod::TextureInfo TextureService::info(mod::TextureHandle handle) const
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Info;
+    request.handle = handle;
+    host.textures.process(owner, request);
+    return { request.image.width, request.image.height, request.result };
+}
+
+mod::Image TextureService::read(mod::TextureHandle handle) const
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Read;
+    request.handle = handle;
+    host.textures.process(owner, request);
+    return request.result ? std::move(request.image) : mod::Image {};
+}
+
+bool TextureService::update(mod::TextureHandle handle, mod::Image image)
+{
+    return write(TextureRequest::Action::Update, handle, std::move(image), 0, 0);
+}
+
+bool TextureService::updateRegion(mod::TextureHandle handle, uint32_t x, uint32_t y, mod::Image image)
+{
+    return write(TextureRequest::Action::Patch, handle, std::move(image), x, y);
+}
+
+bool TextureService::draw(mod::Canvas& canvas, mod::TextureHandle handle, mod::Rect rect, mod::Color tint)
+{
+    TextureRequest request;
+    request.action = TextureRequest::Action::Draw;
+    request.handle = handle;
+    request.canvas = &canvas;
+    request.rect = rect;
+    request.tint = tint;
+    host.textures.process(owner, request);
+    return request.result;
+}
+
+bool TextureService::destroy(mod::TextureHandle handle)
+{
+    return request(TextureRequest::Action::Destroy, handle);
+}
+
+void TextureService::clear()
+{
+    request(TextureRequest::Action::Clear);
 }
 
 }

@@ -1117,7 +1117,8 @@ void Menu::modsPage(Context& ui, float x, float& y, float w)
 
         rowY = y;
         std::string file = trf("kestrel.settings.mods.file", "File: %s", { entry.file });
-        settingsRow(ui, x, y, w, file, entry.id.empty() ? std::string() : trf("kestrel.settings.mods.id", "Id: %s", { entry.id }), 31.33f, ButtonWidth * 2.0f + 6.0f);
+        bool settingsPage = entry.loaded && entry.hasSettings;
+        settingsRow(ui, x, y, w, file, entry.id.empty() ? std::string() : trf("kestrel.settings.mods.id", "Id: %s", { entry.id }), 31.33f, settingsPage ? ButtonWidth * 3.0f + 12.0f : ButtonWidth * 2.0f + 6.0f);
         bool removing = removingMod == entry.file;
         if (ui.pressableButton("mods:remove:" + entry.file, removing ? "pressableElevatedPrimary" : "pressableElevatedSecondary", removing ? tr("kestrel.settings.mods.confirm", "Sure?") : tr("kestrel.settings.mods.remove", "Remove"), { x + w - 12.0f - ButtonWidth, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
             if (removing) {
@@ -1130,6 +1131,9 @@ void Menu::modsPage(Context& ui, float x, float& y, float w)
         }
         if (entry.enabled && ui.pressableButton("mods:reload:" + entry.file, "pressableElevatedSecondary", tr("kestrel.settings.mods.reload", "Reload"), { x + w - 12.0f - ButtonWidth * 2.0f - 6.0f, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
             act(ModAction::Kind::Reload, entry.file);
+        }
+        if (settingsPage && ui.pressableButton("mods:settings:" + entry.file, "pressableElevatedSecondary", tr("kestrel.settings.mods.settings", "Settings"), { x + w - 12.0f - ButtonWidth * 3.0f - 12.0f, rowY + 5.0f, ButtonWidth, ButtonHeight })) {
+            act(ModAction::Kind::OpenSettings, entry.file);
         }
 
         if (entry.config.empty()) {

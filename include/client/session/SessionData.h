@@ -28,4 +28,15 @@ float metadataScale(const EntityDataMap& metadata, float fallback);
  */
 void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor);
 
+/**
+ * Whether placing a block takes the place of this one, by its full name.
+ */
+bool replaceableBlock(std::string_view name);
+
+/**
+ * The single box the game outlines and aims at for a block, relative to its
+ * cell, from its collision boxes relative to the cell.
+ */
+world::CollisionBox selectionBounds(const world::BlockAssets& assets, const world::IdMapping& ids, uint32_t value, const std::vector<world::CollisionBox>& boxes);
+
 }

@@ -15,8 +15,6 @@ using session::EyeHeight;
 using session::enchantmentLevel;
 
 constexpr double BreakReach = 5.7;
-constexpr int32_t DestroyDelayTicks = 5;
-constexpr uint32_t HitSoundTicks = 4;
 constexpr double LocalBreakMemory = 1.0;
 constexpr double BreakAnswerWait = 1.0;
 constexpr int32_t ObstacleRadius = 2;
@@ -140,12 +138,16 @@ std::vector<world::CollisionBox> Session::shapeBoxes(uint32_t value, int32_t x, 
  */
 world::CollisionBox Session::selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z)
 {
+    return session::selectionBounds(*assets, ids, value, shapeBoxes(value, x, y, z));
+}
+
+world::CollisionBox session::selectionBounds(const world::BlockAssets& assets, const world::IdMapping& ids, uint32_t value, const std::vector<world::CollisionBox>& boxes)
+{
     world::CollisionBox bounds = unitBox();
-    if (std::optional<world::CollisionBox> custom = assets->customSelection(value, ids.hashed, ids.sequential.get())) {
+    if (std::optional<world::CollisionBox> custom = assets.customSelection(value, ids.hashed, ids.sequential.get())) {
         return *custom;
     }
-    std::vector<world::CollisionBox> boxes = shapeBoxes(value, x, y, z);
-    const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+    const world::BlockVisual& visual = assets.visual(value, ids.hashed, ids.sequential.get());
     if (!boxes.empty()) {
         bounds = boxes.front();
         for (const world::CollisionBox& box : boxes) {
@@ -156,12 +158,12 @@ world::CollisionBox Session::selectionBox(uint32_t value, int32_t x, int32_t y, 
             bounds.maxY = std::max(bounds.maxY, box.maxY);
             bounds.maxZ = std::max(bounds.maxZ, box.maxZ);
         }
-    } else if (visual.hasModel() && visual.modelTemplate < assets->modelTemplates().size()) {
-        const world::ModelTemplate& modelTemplate = assets->modelTemplates()[visual.modelTemplate];
+    } else if (visual.hasModel() && visual.modelTemplate < assets.modelTemplates().size()) {
+        const world::ModelTemplate& modelTemplate = assets.modelTemplates()[visual.modelTemplate];
         std::array<int32_t, 3> low { 256, 256, 256 };
         std::array<int32_t, 3> high { 0, 0, 0 };
         for (uint32_t q = 0; q < modelTemplate.quadCount; ++q) {
-            for (const std::array<int16_t, 3>& corner : assets->modelQuads()[modelTemplate.quadStart + q].positions) {
+            for (const std::array<int16_t, 3>& corner : assets.modelQuads()[modelTemplate.quadStart + q].positions) {
                 int32_t px = corner[0] - 128;
                 int32_t pz = corner[2] - 128;
                 for (uint32_t turn = 0; turn < (visual.variant & 3); ++turn) {
@@ -321,6 +323,8 @@ void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face, cons
     uint8_t y = uint8_t(cell[1] & 15);
     uint8_t z = uint8_t(cell[2] & 15);
     world.store().updateBlocks(key, { { x, y, z, 0, keepsLiquid ? extra : world::ImplicitAir }, { x, y, z, 1, world::ImplicitAir } });
+    recordBlockChanges({ { cell, name, keepsLiquid ? assets->blockName(extra, ids.hashed, ids.sequential.get()) : "minecraft:air", true } });
+    publishLoaded();
 
     double now = secondsNow();
     std::erase_if(predictedBreaks, [&](const PredictedBreak& entry) {
@@ -366,18 +370,15 @@ void Session::answerPredictedBreak(const std::array<int32_t, 3>& cell, uint32_t 
  * and the block goes once the progress is full, then a short delay passes
  * before the next one starts. Creative breaks at the first hit. Letting go
  * or looking away from every block aborts; sliding onto another block while
- * held only sends the continue for it.
+ * held only sends the continue for it. A block a mod asks to break takes the
+ * place of the crosshair and holds attack down while it is in reach.
  */
 void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick)
 {
-    bool held = attackHeld.load();
-    bool heldBefore = attackHeldBefore;
-    attackHeldBefore = held;
+    std::optional<BlockHit> target = modBreakHit();
+    bool held = attackHeld.load() || modAttackHeld.load() || target.has_value();
     if (!held) {
         attackOnEntity = false;
-    }
-    if (destroyDelay > 0) {
-        --destroyDelay;
     }
 
     int32_t gameType = SurvivalMode;
@@ -421,63 +422,104 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
         packet.mPlayerActions.push_back(data);
     };
 
-    bool mayBreak = held && !attackOnEntity && !dead && (gameType == SurvivalMode || gameType == CreativeMode);
-    std::optional<BlockHit> hit = mayBreak ? traceBlock(BreakReach) : std::nullopt;
-    if (hit) {
+    bool mayBreak = held && (target || !attackOnEntity) && !dead && (gameType == SurvivalMode || gameType == CreativeMode);
+    std::optional<BlockHit> hit;
+    if (mayBreak && target) {
+        std::array<double, 3> eye { tick.position.x, tick.position.y + eyeHeight, tick.position.z };
+        double reach = 0.0;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            double gap = target->point[axis] - eye[axis];
+            reach += gap * gap;
+        }
+        if (reach <= BreakReach * BreakReach) {
+            target->distance = std::sqrt(reach);
+            hit = target;
+        }
+    } else if (mayBreak) {
+        hit = traceBlock(BreakReach);
         double distance = 0.0;
         std::array<double, 3> direction { lookDirection[0], lookDirection[1], lookDirection[2] };
-        if (traceActor(lookOrigin, direction, hit->distance, distance)) {
+        if (hit && traceActor(lookOrigin, direction, hit->distance, distance)) {
             hit.reset();
         }
     }
-    if (breaking.active && (!hit || hit->cell != breaking.cell)) {
-        if (!hit) {
-            action(PlayerActionType::AbortBreak, breaking.cell, breaking.face);
-        }
-        breakSwitched = hit.has_value();
-        breaking.active = false;
-    }
 
+    std::string name;
+    float speed = 0.0f;
+    std::optional<BreakHit> broken;
     if (hit) {
-        {
-            std::lock_guard<std::mutex> guard(mutex);
-            current.hud.lastSwing = now;
-        }
-        std::string name = assets->blockName(hit->value, ids.hashed, ids.sequential.get());
-        float speed = gameType == CreativeMode ? 1.0f : world::destroyProgressPerTick(name, conditions);
-        if (breaking.active) {
-            breaking.face = hit->face;
-            if (breaking.ticks++ % HitSoundTicks == 0) {
-                SoundRequest sound;
-                sound.name = "hit";
-                sound.position = { breaking.cell[0] + 0.5, breaking.cell[1] + 0.5, breaking.cell[2] + 0.5 };
-                sound.block = name;
-                queueSound(std::move(sound));
-            }
-            emitBurst(ParticleBurst::Kind::Crack, breaking.cell, breaking.value, breaking.face);
-            breaking.progress += speed;
-            if (breaking.progress >= 1.0f) {
-                destroyPredicted(packet, breaking.face, hit->point);
-                breaking.active = false;
-                destroyDelay = DestroyDelayTicks;
-            }
-        } else if (destroyDelay == 0 && !(gameType == CreativeMode && world::preventsCreativeBreaking(conditions.heldItem))) {
-            action(heldBefore && breakSwitched ? PlayerActionType::BlockContinueDestroy : PlayerActionType::StartBreak, hit->cell, hit->face);
-            breakSwitched = false;
-            breaking = { true, hit->cell, hit->face, hit->value, 0.0f, 0 };
-            if (speed >= 1.0f) {
-                destroyPredicted(packet, hit->face, hit->point);
-                breaking.active = false;
-                if (gameType == CreativeMode) {
-                    destroyDelay = DestroyDelayTicks;
-                }
-            }
+        name = assets->blockName(hit->value, ids.hashed, ids.sequential.get());
+        speed = gameType == CreativeMode ? 1.0f : world::destroyProgressPerTick(name, conditions);
+        broken = BreakHit { hit->cell, hit->face, hit->value, hit->point };
+    }
+    bool blocked = gameType == CreativeMode && world::preventsCreativeBreaking(conditions.heldItem);
+    BreakStep step = breaking.step(held, broken, speed, gameType == CreativeMode, blocked);
+    if (step.swung) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.lastSwing = now;
+    }
+    if (step.hitSound) {
+        SoundRequest sound;
+        sound.name = "hit";
+        sound.position = { breaking.cell[0] + 0.5, breaking.cell[1] + 0.5, breaking.cell[2] + 0.5 };
+        sound.block = name;
+        queueSound(std::move(sound));
+    }
+    if (step.crack) {
+        emitBurst(ParticleBurst::Kind::Crack, breaking.cell, breaking.value, breaking.face);
+    }
+    for (const BreakAction& entry : step.actions) {
+        if (entry.kind == BreakAction::Kind::Destroy) {
+            destroyPredicted(packet, entry.face, hit->point);
+        } else if (entry.kind == BreakAction::Kind::Abort) {
+            action(PlayerActionType::AbortBreak, entry.cell, entry.face);
+        } else {
+            action(entry.kind == BreakAction::Kind::Continue ? PlayerActionType::BlockContinueDestroy : PlayerActionType::StartBreak, entry.cell, entry.face);
         }
     }
+    recordBreakProgress(step.progress);
 
     if (!packet.mPlayerActions.empty()) {
         packet.mInputData.push_back(static_cast<int32_t>(PlayerAuthInputData::PerformBlockActions));
     }
+    std::lock_guard<std::mutex> guard(mutex);
+    current.mining = conditions;
+    current.breakingCell = breaking.active ? std::optional<std::array<int32_t, 3>>(breaking.cell) : std::nullopt;
+    current.breakingProgress = breaking.active ? std::min(breaking.progress, 1.0f) : 0.0f;
+}
+
+/**
+ * The block a mod asked to break, aimed at the centre of the face it named,
+ * while it is still something the crosshair could rest on.
+ */
+std::optional<BlockHit> Session::modBreakHit()
+{
+    std::optional<std::pair<std::array<int32_t, 3>, int32_t>> requested;
+    {
+        std::lock_guard<std::mutex> guard(modActionMutex);
+        requested = modBreakTarget;
+    }
+    if (!requested) {
+        return std::nullopt;
+    }
+    return faceHit(requested->first, requested->second);
+}
+
+void Session::setModAttackHeld(bool held)
+{
+    modAttackHeld = held;
+}
+
+void Session::requestBreaking(const std::array<int32_t, 3>& cell, int32_t face)
+{
+    std::lock_guard<std::mutex> guard(modActionMutex);
+    modBreakTarget = std::make_pair(cell, std::clamp(face, 0, 5));
+}
+
+void Session::cancelBreaking()
+{
+    std::lock_guard<std::mutex> guard(modActionMutex);
+    modBreakTarget.reset();
 }
 
 /**

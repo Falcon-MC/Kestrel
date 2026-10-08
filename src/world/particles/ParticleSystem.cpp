@@ -478,8 +478,14 @@ struct ParticleSystem::State {
         case ParticleEmitterRules::Lifetime::Looping:
             emitting = emitter.age <= emitter.activeTime;
             if (!emitting) {
-                emitter.sleeping = true;
-                emitter.sleepAge = 0.0;
+                // Native explosion events own one cycle of these looping definitions.
+                if (emitter.effect->identifier == "minecraft:huge_explosion_emitter"
+                    || emitter.effect->identifier == "minecraft:huge_explosion_lab_misc_emitter") {
+                    emitter.stopped = true;
+                } else {
+                    emitter.sleeping = true;
+                    emitter.sleepAge = 0.0;
+                }
             }
             break;
         case ParticleEmitterRules::Lifetime::Expression:

@@ -17,8 +17,8 @@ void Client::startMods()
         if (image) skin.setDynamic(name, { image->width, image->height, image->pixels });
         else skin.clearDynamic(name);
     };
-    bridge.effects = [this](mod::detail::EffectRequest& request) {
-        using Request = mod::detail::EffectRequest;
+    bridge.effects = [this](modding::EffectRequest& request) {
+        using Request = modding::EffectRequest;
         request.result = false;
         if (request.action == Request::Action::Supported) {
             request.result = true;
@@ -91,12 +91,16 @@ void Client::startMods()
     bridge.connect = [this](std::string name, std::string address) {
         menu.connectTo(std::move(name), std::move(address));
     };
-    mods = std::make_unique<modding::ModManager>(session, menu, *renderer, std::move(bridge));
+    bridge.font = &font;
+    mods =std::make_unique<modding::ModManager>(session, menu, *renderer, std::move(bridge));
     mods->loadFolder(platform::dataDirectory() / "mods");
     menu.setModKeyBindHandler([this](const std::string& id, Key key) {
         if (mods) {
             mods->setKeyBind(id, key);
         }
+    });
+    menu.setModCompletions([this](std::string_view draft) {
+        return mods ? mods->completeCommand(draft) : menu::CommandHints {};
     });
 }
 
