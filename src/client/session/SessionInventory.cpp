@@ -3,6 +3,7 @@
 #include "client/InventoryTransaction.h"
 #include "client/DebugLog.h"
 #include "Core/Json/Json.h"
+#include "ItemTagsJson.h"
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/ContainerOpenPacket.h"
 #include "Protocol/Packets/ContainerClosePacket.h"
@@ -177,6 +178,9 @@ void Session::publishInventory()
         view.selectedStationRecipe = selected == view.loomPatterns.end() ? -1 : int(selected - view.loomPatterns.begin());
     }
     view.stationOptions.clear();
+    if (inventoryModel.type == ContainerType::Furnace || inventoryModel.type == ContainerType::BlastFurnace || inventoryModel.type == ContainerType::Smoker) {
+        view.stationOptions = inventoryModel.furnaceCatalog();
+    }
     if (inventoryModel.type == ContainerType::Stonecutter) {
         for (const auto& recipe : inventoryModel.recipes) {
             if ((recipe.recipe.mBlockName == "stonecutter" || recipe.recipe.mBlockName == "minecraft:stonecutter")
@@ -508,6 +512,19 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         ++current.hud.container.revision;
     } else if (auto recipes = std::dynamic_pointer_cast<CraftingDataPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
+        if (inventoryModel.itemTags.empty()) {
+            std::string text(reinterpret_cast<const char*>(KestrelItemTagData::kItemTagsJson), KestrelItemTagData::kItemTagsJsonSize);
+            auto tags = json::parse(text);
+            if (tags && tags->isObject()) {
+                for (const auto& [name, values] : tags->mObject) {
+                    if (!values->isArray()) continue;
+                    auto& items = inventoryModel.itemTags[name];
+                    for (const auto& item : values->mArray) {
+                        if (item->isString()) items.push_back(item->mString);
+                    }
+                }
+            }
+        }
         if (recipes->mCleanRecipes) inventoryModel.recipes.clear();
         if (recipes->mCleanRecipes) {
             inventoryModel.repairRecipe = -1;

@@ -90,6 +90,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
     bool customKey = !state.customName.empty() && state.customName.find(' ') == std::string::npos && state.customName.find('.') != std::string::npos;
     std::string customName = customKey ? ui::tr(state.customName, state.customName) : state.customName;
     std::string title = customName.empty() ? ui::tr(layout.title, layout.title) : customName;
+    bool furnace = state.type == ContainerType::Furnace || state.type == ContainerType::BlastFurnace || state.type == ContainerType::Smoker;
     if (!jsonScreen || jsonRoot != layout.screen || jsonTitle != title) {
         jsonRoot = layout.screen;
         jsonTitle = title;
@@ -109,6 +110,12 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         for (int index = 0; index < 5; ++index) {
             variables[indexes[index]] = ui::UiValue::of(double(index + 1));
         }
+        if (furnace) {
+            variables["$food_index"] = ui::UiValue::of(1.0);
+            variables["$items_index"] = ui::UiValue::of(2.0);
+            variables["$blocks_index"] = ui::UiValue::of(3.0);
+            variables["$search_index"] = ui::UiValue::of(4.0);
+        }
         jsonScreen = std::make_unique<ui::JsonUiScreen>(definitions, layout.screen, variables);
         jsonDataKey.reset();
         jsonScreen->setKeyboardNavigation(true);
@@ -124,15 +131,22 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         return false;
     }
     bool crafting = state.type == ContainerType::Inventory || state.type == ContainerType::Workbench;
-    bool shown = crafting && book;
-    bool wide = shown && creativeMode && wideCreative;
-    const auto& catalog = creativeMode ? state.creative : state.recipes;
+    bool shown = (crafting || furnace) && book;
+    bool creativeCatalog = creativeMode && !furnace;
+    bool wide = shown && creativeCatalog && wideCreative;
+    const auto* catalog = furnace ? &state.stationOptions : (creativeCatalog ? state.creative.get() : state.recipes.get());
+    if (furnace && furnaceTab != 3 && std::none_of(state.stationOptions.begin(), state.stationOptions.end(), [&](const auto& entry) {
+            return entry.category == furnaceTab;
+        })) {
+        furnaceTab = 3;
+    }
+    int selectedTab = furnace ? furnaceTab : tab;
     auto& data = jsonData;
     auto& items = jsonItems;
     auto& ghostSlots = jsonGhostSlots;
     auto& catalogEntries = jsonCatalogEntries;
     auto& catalogGroups = jsonCatalogGroups;
-    JsonDataKey key { state.revision, state.openRevision, tab, bookPage, beaconPrimary, beaconSecondary,
+    JsonDataKey key { state.revision, state.openRevision, selectedTab, bookPage, beaconPrimary, beaconSecondary,
         creativeMode, book, wideCreative, craftableOnly, bookSigning, search, bookTitle, expandedGroups, ui::Localization::shared().revision() };
     if (!jsonDataKey || *jsonDataKey != key) {
         data = {};
@@ -154,8 +168,8 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         boolean("#is_creative_layout", wide);
         boolean("#is_creative_mode", creativeMode);
         boolean("#close_button_visible", true);
-        boolean("#is_creative_layout_button_visible", creativeMode);
-        boolean("#is_creative_and_recipe_book_layout", creativeMode && shown && !wide);
+        boolean("#is_creative_layout_button_visible", creativeCatalog);
+        boolean("#is_creative_and_recipe_book_layout", creativeCatalog && shown && !wide);
         boolean("#is_creative_and_creative_layout", wide);
         boolean("#is_left_tab_inventory", !shown);
         boolean("#filtering_enabled", craftableOnly);
@@ -174,6 +188,28 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
         text("#container_title", title);
         text("#text_box_item_name", search);
         text("#tab_label_text", title);
+        if (furnace) {
+            const char* furnaceTabs[] = { "food", "items", "blocks", "search" };
+            number("#radio:layout_toggle", shown ? 2.0 : 1.0);
+            number("#radio:navigation_tab", double(selectedTab + 1));
+            std::array<bool, 3> categories {};
+            for (const auto& entry : state.stationOptions) {
+                if (entry.category >= 0 && entry.category < 3) categories[entry.category] = true;
+            }
+            for (int index = 0; index < 4; ++index) {
+                boolean(std::string("#is_left_tab_") + furnaceTabs[index], selectedTab == index);
+            }
+            boolean("#food_tab_visible", categories[0]);
+            boolean("#items_tab_is_leftmost", categories[1] && !categories[0]);
+            boolean("#items_tab_visible_not_leftmost", categories[1] && categories[0]);
+            boolean("#blocks_tab_is_leftmost", categories[2] && !categories[0] && !categories[1]);
+            boolean("#blocks_tab_visible_not_leftmost", categories[2] && (categories[0] || categories[1]));
+            text("#food_tab_offset", "0,0");
+            text("#items_tab_offset", categories[0] ? "0,0" : "-25,0");
+            text("#blocks_tab_offset", std::to_string(-25 * (int(!categories[0]) + int(!categories[1]))) + ",0");
+            text("#tab_label_text", selectedTab == 3 ? ui::tr("craftingScreen.tab.allRecipes", "All")
+                : ui::tr(std::string("furnaceScreen.tab.") + furnaceTabs[selectedTab], furnaceTabs[selectedTab]));
+        }
         if (state.type == ContainerType::Anvil) {
             text("#text_box_item_name", state.stationName);
             std::string cost = ui::tr("container.repair.cost", "Enchantment Cost: %1");
@@ -317,6 +353,10 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             text("#crafting_preview_info", state.slots[Output].empty() ? std::string() : world::itemDisplayName(state.slots[Output].identifier));
         }
         items.assign(state.slots.begin(), state.slots.end());
+        if (furnace && items[Container].empty() && !state.recipeGhost[0].empty()) {
+            items[Container] = state.recipeGhost[0];
+            ghostSlots.insert(Container);
+        }
         if (crafting) {
             for (int index = 0; index < 9; ++index) {
                 int slot = Craft + index;
@@ -470,18 +510,18 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             }
         }
         if (shown && catalog) {
-            std::string query = search;
+            std::string query = furnace && selectedTab != 3 ? std::string() : search;
             std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) {
                 return static_cast<char>(std::tolower(c));
             });
             for (size_t index = 0; index < catalog->size(); ++index) {
                 const InventoryCatalogItem& entry = (*catalog)[index];
-                bool available = creativeMode || std::find(state.craftable.begin(), state.craftable.end(), entry.networkId) != state.craftable.end();
+                bool available = creativeCatalog || std::find(state.craftable.begin(), state.craftable.end(), entry.networkId) != state.craftable.end();
                 if (craftableOnly && !available) {
                     continue;
                 }
                 const int categories[] = { 1, 3, 4, 2, 0 };
-                if (tab != 4 && entry.category != categories[tab]) {
+                if (furnace ? (selectedTab != 3 && entry.category != selectedTab) : (tab != 4 && entry.category != categories[tab])) {
                     continue;
                 }
                 std::string label = world::itemDisplayName(entry.item.identifier);
@@ -491,7 +531,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
                 if (!query.empty() && label.find(query) == std::string::npos && entry.item.identifier.find(query) == std::string::npos) {
                     continue;
                 }
-                bool grouped = creativeMode && query.empty() && tab != 4 && entry.group >= 0 && !entry.groupName.empty();
+                bool grouped = creativeCatalog && query.empty() && tab != 4 && entry.group >= 0 && !entry.groupName.empty();
                 if (grouped) {
                     if (listedGroups.insert(entry.group).second) {
                         int icon = int(items.size());
@@ -524,6 +564,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
                 }
                 values["#recipe_hover_text"] = values["#hover_text"];
                 values["#is_creative_selected_slot"] = ui::UiValue::of(false);
+                values["#is_recipe_selected_slot"] = ui::UiValue::of(furnace && entry.networkId == state.selectedStationRecipe);
                 values["#container_item_background_texture"] = ui::UiValue::of(!available ? "textures/ui/recipe_book_red_button"
                     : grouped ? "textures/ui/recipe_book_dark_button" : "textures/ui/recipe_book_item_bg");
                 data.collections["recipe_book"].push_back(std::move(values));
@@ -621,7 +662,7 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             if (input.pressedKey == Key::Q) {
                 send(InventoryAction::Drop, hoveredSlot, 0, input.isHeld(Key::Control));
             }
-        } else if (creativeMode && input.pressedKey == Key::Q && target.collection == "recipe_book"
+        } else if (creativeCatalog && input.pressedKey == Key::Q && target.collection == "recipe_book"
             && catalog && target.index >= 0 && target.index < int(catalogEntries.size()) && catalogGroups[target.index] < 0) {
             const auto& entry = (*catalog)[catalogEntries[target.index]];
             send(InventoryAction::CreativeDrop, -1, entry.networkId, input.isHeld(Key::Control));
@@ -658,8 +699,8 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
                     }
                 } else {
                     const auto& entry = (*catalog)[catalogEntries[target.index]];
-                    send(creativeMode ? InventoryAction::Creative : InventoryAction::SelectRecipe,
-                        creativeMode && input.isHeld(Key::Shift) ? AnyInventorySlot : -1, entry.networkId, !secondary);
+                    send(creativeCatalog ? InventoryAction::Creative : InventoryAction::SelectRecipe,
+                        creativeCatalog && input.isHeld(Key::Shift) ? AnyInventorySlot : -1, entry.networkId, !secondary);
                 }
             } else if (state.screen.empty() && target.name.empty() && !jsonScreen->pointerInsideContent(ui.mouseX(), ui.mouseY())) {
                 send(InventoryAction::Drop, inventory::Cursor, 0, !secondary);
@@ -685,6 +726,17 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             continue;
         }
         if (event.kind == ui::UiEvent::Kind::Button && input.enter) {
+            if (event.collection == "recipe_book" && catalog && event.index >= 0 && event.index < int(catalogEntries.size())) {
+                int group = catalogGroups[event.index];
+                if (group >= 0) {
+                    if (expandedGroups.contains(group)) expandedGroups.erase(group);
+                    else expandedGroups.insert(group);
+                } else {
+                    send(creativeCatalog ? InventoryAction::Creative : InventoryAction::SelectRecipe,
+                        -1, (*catalog)[catalogEntries[event.index]].networkId);
+                }
+                continue;
+            }
             bool handled = false;
             for (const auto& collection : layout.collections) {
                 if (collection.name == event.collection && event.index >= 0 && event.index < int(collection.slots.size())) {
@@ -780,16 +832,18 @@ bool InventoryScreen::drawJson(ui::Context& ui, float width, float height, const
             commands.push_back({ InventoryAction::BookPage, page, operation });
         } else if (event.kind == ui::UiEvent::Kind::Text && state.type == ContainerType::Anvil) {
             commands.push_back({ InventoryAction::Rename, -1, 0, false, {}, event.text });
-        } else if (event.kind == ui::UiEvent::Kind::Text && crafting) {
+        } else if (event.kind == ui::UiEvent::Kind::Text && (crafting || furnace)) {
             search = event.text;
-            tab = 4;
+            if (furnace) furnaceTab = 3;
+            else tab = 4;
         } else if (event.kind == ui::UiEvent::Kind::Toggle && event.name == "layout_toggle" && event.state) {
             int selected = static_cast<int>(event.value);
             book = selected != 1;
             wideCreative = selected == 3;
         } else if (event.kind == ui::UiEvent::Kind::Toggle && event.name == "navigation_tab" && event.state) {
-            tab = std::clamp(static_cast<int>(event.value) - 1, 0, 4);
-        } else if (event.kind == ui::UiEvent::Kind::Toggle && (event.name == "craftable_toggle" || event.name == "toggle.enableFiltering")) {
+            if (furnace) furnaceTab = std::clamp(static_cast<int>(event.value) - 1, 0, 3);
+            else tab = std::clamp(static_cast<int>(event.value) - 1, 0, 4);
+        } else if (event.kind == ui::UiEvent::Kind::Toggle && (event.name == "craftable_toggle" || event.name == "toggle.enableFiltering" || event.name == "toggle.enable_filtering")) {
             craftableOnly = event.state;
         } else if (event.name == "button.menu_exit" || event.name == "button.try_menu_exit" || event.name == "button.menu_inventory_exit" || event.name == "button.exit_student" || event.name == "button.book_exit") {
             close();
