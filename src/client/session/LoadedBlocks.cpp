@@ -51,9 +51,26 @@ std::string qualified(const std::string& name)
 
 }
 
+/**
+ * Whether the block's column is loaded and the height lies within the world.
+ * A sub-chunk that is all air may never be sent, so a missing one inside a
+ * loaded column reads as air rather than as unloaded.
+ */
 bool LoadedBlocks::loaded(int32_t x, int32_t y, int32_t z) const
 {
-    return subChunks.count(keyOf(dimension, x, y, z)) != 0;
+    if (subChunks.count(keyOf(dimension, x, y, z)) != 0) {
+        return true;
+    }
+    std::array<int32_t, 2> column { x >> 4, z >> 4 };
+    if (!std::binary_search(columns.begin(), columns.end(), column)) {
+        return false;
+    }
+    world::DimensionRange range;
+    if (!world::vanillaDimensionRange(dimension, range)) {
+        return false;
+    }
+    int32_t section = y >> 4;
+    return section >= range.baseSubChunkY && section < range.baseSubChunkY + range.subChunkCount;
 }
 
 uint32_t LoadedBlocks::value(int32_t x, int32_t y, int32_t z) const
@@ -243,6 +260,7 @@ void Session::publishLoaded()
             area->columns.push_back({ key.x, key.z });
         }
     }
+    std::sort(area->columns.begin(), area->columns.end());
     area->revision = ++loadedRevision;
     loadedStoreRevision = storeRevision;
     std::lock_guard<std::mutex> guard(mutex);

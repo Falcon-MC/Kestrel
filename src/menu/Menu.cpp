@@ -1813,7 +1813,7 @@ void Menu::handleKeys(Context& ui)
         socialSelected.clear();
         requestSocial(SocialAction::Search, socialSearch);
     }
-    if (!input.escape) {
+    if (std::exchange(chatClosedByScreen, false) || !input.escape) {
         return;
     }
     if (dialog == Dialog::JoinRealm) {
