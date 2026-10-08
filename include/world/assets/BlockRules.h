@@ -43,6 +43,7 @@ enum class Family {
 
 enum class ModelKind {
     None,
+    Honey,
     Slab,
     Stair,
     Fence,

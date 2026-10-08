@@ -24,6 +24,7 @@ using Materials = std::array<uint32_t, 6>;
 uint32_t faceId(uint32_t side);
 
 std::array<ModelQuad, 6> cuboid(const Materials& materials, Point min, Point max);
+std::vector<ModelQuad> honey(const Materials& materials);
 std::vector<ModelQuad> slab(const Materials& materials, uint32_t half);
 std::vector<ModelQuad> stair(const Materials& materials, bool upsideDown, uint32_t shape);
 std::vector<ModelQuad> cross(uint32_t first, uint32_t second);

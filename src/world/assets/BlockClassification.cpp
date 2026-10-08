@@ -96,7 +96,7 @@ Family classify(const std::string& name)
     if (name == "bone_block" || name == "hay_block" || name == "chiseled_quartz_block" || name == "purpur_block" || name == "quartz_block" || name == "smooth_quartz" || name == "tnt" || endsWith(name, "_glazed_terracotta")) {
         return Family::Cube;
     }
-    if (isShapeName(name) || name == "soul_sand" || name == "mud"
+    if (isShapeName(name) || name == "soul_sand" || name == "mud" || name == "honey_block"
         || contains(name, "trapdoor") || endsWith(name, "_door") || name == "wooden_door" || endsWith(name, "_stairs")
         || contains(name, "slab") || contains(name, "fence_gate") || endsWith(name, "_wall") || name == "cobblestone_wall" || name == "border_block"
         || endsWith(name, "_fence") || name == "fence" || name == "nether_brick_fence" || contains(name, "glass_pane")
@@ -114,7 +114,7 @@ Family classify(const std::string& name)
         return Family::Leaves;
     }
     if (contains(name, "stained_glass") || name == "glass" || name == "tinted_glass" || name == "ice" || name == "frosted_ice"
-        || name == "slime" || name == "honey_block" || endsWith(name, "copper_grate") || name == "mob_spawner"
+        || name == "slime" || endsWith(name, "copper_grate") || name == "mob_spawner"
         || name == "trial_spawner" || name == "vault" || name == "beacon" || name == "scaffolding") {
         return Family::TransparentCube;
     }
@@ -123,6 +123,9 @@ Family classify(const std::string& name)
 
 ModelKind modelKind(const std::string& name)
 {
+    if (name == "honey_block") {
+        return ModelKind::Honey;
+    }
     if (isShapeName(name)) {
         return ModelKind::Shape;
     }
