@@ -14,6 +14,8 @@ add_custom_command(TARGET Kestrel POST_BUILD
         "-DBUNDLE=$<TARGET_BUNDLE_DIR:Kestrel>"
         "-DICON=${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png"
         "-DTOUCH_UI=${CMAKE_CURRENT_SOURCE_DIR}/data/ui/touch_controls.json"
+        "-DFONTS=${CMAKE_CURRENT_SOURCE_DIR}/data/fallback_fonts.txt"
+        "-DFONT_CACHE=${CMAKE_CURRENT_BINARY_DIR}/fallback-fonts"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyIosResources.cmake"
     VERBATIM)
 add_custom_target(KestrelIpa

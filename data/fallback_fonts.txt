@@ -1,0 +1,7 @@
+# Free fonts phones draw text with when no installed game supplies Minecraft's own, downloaded at build time
+# and checked against their SHA-256. Each line: file name, SHA-256, pinned URL.
+Monocraft.ttf 262e31822e0a75be567b02320bfa092143d871e8a273e529d1c5ab0c04cd215f https://raw.githubusercontent.com/IdreesInc/Monocraft/e498bf70aeb25b4bdcff1e44d878fb2cb4f7c2a9/dist/Monocraft-ttf/Monocraft.ttf
+Monocraft-LICENSE.txt f69c147003e052dbc9d96c40a9f73647e72766cfda95a597b94ed827fe25acb1 https://raw.githubusercontent.com/IdreesInc/Monocraft/e498bf70aeb25b4bdcff1e44d878fb2cb4f7c2a9/LICENSE
+NotoSans-Regular.ttf 478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823 https://raw.githubusercontent.com/notofonts/notofonts.github.io/47acfd3806a2b2c7f2b8a7cc95030ead55d03c21/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf
+NotoSans-Bold.ttf 1df075a380fc7cb898acf64c1f7b3b4dd780de3caa860178bf929de35817a913 https://raw.githubusercontent.com/notofonts/notofonts.github.io/47acfd3806a2b2c7f2b8a7cc95030ead55d03c21/fonts/NotoSans/hinted/ttf/NotoSans-Bold.ttf
+NotoSans-OFL.txt cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/71cf6f3ca9c185d809dd800ce9a9e58e1c16f1b1/OFL.txt

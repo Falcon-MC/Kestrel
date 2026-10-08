@@ -300,6 +300,15 @@ bool Font::load(GameAssets& assets, Skin& target)
     sources[Five] = assets.readHbuiFont("MinecraftFiveV3");
     sources[Noto] = assets.readHbuiFont("NotoSansMerged-Regular");
     sources[NotoBold] = assets.readHbuiFont("NotoSans-Bold");
+    if (sources[Seven].empty()) {
+        sources[Seven] = assets.readFallbackFont("Monocraft.ttf");
+    }
+    if (sources[Noto].empty()) {
+        sources[Noto] = assets.readFallbackFont("NotoSans-Regular.ttf");
+    }
+    if (sources[NotoBold].empty()) {
+        sources[NotoBold] = assets.readFallbackFont("NotoSans-Bold.ttf");
+    }
     if (sources[Ten].empty()) {
         sources[Ten] = assets.readHbuiFont("Minecraft-Ten");
     }
@@ -313,7 +322,7 @@ bool Font::load(GameAssets& assets, Skin& target)
         sources[NotoBold] = sources[Noto];
     }
     readPixelPage(0);
-    return !sources[Seven].empty() && !sources[Noto].empty() && pages[0].loaded;
+    return !sources[Seven].empty() && !sources[Noto].empty();
 }
 
 std::string Font::pixelPageName(size_t index)
@@ -563,11 +572,16 @@ const Font::BitmapPage* Font::pixelPage(char32_t cp, size_t* index) const
  * The Minecraft Seven glyph drawn in place of the thin Unicode sheets for
  * letters and symbols default8 has no cell for (Turkish letters, arrows),
  * which is how the game shows them in its own font. Pack sheets and the
- * private use area keep their bitmaps.
+ * private use area keep their bitmaps. Without default8, as on a phone built
+ * without the game's files, ASCII comes from this font too.
  */
 const Font::Glyph* Font::pixelFallback(char32_t cp) const
 {
-    if (cp < 0x80 || (cp >= 0xE000 && cp <= 0xF8FF) || cp > 0xFFFF || splitPages[1 + (cp >> 8)]) {
+    if (cp < 0x80) {
+        if (pages[0].loaded) {
+            return nullptr;
+        }
+    } else if ((cp >= 0xE000 && cp <= 0xF8FF) || cp > 0xFFFF || splitPages[1 + (cp >> 8)]) {
         return nullptr;
     }
     const Face& face = faces[static_cast<size_t>(TextStyle::PixelFallback)];
