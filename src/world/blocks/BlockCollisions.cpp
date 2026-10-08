@@ -258,6 +258,17 @@ const std::string& BlockCollisions::name(const CollisionState& state) const
     return state.name < names.size() ? names[state.name] : empty;
 }
 
+std::vector<const CollisionState*> BlockCollisions::statesNamed(std::string_view value) const
+{
+    std::vector<const CollisionState*> found;
+    for (const auto& [hash, state] : states) {
+        if (name(state) == value) {
+            found.push_back(&state);
+        }
+    }
+    return found;
+}
+
 bool BlockCollisions::named(const CollisionState* state, std::string_view value) const
 {
     return state && name(*state) == value;

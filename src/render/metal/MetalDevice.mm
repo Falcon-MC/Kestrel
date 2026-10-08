@@ -38,6 +38,8 @@ NSString* functionName(std::string_view entry)
         { "ps_blend", "blend_fragment" },
         { "ps_overlay", "overlay_fragment" },
         { "ps_sky", "sky_fragment" },
+        { "vs_primitive", "primitive_vertex" },
+        { "ps_primitive", "primitive_fragment" },
     };
     auto found = names.find(entry);
     if (found == names.end()) {
@@ -186,6 +188,7 @@ public:
 
         uiLibrary = compileLibrary(metal::UiShader);
         worldLibrary = compileLibrary(metal::WorldShader);
+        primitiveLibrary = compileLibrary(metal::PrimitiveShader);
 
         MTLSamplerDescriptor* pixel = [MTLSamplerDescriptor new];
         pixel.minFilter = MTLSamplerMinMagFilterNearest;
@@ -334,7 +337,7 @@ public:
 
     std::unique_ptr<Pipeline> createPipeline(const PipelineDesc& desc) override
     {
-        id<MTLLibrary> library = desc.library == ShaderLibrary::Ui ? uiLibrary : worldLibrary;
+        id<MTLLibrary> library = desc.library == ShaderLibrary::Ui ? uiLibrary : desc.library == ShaderLibrary::Primitive ? primitiveLibrary : worldLibrary;
         NSString* vertexName = functionName(desc.vertexEntry);
         NSString* fragmentName = functionName(desc.pixelEntry);
         if (desc.source) {
@@ -372,7 +375,7 @@ public:
             throw std::runtime_error(std::string("Metal pipeline creation failed: ") + (error ? error.localizedDescription.UTF8String : desc.vertexEntry));
         }
         MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
-        depth.depthCompareFunction = desc.depthCompare == DepthCompare::Equal ? MTLCompareFunctionEqual : desc.depthCompare == DepthCompare::Less ? MTLCompareFunctionLess : MTLCompareFunctionLessEqual;
+        depth.depthCompareFunction = desc.depthCompare == DepthCompare::Always ? MTLCompareFunctionAlways : desc.depthCompare == DepthCompare::Equal ? MTLCompareFunctionEqual : desc.depthCompare == DepthCompare::Less ? MTLCompareFunctionLess : MTLCompareFunctionLessEqual;
         depth.depthWriteEnabled = desc.depthWrite ? YES : NO;
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
@@ -672,6 +675,7 @@ private:
     CAMetalLayer* layer;
     id<MTLLibrary> uiLibrary;
     id<MTLLibrary> worldLibrary;
+    id<MTLLibrary> primitiveLibrary;
     id<MTLSamplerState> pixelSampler;
     id<MTLSamplerState> terrainSampler;
     id<MTLTexture> blankImage;

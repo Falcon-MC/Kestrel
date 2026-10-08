@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace kestrel {
 
@@ -30,6 +31,8 @@ void PlayerMotion::reset(const MotionVector& position)
     teleported = false;
     jumpArc = false;
     isGliding = false;
+    glideTicks = 0;
+    hasPreviousRotation = false;
     isCrawling = false;
     forcedSneak = false;
     ready = true;
@@ -38,6 +41,14 @@ void PlayerMotion::reset(const MotionVector& position)
 void PlayerMotion::hold()
 {
     velocity = {};
+}
+
+PlayerMotion PlayerMotion::detached() const
+{
+    PlayerMotion copy = *this;
+    copy.lookup = nullptr;
+    copy.scratch = std::make_shared<Scratch>();
+    return copy;
 }
 
 void PlayerMotion::teleport(const MotionVector& position)
@@ -98,6 +109,52 @@ void PlayerMotion::setMovementSpeed(float current, float base)
     movementSpeed = isSprinting ? baseMovementSpeed * SprintSpeedMultiplier : baseMovementSpeed;
 }
 
+void PlayerMotion::setUnderwaterSpeed(float value)
+{
+    if (std::isfinite(value) && value >= 0.0f) {
+        underwaterSpeed = value;
+    }
+}
+
+void PlayerMotion::setLavaSpeed(float value)
+{
+    if (std::isfinite(value) && value >= 0.0f) {
+        lavaSpeed = value;
+    }
+}
+
+void PlayerMotion::setUniformAirDrag(bool value)
+{
+    uniformAirDrag = value;
+}
+
+void PlayerMotion::setAirDragModifier(float value)
+{
+    if (std::isfinite(value)) {
+        airDragModifier = value;
+    }
+}
+
+/**
+ * The share of vertical speed kept by a drag that keeps `retention` by
+ * default. The server's air drag modifier scales the share lost, which is
+ * clamped so the drag never reverses or adds speed.
+ */
+float PlayerMotion::verticalRetention(float retention) const
+{
+    if (airDragModifier == 1.0f) {
+        return retention;
+    }
+    float lost = (1.0f - retention) * airDragModifier;
+    if (lost > 1.0f) {
+        return 0.0f;
+    }
+    if (lost < 0.0f) {
+        return 1.0f;
+    }
+    return 1.0f - lost;
+}
+
 void PlayerMotion::setServerSprint(bool sprinting)
 {
     serverSprint = sprinting;
@@ -154,6 +211,10 @@ void PlayerMotion::takeSettings(const PlayerMotion& other)
 {
     movementSpeed = other.movementSpeed;
     baseMovementSpeed = other.baseMovementSpeed;
+    underwaterSpeed = other.underwaterSpeed;
+    lavaSpeed = other.lavaSpeed;
+    uniformAirDrag = other.uniformAirDrag;
+    airDragModifier = other.airDragModifier;
     affectedByGravity = other.affectedByGravity;
     immobile = other.immobile;
     scale = other.scale;
@@ -207,18 +268,25 @@ void PlayerMotion::updatePose(const MotionInput& input, MotionTick& tick)
     tick.startCrawling = crawl && !wasCrawling;
     tick.stopCrawling = !crawl && wasCrawling;
     tick.crawling = crawl;
-    tick.forcedSneak = forcedSneak;
 }
 
 /**
- * Opens the elytra on a jump press in the air and closes it once the player
- * lands, enters a liquid, starts flying or takes it off.
+ * Opens the elytra on a jump press in the air, rising or falling, and closes
+ * it once the player lands, enters water, starts flying, takes it off or
+ * breaks it, reaches climbable feet, or presses jump again after eleven
+ * gliding ticks. Lava neither prevents nor ends a glide.
  */
 void PlayerMotion::updateGliding(const MotionInput& input, bool jumpPressed, MotionTick& tick)
 {
     bool was = isGliding;
-    bool usable = input.elytra && !onGround && !isFlying && !noClip && levitationLevel <= 0 && !touchesLiquid(false) && !touchesLiquid(true);
-    isGliding = usable && (was || jumpPressed);
+    int32_t x = floorInt(feet.x);
+    int32_t y = floorInt(feet.y);
+    int32_t z = floorInt(feet.z);
+    bool feetEnd = climbable(x, y, z) || (input.leatherBoots && named(blockView(x, y, z), "powder_snow"));
+    bool usable = input.elytra && !onGround && !isFlying && !noClip && !touchesLiquid(false) && !feetEnd;
+    bool held = was ? !jumpPressed || glideTicks < GlideCancelTicks : jumpPressed;
+    isGliding = usable && held;
+    glideTicks = isGliding ? (was ? glideTicks + 1 : 1) : 0;
     tick.startGliding = isGliding && !was;
     tick.stopGliding = !isGliding && was;
 }
@@ -267,7 +335,15 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
             flyToggleTicks = FlyToggleWindow;
         }
     }
-    updateGliding(input, jumpPressed && !toggledFlight, tick);
+    bool flightRequested = (input.startFlying && !isFlying) || (input.stopFlying && isFlying);
+    if (!toggledFlight && flightRequested && mayFly && gameType != GameSpectator) {
+        isFlying = !isFlying;
+        tick.startFlying = isFlying;
+        tick.stopFlying = !isFlying;
+        toggledFlight = true;
+    }
+    bool glidePressed = (jumpPressed && !toggledFlight) || (input.startGlide && !isGliding) || (input.stopGlide && isGliding);
+    updateGliding(input, glidePressed, tick);
 
     bool wantSneak = (input.sneak || forcedSneak) && !isFlying && !isGliding;
     tick.startSneaking = wantSneak && !isSneaking;
@@ -287,12 +363,19 @@ void PlayerMotion::updateInput(const MotionInput& input, MotionTick& tick)
         sideways *= inverse;
         forward *= inverse;
     }
-    float factor = input.usingItem ? ItemUseInput : 1.0f;
     if (isSneaking || isCrawling) {
-        factor *= std::min(1.0f, SneakInput + SwiftSneakPerLevel * static_cast<float>(swiftSneakLevel));
+        float pose = std::min(1.0f, SneakInput + SwiftSneakPerLevel * static_cast<float>(swiftSneakLevel));
+        sideways *= pose;
+        forward *= pose;
     }
-    tick.moveSideways = sideways * factor;
-    tick.moveForward = forward * factor;
+    if (input.usingItem) {
+        sideways *= ItemUseInput * ItemUseInput;
+        forward *= ItemUseInput * ItemUseInput;
+    }
+    tick.moveSideways = sideways;
+    tick.moveForward = forward;
+    moveSideways = sideways;
+    moveForward = forward;
     impulseSideways = tick.moveSideways * 0.98f;
     impulseForward = tick.moveForward * 0.98f;
 
@@ -379,6 +462,8 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         effective.jump = false;
         if (isFlying || noClip) effective.sneak = false;
     }
+    glideBoost = effective.glideBoost;
+    dolphinBoost = effective.dolphinBoost;
     updateInput(effective, tick);
     updateSwimming(touchesLiquid(false), tick);
     updateSpinAttack(tick);
@@ -387,6 +472,9 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     }
 
     MotionVector start = feet;
+    descendingScaffold = false;
+    stuckInBlock = false;
+    startedInWater = touchesLiquid(false);
     if (teleported) {
         teleported = false;
         velocity = {};
@@ -396,7 +484,7 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         }
     } else if (isFlying || noClip) {
         runFlight(effective);
-    } else if (isGliding) {
+    } else if (isGliding && touchingLiquid(true).empty()) {
         applyKnockback();
         runGlide();
     } else {
@@ -409,8 +497,12 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
         isFlying = false;
         tick.stopFlying = true;
     }
+    previousYaw = yaw;
+    previousPitch = pitch;
+    hasPreviousRotation = true;
     if (isGliding && onGround) {
         isGliding = false;
+        glideTicks = 0;
         bool startedNow = tick.startGliding;
         tick.startGliding = false;
         tick.stopGliding = !startedNow;
@@ -439,6 +531,18 @@ MotionTick PlayerMotion::step(const MotionInput& input, const CellLookup& cells)
     tick.swimming = isSwimming;
     tick.gliding = isGliding;
     tick.jumping = jumpArc;
+    Fluid after = fluidState(boundingBox());
+    tick.inWater = after.water;
+    tick.inLava = after.lava;
+    tick.onClimbable = climbable(floorInt(feet.x), floorInt(feet.y), floorInt(feet.z));
+    if (onGround || after.water || after.lava || tick.onClimbable || isFlying || isGliding || noClip) {
+        fallen = 0.0f;
+    } else if (tick.movement.y < 0.0f) {
+        fallen -= tick.movement.y;
+    }
+    tick.fallDistance = fallen;
+    tick.width = width * scale;
+    tick.height = height * scale;
     lookup = nullptr;
     return tick;
 }
@@ -451,7 +555,7 @@ void PlayerMotion::simulate()
     if (!water.empty() || (isSwimming && lava.empty() && fluid.water)) {
         applyKnockback();
         applyLiquidFlow(water, false);
-        runWater(fluid);
+        runWater();
         return;
     }
     if (!lava.empty()) {
@@ -511,13 +615,13 @@ void PlayerMotion::applyJump()
     velocity = { x, y, z };
 }
 
-void PlayerMotion::applyClimbable()
+void PlayerMotion::applyClimbable(bool scaffoldJump)
 {
     if (!climbable(floorInt(feet.x), floorInt(feet.y), floorInt(feet.z))) {
         return;
     }
     float y = std::max(velocity.y, -ClimbSpeed);
-    if (pressingJump || collideX || collideZ) {
+    if ((pressingJump && !scaffoldJump) || collideX || collideZ) {
         y = ClimbSpeed;
     }
     if (isSneaking && y < 0.0f) {
@@ -536,38 +640,62 @@ void PlayerMotion::applyPowderSnowTraversal()
     }
 }
 
-void PlayerMotion::applyHoneyWallSlide()
+/**
+ * After the move and its friction, the effects of the blocks the body is
+ * inside, cell by cell in x, y, z order: every bubble column cell pushes the
+ * player up or down, harder at its surface, unless flying; then, unless the
+ * tick started in water, every honey cell slows the player and caps the fall.
+ */
+void PlayerMotion::applyInsideBlocks()
 {
-    world::CollisionBox box = grow(boundingBox(), 1.0E-3f, 0.0f, 1.0E-3f);
-    int32_t maximumX = static_cast<int32_t>(std::ceil(box.maxX));
-    int32_t maximumY = static_cast<int32_t>(std::ceil(box.maxY));
-    int32_t maximumZ = static_cast<int32_t>(std::ceil(box.maxZ));
-    for (int32_t x = floorInt(box.minX); x < maximumX; ++x) {
-        for (int32_t y = floorInt(box.minY); y < maximumY; ++y) {
-            for (int32_t z = floorInt(box.minZ); z < maximumZ; ++z) {
-                world::CollisionBox block { float(x), float(y), float(z), x + 1.0f, y + 1.0f, z + 1.0f };
-                if (!named(blockView(x, y, z), "honey_block") || !box.intersects(block)) {
+    std::array<int32_t, 3> low {};
+    std::array<int32_t, 3> high {};
+    insideCells(boundingBox(), low, high);
+    int32_t honeyCells = 0;
+    float vertical = velocity.y;
+    for (int32_t x = low[0]; x <= high[0]; ++x) {
+        for (int32_t y = low[1]; y <= high[1]; ++y) {
+            for (int32_t z = low[2]; z <= high[2]; ++z) {
+                const world::CollisionState* state = cellState(x, y, z);
+                if (named(state, "honey_block")) {
+                    ++honeyCells;
                     continue;
                 }
-                velocity = { velocity.x * 0.4f, std::max(-0.12f, velocity.y), velocity.z * 0.4f };
+                if (isFlying || !named(state, "bubble_column")) {
+                    continue;
+                }
+                bool surface = cellState(x, y + 1, z) == nullptr;
+                if (state->face > 0) {
+                    vertical = std::max(vertical - 0.03f, surface ? -0.9f : -0.3f);
+                } else {
+                    vertical = std::min(vertical + (surface ? 0.1f : 0.06f), surface ? 1.8f : 0.7f);
+                }
             }
         }
     }
+    velocity.y = vertical;
+    if (startedInWater) {
+        return;
+    }
+    for (int32_t index = 0; index < honeyCells; ++index) {
+        velocity = { velocity.x * 0.4f, std::max(velocity.y, -0.12f), velocity.z * 0.4f };
+    }
 }
 
-void PlayerMotion::walkOnBlock(const world::CollisionState* block)
+/**
+ * Standing on slime or honey damps the horizontal speed after friction,
+ * unless the player sneaks or rises.
+ */
+void PlayerMotion::standOnBlock(const world::CollisionState* block)
 {
-    if (!onGround || isSneaking) {
+    if (!onGround || isSneaking || velocity.y >= 0.1f) {
         return;
     }
     if (!named(block, "slime") && !named(block, "honey_block")) {
         return;
     }
-    float vertical = std::abs(velocity.y);
-    if (vertical < 0.1f && !pressingSneak) {
-        float multiplier = 0.4f + vertical * 0.2f;
-        velocity = { velocity.x * multiplier, velocity.y, velocity.z * multiplier };
-    }
+    float multiplier = std::abs(velocity.y) * 0.2f + 0.4f;
+    velocity = { velocity.x * multiplier, velocity.y, velocity.z * multiplier };
 }
 
 void PlayerMotion::postCollisionMotion(const MotionVector& oldVelocity, bool oldOnGround, const world::CollisionState* blockUnderFeet)
@@ -596,56 +724,45 @@ void PlayerMotion::postCollisionMotion(const MotionVector& oldVelocity, bool old
 
 void PlayerMotion::runGroundAndAir()
 {
-    const world::CollisionState* under = blockUnder(0.5f);
+    const world::CollisionState* under = blockUnder(0.1f);
     float frictionFactor = AirFriction;
     float acceleration = airSpeed;
     if (onGround) {
         float speed = movementSpeed;
-        float soulSpeed = 1.0f + SoulSpeedPerLevel * static_cast<float>(soulSpeedLevel);
-        if (named(under, "soul_sand")) {
-            speed *= soulSpeedLevel > 0 ? std::max(SoulSandSpeed, soulSpeed) : SoulSandSpeed;
-        } else if (soulSpeedLevel > 0 && named(under, "soul_soil")) {
-            speed *= soulSpeed;
+        bool soulBlock = named(under, "soul_sand") || named(under, "soul_soil");
+        if (soulSpeedLevel > 0 && soulBlock) {
+            speed *= 1.0f + SoulSpeedPerLevel * static_cast<float>(soulSpeedLevel);
         }
         frictionFactor *= friction(under);
-        float cubed = frictionFactor * frictionFactor;
-        cubed = cubed * frictionFactor;
+        float accelerationFriction = frictionFactor;
+        if (soulSpeedLevel <= 0 && named(under, "soul_sand")) {
+            accelerationFriction *= SoulSandFriction;
+        }
+        float cubed = accelerationFriction * accelerationFriction;
+        cubed = cubed * accelerationFriction;
         acceleration = speed * (0.16277136f / cubed);
     }
 
     applyKnockback();
     moveRelative(acceleration);
-    applyJump();
-    bool scaffoldDescend = false;
-    bool scaffolding = named(blockView(floorInt(feet.x), floorInt(feet.y), floorInt(feet.z)), "scaffolding")
-        || (hasSupportingBlock && named(blockView(supportingBlock[0], supportingBlock[1], supportingBlock[2]), "scaffolding"));
-    if (scaffolding) {
-        if (pressingSneak) {
-            velocity.y = -0.15f;
-            scaffoldDescend = true;
-        } else if (pressingJump) {
-            velocity.y = 0.15f;
-        }
+    ScaffoldContact scaffold = scaffoldContact();
+    descendingScaffold = isSneaking && scaffold.overSupported;
+    if (descendingScaffold) {
+        velocity.y = -ScaffoldingSpeed;
     }
+    bool scaffoldJump = jumping && !descendingScaffold && scaffold.inside;
+    if (scaffoldJump) {
+        velocity.y = ScaffoldingSpeed;
+        jumpDelay = JumpDelayTicks;
+    } else {
+        applyJump();
+    }
+    bool scaffoldGlide = descendingScaffold && (scaffold.inside || scaffold.over);
     applyPowderSnowTraversal();
-    applyClimbable();
-
-    bool cobweb = insideBlockNamed("web");
-    bool powderSnow = !cobweb && insideBlockNamed("powder_snow");
-    bool berryBush = !cobweb && !powderSnow && insideBlockNamed("sweet_berry_bush");
-    if (cobweb) {
-        float horizontal = weaving ? 0.5f : 0.25f;
-        float vertical = weaving ? 0.25f : 0.05f;
-        velocity = { velocity.x * horizontal, velocity.y * vertical, velocity.z * horizontal };
-    } else if (powderSnow) {
-        velocity = { velocity.x * 0.9f, velocity.y * 1.5f, velocity.z * 0.9f };
-    } else if (berryBush) {
-        velocity = { velocity.x * 0.8f, velocity.y * 0.75f, velocity.z * 0.8f };
-    }
+    applyClimbable(scaffoldJump);
 
     MotionVector oldVelocity = velocity;
     bool oldOnGround = onGround;
-    float oldY = feet.y;
     move();
 
     if (hasSupportingBlock) {
@@ -663,40 +780,46 @@ void PlayerMotion::runGroundAndAir()
         }
     }
 
-    if (oldY == feet.y) {
-        walkOnBlock(under);
-    }
     postCollisionMotion(oldVelocity, oldOnGround, under);
 
     if (!oldOnGround && onGround) {
         jumpDelay = 0;
     }
-    if (cobweb || powderSnow || berryBush) {
+    if (stuckInBlock) {
         velocity = {};
     }
 
     float x = velocity.x;
     float y = velocity.y;
     float z = velocity.z;
-    if (!scaffoldDescend && levitationLevel > 0) {
+    if (!scaffoldGlide && levitationLevel > 0) {
         float levitationSpeed = LevitationMultiplier * static_cast<float>(levitationLevel);
         y += (levitationSpeed - y) * 0.2f;
-    } else if (!scaffoldDescend && affectedByGravity) {
+    } else if (affectedByGravity && !scaffoldGlide) {
         y -= y < 0.0f ? gravity : NormalGravity;
-        y *= GravityMultiplier;
+    }
+    if (uniformAirDrag) {
+        y *= verticalRetention(AirFriction);
+    } else if (affectedByGravity) {
+        y *= verticalRetention(GravityMultiplier);
     }
     x *= frictionFactor;
     z *= frictionFactor;
     velocity = { x, y, z };
-    applyHoneyWallSlide();
+    standOnBlock(under);
+    applyInsideBlocks();
 }
 
-void PlayerMotion::runWater(const Fluid& fluid)
+void PlayerMotion::runWater()
 {
     if (isSwimming) {
-        float strider = std::clamp(float(depthStriderLevel), 0.0f, float(DepthStriderMaxLevel))
-            / float(DepthStriderMaxLevel) * (onGround ? 1.0f : 0.5f);
-        moveRelative(WaterAcceleration + (baseMovementSpeed - WaterAcceleration) * strider);
+        float level = std::clamp(float(depthStriderLevel), 0.0f, float(DepthStriderMaxLevel));
+        if (dolphinBoost) {
+            moveRelative(underwaterSpeed * DolphinSwimMultiplier * ((level / float(DepthStriderMaxLevel)) * 0.3f + 0.7f));
+        } else {
+            float halved = onGround ? level : level * 0.5f;
+            moveRelative(underwaterSpeed + ((baseMovementSpeed - underwaterSpeed) * halved) / float(DepthStriderMaxLevel));
+        }
         updateSwimTravel();
         move();
         if (collideX) velocity.x = 0.0f;
@@ -708,13 +831,14 @@ void PlayerMotion::runWater(const Fluid& fluid)
             float target = float(levitationLevel) * LevitationMultiplier;
             velocity.y += (target - velocity.y) * 0.2f;
         }
+        applyInsideBlocks();
         return;
     }
     if (jumping) {
         velocity.y += WaterAscent;
     }
     float drag = WaterDrag;
-    float acceleration = WaterAcceleration;
+    float acceleration = underwaterSpeed;
     float strider = std::clamp(float(depthStriderLevel), 0.0f, float(DepthStriderMaxLevel));
     if (!onGround) {
         strider *= 0.5f;
@@ -747,7 +871,8 @@ void PlayerMotion::runWater(const Fluid& fluid)
     if ((collideX || collideZ) && canClimbOut(boxBottom)) {
         velocity.y = LedgeClimb;
     }
-    applyBubbleColumn(fluid);
+    standOnBlock(blockUnder(0.2f));
+    applyInsideBlocks();
 }
 
 void PlayerMotion::runLava()
@@ -756,7 +881,7 @@ void PlayerMotion::runLava()
         velocity.y = velocity.y + WaterAscent;
     }
     float boxBottom = boundingBox().minY;
-    moveRelative(WaterAcceleration);
+    moveRelative(lavaSpeed);
     move();
 
     velocity = velocity.scaled(LavaDrag);
@@ -769,22 +894,33 @@ void PlayerMotion::runLava()
     if ((collideX || collideZ) && canClimbOut(boxBottom)) {
         velocity.y = LedgeClimb;
     }
+    standOnBlock(blockUnder(0.2f));
+    applyInsideBlocks();
 }
 
+/**
+ * Ability flight. Without movement input the horizontal drag strengthens,
+ * and in creative the vertical speed also drops before the move; jump and
+ * sneak push up or down by fixed impulses and cancel each other to a stop.
+ * Taking off from the ground keeps the ground's friction for that tick.
+ */
 void PlayerMotion::runFlight(const MotionInput& input)
 {
     applyKnockback();
+    bool creative = gameType == GameCreative;
+    bool hovering = std::max(std::abs(moveSideways), std::abs(moveForward)) < FlightHoverInput;
+    float groundFriction = onGround ? friction(blockUnder(0.1f)) : 1.0f;
     float speed = flySpeed * (isSprinting ? 2.0f : 1.0f);
     moveRelative(speed);
-    if (gameType == GameCreative && impulseSideways == 0.0f && impulseForward == 0.0f && !input.jump && !input.sneak) {
-        velocity.y *= 0.375f;
-    }
-    float vertical = flySpeed * (input.sneak && !input.jump ? 4.4f : 3.0f) * verticalFlySpeed;
-    if (input.jump) {
-        velocity.y += vertical;
-    }
-    if (input.sneak) {
-        velocity.y -= vertical;
+    if (input.jump && input.sneak) {
+        velocity.y = 0.0f;
+    } else {
+        float previous = velocity.y;
+        if (hovering && creative && !input.jump && !input.sneak) {
+            previous *= CreativeHoverDrag;
+        }
+        float push = input.jump ? FlightAscend : input.sneak ? FlightDescend : 0.0f;
+        velocity.y = push * verticalFlySpeed + previous;
     }
     if (noClip) {
         if (!boundedQuery(extend(boundingBox(), velocity))) { velocity = {}; return; }
@@ -805,40 +941,82 @@ void PlayerMotion::runFlight(const MotionInput& input)
             velocity.z = 0.0f;
         }
     }
-    velocity = { velocity.x * AirFriction, velocity.y * 0.6f, velocity.z * AirFriction };
+    float hoverDrag = !hovering ? 1.0f : creative ? CreativeHoverDrag : OtherHoverDrag;
+    float horizontal = groundFriction * hoverDrag * AirFriction;
+    auto damp = [&](float value) {
+        return std::abs(value) <= std::numeric_limits<float>::epsilon() ? 0.0f : value * horizontal;
+    };
+    velocity = { damp(velocity.x), velocity.y * verticalRetention(FlightVerticalRetention), damp(velocity.z) };
+    if (!noClip) {
+        applyInsideBlocks();
+    }
 }
 
 /**
  * Elytra flight: gravity is partly lifted the flatter the player looks,
  * falling speed turns into forward speed, looking up trades speed for
- * height, and the horizontal speed turns toward where the player looks.
+ * height, the horizontal speed turns toward where the player looks and a
+ * firework boost pulls toward the look direction. Lift reads the current
+ * pitch, while the look direction comes from the previous rotation advanced
+ * by the wrapped difference to the current one, which the game computes in
+ * that order.
  */
 void PlayerMotion::runGlide()
 {
-    float pitchAngle = pitch * Pi / 180.0f;
-    float yawAngle = yaw * Pi / 180.0f;
+    auto wrapDegrees = [](float degrees) {
+        float wrapped = std::fmod(degrees + 180.0f, 360.0f);
+        if (wrapped < 0.0f) {
+            wrapped += 360.0f;
+        }
+        return wrapped + -180.0f;
+    };
+    float fromYaw = hasPreviousRotation ? previousYaw : yaw;
+    float fromPitch = hasPreviousRotation ? previousPitch : pitch;
+    constexpr float Radians = Pi / 180.0f;
+    float lookYaw = (wrapDegrees(yaw - fromYaw) + fromYaw) * -Radians + -Pi;
+    float lookPitch = (wrapDegrees(pitch - fromPitch) + fromPitch) * -Radians;
+    float horizontal = -cosine(lookPitch);
+    MotionVector look { horizontal * sine(lookYaw), sine(lookPitch), cosine(lookYaw) * horizontal };
+    float lookHorizontalSquared = look.x * look.x + look.z * look.z;
+    float lookHorizontal = std::sqrt(lookHorizontalSquared);
+    float lookLength = std::sqrt(look.y * look.y + look.x * look.x + look.z * look.z) / GlideLookLengthDivisor;
+    float pitchAngle = pitch * Radians;
     float pitchCosine = cosine(pitchAngle);
-    MotionVector look { -sine(yawAngle) * pitchCosine, -sine(pitchAngle), cosine(yawAngle) * pitchCosine };
-    float lookHorizontal = std::sqrt(look.x * look.x + look.z * look.z);
-    float speedHorizontal = std::sqrt(velocity.horizontalLengthSquared());
-    float lift = pitchCosine * pitchCosine;
-    float fall = slowFalling && velocity.y <= 0.0f ? SlowFallingGravity : NormalGravity;
+    float lift = std::min(lookLength, 1.0f) * pitchCosine * pitchCosine;
+
+    float x = velocity.x;
+    float y = velocity.y;
+    float z = velocity.z;
+    float speedHorizontal = std::sqrt(x * x + z * z);
     if (affectedByGravity) {
-        velocity.y += fall * (-1.0f + lift * GlideLift);
+        float fall = slowFalling ? -SlowFallingGravity : -NormalGravity;
+        y -= (GlideLift * lift + -1.0f) * fall;
     }
-    if (lookHorizontal > 0.0f) {
-        if (velocity.y < 0.0f) {
-            float converted = velocity.y * -GlideFallConversion * lift;
-            velocity = { velocity.x + look.x * converted / lookHorizontal, velocity.y + converted, velocity.z + look.z * converted / lookHorizontal };
-        }
-        if (pitchAngle < 0.0f) {
-            float converted = speedHorizontal * -sine(pitchAngle) * GlideClimbConversion;
-            velocity = { velocity.x - look.x * converted / lookHorizontal, velocity.y + converted * GlideClimbBoost, velocity.z - look.z * converted / lookHorizontal };
-        }
-        velocity.x += (look.x / lookHorizontal * speedHorizontal - velocity.x) * GlideAlignment;
-        velocity.z += (look.z / lookHorizontal * speedHorizontal - velocity.z) * GlideAlignment;
+    if (lookHorizontalSquared > 0.0f && y < 0.0f) {
+        float converted = lift * -GlideFallConversion * y;
+        x += (look.x * converted) / lookHorizontal;
+        y += converted;
+        z += (look.z * converted) / lookHorizontal;
     }
-    velocity = { velocity.x * GlideHorizontalDrag, velocity.y * GlideVerticalDrag, velocity.z * GlideHorizontalDrag };
+    if (pitchAngle < 0.0f && lookHorizontalSquared > 0.0f) {
+        float converted = sine(pitchAngle) * speedHorizontal * -GlideClimbConversion;
+        x -= (converted * look.x) / lookHorizontal;
+        y += GlideClimbBoost * converted;
+        z -= (converted * look.z) / lookHorizontal;
+    }
+    if (lookHorizontalSquared > 0.0f) {
+        x += ((look.x / lookHorizontal) * speedHorizontal - x) * GlideAlignment;
+        z += ((look.z / lookHorizontal) * speedHorizontal - z) * GlideAlignment;
+    }
+    if (glideBoost) {
+        auto boost = [](float axis, float direction) {
+            return axis + (GlideBoostTarget * direction - axis) * GlideBoostBlend + direction * GlideBoostPush;
+        };
+        x = boost(x, look.x);
+        y = boost(y, look.y);
+        z = boost(z, look.z);
+    }
+    velocity = { x * GlideHorizontalDrag, y * GlideVerticalDrag, z * GlideHorizontalDrag };
     move();
     if (collideX) {
         velocity.x = 0.0f;
@@ -849,6 +1027,7 @@ void PlayerMotion::runGlide()
     if (collideZ) {
         velocity.z = 0.0f;
     }
+    applyInsideBlocks();
 }
 
 }

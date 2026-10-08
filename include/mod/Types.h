@@ -173,6 +173,37 @@ struct Environment {
     uint32_t moonPhase = 0;
 };
 
+/**
+ * An axis aligned box in world coordinates.
+ */
+struct Box {
+    Vec3 min;
+    Vec3 max;
+};
+
+/**
+ * What a block is. solid means it has collision boxes, fullCube that they
+ * make exactly one whole block. liquidLevel is the liquid's depth, 0 for a
+ * source, or -1 without a liquid. hazard marks blocks that hurt or trap the
+ * player; hardness is negative for unbreakable blocks, and friction is how
+ * slippery the block is underfoot (0.6 for most).
+ */
+struct BlockProps {
+    bool air = true;
+    bool solid = false;
+    bool fullCube = false;
+    bool liquid = false;
+    bool water = false;
+    bool lava = false;
+    bool climbable = false;
+    bool hazard = false;
+    bool replaceable = true;
+    bool gravity = false;
+    int liquidLevel = -1;
+    float hardness = 0.0f;
+    float friction = 0.6f;
+};
+
 struct Sidebar {
     bool visible = false;
     std::string title;

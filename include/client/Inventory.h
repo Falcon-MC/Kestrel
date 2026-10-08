@@ -48,8 +48,12 @@ inline constexpr int SlotCount = Ui + 54;
 inline constexpr int AnyInventorySlot = -2;
 }
 
-enum class InventoryAction { Open, Close, Primary, Secondary, QuickMove, Drop, HotbarSwap, Collect, Distribute, Creative, Destroy, Craft, SelectRecipe, Enchant, Beacon, Rename, StationRecipe, NpcAction, BookPage, BookSign, ToggleCrafter, CreativeDrop };
+enum class InventoryAction { Open, Close, Primary, Secondary, QuickMove, Drop, HotbarSwap, Collect, Distribute, Creative, Destroy, Craft, SelectRecipe, Enchant, Beacon, Rename, StationRecipe, NpcAction, BookPage, BookSign, ToggleCrafter, CreativeDrop, Move };
 
+/**
+ * One inventory request. Move takes count items from slot to the slot in
+ * value, the whole stack when count is 0 or less.
+ */
 struct InventoryCommand {
     InventoryAction action = InventoryAction::Primary;
     int slot = -1;
@@ -57,6 +61,7 @@ struct InventoryCommand {
     bool all = false;
     std::vector<int> slots;
     std::string text;
+    int count = 0;
 };
 
 struct InventoryCatalogItem {

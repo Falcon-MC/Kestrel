@@ -1984,8 +1984,8 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::
     r.now = secondsNow();
     r.viewport = area;
     Node& root = *r.root;
-    bool sameData = generation ? r.laidDataSource == &data && r.laidDataGeneration == generation
-        : !r.laidDataGeneration && r.laidData == data;
+    bool sameData = data.bindingUpdates.empty() && (generation ? r.laidDataSource == &data && r.laidDataGeneration == generation
+        : !r.laidDataGeneration && r.laidData == data);
 
     bool stable = r.laidOut && r.madeThisFrame == 0 && r.focused == 0 && r.events.empty() && quiet(ui) && !animating(r, root)
         && r.laidArea.x == area.x && r.laidArea.y == area.y && r.laidArea.w == area.w && r.laidArea.h == area.h
@@ -2001,6 +2001,26 @@ void JsonUiScreen::draw(Context& ui, const Rect& area, const UiData& data, std::
         return;
     }
     r.madeThisFrame = 0;
+
+    // Packs can latch several title channels delivered between rendered frames.
+    if (!data.bindingUpdates.empty()) {
+        UiData intermediate;
+        intermediate.globals = data.globals;
+        intermediate.collections = data.collections;
+        intermediate.hideUnboundVisibility = data.hideUnboundVisibility;
+        r.data = &intermediate;
+        std::function<void(Node&)> bindTree = [&](Node& node) {
+            r.bind(node);
+            for (auto& child : node.children) bindTree(*child);
+        };
+        size_t count = 0;
+        for (const UiRow& update : data.bindingUpdates) {
+            if (++count > 64) break;
+            for (const auto& [key, value] : update) intermediate.globals[key] = value;
+            bindTree(root);
+        }
+        r.data = &data;
+    }
 
     r.update(root, 0, nullptr);
     r.sweep(root);

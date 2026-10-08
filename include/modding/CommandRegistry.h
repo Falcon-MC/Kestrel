@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace kestrel::modding {
@@ -19,6 +20,19 @@ public:
         mod::Commands::Handler handler;
         std::shared_ptr<Handle> handle;
     };
+
+    /**
+     * What Tab can put in for a typed dot command: suggestions as text and
+     * description, replacing the line from replaceFrom on, and the usage of
+     * the command being typed.
+     */
+    struct Completions {
+        std::vector<std::pair<std::string, std::string>> suggestions;
+        std::vector<std::string> usage;
+        size_t replaceFrom = 0;
+    };
+
+    static constexpr size_t MaxSuggestions = 64;
 
     CommandRegistry() = default;
     ~CommandRegistry();
@@ -33,6 +47,13 @@ public:
      * the server, so chat that merely starts with a dot still goes out.
      */
     bool execute(std::string_view line, mod::Chat& chat, const ErrorSink& errors);
+
+    /**
+     * Completions for line typed up to the caret: command names while the
+     * first word is typed, then whatever the command's complete function
+     * suggests for the argument being typed.
+     */
+    Completions complete(std::string_view line, mod::Chat& chat, const ErrorSink& errors) const;
 
     std::vector<std::shared_ptr<const Entry>> list() const;
     void release(size_t owner);

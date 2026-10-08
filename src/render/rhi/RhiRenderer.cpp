@@ -210,6 +210,21 @@ public:
 
         uiTextures = device->createTextureSet(1, false, SamplerMode::PixelClamp);
         worldTextures = device->createTextureSet(WorldTextureCount, true, SamplerMode::TerrainWrap);
+
+        PipelineDesc primitive;
+        primitive.library = ShaderLibrary::Primitive;
+        primitive.vertexEntry = "vs_primitive";
+        primitive.pixelEntry = "ps_primitive";
+        primitive.vertices = customLayout();
+        primitive.bindings = { 32, false, 1, SamplerMode::PixelClamp };
+        primitive.blend = BlendMode::Alpha;
+        primitive.depthWrite = false;
+        primitive.depthCompare = DepthCompare::LessEqual;
+        builtinShaders[static_cast<size_t>(CustomBuiltin::Primitive)] = nextShader;
+        customPipelines.emplace(nextShader++, CustomPipeline { device->createPipeline(primitive), false });
+        primitive.depthCompare = DepthCompare::Always;
+        builtinShaders[static_cast<size_t>(CustomBuiltin::PrimitiveOverlay)] = nextShader;
+        customPipelines.emplace(nextShader++, CustomPipeline { device->createPipeline(primitive), false });
     }
 
     ~RhiRenderer() override
@@ -673,11 +688,16 @@ public:
     void destroyShader(uint32_t shader) override
     {
         auto found = customPipelines.find(shader);
-        if (found == customPipelines.end()) {
+        if (found == customPipelines.end() || std::find(builtinShaders.begin(), builtinShaders.end(), shader) != builtinShaders.end()) {
             return;
         }
         device->waitIdle();
         customPipelines.erase(found);
+    }
+
+    uint32_t builtinShader(CustomBuiltin builtin) const override
+    {
+        return builtinShaders[static_cast<size_t>(builtin)];
     }
 
     void drawCustom(CustomLayer layer, const std::vector<CustomVertex>& vertices, const std::vector<CustomDraw>& draws, const std::array<float, 16>& transform, float seconds) override
@@ -965,6 +985,7 @@ private:
     std::unordered_map<uint64_t, ActorMesh> actorMeshes;
     std::unordered_map<uint32_t, CustomPipeline> customPipelines;
     uint32_t nextShader = 1;
+    std::array<uint32_t, 2> builtinShaders {};
     std::vector<FrameBuffers> frames;
     std::vector<CompletedFrame> slotFrames;
     CompletedFrame recording;

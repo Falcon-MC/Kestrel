@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Protocol/PacketCodecContext.h"
+#include "Protocol/Types/DebugShapeData.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
 #include "client/ActorRiders.h"
+#include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
 #include "client/PacketHook.h"
@@ -11,6 +13,7 @@
 #include "client/WorldClock.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
+#include "world/BlockBreaking.h"
 #include "world/BlockCollisions.h"
 #include "world/MeshScheduler.h"
 #include "world/Particles.h"
@@ -36,6 +39,7 @@ class BedrockConnection;
 class BossEventPacket;
 class UpdateTradePacket;
 class ClientboundMapItemDataPacket;
+class PrimitiveShapesPacket;
 class LevelEventPacket;
 class MinecraftAuthentication;
 class Packet;
@@ -172,6 +176,18 @@ struct TargetBlock {
     std::array<int32_t, 3> cell {};
     std::string name;
     std::vector<std::string> states;
+};
+
+/**
+ * A debug shape the server drew through PrimitiveShapes, kept until it is
+ * removed or its time runs out. attachedRuntime is the actor it follows, its
+ * position then being an offset from that actor; expires is in secondsNow
+ * time, negative for a shape that stays.
+ */
+struct DebugShapeView {
+    DebugShapeData data;
+    uint64_t attachedRuntime = 0;
+    double expires = -1.0;
 };
 
 struct ActorView {
@@ -361,16 +377,48 @@ struct PlayerView {
     bool sneaking = false;
     bool sprinting = false;
     bool swimming = false;
+    bool gliding = false;
     bool flying = false;
     bool mayFly = false;
     bool operatorCommands = false;
     float movementSpeed = 0.1f;
+    float flySpeed = 0.05f;
+    std::array<float, 3> velocity {};
+    bool inWater = false;
+    bool inLava = false;
+    bool onClimbable = false;
+    bool horizontalCollision = false;
+    bool verticalCollision = false;
+    float fallDistance = 0.0f;
+    float bbWidth = 0.6f;
+    float bbHeight = 1.8f;
 
     double eyeHeight() const
     {
         return swimming ? 0.4 : sneaking ? 1.54 : 1.62;
     }
     uint64_t teleports = 0;
+};
+
+/**
+ * A block the server changed or the player broke ahead of the server, with
+ * its full names before and after.
+ */
+struct BlockChangeView {
+    std::array<int32_t, 3> position {};
+    std::string oldName;
+    std::string newName;
+    bool predicted = false;
+};
+
+/**
+ * Where one movement tick left the local player.
+ */
+struct PlayerTickView {
+    uint64_t tick = 0;
+    std::array<double, 3> position {};
+    std::array<float, 3> velocity {};
+    bool onGround = false;
 };
 
 /**
@@ -525,8 +573,33 @@ struct NearbyBlocks {
  * mods that look anywhere in the world.
  */
 struct LoadedBlocks {
+    /**
+     * What a block is, for mods that reason about the world: liquidLevel is
+     * the liquid's depth (0 a source) or -1 without one, hardness is negative
+     * for unbreakable blocks.
+     */
+    struct Properties {
+        bool air = true;
+        bool solid = false;
+        bool fullCube = false;
+        bool liquid = false;
+        bool water = false;
+        bool lava = false;
+        bool climbable = false;
+        bool hazard = false;
+        bool replaceable = true;
+        bool gravity = false;
+        int liquidLevel = -1;
+        float hardness = 0.0f;
+        float friction = 0.6f;
+    };
+
     int32_t dimension = 0;
+    // Counts the publications whose blocks or sub-chunks differ from the one before.
+    uint64_t revision = 0;
     std::map<world::SubChunkKey, std::shared_ptr<const world::SubChunk>> subChunks;
+    // The loaded columns of the dimension as x and z, sorted.
+    std::vector<std::array<int32_t, 2>> columns;
     std::shared_ptr<const world::BlockAssets> assets;
     world::IdMapping ids;
 
@@ -549,6 +622,25 @@ struct LoadedBlocks {
      * the blocks a mod hid.
      */
     bool selectable(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * The block's collision boxes in world coordinates, joined to their
+     * neighbours the way movement resolves them.
+     */
+    std::vector<world::CollisionBox> collision(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * The box the look ray aims at and the outline follows, in world
+     * coordinates, or nothing for a block the ray passes through.
+     */
+    std::optional<world::CollisionBox> outline(int32_t x, int32_t y, int32_t z) const;
+    Properties properties(int32_t x, int32_t y, int32_t z) const;
+
+    /**
+     * Both block layers as movement collides with them, for stepping a copy
+     * of the player's motion on the main thread.
+     */
+    MotionCell motionCell(int32_t x, int32_t y, int32_t z) const;
 };
 
 struct MeshUpdate {
@@ -668,9 +760,33 @@ struct SessionSnapshot {
     bool localTerrainReady = false;
     bool updatesPending = false;
     std::vector<ActorView> actors;
+    std::vector<DebugShapeView> debugShapes;
     std::shared_ptr<const NearbyBlocks> nearby;
     std::shared_ptr<const NearbyBlocks> cameraBlocks;
     std::shared_ptr<const LoadedBlocks> loaded;
+
+    /**
+     * The latest block changes and movement ticks, newest last, at most a
+     * few hundred of each; the serials count every one ever recorded, so a
+     * reader takes the ones past the serial it last saw.
+     */
+    uint64_t blockChangeSerial = 0;
+    std::shared_ptr<const std::vector<BlockChangeView>> blockChanges;
+    uint64_t playerTickSerial = 0;
+    std::shared_ptr<const std::vector<PlayerTickView>> playerTicks;
+    uint64_t breakProgressSerial = 0;
+    std::shared_ptr<const std::vector<BreakProgress>> breakProgress;
+
+    /**
+     * The block the local player is breaking and how far along, what changes
+     * its dig speed as of the last tick, and the motion state and input the
+     * last movement tick ended with, shared for predictions.
+     */
+    std::optional<std::array<int32_t, 3>> breakingCell;
+    float breakingProgress = 0.0f;
+    world::MiningConditions mining;
+    std::shared_ptr<const PlayerMotion> motion;
+    MotionInput motionInput;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
     SidebarView sidebar;
@@ -752,6 +868,37 @@ public:
     }
 
     /**
+     * Holds the attack or use button down for mods, on top of the player's
+     * own buttons.
+     */
+    void setModAttackHeld(bool held);
+    void setModUseHeld(bool held);
+
+    /**
+     * Breaks the block at cell through one face as if the crosshair rested
+     * on its centre and attack were held, until cancelled.
+     */
+    void requestBreaking(const std::array<int32_t, 3>& cell, int32_t face);
+    void cancelBreaking();
+
+    /**
+     * Queues a click with the held item on one face of a block, click being
+     * where on the block it lands, from 0 to 1 on each axis.
+     */
+    void requestUseOn(const std::array<int32_t, 3>& cell, int32_t face, const std::array<double, 3>& click);
+
+    /**
+     * Queues a use of the held item in the air, held in use until released,
+     * or the release of it.
+     */
+    void requestItemUse(bool start);
+
+    /**
+     * Queues a hit on an entity, if it is in reach.
+     */
+    void requestAttack(uint64_t runtimeId);
+
+    /**
      * Queues a pick of the block under the crosshair: the server selects it
      * in the hotbar, or gives it in creative. With data, the block entity's
      * contents come along.
@@ -789,6 +936,15 @@ public:
      */
     std::vector<uint64_t> takeAttacks();
     void requestInventory(InventoryCommand command);
+
+    /**
+     * The connection's average round trip in milliseconds as its transport
+     * last reported it, -1 before the first report.
+     */
+    int latencyMs() const
+    {
+        return latency.load();
+    }
 
     /**
      * Answers a form: with its response JSON, or without one when the player
@@ -831,6 +987,9 @@ private:
     void publishNearby();
     void publishCameraBlocks();
     void publishLoaded();
+    void recordBlockChanges(std::vector<BlockChangeView> changes);
+    void recordPlayerTick(const PlayerTickView& tick);
+    void recordBreakProgress(const std::vector<BreakProgress>& progress);
     void applyHiddenBlocks();
     void hideNewValues(const world::SubChunk* subChunk);
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
@@ -838,6 +997,8 @@ private:
     void tickMotion();
     void runMotionTick(double now);
     void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
+    void replayFrom(size_t index);
+    void applyMotionBoosts(MotionInput& input, uint64_t tick) const;
     MotionCell motionCell(int32_t x, int32_t y, int32_t z);
     bool motionAreaLoaded(const MotionVector& feet);
     void handleHudPacket(const std::shared_ptr<Packet>& packet);
@@ -878,6 +1039,11 @@ private:
     std::optional<BlockHit> traceBlock(const std::array<double, 3>& origin, const std::array<float, 3>& direction, double reach);
     const ActorView* traceActor(const std::array<double, 3>& origin, const std::array<double, 3>& direction, double reach, double& distance) const;
     void interact(bool use);
+    void useOnEntity(const ActorView& target, bool use, int32_t slot, const std::array<double, 3>& origin, const std::array<double, 3>& point);
+    void useItemInAir(int32_t slot);
+    std::optional<BlockHit> faceHit(const std::array<int32_t, 3>& cell, int32_t face);
+    std::optional<BlockHit> modBreakHit();
+    void runModActions();
     bool openBook(int slot);
     bool holdsBlock(const ItemStack& item) const;
     static std::array<int32_t, 3> placedCell(const BlockHit& hit);
@@ -906,6 +1072,7 @@ private:
     void recordUse(bool repeat, double due, BlockUse outcome);
     static double repeatInterval(bool sneaking, bool slow, double speed, bool survival);
     bool unselectable(uint32_t value) const;
+    bool selectableValue(uint32_t value) const;
     void pickBlock(bool withData);
     void tickHeldUse();
     bool startItemUse(int32_t slot, const ItemStack& item);
@@ -996,6 +1163,7 @@ private:
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
     std::map<int64_t, uint64_t> runtimeByUnique;
+    std::map<uint64_t, DebugShapeView> debugShapes;
     ActorRiders actorRiders;
     int64_t ridingUnique = 0;
     std::map<uint64_t, std::string> uuidByRuntime;
@@ -1028,6 +1196,7 @@ private:
     PacketJournal journal;
     std::shared_ptr<PacketHook> packetHook;
     std::vector<std::string> rawOutgoing;
+    std::atomic<int> latency { -1 };
     std::optional<std::array<ItemStack, inventory::SlotCount>> inventoryBefore;
     std::set<int> inventoryChangedSlots;
     int32_t inventoryRequestId = -1;
@@ -1043,7 +1212,32 @@ private:
     std::atomic<bool> attackRequested { false };
     std::atomic<bool> attackHeld { false };
     std::atomic<bool> useHeld { false };
+    std::atomic<bool> modAttackHeld { false };
+    std::atomic<bool> modUseHeld { false };
     std::atomic<int> pickRequested { 0 };
+
+    /**
+     * A click a mod asked for on one face of a block, click being where on
+     * the block it lands.
+     */
+    struct ModUse {
+        std::array<int32_t, 3> cell {};
+        int32_t face = 0;
+        std::array<double, 3> click {};
+    };
+
+    /**
+     * What mods ask the player to do, guarded by modActionMutex and taken by
+     * the network thread at its next movement tick. modItemHeld, the network
+     * thread's own, keeps an item a mod started using in use until released.
+     */
+    std::mutex modActionMutex;
+    std::optional<std::pair<std::array<int32_t, 3>, int32_t>> modBreakTarget;
+    std::vector<ModUse> modUses;
+    std::vector<uint64_t> modAttacks;
+    bool modItemUseRequested = false;
+    bool modItemReleaseRequested = false;
+    bool modItemHeld = false;
     std::array<double, 3> tickEye {};
     std::array<float, 3> tickDirection { 0.0f, 0.0f, -1.0f };
     bool tickSneaking = false;
@@ -1064,15 +1258,6 @@ private:
     };
     std::optional<ItemInUse> itemInUse;
 
-    struct LocalBreak {
-        bool active = false;
-        std::array<int32_t, 3> cell {};
-        int32_t face = 0;
-        uint32_t value = 0;
-        float progress = 0.0f;
-        uint32_t ticks = 0;
-    };
-
     struct PredictedBreak {
         std::array<int32_t, 3> cell {};
         uint32_t value = 0;
@@ -1086,11 +1271,8 @@ private:
         float speed = 0.0f;
     };
 
-    LocalBreak breaking;
+    BlockBreaker breaking;
     bool attackOnEntity = false;
-    bool attackHeldBefore = false;
-    bool breakSwitched = false;
-    int32_t destroyDelay = 0;
     std::map<std::array<int32_t, 3>, RemoteCrack> remoteCracks;
     struct ChestLidState {
         bool open = false;
@@ -1106,11 +1288,14 @@ private:
     std::vector<int64_t> pendingMapRequests;
     uint64_t mapRevisions = 0;
     void handleMapPacket(const ClientboundMapItemDataPacket& packet);
+    void handlePrimitiveShapes(const PrimitiveShapesPacket& packet);
     void sendMapRequests();
     std::optional<std::pair<std::set<std::string>, bool>> pendingHidden;
     std::set<std::string> hiddenNames;
     bool hiddenInverted = false;
     std::unordered_map<uint32_t, bool> hiddenChecked;
+    uint64_t loadedStoreRevision = 0;
+    uint64_t loadedRevision = 0;
     std::vector<uint64_t> pendingAttacks;
     /**
      * One sent movement tick: its number, the input it ran with, the server
@@ -1136,6 +1321,16 @@ private:
         MotionVector velocity;
     };
     std::deque<ServerMotion> serverMotions;
+    /**
+     * Ticks a server movement boost covers, from its first tick up to but not
+     * including its end.
+     */
+    struct MotionBoost {
+        uint64_t start = 0;
+        uint64_t end = 0;
+    };
+    MotionBoost glideBoost;
+    MotionBoost dolphinBoost;
     bool enderChestOpen = false;
     std::mutex motionInputMutex;
     MotionInput motionInput;
@@ -1147,6 +1342,7 @@ private:
     std::atomic<int32_t> pendingRiptide { 0 };
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
+    double lastMotionFrame = 0.0;
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;

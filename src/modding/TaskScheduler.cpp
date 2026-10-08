@@ -1,11 +1,25 @@
 #include "modding/TaskScheduler.h"
 
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 namespace kestrel::modding {
 
 TaskScheduler::~TaskScheduler()
 {
+    {
+        std::lock_guard<std::mutex> guard(jobMutex);
+        stopping = true;
+        for (Job& job : jobs) {
+            job.handle->expire();
+        }
+        jobs.clear();
+    }
+    jobReady.notify_all();
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
     for (const std::shared_ptr<Entry>& entry : tasks) {
         entry->handle->expire();
     }
@@ -29,6 +43,90 @@ void TaskScheduler::post(size_t owner, mod::Scheduler::Task task)
 {
     std::lock_guard<std::mutex> guard(postedMutex);
     posted.emplace_back(owner, std::move(task));
+}
+
+mod::Subscription TaskScheduler::async(size_t owner, mod::Scheduler::Task task, mod::Scheduler::Task onDone)
+{
+    auto handle = std::make_shared<Handle>(nullptr);
+    if (!task) {
+        handle->expire();
+        return mod::Subscription(handle);
+    }
+    {
+        std::lock_guard<std::mutex> guard(jobMutex);
+        if (idleWorkers == 0 && workers.size() < MaxWorkers) {
+            workers.emplace_back([this] {
+                work();
+            });
+        }
+        jobs.push_back({ owner, std::move(task), std::move(onDone), handle });
+    }
+    jobReady.notify_one();
+    return mod::Subscription(handle);
+}
+
+void TaskScheduler::work()
+{
+    std::unique_lock<std::mutex> lock(jobMutex);
+    while (true) {
+        ++idleWorkers;
+        jobReady.wait(lock, [this] {
+            return stopping || !jobs.empty();
+        });
+        --idleWorkers;
+        if (stopping) {
+            return;
+        }
+        Job job = std::move(jobs.front());
+        jobs.pop_front();
+        size_t owner = job.owner;
+        ++runningJobs[owner];
+        lock.unlock();
+        runJob(job);
+        job = {};
+        lock.lock();
+        if (--runningJobs[owner] == 0) {
+            runningJobs.erase(owner);
+        }
+        jobFinished.notify_all();
+    }
+}
+
+/**
+ * Runs one job on its worker. A failure travels to the main thread as a
+ * posted task that throws, so it is reported there like any other.
+ */
+void TaskScheduler::runJob(Job& job)
+{
+    if (!job.handle->active()) {
+        return;
+    }
+    std::string failure;
+    try {
+        job.task();
+    } catch (const std::exception& error) {
+        failure = error.what();
+    } catch (...) {
+        failure = "unknown exception";
+    }
+    if (!failure.empty()) {
+        job.handle->expire();
+        post(job.owner, [message = "async task threw: " + failure] {
+            throw std::runtime_error(message);
+        });
+        return;
+    }
+    if (!job.onDone) {
+        job.handle->expire();
+        return;
+    }
+    post(job.owner, [done = std::move(job.onDone), handle = job.handle] {
+        if (!handle->active()) {
+            return;
+        }
+        handle->expire();
+        done();
+    });
 }
 
 void TaskScheduler::run(double now, const ErrorSink& errors)
@@ -71,6 +169,19 @@ void TaskScheduler::release(size_t owner)
         }
     }
     std::erase_if(tasks, [owner](const std::shared_ptr<Entry>& entry) { return entry->owner == owner; });
+    {
+        std::unique_lock<std::mutex> lock(jobMutex);
+        std::erase_if(jobs, [owner](const Job& job) {
+            if (job.owner != owner) {
+                return false;
+            }
+            job.handle->expire();
+            return true;
+        });
+        jobFinished.wait(lock, [this, owner] {
+            return !runningJobs.contains(owner);
+        });
+    }
     std::lock_guard<std::mutex> guard(postedMutex);
     std::erase_if(posted, [owner](const auto& task) { return task.first == owner; });
 }

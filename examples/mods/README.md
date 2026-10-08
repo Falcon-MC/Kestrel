@@ -42,9 +42,8 @@ Kestrel down, though the handler that threw stops for that call.
 
 ## Services
 
-`particles()` and `audio()` are optional extensions on API 3. Call
-`supported()` before using them on an older host; unsupported operations return
-false or handle 0. Existing mod interfaces and their ABI are unchanged.
+`particles()` and `audio()` return the mod's particle and sound services.
+Failed operations return false or handle 0.
 
 ```cpp
 auto effect = particles().spawn({
@@ -197,16 +196,13 @@ release the cursor, and close automatically when their owner unloads. Hidden or
 disabled controls lose focus. Screen references are valid only during the event;
 all calls must run on the main thread. Use Canvas directly for labels and art.
 
-This optional extension keeps API version 3 and existing interface layouts.
-Older hosts return false from `supported()` and screen operations. Each mod may
-open eight screens, with 32 total, 256 controls per screen and IDs up to 256 bytes.
+Each mod may open eight screens, with 32 total, 256 controls per screen and IDs up to 256 bytes.
 Text fields accept at most 65,536 bytes. Clipboard, multiline editing and IME
 composition are not provided by this extension.
 
 ## Images and editable textures
 
-`context().textures()` (or `textures()` in a Mod) is an optional API 3 service;
-`supported()` returns false on older hosts. Existing mod interfaces are unchanged.
+`context().textures()` (or `textures()` in a Mod) returns the mod's texture service.
 
 - `load(path)` imports a PNG, JPEG or TGA file. Use `dataDirectory() / filename`
   for a mod's own files. Relative paths otherwise use the client's working directory.
@@ -243,3 +239,24 @@ use `random.pop`. The live volume slider is on Controls. Sound state checks do n
 verify perceived volume or spatialization; listen while moving around the source.
 Use Escape to close a screen and Clear effects / stop all to clean up explicitly.
 Disabling the mod also releases its resources. This example uses API 3.
+
+## API 4
+
+| Area | Added |
+| --- | --- |
+| `world()` | `collision` and `outline` boxes of a block, `properties` (solid, full cube, liquid, hazard, hardness, friction...), `findBlocksMatching` by properties, `breakTicks` for the held item |
+| `player()` | `tickPosition`, `velocity`, `boundingBox`, `fallDistance`, `inWater`, `inLava`, `gliding`, `onClimbable`, collisions, `abilities`; `clickSlot`, `moveItem`, `swapHotbar`, `findItem`, `bestToolFor`; `openContainer`, `openContainerContents`, `closeContainer`; `startBreaking`, `stopBreaking`, `breakingTarget`, `breakingProgress`; `useOn`, `useItem`, `releaseUse`, `attackEntity`, `setAttackHeld`, `setUseHeld`; `predictPath` |
+| Events | `BlockChangeEvent`, `ChunkLoadEvent`, `ChunkUnloadEvent`, `PlayerTickEvent`, `BlockBreakProgressEvent`, `ContainerContentEvent`, `EntitySpawnEvent`, `EntityRemoveEvent`, `InventoryChangeEvent`; `MovementEvent` gains `startGlide`, `stopGlide`, `startFlying`, `stopFlying` and `swimDown` |
+| Drawing | `WorldPainter::lines`, `wireBox`, `filledBox` and `text3d` without a shader of your own |
+| `hud()` | `project` a world position onto the Canvas, `notify` for stacked notifications |
+| `scheduler()` | `async(task, onDone)` runs work on a worker thread and finishes on the main thread |
+| `ui()` | `addSettings` builds a settings page bound to the mod's config |
+| `network()` | typed packet views from `mod/Packets.h`: `addTypedFilter`, `sendTyped`, and `ping` |
+| Commands | `CommandSpec::complete` suggests arguments on Tab |
+| Mods | `Mod::dependencies()` orders and ties mods together; `provide` and `service` share objects between them |
+
+### Compatibility
+
+Mods built for API 1 to 3 still load unchanged: every new member is appended after the existing ones, so the
+layout older mods were built against stays the same. A mod that needs another one declares it through
+`Mod::dependencies()`; it then starts after it and unloads with it.

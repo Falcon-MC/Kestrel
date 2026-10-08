@@ -39,6 +39,22 @@ public:
     }
 
     /**
+     * The API version the mod was built for.
+     */
+    long apiVersion() const
+    {
+        return api;
+    }
+
+    /**
+     * The ids the mod named in Mod::dependencies, empty before API 4.
+     */
+    const std::vector<std::string>& dependencies() const
+    {
+        return needs;
+    }
+
+    /**
      * Runs onEnable; false when it threw, with everything it registered
      * already taken back.
      */
@@ -59,13 +75,19 @@ public:
     mod::Emotes& emotes() override;
     mod::Hud& hud() override;
     mod::Visuals& visuals() override;
+    mod::Particles& particles() override;
+    mod::Audio& audio() override;
+    mod::Ui& ui() override;
+    mod::Textures& textures() override;
     std::filesystem::path dataDirectory() override;
     std::vector<mod::ModInfo> loadedMods() const override;
+    void provideService(std::string_view name, std::shared_ptr<void> service) override;
+    std::shared_ptr<void> findService(std::string_view name) const override;
 
 private:
     using Destroy = void (*)(mod::Mod*);
 
-    ModSlot(platform::Library library, HostState& host, size_t owner, mod::Mod* instance, Destroy destroy);
+    ModSlot(platform::Library library, HostState& host, size_t owner, mod::Mod* instance, Destroy destroy, long api, std::vector<std::string> needs);
 
     void releaseAll();
 
@@ -74,6 +96,8 @@ private:
     size_t id;
     mod::Mod* instance;
     Destroy destroy;
+    long api;
+    std::vector<std::string> needs;
     bool enabled = false;
     EventBusService eventService;
     ChatService chatService;
@@ -90,6 +114,10 @@ private:
     EmoteService emoteService;
     HudService hudService;
     VisualsService visualsService;
+    ParticleService particleService;
+    AudioService audioService;
+    UiService uiService;
+    TextureService textureService;
 };
 
 /**

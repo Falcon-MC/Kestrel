@@ -6,9 +6,10 @@
 
 #include "mod/Mod.h"
 
-// Bumped whenever an interface here changes shape; mods built against
-// another version are refused instead of crashing.
-#define KESTREL_MOD_API_VERSION 3
+// Bumped whenever an interface here grows. Interfaces only grow at their
+// end, so mods built against this version or an older one still load; mods
+// built against a newer one are refused instead of crashing.
+#define KESTREL_MOD_API_VERSION 4
 
 #define KESTREL_MOD_STRINGIFY_(value) #value
 #define KESTREL_MOD_STRINGIFY(value) KESTREL_MOD_STRINGIFY_(value)

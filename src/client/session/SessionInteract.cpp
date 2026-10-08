@@ -14,6 +14,7 @@
 #include <iterator>
 #include <string_view>
 #include <limits>
+#include <utility>
 
 namespace kestrel {
 
@@ -89,6 +90,43 @@ bool Session::unselectable(uint32_t value) const
 }
 
 /**
+ * Whether the crosshair can rest on a block: anything drawn but air, liquids
+ * and the blocks it passes through.
+ */
+bool Session::selectableValue(uint32_t value) const
+{
+    if (value == world::ImplicitAir) {
+        return false;
+    }
+    const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+    return visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid && !unselectable(value);
+}
+
+/**
+ * The hit a look at the centre of one face of a block would make, for blocks
+ * a mod names instead of the crosshair; nothing where the crosshair could not
+ * rest. Its distance is left for the caller to measure.
+ */
+std::optional<BlockHit> Session::faceHit(const std::array<int32_t, 3>& cell, int32_t face)
+{
+    if (!assets || face < 0 || face > 5) {
+        return std::nullopt;
+    }
+    uint32_t value = blockAt(cell[0], cell[1], cell[2]);
+    if (!selectableValue(value)) {
+        return std::nullopt;
+    }
+    world::CollisionBox box = selectionBox(value, cell[0], cell[1], cell[2]);
+    BlockHit hit;
+    hit.cell = cell;
+    hit.value = value;
+    hit.face = face;
+    hit.name = assets->blockName(value, ids.hashed, ids.sequential.get());
+    hit.point = faceCentre({ cell[0] + double(box.minX), cell[1] + double(box.minY), cell[2] + double(box.minZ) }, { cell[0] + double(box.maxX), cell[1] + double(box.maxY), cell[2] + double(box.maxZ) }, face);
+    return hit;
+}
+
+/**
  * The first block along the look ray within reach whose outline box the ray
  * passes through: its cell, the face of that box the ray enters through
  * (down, up, north, south, west, east) and the point it hits. Rays slip past
@@ -126,8 +164,7 @@ std::optional<BlockHit> Session::traceBlock(const std::array<double, 3>& lookOri
     double travelled = 0.0;
     while (travelled <= reach) {
         uint32_t value = blockAt(int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
-        const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
-        if (value != world::ImplicitAir && visual.flags != 0 && !(visual.flags & world::FlagAir) && !visual.liquid && !unselectable(value)) {
+        if (selectableValue(value)) {
             world::CollisionBox box = selectionBox(value, int32_t(cell[0]), int32_t(cell[1]), int32_t(cell[2]));
             std::array<double, 3> low { double(cell[0]) + box.minX, double(cell[1]) + box.minY, double(cell[2]) + box.minZ };
             std::array<double, 3> high { double(cell[0]) + box.maxX, double(cell[1]) + box.maxY, double(cell[2]) + box.maxZ };
@@ -215,28 +252,20 @@ void Session::interact(bool use)
         attackOnEntity = target != nullptr;
     }
 
-    InventoryTransactionPacket packet;
-    packet.mHotbarSlot = slot;
-    packet.mItemInHand = inventoryModel.slots[size_t(slot)];
-    packet.mPlayerPosition = Vector3f(float(origin[0]), float(origin[1]), float(origin[2]));
-    packet.mTriggerType = ItemUseTriggerType::PlayerInput;
-    packet.mClientInteractPrediction = ItemUsePredictedResult::Success;
     if (target) {
-        packet.mTransactionType = InventoryTransactionType::ItemUseOnEntity;
-        packet.mActionType = use ? InteractEntity : AttackEntity;
-        packet.mRuntimeActorId = static_cast<int64_t>(target->runtimeId);
-        packet.mClickPosition = Vector3f(float(origin[0] + direction[0] * nearest - target->x), float(origin[1] + direction[1] * nearest - target->y), float(origin[2] + direction[2] * nearest - target->z));
-        debugLog(std::string(use ? "interact with " : "attack ") + target->identifier + " " + std::to_string(target->runtimeId));
-        if (!use) {
-            trySwing("attack");
-        }
-    } else if (!use) {
+        std::array<double, 3> point { origin[0] + direction[0] * nearest, origin[1] + direction[1] * nearest, origin[2] + direction[2] * nearest };
+        useOnEntity(*target, use, slot, origin, point);
+        return;
+    }
+    if (!use) {
         trySwing(block ? "mine" : "attack");
         if (!block) {
             missedSwing = true;
         }
         return;
-    } else if (block) {
+    }
+    if (block) {
+        const ItemStack& item = inventoryModel.slots[size_t(slot)];
         if (!usableBlock(block->name) && openBook(slot)) {
             return;
         }
@@ -244,44 +273,75 @@ void Session::interact(bool use)
             recordUse(false, secondsNow(), BlockUse::Nothing);
             return;
         }
-        BlockUse outcome = localUse(*block, packet.mItemInHand);
+        BlockUse outcome = localUse(*block, item);
         recordUse(false, secondsNow(), outcome);
         useOnBlock(*block, false, outcome);
-        if (outcome != BlockUse::Nothing || packet.mItemInHand.isAir()) {
+        if (outcome != BlockUse::Nothing || item.isAir()) {
             return;
         }
     }
-    if (!target) {
-        if (!block && openBook(slot)) {
-            return;
-        }
-        packet.mTransactionType = InventoryTransactionType::ItemUse;
-        packet.mActionType = ClickAir;
-        packet.mBlockFace = -1;
-        packet.mTriggerType = ItemUseTriggerType::Unknown;
-        debugLog("use item in the air");
-        // Throwing swings the arm; items used in place, like food or a bow, do not.
-        static constexpr std::string_view Thrown[] = {
-            "minecraft:snowball", "minecraft:egg", "minecraft:ender_pearl", "minecraft:ender_eye", "minecraft:splash_potion",
-            "minecraft:lingering_potion", "minecraft:experience_bottle", "minecraft:fishing_rod", "minecraft:wind_charge",
-            "minecraft:blue_egg", "minecraft:brown_egg",
-        };
-        if (!packet.mItemInHand.isAir() && std::find(std::begin(Thrown), std::end(Thrown), packet.mItemInHand.mDefinition->getIdentifier()) != std::end(Thrown)) {
-            std::lock_guard<std::mutex> guard(mutex);
-            current.hud.lastSwing = secondsNow();
-        }
+    if (!block && openBook(slot)) {
+        return;
     }
-    if (target && !use) {
+    useItemInAir(slot);
+}
+
+/**
+ * Hits or uses an entity, from origin, landing on point: the arm swings and
+ * the client remembers the hit before the transaction goes out.
+ */
+void Session::useOnEntity(const ActorView& target, bool use, int32_t slot, const std::array<double, 3>& origin, const std::array<double, 3>& point)
+{
+    InventoryTransactionPacket packet;
+    packet.mHotbarSlot = slot;
+    packet.mItemInHand = inventoryModel.slots[size_t(slot)];
+    packet.mPlayerPosition = Vector3f(float(origin[0]), float(origin[1]), float(origin[2]));
+    packet.mTriggerType = ItemUseTriggerType::PlayerInput;
+    packet.mClientInteractPrediction = ItemUsePredictedResult::Success;
+    packet.mTransactionType = InventoryTransactionType::ItemUseOnEntity;
+    packet.mActionType = use ? InteractEntity : AttackEntity;
+    packet.mRuntimeActorId = static_cast<int64_t>(target.runtimeId);
+    packet.mClickPosition = Vector3f(float(point[0] - target.x), float(point[1] - target.y), float(point[2] - target.z));
+    debugLog(std::string(use ? "interact with " : "attack ") + target.identifier + " " + std::to_string(target.runtimeId));
+    if (!use) {
+        trySwing("attack");
         constexpr size_t MaxPendingAttacks = 16;
         std::lock_guard<std::mutex> guard(mutex);
         if (pendingAttacks.size() < MaxPendingAttacks) {
-            pendingAttacks.push_back(target->runtimeId);
+            pendingAttacks.push_back(target.runtimeId);
         }
     }
     transmit(packet);
-    if (!target) {
-        startItemUse(slot, packet.mItemInHand);
+}
+
+/**
+ * Uses the held item in the air from the eye of the latest movement tick,
+ * and holds it in use when it is one that charges.
+ */
+void Session::useItemInAir(int32_t slot)
+{
+    InventoryTransactionPacket packet;
+    packet.mHotbarSlot = slot;
+    packet.mItemInHand = inventoryModel.slots[size_t(slot)];
+    packet.mPlayerPosition = Vector3f(float(tickEye[0]), float(tickEye[1]), float(tickEye[2]));
+    packet.mClientInteractPrediction = ItemUsePredictedResult::Success;
+    packet.mTransactionType = InventoryTransactionType::ItemUse;
+    packet.mActionType = ClickAir;
+    packet.mBlockFace = -1;
+    packet.mTriggerType = ItemUseTriggerType::Unknown;
+    debugLog("use item in the air");
+    // Throwing swings the arm; items used in place, like food or a bow, do not.
+    static constexpr std::string_view Thrown[] = {
+        "minecraft:snowball", "minecraft:egg", "minecraft:ender_pearl", "minecraft:ender_eye", "minecraft:splash_potion",
+        "minecraft:lingering_potion", "minecraft:experience_bottle", "minecraft:fishing_rod", "minecraft:wind_charge",
+        "minecraft:blue_egg", "minecraft:brown_egg",
+    };
+    if (!packet.mItemInHand.isAir() && std::find(std::begin(Thrown), std::end(Thrown), packet.mItemInHand.mDefinition->getIdentifier()) != std::end(Thrown)) {
+        std::lock_guard<std::mutex> guard(mutex);
+        current.hud.lastSwing = secondsNow();
     }
+    transmit(packet);
+    startItemUse(slot, packet.mItemInHand);
 }
 
 /**
@@ -571,7 +631,7 @@ void Session::recordUse(bool repeat, double due, BlockUse outcome)
  */
 void Session::tickHeldUse()
 {
-    if (!useHeld.load() || !connection || !codecContext || !assets) {
+    if (!(useHeld.load() || modUseHeld.load()) || !connection || !codecContext || !assets) {
         slowRepeat = false;
         return;
     }
@@ -633,11 +693,6 @@ std::array<int32_t, 3> Session::placedCell(const BlockHit& hit)
  */
 bool Session::replaceableAt(const std::array<int32_t, 3>& cell)
 {
-    static constexpr std::string_view Replaceable[] = {
-        "minecraft:air", "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava", "minecraft:short_grass",
-        "minecraft:tall_grass", "minecraft:fern", "minecraft:large_fern", "minecraft:deadbush", "minecraft:vine", "minecraft:snow_layer",
-        "minecraft:fire", "minecraft:soul_fire", "minecraft:seagrass", "minecraft:structure_void",
-    };
     if (!assets) {
         return true;
     }
@@ -645,7 +700,16 @@ bool Session::replaceableAt(const std::array<int32_t, 3>& cell)
     if (value == world::ImplicitAir) {
         return true;
     }
-    std::string name = assets->blockName(value, ids.hashed, ids.sequential.get());
+    return session::replaceableBlock(assets->blockName(value, ids.hashed, ids.sequential.get()));
+}
+
+bool session::replaceableBlock(std::string_view name)
+{
+    static constexpr std::string_view Replaceable[] = {
+        "minecraft:air", "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava", "minecraft:short_grass",
+        "minecraft:tall_grass", "minecraft:fern", "minecraft:large_fern", "minecraft:deadbush", "minecraft:vine", "minecraft:snow_layer",
+        "minecraft:fire", "minecraft:soul_fire", "minecraft:seagrass", "minecraft:structure_void",
+    };
     return std::find(std::begin(Replaceable), std::end(Replaceable), name) != std::end(Replaceable);
 }
 
@@ -711,6 +775,119 @@ bool Session::usableBlock(std::string_view name)
 void Session::setUseHeld(bool held)
 {
     useHeld = held;
+}
+
+void Session::setModUseHeld(bool held)
+{
+    modUseHeld = held;
+}
+
+void Session::requestUseOn(const std::array<int32_t, 3>& cell, int32_t face, const std::array<double, 3>& click)
+{
+    constexpr size_t MaxModUses = 16;
+    std::lock_guard<std::mutex> guard(modActionMutex);
+    if (modUses.size() < MaxModUses) {
+        modUses.push_back({ cell, face, click });
+    }
+}
+
+void Session::requestItemUse(bool start)
+{
+    std::lock_guard<std::mutex> guard(modActionMutex);
+    if (start) {
+        modItemUseRequested = true;
+        modItemReleaseRequested = false;
+    } else {
+        modItemUseRequested = false;
+        modItemReleaseRequested = true;
+    }
+}
+
+void Session::requestAttack(uint64_t runtimeId)
+{
+    constexpr size_t MaxModAttacks = 16;
+    std::lock_guard<std::mutex> guard(modActionMutex);
+    if (modAttacks.size() < MaxModAttacks) {
+        modAttacks.push_back(runtimeId);
+    }
+}
+
+/**
+ * Carries out what mods asked for since the last tick, the way the player's
+ * own clicks go: a click on a block face in pick range, a hit on an entity in
+ * reach, and the held item used in the air or released.
+ */
+void Session::runModActions()
+{
+    std::vector<ModUse> uses;
+    std::vector<uint64_t> attacks;
+    bool startUse = false;
+    bool releaseUse = false;
+    {
+        std::lock_guard<std::mutex> guard(modActionMutex);
+        uses = std::exchange(modUses, {});
+        attacks = std::exchange(modAttacks, {});
+        startUse = std::exchange(modItemUseRequested, false);
+        releaseUse = std::exchange(modItemReleaseRequested, false);
+    }
+    if (!connection || !codecContext || !assets) {
+        return;
+    }
+    int32_t slot = 0;
+    bool creative = false;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        slot = std::clamp(current.hud.selectedSlot, 0, 8);
+        creative = current.gameMode == "Creative";
+    }
+    for (const ModUse& request : uses) {
+        std::optional<BlockHit> block = faceHit(request.cell, request.face);
+        if (!block) {
+            continue;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            block->point[axis] = request.cell[axis] + request.click[axis];
+        }
+        if (!withinPickRange(*block)) {
+            continue;
+        }
+        if (!useSelectionVerified()) {
+            recordUse(false, secondsNow(), BlockUse::Nothing);
+            continue;
+        }
+        BlockUse outcome = localUse(*block, inventoryModel.slots[size_t(slot)]);
+        recordUse(false, secondsNow(), outcome);
+        useOnBlock(*block, false, outcome);
+    }
+    double entityReach = creative ? CreativeEntityReach : EntityReach;
+    for (uint64_t runtimeId : attacks) {
+        auto found = actors.find(runtimeId);
+        if (runtimeId == localRuntimeId || found == actors.end() || !pickable(found->second)) {
+            continue;
+        }
+        const ActorView& actor = found->second;
+        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5;
+        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
+        std::array<double, 3> low { actor.x - half, actor.y, actor.z - half };
+        std::array<double, 3> high { actor.x + half, actor.y + height, actor.z + half };
+        std::array<double, 3> point {};
+        double reach = 0.0;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            point[axis] = std::clamp(tickEye[axis], low[axis], high[axis]);
+            reach += (point[axis] - tickEye[axis]) * (point[axis] - tickEye[axis]);
+        }
+        if (reach > entityReach * entityReach) {
+            continue;
+        }
+        useOnEntity(actor, false, slot, tickEye, point);
+    }
+    if (releaseUse) {
+        modItemHeld = false;
+    }
+    if (startUse && !itemInUse) {
+        useItemInAir(slot);
+        modItemHeld = itemInUse.has_value();
+    }
 }
 
 void Session::requestPickBlock(bool withData)

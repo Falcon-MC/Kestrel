@@ -32,6 +32,8 @@ constexpr const char* ChatRoot = "chat.chat_screen";
 constexpr float ChatChromeHeight = 50.0f;
 constexpr float AutoCompleteRowHeight = 10.0f;
 constexpr const char* HelpAlias = "?";
+// What a client side mod command starts with, mod::Commands::Prefix.
+constexpr char ModCommandPrefix = '.';
 constexpr const char* HelpDescription = "commands.help.description";
 constexpr const char* Ellipsis = "\xE2\x80\xA6";
 constexpr const char* Italic = "\xC2\xA7o";
@@ -152,8 +154,11 @@ std::string commandDescription(const std::string& description)
 }
 
 CommandHints chatCompletions(const std::shared_ptr<const std::vector<ChatCommand>>& commands,
-    const std::vector<std::string>& players, std::string_view draft)
+    const std::vector<std::string>& players, const std::function<CommandHints(std::string_view)>& modCompletions, std::string_view draft)
 {
+    if (!draft.empty() && draft.front() == ModCommandPrefix && modCompletions) {
+        return modCompletions(draft);
+    }
     if (!draft.empty() && draft.front() == '/') {
         CommandHints hints = commands ? commandHints(*commands, players, draft) : CommandHints {};
         std::string_view typed = draft.substr(1);
@@ -374,7 +379,7 @@ void Menu::completeChat(bool backwards)
 {
     size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
     if (chatCycle.empty() || chatDraft != chatCycleDraft || caret != chatCycleCaret) {
-        CommandHints hints = chatCompletions(commands, players, std::string_view(chatDraft).substr(0, caret));
+        CommandHints hints = chatCompletions(commands, players, modCompletions, std::string_view(chatDraft).substr(0, caret));
         if (hints.suggestions.empty()) {
             chatCycle.clear();
             return;
@@ -505,7 +510,7 @@ std::vector<Menu::ChatRow> Menu::chatRows(size_t capacity) const
     }
     size_t caret = std::min(chatCaret.value_or(chatDraft.size()), chatDraft.size());
     bool cycling = !chatCycle.empty() && chatDraft == chatCycleDraft && caret == chatCycleCaret;
-    CommandHints hints = chatCompletions(commands, players, std::string_view(chatDraft).substr(0, caret));
+    CommandHints hints = chatCompletions(commands, players, modCompletions, std::string_view(chatDraft).substr(0, caret));
     const std::vector<CommandSuggestion>& suggestions = cycling ? chatCycle : hints.suggestions;
     std::string base = cycling ? chatCycleBase : chatDraft.substr(0, hints.replaceFrom);
     size_t end = chatDraft.find_first_of(" \t", caret);

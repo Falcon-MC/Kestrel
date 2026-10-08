@@ -14,6 +14,11 @@ bool sameName(std::string_view left, std::string_view right)
     });
 }
 
+bool startsWithName(std::string_view text, std::string_view prefix)
+{
+    return text.size() >= prefix.size() && sameName(text.substr(0, prefix.size()), prefix);
+}
+
 }
 
 CommandRegistry::~CommandRegistry()
@@ -60,6 +65,70 @@ bool CommandRegistry::execute(std::string_view line, mod::Chat& chat, const Erro
         errors(entry->owner, "unknown exception");
     }
     return true;
+}
+
+CommandRegistry::Completions CommandRegistry::complete(std::string_view line, mod::Chat& chat, const ErrorSink& errors) const
+{
+    Completions found;
+    if (line.empty() || line.front() != mod::Commands::Prefix) {
+        return found;
+    }
+    std::string_view body = line.substr(1);
+    size_t space = body.find(' ');
+    if (space == std::string_view::npos) {
+        found.replaceFrom = 1;
+        for (const std::shared_ptr<const Entry>& entry : list()) {
+            if (found.suggestions.size() >= MaxSuggestions) {
+                break;
+            }
+            if (startsWithName(entry->spec.name, body)) {
+                found.suggestions.emplace_back(entry->spec.name, entry->spec.description);
+            }
+            for (const std::string& alias : entry->spec.aliases) {
+                if (startsWithName(alias, body)) {
+                    found.suggestions.emplace_back(alias, entry->spec.description);
+                }
+            }
+        }
+        return found;
+    }
+    std::string_view label = body.substr(0, space);
+    std::shared_ptr<Entry> entry = find(label);
+    if (!entry) {
+        return found;
+    }
+    if (!entry->spec.usage.empty()) {
+        found.usage.push_back(std::string(1, mod::Commands::Prefix) + entry->spec.name + " " + entry->spec.usage);
+    }
+    if (!entry->spec.complete) {
+        return found;
+    }
+    std::string_view rest = body.substr(space + 1);
+    size_t lastSpace = rest.find_last_of(' ');
+    size_t tokenStart = lastSpace == std::string_view::npos ? 0 : lastSpace + 1;
+    std::string_view typed = rest.substr(tokenStart);
+    mod::CommandContext context { std::string(label), splitArguments(rest.substr(0, tokenStart)), std::string(rest), chat };
+    context.args.emplace_back(typed);
+    std::vector<std::string> candidates;
+    try {
+        candidates = entry->spec.complete(context);
+    } catch (const std::exception& failure) {
+        errors(entry->owner, failure.what());
+        return found;
+    } catch (...) {
+        errors(entry->owner, "unknown exception");
+        return found;
+    }
+    found.replaceFrom = 1 + space + 1 + tokenStart;
+    for (std::string& candidate : candidates) {
+        if (found.suggestions.size() >= MaxSuggestions) {
+            break;
+        }
+        if (startsWithName(candidate, typed)) {
+            found.suggestions.emplace_back(std::move(candidate), std::string());
+        }
+    }
+    return found;
 }
 
 std::vector<std::shared_ptr<const CommandRegistry::Entry>> CommandRegistry::list() const

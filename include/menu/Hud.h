@@ -161,6 +161,7 @@ struct HudView {
     HudText tip;
     HudText actionbar;
     HudTitle title;
+    std::vector<HudTitle> titleUpdates;
     HudGameTip gameTip;
     std::vector<HudChatLine> chat;
     ChatStyle chatStyle;

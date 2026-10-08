@@ -30,9 +30,9 @@ size_t after(const std::string& text, size_t caret)
 }
 }
 
-void ModUi::process(size_t owner, mod::detail::UiRequest& request)
+void ModUi::process(size_t owner, UiRequest& request)
 {
-    using Action = mod::detail::UiRequest::Action;
+    using Action = UiRequest::Action;
     request.result = false;
     if (request.action == Action::Supported) { request.result = true; return; }
     if (!valid(request.id)) return;

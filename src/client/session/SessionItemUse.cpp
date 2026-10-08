@@ -76,7 +76,7 @@ void Session::tickItemUse(PlayerAuthInputPacket& packet)
         packet.mInputData.push_back(static_cast<int32_t>(PlayerAuthInputData::StartUsingItem));
         itemInUse->announced = true;
     }
-    if (useHeld.load()) {
+    if (useHeld.load() || modUseHeld.load() || modItemHeld) {
         return;
     }
     InventoryTransactionPacket release;
@@ -103,6 +103,7 @@ void Session::tickItemUse(PlayerAuthInputPacket& packet)
 void Session::stopItemUse()
 {
     itemInUse.reset();
+    modItemHeld = false;
     std::lock_guard<std::mutex> guard(mutex);
     current.hud.itemUseStarted = 0.0;
 }

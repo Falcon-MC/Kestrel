@@ -1,6 +1,7 @@
 #include "modding/ModManager.h"
 
 #include "modding/HostState.h"
+#include "modding/ModDependencies.h"
 #include "modding/ModSlot.h"
 #include "modding/Painters.h"
 
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 namespace kestrel::modding {
@@ -27,6 +29,9 @@ namespace kestrel::modding {
 namespace {
 
 constexpr double TickSeconds = 0.05;
+constexpr size_t MaxErrorsPerWindow = 10;
+constexpr double ErrorWindowSeconds = 60.0;
+constexpr double NoticeFadeSeconds = 0.5;
 constexpr int MaxTicksPerFrame = 10;
 
 mod::ChatKind chatKind(ChatMessage::Kind kind)
@@ -229,6 +234,7 @@ void ModManager::scan()
         unloadRecord(*gone);
         gone = records.erase(gone);
     }
+    std::vector<std::string> fresh;
     for (const std::filesystem::path& file : files) {
         if (record(file.filename().string())) {
             continue;
@@ -238,16 +244,63 @@ void ModManager::scan()
         added.enabled = !disabled.contains(file.filename().string());
         records.push_back(std::move(added));
         if (records.back().enabled) {
-            loadRecord(records.back());
+            fresh.push_back(file.filename().string());
         }
     }
+    startRecords(fresh);
 }
 
 void ModManager::loadRecord(Record& entry)
 {
-    if (entry.owner != 0) {
-        return;
+    startRecords({ entry.file.filename().string() });
+}
+
+/**
+ * Opens the libraries of these records first and starts them in dependency
+ * order, so whatever a mod needs is running before its onEnable. A mod whose
+ * dependency is missing, failed or part of a cycle is refused and its
+ * library let go.
+ */
+void ModManager::startRecords(const std::vector<std::string>& files)
+{
+    std::vector<std::pair<std::string, std::unique_ptr<ModSlot>>> opened;
+    for (const std::string& file : files) {
+        Record* entry = record(file);
+        if (!entry || entry->owner != 0) {
+            continue;
+        }
+        if (std::unique_ptr<ModSlot> loaded = openRecord(*entry)) {
+            opened.emplace_back(file, std::move(loaded));
+        }
     }
+    std::vector<DependencyNode> nodes;
+    for (const auto& [file, loaded] : opened) {
+        nodes.push_back({ loaded->info().id, loaded->dependencies() });
+    }
+    std::set<std::string> running;
+    for (const mod::ModInfo& info : host->loaded) {
+        running.insert(info.id);
+    }
+    DependencyPlan plan = planDependencies(nodes, running);
+    for (const auto& [index, reason] : plan.refused) {
+        const std::string& file = opened[index].first;
+        if (Record* entry = record(file)) {
+            entry->info = opened[index].second->info();
+            entry->dependencies = opened[index].second->dependencies();
+            entry->error = reason;
+        }
+        debugLog("mods: skipped " + file + ", " + reason);
+        std::fprintf(stderr, "Kestrel skipped the mod %s: %s\n", file.c_str(), reason.c_str());
+    }
+    for (size_t index : plan.order) {
+        if (Record* entry = record(opened[index].first)) {
+            startRecord(*entry, std::move(opened[index].second));
+        }
+    }
+}
+
+std::unique_ptr<ModSlot> ModManager::openRecord(Record& entry)
+{
     std::string name = entry.file.filename().string();
     std::string reason;
     std::unique_ptr<ModSlot> loaded = ModSlot::load(entry.file, *host, nextOwner++, reason);
@@ -255,14 +308,28 @@ void ModManager::loadRecord(Record& entry)
         entry.error = reason;
         debugLog("mods: skipped " + name + ", " + reason);
         std::fprintf(stderr, "Kestrel skipped the mod %s: %s\n", name.c_str(), reason.c_str());
-        return;
     }
+    return loaded;
+}
+
+void ModManager::startRecord(Record& entry, std::unique_ptr<ModSlot> loaded)
+{
+    std::string name = entry.file.filename().string();
     entry.info = loaded->info();
+    entry.dependencies = loaded->dependencies();
     bool taken = std::any_of(slots.begin(), slots.end(), [&](const auto& other) { return other->info().id == entry.info.id; });
     if (taken) {
         entry.error = "another mod already uses the id " + entry.info.id;
         debugLog("mods: skipped " + name + ", " + entry.error);
         return;
+    }
+    for (const std::string& dependency : entry.dependencies) {
+        bool present = std::any_of(host->loaded.begin(), host->loaded.end(), [&](const mod::ModInfo& info) { return info.id == dependency; });
+        if (!present) {
+            entry.error = "it needs the mod " + dependency + ", which is missing or could not start";
+            debugLog("mods: skipped " + name + ", " + entry.error);
+            return;
+        }
     }
     host->loaded.push_back(entry.info);
     if (!loaded->enable()) {
@@ -276,17 +343,59 @@ void ModManager::loadRecord(Record& entry)
     slots.push_back(std::move(loaded));
 }
 
-void ModManager::unloadRecord(Record& entry)
+std::vector<std::string> ModManager::unloadRecord(Record& entry)
 {
+    std::vector<std::string> stopped;
     if (entry.owner == 0) {
-        return;
+        return stopped;
     }
     size_t owner = entry.owner;
     entry.owner = 0;
+    for (Record& other : records) {
+        if (other.owner == 0 || std::find(other.dependencies.begin(), other.dependencies.end(), entry.info.id) == other.dependencies.end()) {
+            continue;
+        }
+        std::vector<std::string> nested = unloadRecord(other);
+        other.error = "its dependency " + entry.info.id + " was unloaded";
+        stopped.push_back(other.file.filename().string());
+        stopped.insert(stopped.end(), nested.begin(), nested.end());
+    }
     std::erase_if(host->loaded, [&](const mod::ModInfo& info) { return info.id == entry.info.id; });
     std::erase_if(slots, [owner](const std::unique_ptr<ModSlot>& running) { return running->owner() == owner; });
     warned.erase(owner);
+    errorTimes.erase(owner);
+    settingsScroll.erase(owner);
     debugLog("mods: unloaded " + entry.info.id + " from " + entry.file.filename().string());
+    return stopped;
+}
+
+/**
+ * Turns off the mods reportError found failing too often. They stay turned
+ * on in disabled.txt, so the next start or a reload tries them again.
+ */
+void ModManager::stopFaulted()
+{
+    std::set<size_t> failing = std::exchange(faulted, {});
+    for (Record& entry : records) {
+        if (entry.owner == 0 || !failing.contains(entry.owner)) {
+            continue;
+        }
+        unloadRecord(entry);
+        entry.error = "it was turned off after " + std::to_string(MaxErrorsPerWindow + 1) + " errors in " + std::to_string(static_cast<int>(ErrorWindowSeconds)) + " seconds, see debug.txt";
+    }
+}
+
+void ModManager::openSettings(size_t owner)
+{
+    if (!host->settings.contains(owner)) {
+        return;
+    }
+    UiRequest request;
+    request.action = UiRequest::Action::Open;
+    request.id = std::string(SettingsScreenId);
+    host->ui.process(owner, request);
+    settingsScroll.erase(owner);
+    settingsListening.clear();
 }
 
 /**
@@ -295,6 +404,7 @@ void ModManager::unloadRecord(Record& entry)
  */
 void ModManager::applyActions()
 {
+    stopFaulted();
     std::vector<menu::ModAction> actions = std::exchange(pending, {});
     for (const menu::ModAction& action : actions) {
         if (action.kind == menu::ModAction::Kind::Rescan) {
@@ -327,12 +437,14 @@ void ModManager::applyActions()
             saveDisabled();
             unloadRecord(*entry);
             break;
-        case menu::ModAction::Kind::Reload:
-            unloadRecord(*entry);
+        case menu::ModAction::Kind::Reload: {
+            std::vector<std::string> restart = unloadRecord(*entry);
             if (entry->enabled) {
-                loadRecord(*entry);
+                restart.insert(restart.begin(), action.file);
             }
+            startRecords(restart);
             break;
+        }
         case menu::ModAction::Kind::Remove: {
             unloadRecord(*entry);
             std::error_code error;
@@ -350,8 +462,14 @@ void ModManager::applyActions()
             if (ModSlot* running = slot(entry->owner)) {
                 running->configStore().put(action.key, action.value);
                 running->configStore().save();
-                unloadRecord(*entry);
-                loadRecord(*entry);
+                std::vector<std::string> restart = unloadRecord(*entry);
+                restart.insert(restart.begin(), action.file);
+                startRecords(restart);
+            }
+            break;
+        case menu::ModAction::Kind::OpenSettings:
+            if (entry->owner != 0) {
+                openSettings(entry->owner);
             }
             break;
         default:
@@ -417,6 +535,7 @@ std::vector<menu::ModEntry> ModManager::listedMods() const
         listed.enabled = entry.enabled;
         listed.loaded = entry.owner != 0;
         listed.error = entry.error;
+        listed.hasSettings = entry.owner != 0 && host->settings.contains(entry.owner);
         if (ModSlot* running = slot(entry.owner)) {
             for (const std::string& key : running->configStore().keys()) {
                 listed.config.emplace_back(key, running->configStore().find(key).value_or(std::string()));
@@ -430,6 +549,21 @@ std::vector<menu::ModEntry> ModManager::listedMods() const
 void ModManager::request(menu::ModAction action)
 {
     pending.push_back(std::move(action));
+}
+
+menu::CommandHints ModManager::completeCommand(std::string_view draft)
+{
+    menu::CommandHints hints;
+    if (slots.empty()) {
+        return hints;
+    }
+    CommandRegistry::Completions found = host->commands.complete(draft, *hostChat, host->errors);
+    hints.replaceFrom = found.replaceFrom;
+    hints.usage = std::move(found.usage);
+    for (auto& [text, description] : found.suggestions) {
+        hints.suggestions.push_back({ std::move(text), std::move(description) });
+    }
+    return hints;
 }
 
 bool ModManager::wantsCursor() const
@@ -639,6 +773,11 @@ void ModManager::observe(const SessionSnapshot& snapshot)
     if (slots.empty()) {
         seenActors.clear();
         inventorySeen = false;
+        seenBlockChangeSerial = snapshot.blockChangeSerial;
+        seenPlayerTickSerial = snapshot.playerTickSerial;
+        seenBreakProgressSerial = snapshot.breakProgressSerial;
+        seenColumns.clear();
+        seenLoadedRevision = 0;
         return;
     }
     if (snapshot.state != host->snapshot.state || snapshot.joinCount != host->snapshot.joinCount || snapshot.dimension != host->snapshot.dimension) {
@@ -660,11 +799,16 @@ void ModManager::observe(const SessionSnapshot& snapshot)
     if (snapshot.state != SessionState::Joined) {
         lastDead = false;
         forgetActors();
+        forgetChunks();
         inventorySeen = false;
+        seenBlockChangeSerial = snapshot.blockChangeSerial;
+        seenPlayerTickSerial = snapshot.playerTickSerial;
+        seenBreakProgressSerial = snapshot.breakProgressSerial;
         return;
     }
     if (snapshot.joinCount != lastJoin) {
         forgetActors();
+        forgetChunks();
         inventorySeen = false;
         lastJoin = snapshot.joinCount;
         lastDimension = snapshot.dimension;
@@ -695,6 +839,162 @@ void ModManager::observe(const SessionSnapshot& snapshot)
     }
     trackActors(snapshot);
     trackInventory(snapshot);
+    trackChunks(snapshot);
+    trackBlockChanges(snapshot);
+    trackPlayerTicks(snapshot);
+    trackBreakProgress(snapshot);
+    trackContainer(snapshot);
+}
+
+/**
+ * Sends the block changes the session recorded since the last frame, oldest
+ * first; a frame late enough to miss some only sends those still kept.
+ */
+void ModManager::trackBlockChanges(const SessionSnapshot& snapshot)
+{
+    uint64_t seen = std::exchange(seenBlockChangeSerial, snapshot.blockChangeSerial);
+    if (snapshot.blockChangeSerial <= seen || !snapshot.blockChanges || !host->events.listening(mod::BlockChangeEvent::Type)) {
+        return;
+    }
+    std::shared_ptr<const std::vector<BlockChangeView>> list = snapshot.blockChanges;
+    size_t fresh = static_cast<size_t>(std::min<uint64_t>(snapshot.blockChangeSerial - seen, list->size()));
+    for (size_t i = list->size() - fresh; i < list->size(); ++i) {
+        const BlockChangeView& change = (*list)[i];
+        mod::BlockChangeEvent event;
+        event.position = { change.position[0], change.position[1], change.position[2] };
+        event.oldName = change.oldName;
+        event.newName = change.newName;
+        event.predicted = change.predicted;
+        host->events.dispatch(event);
+    }
+}
+
+/**
+ * Compares the loaded columns with the ones last seen whenever the session
+ * publishes a new world, and reports the ones that came and went.
+ */
+void ModManager::trackChunks(const SessionSnapshot& snapshot)
+{
+    const std::shared_ptr<const LoadedBlocks>& area = snapshot.loaded;
+    if (!area || area->revision == seenLoadedRevision) {
+        return;
+    }
+    if (area->dimension != seenColumnsDimension) {
+        forgetChunks();
+    }
+    seenLoadedRevision = area->revision;
+    seenColumnsDimension = area->dimension;
+    if (!host->events.listening(mod::ChunkLoadEvent::Type) && !host->events.listening(mod::ChunkUnloadEvent::Type)) {
+        seenColumns = area->columns;
+        return;
+    }
+    std::vector<std::array<int32_t, 2>> gone;
+    std::vector<std::array<int32_t, 2>> arrived;
+    std::set_difference(seenColumns.begin(), seenColumns.end(), area->columns.begin(), area->columns.end(), std::back_inserter(gone));
+    std::set_difference(area->columns.begin(), area->columns.end(), seenColumns.begin(), seenColumns.end(), std::back_inserter(arrived));
+    seenColumns = area->columns;
+    for (const std::array<int32_t, 2>& column : gone) {
+        mod::ChunkUnloadEvent event;
+        event.x = column[0];
+        event.z = column[1];
+        event.dimension = area->dimension;
+        host->events.dispatch(event);
+    }
+    for (const std::array<int32_t, 2>& column : arrived) {
+        mod::ChunkLoadEvent event;
+        event.x = column[0];
+        event.z = column[1];
+        event.dimension = area->dimension;
+        host->events.dispatch(event);
+    }
+}
+
+void ModManager::forgetChunks()
+{
+    std::vector<std::array<int32_t, 2>> gone = std::exchange(seenColumns, {});
+    seenLoadedRevision = 0;
+    for (const std::array<int32_t, 2>& column : gone) {
+        mod::ChunkUnloadEvent event;
+        event.x = column[0];
+        event.z = column[1];
+        event.dimension = seenColumnsDimension;
+        host->events.dispatch(event);
+    }
+}
+
+/**
+ * Sends one event per movement tick the session ran since the last frame.
+ */
+void ModManager::trackPlayerTicks(const SessionSnapshot& snapshot)
+{
+    uint64_t seen = std::exchange(seenPlayerTickSerial, snapshot.playerTickSerial);
+    if (snapshot.playerTickSerial <= seen || !snapshot.playerTicks || !host->events.listening(mod::PlayerTickEvent::Type)) {
+        return;
+    }
+    std::shared_ptr<const std::vector<PlayerTickView>> list = snapshot.playerTicks;
+    size_t fresh = static_cast<size_t>(std::min<uint64_t>(snapshot.playerTickSerial - seen, list->size()));
+    for (size_t i = list->size() - fresh; i < list->size(); ++i) {
+        const PlayerTickView& tick = (*list)[i];
+        mod::PlayerTickEvent event;
+        event.tick = tick.tick;
+        event.position = { tick.position[0], tick.position[1], tick.position[2] };
+        event.velocity = { tick.velocity[0], tick.velocity[1], tick.velocity[2] };
+        event.onGround = tick.onGround;
+        host->events.dispatch(event);
+    }
+}
+
+/**
+ * Sends the breaking progress the session recorded since the last frame,
+ * oldest first.
+ */
+void ModManager::trackBreakProgress(const SessionSnapshot& snapshot)
+{
+    uint64_t seen = std::exchange(seenBreakProgressSerial, snapshot.breakProgressSerial);
+    if (snapshot.breakProgressSerial <= seen || !snapshot.breakProgress || !host->events.listening(mod::BlockBreakProgressEvent::Type)) {
+        return;
+    }
+    std::shared_ptr<const std::vector<BreakProgress>> list = snapshot.breakProgress;
+    size_t fresh = static_cast<size_t>(std::min<uint64_t>(snapshot.breakProgressSerial - seen, list->size()));
+    for (size_t i = list->size() - fresh; i < list->size(); ++i) {
+        const BreakProgress& progress = (*list)[i];
+        mod::BlockBreakProgressEvent event;
+        event.position = { progress.cell[0], progress.cell[1], progress.cell[2] };
+        event.progress = progress.progress;
+        event.finished = progress.finished;
+        event.aborted = progress.aborted;
+        host->events.dispatch(event);
+    }
+}
+
+/**
+ * Sends the open container's slots when it opens and whenever one of them
+ * holds something else than in the last frame.
+ */
+void ModManager::trackContainer(const SessionSnapshot& snapshot)
+{
+    const InventoryState& open = snapshot.hud.container;
+    if (open.windowId == 0) {
+        seenContainer.clear();
+        return;
+    }
+    size_t size = static_cast<size_t>(std::clamp(open.containerSize, 0, inventory::Ui - inventory::Container));
+    auto first = open.slots.begin() + inventory::Container;
+    bool reopened = std::exchange(seenContainerOpen, open.openRevision) != open.openRevision;
+    if (!reopened && seenContainer.size() == size && std::equal(seenContainer.begin(), seenContainer.end(), first)) {
+        return;
+    }
+    seenContainer.assign(first, first + static_cast<std::ptrdiff_t>(size));
+    if (!host->events.listening(mod::ContainerContentEvent::Type)) {
+        return;
+    }
+    mod::ContainerContentEvent event;
+    event.containerType = static_cast<int>(open.type);
+    event.slots.reserve(size);
+    for (const HudItem& item : seenContainer) {
+        event.slots.push_back(itemOf(item));
+    }
+    host->events.dispatch(event);
 }
 
 void ModManager::trackActors(const SessionSnapshot& snapshot)
@@ -936,9 +1236,15 @@ void ModManager::adjustMovement(MotionInput& input)
     input.jump = event.jump;
     input.sneak = event.sneak;
     input.sprint = event.sprint;
+    input.startGlide = event.startGlide;
+    input.stopGlide = event.stopGlide;
+    input.startFlying = event.startFlying;
+    input.stopFlying = event.stopFlying;
+    input.swimDown = event.swimDown;
     if (event.overrideRotation && std::isfinite(event.rotation.yaw) && std::isfinite(event.rotation.pitch)) {
         input.yaw = event.rotation.yaw;
         input.pitch = std::clamp(event.rotation.pitch, -90.0f, 90.0f);
+        input.rotationOverridden = true;
     }
 }
 
@@ -1045,7 +1351,10 @@ bool ModManager::filterForm(const FormRequest& form)
 
 void ModManager::drawHud(ui::Context& context, float width, float height, bool screenOpen)
 {
-    if (slots.empty() || !host->events.listening(mod::HudRenderEvent::Type)) {
+    host->interfaceWidth = width;
+    host->interfaceHeight = height;
+    bool listening = host->events.listening(mod::HudRenderEvent::Type);
+    if (slots.empty() || (!listening && host->notices.empty())) {
         return;
     }
     hudWidth = width;
@@ -1054,20 +1363,55 @@ void ModManager::drawHud(ui::Context& context, float width, float height, bool s
     context.clearLayer();
     context.clearClip();
     UiCanvas canvas(context, host->shaders, width, height);
-    mod::HudRenderEvent event(canvas);
-    event.screenOpen = screenOpen;
-    host->events.dispatch(event);
+    if (listening) {
+        mod::HudRenderEvent event(canvas);
+        event.screenOpen = screenOpen;
+        host->events.dispatch(event);
+        context.clearClip();
+    }
+    drawNotices(canvas, width);
     context.clearClip();
 }
 
-void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera)
+/**
+ * The mods' Hud::notify notifications, stacked down the top right corner on
+ * a dark strip with a green edge, each fading out over its last half second.
+ */
+void ModManager::drawNotices(mod::Canvas& canvas, float width)
 {
-    if (slots.empty() || !host->events.listening(mod::WorldRenderEvent::Type)) {
+    double now = host->seconds;
+    std::erase_if(host->notices, [now](const HudNotice& notice) { return notice.until <= now; });
+    float lineHeight = canvas.lineHeight(mod::TextStyle::Ui);
+    float y = 6.0f;
+    for (const HudNotice& notice : host->notices) {
+        float alpha = static_cast<float>(std::clamp((notice.until - now) / NoticeFadeSeconds, 0.0, 1.0));
+        float boxWidth = std::min(canvas.measure(notice.text, mod::TextStyle::Ui) + 16.0f, std::max(width * 0.4f, 60.0f));
+        mod::Rect box { width - boxWidth - 6.0f, y, boxWidth, lineHeight + 10.0f };
+        canvas.fill(box, { 16, 16, 16, static_cast<uint8_t>(210.0f * alpha) });
+        canvas.fill({ box.x, box.y, 2.0f, box.h }, { 100, 180, 70, static_cast<uint8_t>(255.0f * alpha) });
+        canvas.setClip(box.inset(2.0f));
+        canvas.text(notice.text, box.x + 8.0f, box.y + 5.0f, { 255, 255, 255, static_cast<uint8_t>(255.0f * alpha) }, mod::TextStyle::Ui, false);
+        canvas.clearClip();
+        y += box.h + 4.0f;
+    }
+}
+
+void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(mod::WorldPainter&)>& client)
+{
+    host->worldViewProjection = viewProjection;
+    host->worldCamera = camera;
+    bool modsDraw = !slots.empty() && host->events.listening(mod::WorldRenderEvent::Type);
+    if (!modsDraw && !client) {
         return;
     }
-    WorldCanvas painter(host->shaders, camera);
-    mod::WorldRenderEvent event(painter);
-    host->events.dispatch(event);
+    WorldCanvas painter(host->shaders, host->bridge.font, camera, viewProjection);
+    if (client) {
+        client(painter);
+    }
+    if (modsDraw) {
+        mod::WorldRenderEvent event(painter);
+        host->events.dispatch(event);
+    }
     host->shaders.submit(CustomLayer::World, viewProjection, static_cast<float>(host->seconds - started));
 }
 
@@ -1117,6 +1461,19 @@ void ModManager::reportError(size_t owner, std::string_view what)
     if (warned.insert(owner).second) {
         host->menu.addChatLine("§c" + name + " ran into an error: " + std::string(what) + " (more in debug.txt)");
     }
+    if (owner == HostOwner || faulted.contains(owner)) {
+        return;
+    }
+    double now = secondsNow();
+    std::deque<double>& times = errorTimes[owner];
+    times.push_back(now);
+    while (!times.empty() && now - times.front() > ErrorWindowSeconds) {
+        times.pop_front();
+    }
+    if (times.size() > MaxErrorsPerWindow) {
+        faulted.insert(owner);
+        host->menu.addChatLine("§c" + name + " failed " + std::to_string(times.size()) + " times in a minute and is being turned off");
+    }
 }
 
 void ModManager::registerBuiltins()
@@ -1134,17 +1491,62 @@ void ModManager::registerBuiltins()
             context.reply(line);
         }
     });
-    host->commands.add(HostOwner, { "mods", "Lists the loaded mods", "", {} }, [this](mod::CommandContext& context) {
-        context.reply("§e" + std::to_string(host->loaded.size()) + " mods loaded:");
-        for (const mod::ModInfo& info : host->loaded) {
-            std::string line = "§a" + (info.name.empty() ? info.id : info.name) + " §7" + info.version;
-            if (!info.author.empty()) {
-                line += " by " + info.author;
+    mod::CommandSpec mods { "mods", "Lists the loaded mods, reloads one or opens its settings", "[reload|settings <mod id>]", {} };
+    mods.complete = [this](const mod::CommandContext& context) {
+        std::vector<std::string> options;
+        if (context.args.size() == 1) {
+            options = { "reload", "settings" };
+        } else if (context.args.size() == 2) {
+            for (const Record& entry : records) {
+                if (!entry.info.id.empty()) {
+                    options.push_back(entry.info.id);
+                }
             }
-            context.reply(line);
         }
+        return options;
+    };
+    host->commands.add(HostOwner, std::move(mods), [this](mod::CommandContext& context) {
+        if (context.args.empty()) {
+            context.reply("§e" + std::to_string(host->loaded.size()) + " mods loaded:");
+            for (const mod::ModInfo& info : host->loaded) {
+                std::string line = "§a" + (info.name.empty() ? info.id : info.name) + " §7" + info.version;
+                if (!info.author.empty()) {
+                    line += " by " + info.author;
+                }
+                context.reply(line);
+            }
+            return;
+        }
+        const std::string& action = context.arg(0);
+        if (action != "reload" && action != "settings") {
+            throw mod::CommandError("Unknown action " + action + ", use reload or settings");
+        }
+        const std::string& id = context.arg(1);
+        auto found = std::find_if(records.begin(), records.end(), [&](const Record& entry) { return entry.info.id == id; });
+        if (found == records.end()) {
+            throw mod::CommandError("No mod has the id " + id);
+        }
+        if (action == "reload") {
+            pending.push_back({ menu::ModAction::Kind::Reload, found->file.filename().string(), {}, {} });
+            context.reply("§eReloading " + id);
+            return;
+        }
+        if (found->owner == 0 || !host->settings.contains(found->owner)) {
+            throw mod::CommandError(id + " has no settings page");
+        }
+        pending.push_back({ menu::ModAction::Kind::OpenSettings, found->file.filename().string(), {}, {} });
     });
-    host->commands.add(HostOwner, { "reloadconfig", "Asks the mods to read their settings again", "[mod id]", {} }, [this](mod::CommandContext& context) {
+    mod::CommandSpec reloadConfig { "reloadconfig", "Asks the mods to read their settings again", "[mod id]", {} };
+    reloadConfig.complete = [this](const mod::CommandContext& context) {
+        std::vector<std::string> ids;
+        if (context.args.size() == 1) {
+            for (const mod::ModInfo& info : host->loaded) {
+                ids.push_back(info.id);
+            }
+        }
+        return ids;
+    };
+    host->commands.add(HostOwner, std::move(reloadConfig), [this](mod::CommandContext& context) {
         std::string target = context.args.empty() ? std::string() : context.args.front();
         host->scheduler.post(HostOwner, [this, target] { reloadConfigs(target); });
         context.reply(target.empty() ? "§eReloading every mod's config" : "§eReloading the config of " + target);

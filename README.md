@@ -133,7 +133,17 @@ KESTREL_MOD(Greeter)
 
 Mods get events (chat, titles, forms, keys, movement, packets, HUD and world drawing), client side `.commands`,
 key bindings, a scheduler, per mod settings, packet filters and custom shaders. See
-[examples/mods](examples/mods) for the details and two working mods.
+[examples/mods](examples/mods) for the details and working mods.
+
+API 4 adds block collision and properties, break times and block searches by property; the player's tick
+position, velocity, bounding box and state; breaking, using items, inventory moves and containers; block,
+chunk, entity, inventory, player tick and break progress events; elytra and flight requests in
+`MovementEvent`; line, box and 3D text drawing; HUD projection and notifications; worker threads through
+`Scheduler::async`; generated settings pages; typed packets; command completion; and services shared between
+mods.
+
+Mods built for API 1 to 3 still load unchanged: new members are appended after the existing ones. A mod that
+needs another declares it in `Mod::dependencies()`.
 
 ## Contributing
 

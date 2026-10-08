@@ -1,4 +1,5 @@
 #include "ui/JsonUiInternal.h"
+#include "ui/LabelScale.h"
 
 #include "ui/Context.h"
 
@@ -376,13 +377,12 @@ float JsonUiRuntime::term(const Node& node, const json::Value* value, float pare
 
 /**
  * How many units one font pixel of a label takes: its font_size times its
- * font_scale_factor. The game keeps the font_size steps in code; large at one
- * and a half matches it on screen, and small is the same step down.
+ * font_scale_factor.
  */
 float JsonUiRuntime::labelScale(const Node& node) const
 {
     std::string size = text(node, "font_size");
-    float step = size == "small" ? 2.0f / 3.0f : size == "large" ? 1.5f : size == "extra_large" ? 2.0f : 1.0f;
+    float step = labelFontScale(size);
     return step * static_cast<float>(number(node, "font_scale_factor", 1.0));
 }
 

@@ -1,15 +1,21 @@
 #pragma once
 
-#include "mod/Effects.h"
+#include "modding/LegacyRequests.h"
 
 #include <functional>
 #include <map>
 
 namespace kestrel::modding {
 
+/**
+ * One operation on a mod's particle or sound. Older mods post it as an event
+ * and the services fill it directly, so both reach the same store.
+ */
+using EffectRequest = mod::detail::EffectRequest;
+
 class LocalEffects {
 public:
-    using Request = mod::detail::EffectRequest;
+    using Request = EffectRequest;
     using Backend = std::function<void(Request&)>;
 
     explicit LocalEffects(Backend backend) : backend(std::move(backend)) { }

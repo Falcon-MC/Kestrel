@@ -30,6 +30,12 @@ public:
      * Queues a triangle list; positions are already in the layer's space.
      */
     void queue(CustomLayer layer, const mod::Shader& shader, const CustomVertex* vertices, size_t count, const mod::ShaderParams& params);
+
+    /**
+     * Queues a triangle list for one of the renderer's own shaders, in order
+     * with the mods' draws on the same layer.
+     */
+    void queueBuiltin(CustomLayer layer, CustomBuiltin builtin, const CustomVertex* vertices, size_t count);
     void submit(CustomLayer layer, const std::array<float, 16>& transform, float seconds);
     void queuePost(const mod::Shader& shader, const mod::ShaderParams& params, bool keepInput);
     void submitPost(const std::array<float, 16>& inverseViewProjection, float seconds);
