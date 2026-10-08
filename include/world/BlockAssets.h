@@ -54,6 +54,7 @@ enum ModelTemplateFlag : uint32_t {
     TemplateWall = 1 << 4,
     TemplateGateAxisX = 1 << 5,
     TemplateGateAxisZ = 1 << 6,
+    TemplateDoor = 1 << 7,
 };
 
 enum ModelQuadFlag : uint32_t {
@@ -185,6 +186,7 @@ struct BlockVisual {
     uint8_t lightEmission = 0;
     uint8_t lightFilter = 0;
     bool powderSnow = false;
+    uint8_t doorState = 0;
 
     bool emitsCubeGeometry() const
     {
@@ -404,6 +406,7 @@ public:
     static std::shared_ptr<const BlockAssets> create(const std::vector<std::shared_ptr<const PackFiles>>& packs, const std::vector<CustomBlock>& customBlocks, std::string& error);
 
     const BlockVisual& visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential = nullptr) const;
+    std::optional<CollisionBox> doorBox(uint32_t value, uint32_t other, bool hashed, const SequentialMap* sequential) const;
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
