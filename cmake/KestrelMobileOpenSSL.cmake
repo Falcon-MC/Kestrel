@@ -12,7 +12,13 @@ FetchContent_MakeAvailable(openssl)
 set(KESTREL_OPENSSL_ROOT "${openssl_BINARY_DIR}/install")
 file(MAKE_DIRECTORY "${KESTREL_OPENSSL_ROOT}/include" "${KESTREL_OPENSSL_ROOT}/lib")
 
-if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+set(openssl_environment)
+if(ANDROID)
+    # OpenSSL's Android targets find clang through the NDK root and PATH rather than through CMake.
+    set(openssl_platform android-arm64)
+    set(openssl_minimum "-D__ANDROID_API__=${ANDROID_PLATFORM_LEVEL}")
+    set(openssl_environment ${CMAKE_COMMAND} -E env "ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK}" "PATH=${ANDROID_TOOLCHAIN_ROOT}/bin:$ENV{PATH}")
+elseif(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
     set(openssl_platform iossimulator-arm64-xcrun)
     set(openssl_minimum "-mios-simulator-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
 else()
@@ -24,11 +30,11 @@ ExternalProject_Add(KestrelOpenSSL
     BINARY_DIR "${openssl_BINARY_DIR}/build"
     PREFIX "${openssl_BINARY_DIR}/project"
     DOWNLOAD_COMMAND ""
-    CONFIGURE_COMMAND "${PERL_EXECUTABLE}" "${openssl_SOURCE_DIR}/Configure"
+    CONFIGURE_COMMAND ${openssl_environment} "${PERL_EXECUTABLE}" "${openssl_SOURCE_DIR}/Configure"
         ${openssl_platform} no-shared no-tests no-apps no-module no-dso
         "${openssl_minimum}" "--prefix=${KESTREL_OPENSSL_ROOT}" --libdir=lib
-    BUILD_COMMAND "${KESTREL_MAKE}" -j8
-    INSTALL_COMMAND "${KESTREL_MAKE}" install_sw
+    BUILD_COMMAND ${openssl_environment} "${KESTREL_MAKE}" -j8
+    INSTALL_COMMAND ${openssl_environment} "${KESTREL_MAKE}" install_sw
     BUILD_BYPRODUCTS "${KESTREL_OPENSSL_ROOT}/lib/libssl.a" "${KESTREL_OPENSSL_ROOT}/lib/libcrypto.a"
     LOG_CONFIGURE TRUE
     LOG_BUILD TRUE

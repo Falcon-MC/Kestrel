@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+// build-android.sh fetches SDL and gathers the bundled game files; both are passed in so the Java activity,
+// the native library and the APK assets come from the same checkout.
+def sdl = file(project.findProperty('kestrelSdl') ?: "$rootDir/../build/android/SDL")
+def bundle = file(project.findProperty('kestrelAssets') ?: "$rootDir/../build/android/assets")
+
+android {
+    namespace 'org.falconmc.kestrel'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.falconmc.kestrel'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared', "-DFETCHCONTENT_SOURCE_DIR_SDL3=${sdl}"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "${sdl}/android-project/app/src/main/java"
+            assets.srcDirs += bundle
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

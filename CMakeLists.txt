@@ -6,6 +6,10 @@ set(KESTREL_IOS OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(KESTREL_IOS ON)
 endif()
+set(KESTREL_ANDROID OFF)
+if(ANDROID)
+    set(KESTREL_ANDROID ON)
+endif()
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -15,8 +19,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
-if(KESTREL_IOS)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KestrelIosOpenSSL.cmake")
+if(KESTREL_IOS OR KESTREL_ANDROID)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KestrelMobileOpenSSL.cmake")
 endif()
 
 FetchContent_Declare(
@@ -142,7 +146,7 @@ file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.mm
 )
-list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux|ios)|render/(d3d12|metal|vulkan))/")
+list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux|ios|android|mobile)|render/(d3d12|metal|vulkan))/")
 
 if(WIN32)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -156,6 +160,7 @@ elseif(KESTREL_IOS)
     list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/main\\.cpp$")
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios/*.mm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/mobile/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/metal/*.mm
     )
     list(APPEND KESTREL_PLATFORM_SOURCES
@@ -163,6 +168,37 @@ elseif(KESTREL_IOS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Library.mm
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/System.mm
     )
+elseif(KESTREL_ANDROID)
+    # Android runs the Linux SDL window and the Vulkan renderer; SDL's activity loads the game as libmain.so.
+    list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/main\\.cpp$")
+    file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/android/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/mobile/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vulkan/*.cpp
+    )
+    list(APPEND KESTREL_PLATFORM_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/Gamepad.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/Library.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/System.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/Window.cpp
+    )
+
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
+    set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+    # The first launch draws its download progress with SDL's renderer before the game's own window exists.
+    set(SDL_RENDER ON CACHE BOOL "" FORCE)
+    set(SDL_GPU OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.18
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(SDL3)
 elseif(APPLE)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/*.mm
@@ -195,11 +231,20 @@ else()
     FetchContent_MakeAvailable(SDL3)
 endif()
 
-add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
+if(KESTREL_ANDROID)
+    add_library(Kestrel SHARED ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
+    set_target_properties(Kestrel PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
+endif()
+if(KESTREL_IOS OR KESTREL_ANDROID)
+    target_compile_definitions(Kestrel PRIVATE KESTREL_MOBILE=1)
+endif()
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if(NOT WIN32 AND NOT APPLE)
-    find_program(KESTREL_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/bin" REQUIRED)
+    file(GLOB KESTREL_NDK_SHADER_TOOLS "${CMAKE_ANDROID_NDK}/shader-tools/*")
+    find_program(KESTREL_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/bin" ${KESTREL_NDK_SHADER_TOOLS} REQUIRED)
     set(KESTREL_SHADER_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/render/vulkan")
     set(KESTREL_SHADER_HEADER "#pragma once\n#include <cstdint>\nnamespace kestrel::shaders {\n")
     function(kestrel_vulkan_shader symbol source)
@@ -518,7 +563,7 @@ elseif(APPLE)
     )
     if(KESTREL_IOS)
         set_source_files_properties(src/audio/SoundEngine.cpp PROPERTIES LANGUAGE OBJCXX)
-        target_link_libraries(Kestrel PRIVATE "-framework UIKit" "-framework Foundation" "-framework CoreGraphics" "-framework AVFAudio" "-framework AVFoundation")
+        target_link_libraries(Kestrel PRIVATE "-framework UIKit" "-framework Foundation" "-framework CoreGraphics" "-framework AVFAudio" "-framework AVFoundation" "-framework UniformTypeIdentifiers")
         target_compile_definitions(Kestrel PRIVATE KESTREL_IOS=1)
         set_target_properties(Kestrel PROPERTIES
             MACOSX_BUNDLE TRUE
@@ -536,6 +581,8 @@ elseif(APPLE)
         target_link_libraries(Kestrel PRIVATE "-framework Cocoa")
     endif()
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+elseif(KESTREL_ANDROID)
+    target_link_libraries(Kestrel PRIVATE SDL3::SDL3 vulkan android log ${CMAKE_DL_LIBS} m)
 else()
     target_link_libraries(Kestrel PRIVATE SDL3::SDL3-static Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)
 endif()

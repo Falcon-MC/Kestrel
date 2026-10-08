@@ -114,9 +114,23 @@ and gamepads. Touch supports menus, the software keyboard, simultaneous movement
 and looking, action buttons, and hotbar selection. The JSON UI Touch tab saves
 the control scheme, sensitivity, handedness, joystick visibility, sneak behavior,
 and control size/opacity. Gameplay controls use `data/ui/touch_controls.json`
-with Mojang's icons. File picker
-actions are currently unavailable on iOS. Installing on an iPhone or iPad
-requires signing the IPA through your chosen installation tool.
+with Mojang's icons. Importing skins and resource packs uses the system's
+document picker. Installing on an iPhone or iPad requires signing the IPA
+through your chosen installation tool.
+
+### Android APK
+
+With the Android SDK, NDK, CMake 3.31.6 and Gradle installed, run
+`./build-android.sh` on Linux or macOS to build an arm64 APK for Android 8.0 or
+later with Vulkan 1.1. Like on iOS, the app downloads Mojang's
+`bedrock-samples` pack on first launch. Set `KESTREL_ANDROID_RESOURCE_PACKS` to
+an installed game's `resource_packs` directory to also ship its fonts and HTML
+menu assets, or `KESTREL_ANDROID_NO_GAME_FILES=1` to build without them, as CI
+does: text is then drawn with Monocraft and Noto Sans (OFL-1.1), which the
+script downloads and checks against `data/fallback_fonts.txt`. It fetches SDL,
+which provides the window, input and file picker, and packages
+`android/app/build/outputs/apk/release/app-release.apk` signed with the debug
+key.
 
 ## Command line and agents
 

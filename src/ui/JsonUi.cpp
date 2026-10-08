@@ -1,6 +1,7 @@
 #include "ui/JsonUi.h"
 
 #include "ui/JsonUiInternal.h"
+#include "platform/Input.h"
 
 #include <algorithm>
 #include <cmath>
@@ -446,9 +447,10 @@ json::Value* findPath(json::Value& base, const std::string& path)
 }
 
 /**
- * The variables a retail, full game, desktop build of the game sets in code
- * before any definition is read, the false ones included, since a variable
- * nothing sets reads as its own name.
+ * The variables a retail, full game build of the game sets in code before any
+ * definition is read, the false ones included, since a variable nothing sets
+ * reads as its own name. A touch build reports itself as the pocket edition
+ * screens do, so the game's _pocket screens replace the desktop ones.
  */
 std::unique_ptr<json::Value> platformVariables()
 {
@@ -462,18 +464,25 @@ std::unique_ptr<json::Value> platformVariables()
 #else
     constexpr bool Ios = false;
 #endif
+#if defined(__ANDROID__)
+    constexpr bool Android = true;
+#else
+    constexpr bool Android = false;
+#endif
     static const std::pair<const char*, bool> Flags[] = {
-        { "desktop_screen", true },
-        { "pocket_screen", false },
-        { "touch", Ios },
-        { "is_pc", true },
-        { "win10_edition", !Mac && !Ios },
-        { "microsoft_os", !Mac && !Ios },
-        { "ms_platform", !Mac && !Ios },
+        { "desktop_screen", !TouchScreen },
+        { "pocket_screen", TouchScreen },
+        { "is_pocket_mode", TouchScreen },
+        { "use_touch_mode", TouchScreen },
+        { "touch", TouchScreen },
+        { "is_pc", !TouchScreen },
+        { "win10_edition", !Mac && !TouchScreen },
+        { "microsoft_os", !Mac && !TouchScreen },
+        { "ms_platform", !Mac && !TouchScreen },
         { "osx_edition", Mac },
         { "apple_os", Mac || Ios },
         { "is_desktop", true },
-        { "mouse", true },
+        { "mouse", !TouchScreen },
         { "is_publish", true },
         { "test_infrastructure_disabled", true },
         { "new_video_settings", true },
@@ -486,7 +495,7 @@ std::unique_ptr<json::Value> platformVariables()
         { "is_packs_enabled", true },
         { "is_server_enabled", true },
         { "is_store_enabled", true },
-        { "file_picking_supported", !Ios },
+        { "file_picking_supported", !TouchScreen },
         { "supports_clipboard_set", true },
         { "supports_add_friend", true },
         { "supports_xbl_achievements", true },
@@ -505,13 +514,13 @@ std::unique_ptr<json::Value> platformVariables()
         { "is_secondary_client", false },
         { "requires_xbl_signin_to_play", false },
         { "is_editor_mode_enabled", false },
-        { "can_quit", !Ios },
+        { "can_quit", !TouchScreen },
         { "world_archive_support", true },
         { "is_dynamic_textures_platform_supported", true },
         { "is_pregame", false },
         { "screen_transitions_enabled", false },
         { "use_normalized_font_size", false },
-        { "image_picking_not_supported", Ios },
+        { "image_picking_not_supported", TouchScreen },
         { "vibration_supported", false },
         { "supports_share", false },
         { "hide_xbox_live_icon", false },
@@ -527,9 +536,9 @@ std::unique_ptr<json::Value> platformVariables()
         { "edu_save_to_cloud_general_toggle_on", false },
         { "built_with_ore_ui_docs_and_tests", false },
         { "build_platform_UWP", false },
-        { "google_os", false },
+        { "google_os", Android },
         { "is_ios", Ios },
-        { "is_android", false },
+        { "is_android", Android },
         { "is_chromebook", false },
         { "fire_tv", false },
         { "nx_os", false },

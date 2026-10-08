@@ -9,6 +9,16 @@
 
 namespace kestrel {
 
+/**
+ * Whether the game is played with fingers. The JSON UI picks the game's touch
+ * screens and HUD layout from it.
+ */
+#if defined(KESTREL_MOBILE)
+inline constexpr bool TouchScreen = true;
+#else
+inline constexpr bool TouchScreen = false;
+#endif
+
 struct TouchPoint {
     uint64_t id = 0;
     float x = 0, y = 0, dx = 0, dy = 0;

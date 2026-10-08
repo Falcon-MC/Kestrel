@@ -60,7 +60,7 @@ constexpr std::pair<const char*, bool> ContextFlags[] = {
     { "is_realms_edit", false }, { "is_realm_slot", false }, { "is_mp_host", false }, { "is_mp_client", false },
     { "non_config_realms_env", false }, { "realms_pack_feature_enabled", false }, { "gamepad_supported", true },
     { "keyboard_and_mouse_supported", true },
-#if defined(KESTREL_IOS)
+#if defined(KESTREL_MOBILE)
     { "touch_supported", true },
 #else
     { "touch_supported", false },

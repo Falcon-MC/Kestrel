@@ -6,10 +6,14 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace kestrel {
 
@@ -22,6 +26,11 @@ public:
     {
         // a fullscreen window should stay up when another app takes focus
         SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+        if (TouchScreen) {
+            SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+            SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+            SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+        }
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
             throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
@@ -44,7 +53,9 @@ public:
         }
         SDL_SetWindowMinimumSize(window, 760, 520);
         setIcon();
-        SDL_StartTextInput(window);
+        if (!TouchScreen) {
+            SDL_StartTextInput(window);
+        }
 
         cursors[0] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
         cursors[1] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
@@ -138,12 +149,45 @@ public:
         }
         captured = value;
         SDL_SetWindowRelativeMouseMode(window, captured);
+        if (TouchScreen) {
+            state.mouseDown = false;
+            state.mouseReleased = true;
+            pointerFinger.reset();
+            return;
+        }
         // An input method left on in game eats held letters, KDE's press and hold accent picker swallows A, S and D.
         if (captured) {
             SDL_StopTextInput(window);
         } else {
             SDL_StartTextInput(window);
         }
+    }
+
+    void setTextInput(bool enabled) override
+    {
+        if (!TouchScreen || enabled == textEditing) {
+            return;
+        }
+        textEditing = enabled;
+        if (enabled) {
+            SDL_StartTextInput(window);
+        } else {
+            SDL_StopTextInput(window);
+        }
+    }
+
+    ui::Rect safeArea() const override
+    {
+        SDL_Rect area {};
+        int windowWidth = 0;
+        int windowHeight = 0;
+        SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+        if (!SDL_GetWindowSafeArea(window, &area) || windowWidth <= 0 || windowHeight <= 0) {
+            return Window::safeArea();
+        }
+        float ratioX = static_cast<float>(width()) / windowWidth;
+        float ratioY = static_cast<float>(height()) / windowHeight;
+        return { area.x * ratioX, area.y * ratioY, area.w * ratioX, area.h * ratioY };
     }
 
     bool drawsCaptionButtons() const override
@@ -211,6 +255,20 @@ private:
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             focusLost = true;
+            for (TouchPoint& touch : state.touches) {
+                touch.down = false;
+                touch.released = touch.cancelled = true;
+            }
+            pointerFinger.reset();
+            break;
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+            if (TouchScreen) {
+                finger(event.tfinger, event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED,
+                    event.type == SDL_EVENT_FINGER_CANCELED);
+            }
             break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
             if (!state.mouseDown) {
@@ -254,6 +312,51 @@ private:
         float ratioY = windowHeight > 0 ? static_cast<float>(height()) / windowHeight : 1.0f;
         state.mouseX = motion.x * ratioX;
         state.mouseY = motion.y * ratioY;
+    }
+
+    /**
+     * Fingers become touches for the touch controls. Outside the game the first finger also drives the
+     * pointer, and dragging it scrolls, the way the game's own menus answer a finger.
+     */
+    void finger(const SDL_TouchFingerEvent& event, bool ended, bool cancelled)
+    {
+        float x = event.x * static_cast<float>(width());
+        float y = event.y * static_cast<float>(height());
+        uint64_t id = static_cast<uint64_t>(event.fingerID);
+        std::vector<TouchPoint>& points = state.touches;
+        auto found = std::find_if(points.begin(), points.end(), [id](const TouchPoint& point) { return point.id == id; });
+        bool began = found == points.end();
+        if (began) {
+            if (ended) {
+                return;
+            }
+            points.push_back({ id, x, y, 0, 0, true, true });
+            found = points.end() - 1;
+        }
+        found->dx += x - found->x;
+        found->dy += y - found->y;
+        found->x = x;
+        found->y = y;
+        found->down = !ended;
+        found->released = ended;
+        found->cancelled = cancelled;
+        if (!captured && !pointerFinger && began) {
+            pointerFinger = id;
+        }
+        if (!captured && pointerFinger == id) {
+            float scale = contentScale();
+            state.mouseX = x;
+            state.mouseY = y;
+            state.mousePressed |= began;
+            state.mouseReleased |= ended;
+            state.mouseDown = !ended;
+            if (!began && !ended && std::abs(found->dy) > 2 * scale) {
+                state.wheel += found->dy / (32 * scale);
+            }
+        }
+        if (ended && pointerFinger == id) {
+            pointerFinger.reset();
+        }
     }
 
     void mouseButton(uint8_t button, bool down)
@@ -309,6 +412,7 @@ private:
             state.enter = true;
             break;
         case SDL_SCANCODE_ESCAPE:
+        case SDL_SCANCODE_AC_BACK:
             state.escape = true;
             break;
         case SDL_SCANCODE_TAB:
@@ -355,6 +459,7 @@ private:
         case SDL_SCANCODE_BACKSPACE:
             return Key::Backspace;
         case SDL_SCANCODE_ESCAPE:
+        case SDL_SCANCODE_AC_BACK:
             return Key::Escape;
         case SDL_SCANCODE_UP:
             return Key::Up;
@@ -403,6 +508,8 @@ private:
     bool focusLost = false;
     bool captured = false;
     bool shouldClose = false;
+    bool textEditing = false;
+    std::optional<uint64_t> pointerFinger;
     InputState state;
 };
 
