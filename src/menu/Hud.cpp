@@ -303,9 +303,10 @@ ui::UiData hudData(const HudView& view)
     }
     g["#hud_alpha"] = number(1.0);
     g["#hud_propagate_alpha"] = flag(false);
-    g["#hud_visible_centered"] = flag(true);
+    g["#hud_visible_centered"] = flag(!TouchScreen);
     g["#hud_visible_centered_gui_elements"] = flag(true);
-    g["#hud_visible_centered_touch"] = flag(false);
+    g["#hud_visible_centered_touch"] = flag(TouchScreen);
+    g["#inventory_touch_button"] = flag(TouchScreen && hotbarShown);
     g["#hud_visible_not_centered"] = flag(false);
     g["#hotbar_visible"] = flag(hotbarShown);
     g["#hotbar_visible_not_centered"] = flag(false);
@@ -352,7 +353,7 @@ ui::UiData hudData(const HudView& view)
         });
     }
     g["#boss_hud_padding"] = flag(false);
-    g["#boss_hud_touch_padding"] = flag(false);
+    g["#boss_hud_touch_padding"] = flag(TouchScreen);
     g["#on_new_death_screen"] = flag(false);
     g["#interact_visible"] = flag(false);
     g["#auto_save_animation_visible"] = flag(false);

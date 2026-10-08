@@ -5,10 +5,30 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 namespace kestrel {
 
+/**
+ * Whether the game is played with fingers. The JSON UI picks the game's touch
+ * screens and HUD layout from it.
+ */
+#if defined(KESTREL_MOBILE)
+inline constexpr bool TouchScreen = true;
+#else
+inline constexpr bool TouchScreen = false;
+#endif
+
+struct TouchPoint {
+    uint64_t id = 0;
+    float x = 0, y = 0, dx = 0, dy = 0;
+    bool down = true, pressed = false, released = false, cancelled = false;
+};
+
 struct InputState {
+    std::vector<TouchPoint> touches;
+    float touchForward = 0, touchSideways = 0;
+    float touchAimX = -1, touchAimY = -1;
     float mouseX = -1.0f;
     float mouseY = -1.0f;
     bool mouseDown = false;
@@ -53,6 +73,13 @@ struct InputState {
 
     void beginFrame()
     {
+        std::erase_if(touches, [](const TouchPoint& touch) { return !touch.down; });
+        for (auto& touch : touches) {
+            touch.pressed = touch.released = touch.cancelled = false;
+            touch.dx = touch.dy = 0;
+        }
+        touchForward = touchSideways = 0;
+        touchAimX = touchAimY = -1;
         mousePressed = false;
         rightMousePressed = false;
         middleMousePressed = false;

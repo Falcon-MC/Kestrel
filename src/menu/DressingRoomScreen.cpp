@@ -794,6 +794,16 @@ void Menu::equipCharacter(Context& ui, size_t index)
  */
 void Menu::dressingClassicSkins(Context& ui, const Rect& panel)
 {
+    if (auto source = platform::takePickedFile(platform::FileKind::Png)) {
+        std::string failure;
+        if (util::importCustomSkin(*source, failure)) {
+            ui.skin().clearDynamic("dynamic/custom_skin");
+            classicSelected = "custom";
+            dressingState.dialog = DressingDialog::SkinModel;
+        } else {
+            notify(tr("dr.classic_skins.invalidCustomSkin", "Please import a 64x64, 64x32 or 128x128 .png file"));
+        }
+    }
     Rect inner { panel.x + 5.0f, panel.y + 4.0f, panel.w - 16.0f, panel.h - 8.0f };
     ui.text(upper(tr("dr.classic_skins.custom_skin_section_title", "Owned Skins")), TextStyle::HeadingSmall, inner.x + 1.0f, inner.y + 3.0f, White);
     float tile = std::min(TileSize, std::floor((inner.w - (TileColumns - 1) * (TileStep - TileSize)) / TileColumns));
@@ -835,17 +845,7 @@ void Menu::dressingClassicSkins(Context& ui, const Rect& panel)
         }
         if (cellState.clicked) {
             if (skin == "import") {
-                std::string source = platform::pickPngFile();
-                std::string failure;
-                if (!source.empty()) {
-                    if (util::importCustomSkin(source, failure)) {
-                        ui.skin().clearDynamic("dynamic/custom_skin");
-                        classicSelected = "custom";
-                        dressingState.dialog = DressingDialog::SkinModel;
-                    } else {
-                        notify(tr("dr.classic_skins.invalidCustomSkin", "Please import a 64x64, 64x32 or 128x128 .png file"));
-                    }
-                }
+                platform::showFilePicker(platform::FileKind::Png);
             } else {
                 classicSelected = skin;
             }

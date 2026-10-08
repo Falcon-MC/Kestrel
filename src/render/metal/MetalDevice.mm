@@ -180,7 +180,9 @@ public:
         layer.device = device;
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         layer.framebufferOnly = NO;
+#if !defined(KESTREL_IOS)
         layer.displaySyncEnabled = NO;
+#endif
         layer.drawableSize = CGSizeMake(surfaceWidth, surfaceHeight);
 
         completion = std::make_shared<CompletionState>();
@@ -524,7 +526,9 @@ public:
 
     void setVsync(bool enabled) override
     {
+#if !defined(KESTREL_IOS)
         layer.displaySyncEnabled = enabled ? YES : NO;
+#endif
     }
 
     void draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) override

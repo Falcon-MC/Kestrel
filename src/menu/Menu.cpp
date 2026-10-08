@@ -3,6 +3,7 @@
 
 #include "client/DebugLog.h"
 
+#include "platform/Input.h"
 #include "platform/Shell.h"
 #include "ui/Context.h"
 #include "ui/Localization.h"
@@ -900,8 +901,8 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
     constexpr float NeckY = 24.0f;
 
     float eyeY = top + 4.0f * pixel;
-    float dx = (ui.mouseX() - centerX) / pixel;
-    float dy = (ui.mouseY() - eyeY) / pixel;
+    float dx = TouchScreen ? 0.0f : (ui.mouseX() - centerX) / pixel;
+    float dy = TouchScreen ? 0.0f : (ui.mouseY() - eyeY) / pixel;
     float bodyYaw = std::atan(dx / 40.0f) * 20.0f * Degrees;
     float headYaw = std::atan(dx / 40.0f) * 40.0f * Degrees;
     float headPitch = std::atan(dy / 40.0f) * 20.0f * Degrees;
@@ -1589,6 +1590,8 @@ void Menu::gameView(Context& ui, float width, float height)
 
 void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
 {
+    touchSettingsUi.reset();
+    touchSettingsRoot.reset();
     jsonUi = std::move(definitions);
     hudScreen.reset();
     safeZoneScreen.reset();
@@ -1917,6 +1920,12 @@ std::string* Menu::focusedText()
         break;
     }
     return nullptr;
+}
+
+bool Menu::wantsTextInput()
+{
+    return focusedText() || forms.editing() || (settingsUi && settingsUi->editing())
+        || (chatSettingsUi && chatSettingsUi->editing());
 }
 
 void Menu::navigate(Screen target)

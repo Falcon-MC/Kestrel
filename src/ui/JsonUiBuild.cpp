@@ -1,6 +1,7 @@
 #include "ui/JsonUiInternal.h"
 #include "ui/BindingVisibility.h"
 #include "ui/BindingLookup.h"
+#include "platform/Input.h"
 
 #include <algorithm>
 #include <iterator>
@@ -50,9 +51,10 @@ const UiRow& screenDefaults()
         for (const char* side : { "outer_left", "outer_right", "outer_top", "outer_bottom", "inner_left", "inner_right", "inner_top", "inner_bottom" }) {
             row[std::string("#safezone_") + side] = UiValue::of(false);
         }
-        for (const char* name : { "#is_container_screen", "#is_using_gamepad", "#using_touch", "#tts_enabled", "#gesture_control_enabled", "#is_pregame", "#bar_animation_visible" }) {
+        for (const char* name : { "#is_container_screen", "#is_using_gamepad", "#tts_enabled", "#gesture_control_enabled", "#is_pregame", "#bar_animation_visible" }) {
             row[name] = UiValue::of(false);
         }
+        row["#using_touch"] = UiValue::of(TouchScreen);
         return row;
     }();
     return defaults;

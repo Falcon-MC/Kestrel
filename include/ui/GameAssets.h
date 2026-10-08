@@ -72,6 +72,12 @@ public:
     bool readBaseArchived(const std::string& archive, const std::string& name, std::string& out);
     bool readHbuiImage(std::string_view name, Bitmap& out);
     std::vector<unsigned char> readHbuiFont(std::string_view name);
+
+    /**
+     * A free font from the directory KESTREL_FONTS names, which builds without the game's files ship in place
+     * of Minecraft's own; empty when the variable is unset or the file is missing.
+     */
+    std::vector<unsigned char> readFallbackFont(std::string_view name);
     std::string readHbuiText(std::string_view name);
     std::vector<unsigned char> readPackFile(const std::string& relative);
 

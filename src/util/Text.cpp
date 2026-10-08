@@ -1,8 +1,29 @@
 #include "util/Text.h"
 
 #include <cctype>
+#include <charconv>
+#if defined(__APPLE__) || defined(__ANDROID__)
+#include <cstdlib>
+#include <locale.h>
+#endif
 
 namespace kestrel::util {
+
+/**
+ * Apple's and Android's C++ libraries have no floating point from_chars, so they parse in the C locale
+ * instead, which keeps a decimal point whatever the device's language.
+ */
+float parseFloat(std::string_view text)
+{
+#if defined(__APPLE__) || defined(__ANDROID__)
+    static locale_t locale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    return strtof_l(std::string(text).c_str(), nullptr, locale);
+#else
+    float value = 0.0f;
+    std::from_chars(text.data(), text.data() + text.size(), value);
+    return value;
+#endif
+}
 
 bool startsWith(std::string_view value, std::string_view prefix)
 {

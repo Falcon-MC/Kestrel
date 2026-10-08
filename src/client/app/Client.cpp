@@ -96,6 +96,15 @@ float Client::serverFovDegrees(float settingDegrees, float deltaSeconds)
     return degrees;
 }
 
+struct Client::FrameState {
+#if !defined(KESTREL_MOBILE)
+    DiscordPresence discord;
+#endif
+    float bakedScale = 0.0f;
+    bool firstFrameLogged = false;
+    std::chrono::steady_clock::time_point lastFrame = std::chrono::steady_clock::now();
+};
+
 Client::Client(LaunchOptions options)
     : store(platform::dataDirectory() / "servers.txt")
     , menu(store)
@@ -167,23 +176,35 @@ Client::~Client()
 
 int Client::run()
 {
-    DiscordPresence discord;
-    float bakedScale = 0.0f;
-    bool firstFrameLogged = false;
-    constexpr ui::Color canvas = ui::theme::Black;
-    auto lastFrame = std::chrono::steady_clock::now();
+    while (frame()) { }
+    return 0;
+}
 
-    while (true) {
+bool Client::frame(bool paced)
+{
+    if (!frames) frames = std::make_unique<FrameState>();
+    float& bakedScale = frames->bakedScale;
+    bool& firstFrameLogged = frames->firstFrameLogged;
+    auto& lastFrame = frames->lastFrame;
+    constexpr ui::Color canvas = ui::theme::Black;
+    {
         profiler.beginFrame();
         {
             Profiler::Section section(profiler, "window events");
             mods->restoreInput(window->input());
             if (!window->pump()) {
-                break;
+                return false;
             }
         }
-        discord.update();
+#if !defined(KESTREL_MOBILE)
+        frames->discord.update();
+#endif
         driveGamepad();
+#if defined(KESTREL_MOBILE)
+        bool touchSpyglass = localItemUseTicks() > 0 && hudState.inventory[size_t(std::clamp(hudState.selectedSlot, 0, 8))].identifier == "minecraft:spyglass";
+        float touchLookScale = touchSpyglass ? std::max(0.05f, 1.0f - menu.option("spyglass_touch_dampening", 50) / 100.0f) : 1.0f;
+        touchControls.update(window->input(), menu.keyBindings(), menu, guiScale(), window->width(), window->height(), menu.capturesMouse() && worldShown, secondsNow(), touchLookScale);
+#endif
         if (agentServer) {
             Profiler::Section section(profiler, "agent");
             serveAgent();
@@ -202,7 +223,7 @@ int Client::run()
         if (!window->visible()) {
             limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
         }
-        if (limit != menu::UnlimitedFps) {
+        if (paced && limit != menu::UnlimitedFps) {
             Profiler::Section section(profiler, "fps cap wait");
             std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
         }
@@ -283,6 +304,13 @@ int Client::run()
                     }
                     input.jump = keys.isHeld(bindings.up());
                     input.sprint = keys.isHeld(Key::Control);
+#if defined(KESTREL_MOBILE)
+                    input.autoJump = !keys.touches.empty() && menu.option("touch_autojump", 1);
+#endif
+                    if (keys.touchForward != 0 || keys.touchSideways != 0) {
+                        input.forward = keys.touchForward;
+                        input.sideways = keys.touchSideways;
+                    }
                     if (padMove[0] != 0.0f || padMove[1] != 0.0f) {
                         input.forward = padMove[1];
                         input.sideways = -padMove[0];
@@ -355,7 +383,9 @@ int Client::run()
                 camera.update(window->input(), menu.keyBindings(), deltaSeconds, captured);
                 eyePosition = { camera.x(), camera.y(), camera.z() };
             }
-            session.setLookRay(eyePosition, camera.forward());
+            const InputState& aiming = window->input();
+            session.setLookRay(eyePosition, aiming.touchAimX >= 0 && aiming.touchAimY >= 0
+                ? camera.screenRay(aiming.touchAimX, aiming.touchAimY, float(window->width()) / std::max(1u, window->height())) : camera.forward());
             camera.setHurtProgress(playerView.active && hudState.lastHurt > 0.0
                 ? static_cast<float>(std::clamp(1.0 - (secondsNow() - hudState.lastHurt) / 0.5, 0.0, 1.0)) * visuals.hurtCamera.value_or(1.0f) : 0.0f);
         }
@@ -435,6 +465,13 @@ int Client::run()
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
+#if defined(KESTREL_MOBILE)
+            if (menu.capturesMouse() && worldShown && !menu.hudHidden()) {
+                ui::Rect safe = window->safeArea();
+                touchControls.draw(context, assets, menu, { safe.x / scale, safe.y / scale, safe.w / scale, safe.h / scale });
+            }
+            window->setTextInput(menu.wantsTextInput());
+#endif
             if (menu.worldVisible() && !menu.hudHidden()) {
                 mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
@@ -531,7 +568,7 @@ int Client::run()
             saveSettings();
         }
         if (menu.quitRequested() || agentQuit) {
-            break;
+            return false;
         }
 
         if (menu.worldVisible() || (worldShown && !terrainReleased)) {
@@ -738,7 +775,7 @@ int Client::run()
         }
         profiler.endFrame();
     }
-    return 0;
+    return true;
 }
 
 void Client::collectFeaturedImages()

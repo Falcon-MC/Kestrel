@@ -32,4 +32,6 @@ std::string withoutNamespace(const std::string& identifier);
  */
 std::vector<uint64_t> versionNumbers(const std::string& text);
 
+float parseFloat(std::string_view text);
+
 }

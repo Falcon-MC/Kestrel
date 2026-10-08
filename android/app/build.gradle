@@ -1,0 +1,68 @@
+plugins {
+    id 'com.android.application'
+}
+
+// build-android.sh fetches SDL and gathers the bundled game files; both are passed in so the Java activity,
+// the native library and the APK assets come from the same checkout.
+def sdl = file(project.findProperty('kestrelSdl') ?: "$rootDir/../build/android/SDL")
+def bundle = file(project.findProperty('kestrelAssets') ?: "$rootDir/../build/android/assets")
+def iconRes = layout.buildDirectory.dir('generated/kestrelIcon').get().asFile
+
+// The launcher icon is the same data/icon.png the desktop builds embed, copied in rather than kept twice.
+def copyIcon = tasks.register('copyKestrelIcon', Copy) {
+    from "$rootDir/../data/icon.png"
+    into "$iconRes/drawable-nodpi"
+    rename { 'ic_launcher.png' }
+}
+tasks.named('preBuild') {
+    dependsOn copyIcon
+}
+
+android {
+    namespace 'org.falconmc.kestrel'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.falconmc.kestrel'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                // Kestrel uses no C++ modules, and the module scanner CMake finds on a build machine is not the NDK's.
+                arguments '-DANDROID_STL=c++_shared', "-DFETCHCONTENT_SOURCE_DIR_SDL3=${sdl}", '-DCMAKE_CXX_SCAN_FOR_MODULES=OFF'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "${sdl}/android-project/app/src/main/java"
+            assets.srcDirs += bundle
+            res.srcDirs += iconRes
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
