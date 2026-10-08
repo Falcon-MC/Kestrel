@@ -22,7 +22,8 @@ android {
         }
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=c++_shared', "-DFETCHCONTENT_SOURCE_DIR_SDL3=${sdl}"
+                // Kestrel uses no C++ modules, and the module scanner CMake finds on a build machine is not the NDK's.
+                arguments '-DANDROID_STL=c++_shared', "-DFETCHCONTENT_SOURCE_DIR_SDL3=${sdl}", '-DCMAKE_CXX_SCAN_FOR_MODULES=OFF'
             }
         }
     }

@@ -304,7 +304,7 @@ if(KESTREL_BUILD_TESTS)
     add_test(NAME mod-textures COMMAND KestrelModTexturesTest)
 
     add_executable(KestrelModTextureAtlasTest
-        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
+        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/FallbackIcons.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
         src/world/packs/PackSource.cpp src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp src/util/Text.cpp src/client/diagnostics/DebugLog.cpp src/platform/Paths.cpp)
     target_include_directories(KestrelModTextureAtlasTest PRIVATE include ${stb_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
