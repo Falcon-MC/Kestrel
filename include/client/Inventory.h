@@ -212,6 +212,8 @@ public:
     ItemStack stationPreview(std::vector<std::pair<int, int>>* consumption = nullptr, int* cost = nullptr) const;
     ItemStack anvilPreview(std::vector<std::pair<int, int>>* consumption, int* cost) const;
     bool canCraft(const InventoryRecipe& recipe) const;
+    bool furnaceRecipe(const InventoryRecipe& recipe) const;
+    std::vector<InventoryCatalogItem> furnaceCatalog() const;
 
     /**
      * The grid cell, counted on a 3 wide row for the workbench and a 2 wide

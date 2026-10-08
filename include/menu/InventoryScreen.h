@@ -73,6 +73,7 @@ private:
     int dragStart = -1;
     std::vector<int> dragSlots;
     int tab = 0;
+    int furnaceTab = 3;
     int scrollRow = 0;
     int hoveredSlot = -1;
     int lastClickedSlot = -1;

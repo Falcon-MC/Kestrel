@@ -62,6 +62,8 @@ falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlo
         SYMBOL kBlockDefinitionsNbt OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockDefinitionsNbt.h")
 falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLightData
         SYMBOL kBlockLightJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockLightJson.h")
+falcon_bedrock_data_embed_binary(FILE item_tags.json NAMESPACE KestrelItemTagData
+        SYMBOL kItemTagsJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/ItemTagsJson.h")
 
 function(kestrel_embed_file file namespace symbol output)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
@@ -377,6 +379,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelInventoryTransactionTest PRIVATE include)
     target_link_libraries(KestrelInventoryTransactionTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME inventory-transaction COMMAND KestrelInventoryTransactionTest)
+    add_executable(KestrelFurnaceRecipesTest
+        tests/FurnaceRecipes.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelFurnaceRecipesTest PRIVATE include)
+    target_link_libraries(KestrelFurnaceRecipesTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME furnace-recipes COMMAND KestrelFurnaceRecipesTest)
     add_executable(KestrelHealthFeedbackTest tests/HealthFeedback.cpp)
     target_include_directories(KestrelHealthFeedbackTest PRIVATE include)
     add_test(NAME health-feedback COMMAND KestrelHealthFeedbackTest)
