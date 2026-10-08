@@ -286,6 +286,17 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
     add_test(NAME border-block COMMAND KestrelBorderBlockTest)
+    add_executable(KestrelHoneyBlockTest
+        tests/HoneyBlock.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelHoneyBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelHoneyBlockTest PRIVATE FalconProtocol)
+    add_test(NAME honey-block COMMAND KestrelHoneyBlockTest)
     add_executable(KestrelDoorStatesTest
         tests/DoorStates.cpp
         src/world/mesh/BlockModels.cpp)

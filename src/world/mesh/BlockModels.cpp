@@ -360,6 +360,17 @@ uint32_t faceId(uint32_t side)
     return FaceIds[side];
 }
 
+std::vector<ModelQuad> honey(const Materials& materials)
+{
+    auto core = cuboid(materials, { 16, 16, 16 }, { 240, 240, 240 });
+    Materials coating;
+    coating.fill(materials[Down]);
+    auto shell = cuboid(coating, { 0, 0, 0 }, { Full, Full, Full });
+    std::vector<ModelQuad> result(core.begin(), core.end());
+    result.insert(result.end(), shell.begin(), shell.end());
+    return result;
+}
+
 std::array<ModelQuad, 6> cuboid(const Materials& materials, Point min, Point max)
 {
     std::array<ModelQuad, 6> result {};

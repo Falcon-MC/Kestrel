@@ -832,6 +832,15 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             uint32_t modelTemplate = NoModelTemplate;
             uint32_t variant = 0;
             switch (kind) {
+            case ModelKind::Honey: {
+                if (!complete) {
+                    break;
+                }
+                modelTemplate = intern(keyOf("honey", materials, {}), [&] {
+                    pushTemplate(models::honey(materials), 0);
+                });
+                break;
+            }
             case ModelKind::Slab: {
                 if (!complete) {
                     break;
