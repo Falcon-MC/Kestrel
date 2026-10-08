@@ -584,6 +584,8 @@ elseif(APPLE)
     target_compile_options(Kestrel PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 elseif(KESTREL_ANDROID)
     target_link_libraries(Kestrel PRIVATE SDL3::SDL3 vulkan android log ${CMAKE_DL_LIBS} m)
+    # The NDK's libc++ still files std::jthread under its experimental features; it lives in headers only.
+    target_compile_definitions(Kestrel PRIVATE _LIBCPP_ENABLE_EXPERIMENTAL)
 else()
     target_link_libraries(Kestrel PRIVATE SDL3::SDL3-static Vulkan::Vulkan ${CMAKE_DL_LIBS} pthread m)
 endif()
