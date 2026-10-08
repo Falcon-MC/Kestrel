@@ -69,11 +69,11 @@ void ModUi::process(size_t owner, UiRequest& request)
 void ModUi::capture(InputState& input, float scale)
 {
     auto screen = top();
-    if (!screen || consumed) return;
-    if (input.escape) {
+    if (consumed) return;
+    if (screen && input.escape) {
         screens.pop_back();
         if (auto next = top()) { next->controls.begin({}, scale); next->controls.active.clear(); }
-    } else screen->controls.begin(input, scale);
+    } else if (screen) screen->controls.begin(input, scale);
     captured = input;
     consumed = true;
     consume(input);
