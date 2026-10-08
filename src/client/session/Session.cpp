@@ -2075,6 +2075,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     inventoryBefore.reset();
     inventoryChangedSlots.clear();
     pendingInventoryRequest = 0;
+    pendingInventoryRequests.clear();
     inventoryRequestId = -1;
     inventoryClosing = false;
     {

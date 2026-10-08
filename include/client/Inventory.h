@@ -236,8 +236,7 @@ private:
     void takeStationOutput(ItemStackRequest& request, bool toInventory);
     /**
      * Crafts the recipe in the grid once into the cursor, or as many times as
-     * the grid and the inventory allow when toInventory, in a single craft
-     * action the way the game sends it.
+     * one output stack, the grid and the inventory allow when toInventory.
      */
     bool craft(ItemStackRequest& request, const InventoryRecipe& recipe, const std::vector<std::pair<int, int>>& consumption, bool toInventory);
     int inventoryRoom(const ItemStack& item) const;
