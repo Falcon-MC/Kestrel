@@ -6,6 +6,7 @@
 #include "client/DiscordPresence.h"
 
 #include "platform/Paths.h"
+#include "platform/System.h"
 #include "platform/Window.h"
 #include "render/Renderer.h"
 #include "ui/Localization.h"
@@ -25,7 +26,6 @@
 #include <fstream>
 #include <set>
 #include <stdexcept>
-#include <thread>
 #include <unordered_set>
 
 namespace kestrel {
@@ -175,6 +175,16 @@ int Client::run()
 
     while (true) {
         profiler.beginFrame();
+        int limit = menu.maxFps();
+        // Nobody watches a hidden window, and an agent reads it a few times a second at most.
+        if (!window->visible()) {
+            limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
+        }
+        if (limit != menu::UnlimitedFps) {
+            // Sample input after the wait so capped frames use fresh mouse motion.
+            Profiler::Section section(profiler, "fps cap wait");
+            platform::waitUntil(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
+        }
         {
             Profiler::Section section(profiler, "window events");
             mods->restoreInput(window->input());
@@ -197,15 +207,6 @@ int Client::run()
             renderer->resize(window->width(), window->height());
         }
 
-        int limit = menu.maxFps();
-        // Nobody watches a hidden window, and an agent reads it a few times a second at most.
-        if (!window->visible()) {
-            limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
-        }
-        if (limit != menu::UnlimitedFps) {
-            Profiler::Section section(profiler, "fps cap wait");
-            std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
-        }
         auto now = std::chrono::steady_clock::now();
         updateGlobalResources();
         float environmentDeltaSeconds = std::clamp(std::chrono::duration<float>(now - lastFrame).count(), 0.0f, 1.0f);

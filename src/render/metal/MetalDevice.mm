@@ -534,10 +534,10 @@ public:
         }
     }
 
-    void drawIndexed(uint32_t indexCount) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance) override
     {
         if (encoder && indexBuffer) {
-            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:0];
+            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:0 instanceCount:instanceCount baseVertex:0 baseInstance:firstInstance];
         }
     }
 

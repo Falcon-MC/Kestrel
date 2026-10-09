@@ -1,9 +1,16 @@
 #include "platform/System.h"
 
+#include <thread>
+
 #include <mach/mach.h>
 #include <sys/sysctl.h>
 
 namespace kestrel::platform {
+
+void waitUntil(std::chrono::steady_clock::time_point deadline)
+{
+    std::this_thread::sleep_until(deadline);
+}
 
 MemoryUsage memoryUsage()
 {
