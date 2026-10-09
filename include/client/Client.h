@@ -21,6 +21,7 @@
 #include "client/Session.h"
 #include "client/Social.h"
 #include "world/EntityAnimation.h"
+#include "world/BookAnimation.h"
 #include "world/GlobalResources.h"
 #include "render/Renderer.h"
 #include "world/Mesher.h"
@@ -400,6 +401,25 @@ private:
     std::vector<BlockCrack> crackViews;
     std::vector<ChestLidView> chestLidViews;
     std::vector<FrameItemView> frameItemViews;
+    std::vector<ShelfItemView> shelfItemViews;
+    std::vector<EnchantingBookView> enchantingBookViews;
+    std::vector<BeaconBeamView> beaconBeamViews;
+    std::vector<ConduitView> conduitViews;
+    std::vector<BannerView> bannerViews;
+    std::vector<SignTextView> signTextViews;
+    std::vector<SpawnerView> spawnerViews;
+    std::vector<VaultItemView> vaultItemViews;
+    std::vector<PotView> potViews;
+    std::vector<PistonView> pistonViews;
+    std::vector<MovingBlockView> movingBlockViews;
+    struct SpawnerPose {
+        uint64_t id = 0;
+        float spin = 0.0f;
+        double time = 0.0;
+        std::string identifier;
+    };
+    std::map<std::array<int32_t, 3>, SpawnerPose> spawnerPoses;
+    std::map<std::array<int32_t, 3>, world::BookAnimation> enchantingBookShown;
     std::vector<uint8_t> mapIcons;
     uint32_t mapIconsWidth = 0;
     uint32_t mapIconsHeight = 0;
@@ -536,6 +556,15 @@ private:
     std::string mapMeshKey(const HudItem& item);
     bool buildMapMesh(const HudItem& item, uint32_t layer, std::vector<HeldItemFace>& faces);
     void appendFrameItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendShelfItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendVaultItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendPots(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendPistons(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
+    void appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
+    void appendEnchantingBooks(const std::array<int32_t, 3>& origin, double deltaSeconds, std::vector<world::ModelQuadGpu>& out);
+    void appendConduits(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendBanners(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
+    void drawSignTexts(modding::WorldCanvas& painter);
     bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, std::vector<world::ModelQuadGpu>& out);
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;

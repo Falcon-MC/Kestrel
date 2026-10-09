@@ -51,6 +51,8 @@ std::vector<EntityBox> piglinHeadBoxes(bool wall);
 std::vector<EntityBox> dragonHeadBoxes(bool wall);
 std::vector<EntityBox> shulkerBoxBoxes();
 std::vector<EntityBox> bannerBoxes(bool wall);
+std::array<EntityBox, 7> enchantingBookBoxes();
+std::array<EntityBox, 5> activeConduitBoxes();
 
 /**
  * Samples one face region into a 16x16 RGBA layer, applying its flips and

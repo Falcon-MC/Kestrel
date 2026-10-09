@@ -65,6 +65,22 @@ falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLig
 falcon_bedrock_data_embed_binary(FILE item_tags.json NAMESPACE KestrelItemTagData
         SYMBOL kItemTagsJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/ItemTagsJson.h")
 
+falcon_bedrock_data_file(entity_definitions.json kestrelEntityDefinitionsPath)
+file(READ "${kestrelEntityDefinitionsPath}" kestrelEntityDefinitions)
+string(JSON kestrelEntityCount LENGTH "${kestrelEntityDefinitions}")
+math(EXPR kestrelLastEntity "${kestrelEntityCount} - 1")
+set(kestrelEntityDimensions "")
+foreach(index RANGE ${kestrelLastEntity})
+    string(JSON name MEMBER "${kestrelEntityDefinitions}" ${index})
+    string(JSON width ERROR_VARIABLE widthError GET "${kestrelEntityDefinitions}" "${name}" components "minecraft:collision_box" width)
+    string(JSON height ERROR_VARIABLE heightError GET "${kestrelEntityDefinitions}" "${name}" components "minecraft:collision_box" height)
+    if(NOT widthError AND NOT heightError AND width GREATER 0 AND height GREATER 0)
+        string(APPEND kestrelEntityDimensions "    { \"${name}\", float(${width}), float(${height}) },\n")
+    endif()
+endforeach()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/EntityDisplayDimensionsData.h"
+    "#pragma once\n#include <string_view>\nnamespace kestrel::world {\nstruct EntityDisplaySize { std::string_view name; float width; float height; };\ninline constexpr EntityDisplaySize EntityDisplaySizes[] = {\n${kestrelEntityDimensions}};\n}\n")
+
 function(kestrel_embed_file file namespace symbol output)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
     file(READ "${file}" hex HEX)
@@ -299,6 +315,24 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelHoneyBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelHoneyBlockTest PRIVATE FalconProtocol)
     add_test(NAME honey-block COMMAND KestrelHoneyBlockTest)
+    add_executable(KestrelBlockShapesTest
+        tests/BlockShapes.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBlockShapesTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBlockShapesTest PRIVATE FalconProtocol)
+    add_test(NAME block-shapes COMMAND KestrelBlockShapesTest)
+    add_executable(KestrelBlockEntityDisplaysTest
+        tests/BlockEntityDisplays.cpp
+        src/world/mesh/BlockEntityModels.cpp
+        src/world/mesh/BlockModels.cpp)
+    target_include_directories(KestrelBlockEntityDisplaysTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBlockEntityDisplaysTest PRIVATE FalconProtocol)
+    add_test(NAME block-entity-displays COMMAND KestrelBlockEntityDisplaysTest)
     add_executable(KestrelDoorStatesTest
         tests/DoorStates.cpp
         src/world/mesh/BlockModels.cpp)

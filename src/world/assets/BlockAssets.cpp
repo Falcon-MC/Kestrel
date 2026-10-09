@@ -5,6 +5,7 @@
 
 #include "Core/Json/Json.h"
 #include "Protocol/BlockStateHasher.h"
+#include "world/PottedPlant.h"
 #include "ui/Image.h"
 #include "world/BlockEntityModels.h"
 #include "world/BlockModels.h"
@@ -517,7 +518,14 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             return DiagnosticMaterial;
         }
 
-        std::string key = path + '|' + std::to_string(rotate) + '|' + std::to_string(tint) + '|' + std::to_string(flipbook != nullptr) + '|' + std::to_string(tintFlags);
+        std::string overlayPath;
+        if (textureKey == "open_eyeblossom" && variant == 0) {
+            if (const json::Value* entry = terrainEntry(textureKey); entry && terrainVariantCount(*entry) > 1) {
+                overlayPath = terrainPath(*entry, 1);
+            }
+        }
+
+        std::string key = path + '|' + std::to_string(rotate) + '|' + std::to_string(tint) + '|' + std::to_string(flipbook != nullptr) + '|' + std::to_string(tintFlags) + '|' + overlayPath;
         auto materialFound = materialByKey.find(key);
         if (materialFound != materialByKey.end()) {
             return materialFound->second;
@@ -545,6 +553,22 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             bool bakedOverlay = tint && (tintFlags & TintOverlay);
             for (size_t frame : timeline) {
                 std::vector<uint8_t> pixels = frames[frame];
+                if (!overlayPath.empty()) {
+                    const auto& overlays = framesOf(overlayPath);
+                    if (!overlays.empty() && overlays.front().size() == pixels.size()) {
+                        const auto& overlay = overlays[std::min(frame, overlays.size() - 1)];
+                        for (size_t pixel = 0; pixel < pixels.size(); pixel += 4) {
+                            const uint32_t alpha = overlay[pixel + 3];
+                            const uint32_t remaining = uint32_t(pixels[pixel + 3]) * (255 - alpha) / 255;
+                            const uint32_t combined = alpha + remaining;
+                            for (size_t channel = 0; channel < 3; ++channel) {
+                                pixels[pixel + channel] = combined ? uint8_t((uint32_t(overlay[pixel + channel]) * alpha
+                                    + uint32_t(pixels[pixel + channel]) * remaining) / combined) : 0;
+                            }
+                            pixels[pixel + 3] = uint8_t(combined);
+                        }
+                    }
+                }
                 if (bakedOverlay) {
                     applyOverlay(pixels, tint);
                 } else if (tint) {
@@ -609,6 +633,30 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         if (count <= 1) {
             return 0;
         }
+        if (textureKey == "daylight_detector_top") {
+            return name == "daylight_detector_inverted" ? 1 : 0;
+        }
+        if (textureKey == "repeater_up" || textureKey == "comparator_up") {
+            return startsWith(name, "powered_") || stateInt(states, "output_lit_bit").value_or(0) != 0 ? 1 : 0;
+        }
+        if (textureKey == "lightning_rod" || endsWith(textureKey, "_lightning_rod")) {
+            return stateInt(states, "powered_bit").value_or(0) != 0 ? 1 : 0;
+        }
+        if (startsWith(textureKey, "pointed_dripstone_") || startsWith(textureKey, "sulfur_spike_")) {
+            return stateInt(states, "hanging").value_or(0) ? 0 : 1;
+        }
+        if (textureKey == "sculk_shrieker_inner_top") {
+            return stateInt(states, "can_summon").value_or(0) ? 1 : 0;
+        }
+        if (startsWith(textureKey, "dried_ghast_")) {
+            return size_t(std::clamp(stateInt(states, "rehydration_level").value_or(0), 0, 3));
+        }
+        if (textureKey == "pitcher_crop_lower_flower") {
+            return size_t(std::clamp(stateInt(states, "growth").value_or(0) - 1, 0, 3));
+        }
+        if (textureKey == "pitcher_crop_upper_flower") {
+            return size_t(std::clamp(stateInt(states, "growth").value_or(0) - 3, 0, 1));
+        }
         if (textureKey == "door_lower" || textureKey == "door_upper") {
             static const std::pair<const char*, size_t> doors[] = {
                 { "wooden_door", 0 }, { "spruce_door", 1 }, { "birch_door", 2 }, { "jungle_door", 3 },
@@ -656,7 +704,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         if (isCandleName(textureKey)) {
             return stateInt(states, "lit").value_or(0) != 0 ? 1 : 0;
         }
-        if (textureKey == "turtle_egg") {
+        if (textureKey == "turtle_egg" || startsWith(textureKey, "sniffer_egg_")) {
             std::string cracks = stateString(states, "cracked_state");
             return std::min<size_t>(cracks == "max_cracked" ? 2 : cracks == "cracked" ? 1 : 0, count - 1);
         }
@@ -713,6 +761,20 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         std::string name = startsWith(record.name, "minecraft:") ? record.name.substr(10) : record.name;
         BlockVisual& visual = visuals[i];
         visual.powderSnow = name == "powder_snow";
+        if (name == "redstone_wire" || name == "redstone_block" || name == "redstone_torch" || name == "unlit_redstone_torch"
+            || name == "lever" || name == "daylight_detector" || name == "daylight_detector_inverted" || name == "target"
+            || name == "detector_rail" || name == "tripwire_hook" || name == "trapped_chest" || name == "lectern"
+            || name == "lightning_rod" || endsWith(name, "_lightning_rod") || endsWith(name, "_button") || contains(name, "pressure_plate")) {
+            visual.redstoneConnections = 15;
+        } else if (contains(name, "repeater") || contains(name, "comparator")) {
+            const std::string cardinal = stateString(record.states, "minecraft:cardinal_direction");
+            const uint32_t rotation = cardinal.empty() ? uint32_t(stateInt(record.states, "direction").value_or(0)) : facingRotation(cardinal);
+            visual.redstoneConnections = (rotation & 1) ? 10 : 5;
+        } else if (name == "observer") {
+            static constexpr uint8_t OutputSides[6] = { 0, 0, 4, 1, 2, 8 };
+            const int32_t facing = std::clamp(stateInt(record.states, "facing_direction").value_or(0), 0, 5);
+            visual.redstoneConnections = OutputSides[facing];
+        }
         if (name == "air") {
             airSequential = static_cast<uint32_t>(i);
             airHash = record.networkHash;
@@ -756,9 +818,9 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 visual.flags = static_cast<uint8_t>((visual.flags & ~FlagOccludesFullFace) | FlagCullSame);
             }
         }
-        uint32_t tint = contains(name, "water") && family == Family::Liquid ? 0xFFFFFFu : 0u;
+        uint32_t tint = (contains(name, "water") || name == "bubble_column") && family == Family::Liquid ? 0xFFFFFFu : 0u;
 
-        const json::Value* entry = blockEntry(name);
+        const json::Value* entry = blockEntry(name == "bubble_column" ? "water" : name);
         if (!entry) {
             if (const char* alias = legacyAlias(name)) {
                 entry = blockEntry(alias);
@@ -796,6 +858,16 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             models::Materials materials {};
             bool complete = true;
             uint32_t fixedTint = name == "waterlily" || name == "lily_pad" ? LilyPadColor : 0;
+            if (name == "melon_stem" || name == "pumpkin_stem") {
+                const uint32_t growth = uint32_t(std::clamp(stateInt(record.states, "growth").value_or(0), 0, 7));
+                fixedTint = ((growth * 32) << 16) | ((255 - growth * 8) << 8) | (growth * 4);
+            }
+            if (name == "redstone_wire") {
+                const float power = float(std::clamp(stateInt(record.states, "redstone_signal").value_or(0), 0, 15)) / 15.0f;
+                const uint32_t red = uint32_t((power * 0.6f + (power > 0 ? 0.4f : 0.3f)) * 255);
+                const uint32_t green = uint32_t(std::max(0.0f, power * power * 0.7f - 0.5f) * 255);
+                fixedTint = (red << 16) | (green << 8);
+            }
             for (int face = 0; face < 6; ++face) {
                 std::string key = faceKeyFor(face);
                 materials[face] = isEndPortalName(name) ? endPortalFor() : key.empty() ? DiagnosticMaterial : materialFor(key, false, variantFor(key, name, record.states), fixedTint, blockTint(name, face));
@@ -832,6 +904,204 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             uint32_t modelTemplate = NoModelTemplate;
             uint32_t variant = 0;
             switch (kind) {
+            case ModelKind::Piston: {
+                if (!complete) break;
+                const int32_t facing = std::clamp(stateInt(record.states, "facing_direction").value_or(1), 0, 5);
+                static constexpr uint32_t Sides[6] = { models::Down, models::Up, models::South, models::North, models::East, models::West };
+                const uint32_t direction = Sides[facing];
+                const uint32_t normal = materialFor("piston_top_normal", false);
+                const uint32_t inner = materialFor("piston_top", false);
+                materials[models::Up] = materialFor(name == "sticky_piston" ? "piston_top_sticky" : "piston_top_normal", false);
+                if (normal == DiagnosticMaterial || inner == DiagnosticMaterial || materials[models::Up] == DiagnosticMaterial) break;
+                modelTemplate = intern(keyOf("piston", materials, { direction, inner, normal }), [&] {
+                    const auto closed = models::cuboid(materials, { 0, 0, 0 }, { 256, 256, 256 });
+                    pushTemplate(models::orient({ closed.begin(), closed.end() }, direction), 0);
+                    auto body = models::pistonBody(materials, inner, direction);
+                    auto extended = body;
+                    const auto head = models::pistonHead(materials, normal, direction, true);
+                    extended.insert(extended.end(), head.begin(), head.end());
+                    pushTemplate(extended, 0);
+                    pushTemplate(body, 0);
+                    pushTemplate(models::pistonHead(materials, normal, direction, false), 0);
+                });
+                visual.blockEntity = EntityPiston;
+                variant = uint32_t(facing);
+                break;
+            }
+            case ModelKind::TripwireHook: {
+                if (!complete) break;
+                const bool attached = flag("attached_bit");
+                const bool powered = flag("powered_bit");
+                const uint32_t turns = (cardinal() + 2) & 3;
+                modelTemplate = intern(keyOf("tripwire_hook", materials, { attached, powered, turns }), [&] {
+                    pushTemplate(models::tripwireHook(materials, attached, powered, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::RedstoneWire: {
+                if (!complete) break;
+                modelTemplate = intern(keyOf("redstone_wire", materials, {}), [&] {
+                    for (uint32_t mask = 0; mask < 256; ++mask) {
+                        pushTemplate(models::redstoneWire(materials[models::Up], materials[models::Down], mask), TemplateRedstoneWire);
+                    }
+                });
+                break;
+            }
+            case ModelKind::Tripwire: {
+                if (!complete) break;
+                uint32_t mask = 0;
+                static constexpr const char* Connections[] = { "minecraft:connection_north", "minecraft:connection_east", "minecraft:connection_south", "minecraft:connection_west" };
+                for (uint32_t side = 0; side < 4; ++side) if (flag(Connections[side])) mask |= 1u << side;
+                const bool attached = flag("attached_bit");
+                const bool suspended = flag("suspended_bit");
+                modelTemplate = intern(keyOf("tripwire", materials, { mask, attached, suspended }), [&] {
+                    pushTemplate(models::tripwire(materials[models::Up], mask, attached, suspended), 0);
+                });
+                break;
+            }
+            case ModelKind::DriedGhast: {
+                const uint32_t tentacles = materialFor("dried_ghast_tentacles", false,
+                    variantFor("dried_ghast_tentacles", name, record.states));
+                if (!complete || tentacles == DiagnosticMaterial) break;
+                const uint32_t turns = cardinal();
+                modelTemplate = intern(keyOf("dried_ghast", materials, { tentacles, turns }), [&] {
+                    pushTemplate(models::driedGhast(materials, tentacles, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::CropStem: {
+                if (!complete) break;
+                const uint32_t growth = uint32_t(std::clamp(stateInt(record.states, "growth").value_or(0), 0, 7));
+                const int32_t facing = stateInt(record.states, "facing_direction").value_or(0);
+                modelTemplate = intern(keyOf("crop_stem", materials, { growth, uint32_t(facing) }), [&] {
+                    pushTemplate(models::cropStem(materials[models::Up], growth, facing), 0);
+                });
+                break;
+            }
+            case ModelKind::PitcherCrop: {
+                if (!complete) break;
+                const uint32_t growth = uint32_t(std::clamp(stateInt(record.states, "growth").value_or(0), 0, 4));
+                const bool upper = flag("upper_block_bit");
+                modelTemplate = intern(keyOf("pitcher_crop", materials, { growth, upper }), [&] {
+                    pushTemplate(models::pitcherCrop(materials, growth, upper), 0);
+                });
+                break;
+            }
+            case ModelKind::SmallDripleaf: {
+                if (!complete) break;
+                const bool upper = flag("upper_block_bit");
+                const uint32_t turns = cardinal();
+                modelTemplate = intern(keyOf("small_dripleaf", materials, { upper, turns }), [&] {
+                    pushTemplate(models::smallDripleaf(materials, upper, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::CoralFan: {
+                if (!complete) break;
+                const bool wall = contains(name, "wall_fan") || contains(name, "fan_hang");
+                const uint32_t direction = uint32_t(stateInt(record.states, "coral_direction").value_or(0)) & 3;
+                static constexpr uint32_t WallTurns[4] = { 3, 1, 0, 2 };
+                const uint32_t turns = wall ? WallTurns[direction]
+                    : uint32_t(stateInt(record.states, "coral_fan_direction").value_or(0)) & 1;
+                modelTemplate = intern(keyOf("coral_fan", materials, { wall, turns }), [&] {
+                    pushTemplate(models::coralFan(materials[models::Up], wall, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::SporeBlossom: {
+                if (!complete) break;
+                modelTemplate = intern(keyOf("spore_blossom", materials, {}), [&] {
+                    pushTemplate(models::sporeBlossom(materials[models::Up], materials[models::Down]), 0);
+                });
+                break;
+            }
+            case ModelKind::Sunflower: {
+                const bool upper = flag("upper_block_bit");
+                const uint32_t front = materialFor("sunflower_additional", false, 0);
+                const uint32_t back = materialFor("sunflower_additional", false, 1);
+                const uint32_t stem = materials[upper ? models::Up : models::Down];
+                if (stem == DiagnosticMaterial || front == DiagnosticMaterial || back == DiagnosticMaterial) break;
+                modelTemplate = intern(keyOf("sunflower", materials, { front, back, upper }), [&] {
+                    pushTemplate(models::sunflower(stem, front, back, upper), 0);
+                });
+                break;
+            }
+            case ModelKind::Chorus: {
+                if (!complete) break;
+                modelTemplate = intern(keyOf("chorus", materials, {}), [&] {
+                    for (uint32_t mask = 0; mask < 64; ++mask) {
+                        pushTemplate(models::chorus(materials, mask), TemplateChorus);
+                    }
+                });
+                break;
+            }
+            case ModelKind::SeaPickle: {
+                if (!complete) break;
+                const uint32_t count = uint32_t(std::clamp(stateInt(record.states, "cluster_count").value_or(0), 0, 3));
+                const bool dead = flag("dead_bit");
+                modelTemplate = intern(keyOf("sea_pickle", materials, { count, dead }), [&] {
+                    pushTemplate(models::seaPickles(materials[models::Up], count, dead), 0);
+                });
+                break;
+            }
+            case ModelKind::SculkShrieker: {
+                const uint32_t inner = materialFor("sculk_shrieker_inner_top", false,
+                    variantFor("sculk_shrieker_inner_top", name, record.states));
+                if (!complete || inner == DiagnosticMaterial) break;
+                modelTemplate = intern(keyOf("sculk_shrieker", materials, { inner }), [&] {
+                    pushTemplate(models::sculkShrieker(materials, inner), 0);
+                });
+                break;
+            }
+            case ModelKind::Dripleaf: {
+                if (!complete) break;
+                bool head = flag("big_dripleaf_head");
+                std::string tiltName = stateString(record.states, "big_dripleaf_tilt");
+                uint32_t tilt = tiltName == "full_tilt" ? 3 : tiltName == "partial_tilt" ? 2 : 0;
+                uint32_t turns = cardinal();
+                modelTemplate = intern(keyOf("big_dripleaf", materials, { head, tilt, turns }), [&] {
+                    pushTemplate(models::dripleaf(materials, head, tilt, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::SculkSensor: {
+                bool active = stateInt(record.states, "sculk_sensor_phase").value_or(0) == 1;
+                uint32_t tendril = materialFor(active ? "sculk_sensor_tendril_active" : "sculk_sensor_tendril_inactive", false);
+                bool calibrated = name == "calibrated_sculk_sensor";
+                uint32_t amethyst = calibrated ? materialFor("calibrated_sculk_sensor_amethyst", false) : DiagnosticMaterial;
+                if (!complete || tendril == DiagnosticMaterial || (calibrated && amethyst == DiagnosticMaterial)) {
+                    break;
+                }
+                uint32_t turns = calibrated ? cardinal() : 0;
+                modelTemplate = intern(keyOf("sculk_sensor", materials, { tendril, amethyst, turns }), [&] {
+                    pushTemplate(models::sculkSensor(materials, tendril, calibrated ? std::optional<uint32_t>(amethyst) : std::nullopt, turns), 0);
+                });
+                break;
+            }
+            case ModelKind::Azalea: {
+                if (materials[models::North] == DiagnosticMaterial || materials[models::Up] == DiagnosticMaterial || materials[models::East] == DiagnosticMaterial) {
+                    break;
+                }
+                modelTemplate = intern(keyOf("azalea", materials, {}), [&] {
+                    pushTemplate(models::azalea(materials), 0);
+                });
+                break;
+            }
+            case ModelKind::CandleCake: {
+                std::string candleName = name.substr(0, name.size() - 5);
+                const json::Value* candleEntry = blockEntry(candleName);
+                const json::Value* candleTextures = candleEntry ? candleEntry->get("textures") : nullptr;
+                bool rotate = false;
+                std::string candleKey = candleTextures ? resolveTextureKey(candleTextures, FaceOrder[models::Up], Axis::Y, std::nullopt, rotate) : std::string();
+                uint32_t candleMaterial = candleKey.empty() ? DiagnosticMaterial : materialFor(candleKey, false, variantFor(candleKey, candleName, record.states));
+                if (!complete || candleMaterial == DiagnosticMaterial) {
+                    break;
+                }
+                modelTemplate = intern(keyOf("candle_cake", materials, { candleMaterial }), [&] {
+                    pushTemplate(models::candleCake(materials, candleMaterial), 0);
+                });
+                break;
+            }
             case ModelKind::Honey: {
                 if (!complete) {
                     break;
@@ -1164,7 +1434,11 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             case ModelKind::Cross: {
                 int face = models::Up;
                 if (textures && textures->isObject()) {
-                    if (name == "sweet_berry_bush") {
+                    if (name == "pointed_dripstone" || name == "sulfur_spike") {
+                        const std::string thickness = stateString(record.states, "dripstone_thickness");
+                        face = thickness == "base" ? models::Up : thickness == "frustum" ? models::Down
+                            : thickness == "middle" ? models::South : thickness == "merge" ? models::West : models::North;
+                    } else if (name == "sweet_berry_bush") {
                         static constexpr int ByGrowth[4] = { models::Down, models::Up, models::North, models::South };
                         face = ByGrowth[std::clamp(stateInt(record.states, "growth").value_or(0), 0, 3)];
                     } else if (textures->get("up") && textures->get("down") && name != "seagrass") {
@@ -1221,7 +1495,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 std::string axis = stateString(record.states, "pillar_axis");
                 uint32_t facing = axis == "x" ? models::East : axis == "z" ? models::South : models::Up;
                 modelTemplate = intern(keyOf("chain", { first, second, 0, 0, 0, 0 }, { facing }), [&] {
-                    pushTemplate(models::orientedCross(first, second, facing), 0);
+                    pushTemplate(models::chain(first, second, facing), 0);
                 });
                 break;
             }
@@ -1266,19 +1540,26 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 break;
             }
             case ModelKind::Shape: {
+                if (name == "flower_pot") visual.blockEntity = EntityFlowerPot;
                 BlockShape shape = blockShape(name, record.states);
+                if (name == "lectern") {
+                    modelTemplate = intern(keyOf("lectern", materials, { shape.turns }), [&] {
+                        pushTemplate(models::lectern(materials, shape.turns), 0);
+                    });
+                    break;
+                }
                 std::vector<models::ShapePart> parts;
                 std::string shapeKey = "shape";
                 bool usable = true;
                 for (const ShapeBox& box : shape.boxes) {
                     models::ShapePart shapePart;
                     for (int axis = 0; axis < 3; ++axis) {
-                        shapePart.min[axis] = static_cast<int16_t>(box.min[axis] * 16);
-                        shapePart.max[axis] = static_cast<int16_t>(box.max[axis] * 16);
+                        shapePart.min[axis] = static_cast<int16_t>(box.min[axis] * 16 + box.offset[axis]);
+                        shapePart.max[axis] = static_cast<int16_t>(box.max[axis] * 16 + box.offset[axis]);
                     }
                     shapePart.materials = box.texture ? uniform(0) : box.side >= 0 ? uniform(box.side) : materials;
                     if (box.texture) {
-                        shapePart.materials.fill(materialFor(box.texture, false));
+                        shapePart.materials.fill(materialFor(box.texture, false, box.textureVariant));
                     }
                     for (size_t side = 0; side < 6; ++side) {
                         if (box.faceSides[side] >= 0) {
@@ -1287,18 +1568,19 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                     }
                     shapePart.uvs = box.uvs;
                     shapePart.hidden = box.hidden;
+                    shapePart.uvSize = box.uvSize;
                     if (box.uvs) {
                         for (const auto& rect : *box.uvs) {
                             shapeKey += '#' + std::to_string(rect[0]) + ',' + std::to_string(rect[1]) + ',' + std::to_string(rect[2]) + ',' + std::to_string(rect[3]);
                         }
                     }
-                    shapeKey += '~' + std::to_string(box.hidden);
+                    shapeKey += '~' + std::to_string(box.hidden) + ':' + std::to_string(box.uvSize);
                     for (uint32_t material : shapePart.materials) {
                         usable &= material != DiagnosticMaterial;
                         shapeKey += ':' + std::to_string(material);
                     }
                     for (int axis = 0; axis < 3; ++axis) {
-                        shapeKey += '/' + std::to_string(box.min[axis]) + ',' + std::to_string(box.max[axis]);
+                        shapeKey += '/' + std::to_string(shapePart.min[axis]) + ',' + std::to_string(shapePart.max[axis]);
                     }
                     parts.push_back(shapePart);
                 }
@@ -1308,12 +1590,12 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 }
                 if (shape.planeSide >= 0) {
                     usable &= materials[shape.planeSide] != DiagnosticMaterial;
-                    extra = models::flatPlane(materials[shape.planeSide], 16);
+                    extra = models::flatPlane(materials[shape.planeSide], shape.planeHeight);
                 }
                 if (!usable || (parts.empty() && extra.empty())) {
                     break;
                 }
-                shapeKey += "|" + std::to_string(extra.empty() ? 0 : extra.front().material) + "|" + std::to_string(shape.crossSide) + std::to_string(shape.planeSide);
+                shapeKey += "|" + std::to_string(extra.empty() ? 0 : extra.front().material) + "|" + std::to_string(shape.crossSide) + std::to_string(shape.planeSide) + ":" + std::to_string(shape.planeHeight);
                 modelTemplate = intern(keyOf(shapeKey, {}, { shape.turns, uint32_t(shape.facing + 1) }), [&] {
                     // Tilted models like a wall grindstone tip over first, then turn like the rest.
                     std::vector<ModelQuad> quads = models::shape(parts, std::move(extra), 0);
@@ -1353,6 +1635,10 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
             visual.flags = FlagDiagnostic;
             visual.faces.fill(DiagnosticMaterial);
             ++diagnosticCount;
+        } else if (name == "end_stone" || name == "chorus_flower") {
+            visual.modelTemplate = intern("chorus-neighbour|" + name, [&] {
+                pushTemplate({}, name == "end_stone" ? TemplateChorusSupport : TemplateChorusFlower);
+            });
         } else if (family == Family::Liquid) {
             visual.liquid = contains(name, "lava") ? 2 : 1;
             visual.liquidLevel = static_cast<uint8_t>(std::clamp(stateInt(record.states, "liquid_depth").value_or(0), 0, 15));
@@ -1542,6 +1828,36 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
     }
 
     timer.mark("assets: block visuals, textures and models");
+    const BlockVisual* emptyPot = nullptr;
+    for (size_t index = 0; index < registry.records().size(); ++index) {
+        if (registry.records()[index].name == "minecraft:flower_pot") {
+            emptyPot = &visuals[index];
+            break;
+        }
+    }
+    if (emptyPot && emptyPot->hasModel()) {
+        const auto potQuads = templateQuads(emptyPot->modelTemplate);
+        for (size_t index = 0; index < registry.records().size(); ++index) {
+            const auto& record = registry.records()[index];
+            if (!pottablePlant(record.name)) continue;
+            auto materials = visuals[index].faces;
+            uint32_t leaves = DiagnosticMaterial;
+            if (record.name == "minecraft:bamboo" || record.name == "minecraft:bamboo_sapling") {
+                materials.fill(materialFor("bamboo_stem", false, 0));
+                leaves = materialFor("bamboo_singleleaf", false, 0);
+            } else if (record.name == "minecraft:azalea" || record.name == "minecraft:flowering_azalea") {
+                const std::string prefix = record.name == "minecraft:azalea" ? "potted_azalea_bush_" : "potted_flowering_azalea_bush_";
+                materials.fill(materialFor(prefix + "side", false, 0));
+                materials[models::Up] = materialFor(prefix + "top", false, 0);
+                leaves = materialFor(prefix + "plant", false, 0);
+            }
+            if (std::find(materials.begin(), materials.end(), DiagnosticMaterial) != materials.end()) continue;
+            auto plant = models::pottedPlant(record.name, materials, leaves);
+            auto combined = potQuads;
+            combined.insert(combined.end(), plant.begin(), plant.end());
+            entityTemplates.pottedPlants.emplace(record.networkHash, pushTemplate(combined, 0));
+        }
+    }
     buildBlockEntityTemplates(pack, layers, overlayLayers, materialByKey, pushTemplate);
     timer.mark("assets: block entity templates");
     buildInterfaceAssets(pack, packs);

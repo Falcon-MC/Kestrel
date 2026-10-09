@@ -1,6 +1,7 @@
 #include "world/BlockModels.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace kestrel::world::models {
 
@@ -84,12 +85,12 @@ ModelQuad makeQuad(uint32_t side, Point min, Point max, uint32_t material, bool 
     return quad;
 }
 
-void rectUvs(ModelQuad& quad, uint32_t side, std::array<uint16_t, 4> rect)
+void rectUvs(ModelQuad& quad, uint32_t side, std::array<uint16_t, 4> rect, uint16_t size = 16)
 {
-    uint16_t u1 = static_cast<uint16_t>(rect[0] * 256);
-    uint16_t v1 = static_cast<uint16_t>(rect[1] * 256);
-    uint16_t u2 = static_cast<uint16_t>(rect[2] * 256);
-    uint16_t v2 = static_cast<uint16_t>(rect[3] * 256);
+    uint16_t u1 = static_cast<uint16_t>(uint32_t(rect[0]) * 4096 / std::max<uint16_t>(size, 1));
+    uint16_t v1 = static_cast<uint16_t>(uint32_t(rect[1]) * 4096 / std::max<uint16_t>(size, 1));
+    uint16_t u2 = static_cast<uint16_t>(uint32_t(rect[2]) * 4096 / std::max<uint16_t>(size, 1));
+    uint16_t v2 = static_cast<uint16_t>(uint32_t(rect[3]) * 4096 / std::max<uint16_t>(size, 1));
     switch (side) {
     case West:
     case South:
@@ -1008,13 +1009,687 @@ std::vector<ModelQuad> shape(const std::vector<ShapePart>& parts, std::vector<Mo
                 continue;
             }
             if (part.uvs) {
-                rectUvs(faces[side], side, (*part.uvs)[side]);
+                rectUvs(faces[side], side, (*part.uvs)[side], part.uvSize);
             }
             quads.push_back(faces[side]);
         }
     }
     quads.insert(quads.end(), extra.begin(), extra.end());
     return rotateSign(std::move(quads), (turns & 3) * 4);
+}
+
+std::vector<ModelQuad> pistonBody(const Materials& materials, uint32_t inner, uint32_t facing)
+{
+    Materials body = materials;
+    body[Up] = inner;
+    auto faces = cuboid(body, { 0, 0, 0 }, { Full, 192, Full });
+    for (uint32_t side : { West, East, North, South }) rectUvs(faces[side], side, { 0, 4, 16, 16 });
+    return orient({ faces.begin(), faces.end() }, facing);
+}
+
+std::vector<ModelQuad> pistonHead(const Materials& materials, uint32_t normal, uint32_t facing, bool extended)
+{
+    Materials platform = materials;
+    platform[Down] = normal;
+    auto faces = cuboid(platform, { 0, 192, 0 }, { Full, Full, Full });
+    for (uint32_t side : { West, East, North, South }) rectUvs(faces[side], side, { 0, 0, 16, 4 });
+    std::vector<ModelQuad> quads(faces.begin(), faces.end());
+    Materials rod;
+    rod.fill(materials[North]);
+    const auto stem = cuboid(rod, { 96, -64, 96 }, { 160, 192, 160 });
+    for (uint32_t side : { West, East, North, South }) {
+        ModelQuad quad = stem[side];
+        rectUvs(quad, side, { 0, 0, 16, 4 });
+        std::rotate(quad.uvs.begin(), quad.uvs.begin() + 1, quad.uvs.end());
+        quads.push_back(quad);
+    }
+    if (extended) for (auto& quad : quads) for (auto& point : quad.positions) point[1] += Full;
+    return orient(std::move(quads), facing);
+}
+
+std::vector<ModelQuad> azalea(const Materials& materials)
+{
+    Materials canopy;
+    canopy.fill(materials[North]);
+    canopy[Up] = materials[Up];
+    const auto faces = cuboid(canopy, { 0, 80, 0 }, { Full, Full, Full });
+    std::vector<ModelQuad> quads;
+    for (uint32_t side = 0; side < 6; ++side) {
+        if (side == Down) continue;
+        auto quad = faces[side];
+        rectUvs(quad, side, { 0, 0, 16, static_cast<uint16_t>(side == Up ? 16 : 11) });
+        quad.flags |= QuadTwoSided;
+        quads.push_back(quad);
+    }
+    const auto stem = cross(materials[East], materials[East]);
+    quads.insert(quads.end(), stem.begin(), stem.end());
+    return quads;
+}
+
+std::vector<ModelQuad> pottedPlant(std::string_view name, const Materials& materials, uint32_t leaves)
+{
+    if (name == "minecraft:cactus") {
+        const auto faces = cuboid(materials, { 96, 80, 96 }, { 160, Full, 160 });
+        std::vector<ModelQuad> out;
+        for (uint32_t side = 0; side < 6; ++side) {
+            if (side == Down) continue;
+            auto quad = faces[side];
+            if (side != Up) rectUvs(quad, side, { 6, 0, 10, 11 });
+            quad.flags &= ~QuadCullFaceMask;
+            out.push_back(quad);
+        }
+        return out;
+    }
+    if (name == "minecraft:bamboo" || name == "minecraft:bamboo_sapling") {
+        const auto faces = cuboid(materials, { 112, 0, 112 }, { 144, Full, 144 });
+        std::vector<ModelQuad> out;
+        for (uint32_t side = 0; side < 6; ++side) {
+            if (side == Down) continue;
+            auto quad = faces[side];
+            rectUvs(quad, side, side == Up ? std::array<uint16_t, 4> { 13, 0, 15, 2 }
+                                         : std::array<uint16_t, 4> { 6, 0, 8, 16 });
+            quad.flags &= ~QuadCullFaceMask;
+            out.push_back(quad);
+        }
+        if (leaves != DiagnosticMaterial) out.push_back(uprightPlane(leaves, 0, 128, Full, 128, 32, 288, { 0, 0, 16, 16 }));
+        return out;
+    }
+    if (name == "minecraft:mangrove_propagule") {
+        const uint32_t material = materials[Up];
+        return {
+            uprightPlane(material, 72, 72, 184, 184, 144, 240, { 4, 1, 11, 7 }),
+            uprightPlane(material, 184, 72, 72, 184, 144, 240, { 4, 1, 11, 7 }),
+            uprightPlane(material, 112, 112, 144, 144, 0, 144, { 7, 7, 9, 16 }),
+            uprightPlane(material, 144, 112, 112, 144, 0, 144, { 7, 7, 9, 16 }),
+        };
+    }
+    const bool azalea = name == "minecraft:azalea" || name == "minecraft:flowering_azalea";
+    const uint32_t plant = azalea ? leaves : materials[Up];
+    if (plant == DiagnosticMaterial) return {};
+    std::vector<ModelQuad> out {
+        uprightPlane(plant, 42, 42, 214, 214, 64, Full, { 0, uint16_t(azalea ? 4 : 0), 16, 16 }),
+        uprightPlane(plant, 214, 42, 42, 214, 64, Full, { 0, uint16_t(azalea ? 4 : 0), 16, 16 }),
+    };
+    if (azalea) {
+        const auto canopy = cuboid(materials, { 64, 128, 64 }, { 192, Full, 192 });
+        for (uint32_t side = 0; side < 6; ++side) {
+            if (side == Down) continue;
+            auto quad = canopy[side];
+            rectUvs(quad, side, side == Up ? std::array<uint16_t, 4> { 4, 4, 12, 12 }
+                                         : std::array<uint16_t, 4> { 4, 5, 12, 13 });
+            quad.flags = faceId(side) | QuadTwoSided;
+            out.push_back(quad);
+        }
+    }
+    return out;
+}
+
+std::vector<ModelQuad> sculkSensor(const Materials& materials, uint32_t tendril, std::optional<uint32_t> amethyst, uint32_t turns)
+{
+    const auto faces = cuboid(materials, { 0, 0, 0 }, { Full, 128, Full });
+    std::vector<ModelQuad> quads;
+    for (uint32_t side = 0; side < 6; ++side) {
+        auto quad = faces[side];
+        rectUvs(quad, side, side == Up || side == Down ? std::array<uint16_t, 4> { 0, 0, 16, 16 }
+                                                                     : std::array<uint16_t, 4> { 0, 8, 16, 16 });
+        quads.push_back(quad);
+    }
+    for (const auto& [x, z, diagonal] : {
+             std::array<int16_t, 3> { 48, 48, 1 }, { 208, 48, -1 }, { 208, 208, 1 }, { 48, 208, -1 } }) {
+        quads.push_back(uprightPlane(tendril, x - 45, z - 45 * diagonal, x + 45, z + 45 * diagonal,
+            128, Full, { 4, 8, 12, 16 }));
+    }
+    if (amethyst) {
+        quads.push_back(uprightPlane(*amethyst, 0, 0, Full, Full, 128, 320, { 0, 4, 16, 16 }));
+        quads.push_back(uprightPlane(*amethyst, Full, 0, 0, Full, 128, 320, { 0, 4, 16, 16 }));
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> chorus(const Materials& materials, uint32_t connections)
+{
+    auto core = cuboid(materials, { 32, 32, 32 }, { 224, 224, 224 });
+    std::vector<ModelQuad> result;
+    for (uint32_t side = 0; side < 6; ++side) {
+        if (!(connections & (1u << side))) result.push_back(core[side]);
+    }
+    for (uint32_t side = 0; side < 6; ++side) {
+        if (!(connections & (1u << side))) continue;
+        const uint32_t axis = side < 2 ? 0 : side < 4 ? 1 : 2;
+        Point min { 32, 32, 32 };
+        Point max { 224, 224, 224 };
+        const bool positive = side & 1;
+        min[axis] = positive ? 224 : 0;
+        max[axis] = positive ? 256 : 32;
+        auto arm = cuboid(materials, min, max);
+        for (uint32_t face = 0; face < 6; ++face) {
+            if (face != (side ^ 1)) result.push_back(arm[face]);
+        }
+    }
+    return result;
+}
+
+std::vector<ModelQuad> sculkShrieker(const Materials& materials, uint32_t inner)
+{
+    Materials baseMaterials = materials;
+    baseMaterials[Up] = inner;
+    auto base = cuboid(baseMaterials, { 0, 0, 0 }, { Full, 128, Full });
+    for (uint32_t side : { West, East, North, South }) {
+        rectUvs(base[side], side, { 0, 8, 16, 16 });
+    }
+    std::vector<ModelQuad> result(base.begin(), base.end());
+    auto crown = cuboid(materials, { 16, 128, 16 }, { 240, 240, 240 });
+    for (uint32_t side : { West, East, Up, North, South }) {
+        rectUvs(crown[side], side, side == Up ? std::array<uint16_t, 4> { 1, 1, 15, 15 }
+                                            : std::array<uint16_t, 4> { 1, 1, 15, 8 });
+        crown[side].flags |= QuadTwoSided;
+        result.push_back(crown[side]);
+    }
+    return result;
+}
+
+std::vector<ModelQuad> seaPickles(uint32_t material, uint32_t count, bool dead)
+{
+    static constexpr std::array<std::array<Point, 4>, 4> Positions { {
+        { Point { 6, 6, 6 }, {}, {}, {} },
+        { Point { 3, 6, 3 }, { 8, 4, 8 }, {}, {} },
+        { Point { 6, 6, 9 }, { 2, 4, 2 }, { 8, 6, 4 }, {} },
+        { Point { 2, 6, 2 }, { 9, 4, 10 }, { 9, 6, 2 }, { 2, 7, 8 } },
+    } };
+    count = std::min(count, 3u);
+    Materials materials;
+    materials.fill(material);
+    std::vector<ModelQuad> result;
+    result.reserve((count + 1) * (dead ? 7 : 9));
+    for (uint32_t index = 0; index <= count; ++index) {
+        const auto& position = Positions[count][index];
+        const int16_t x = position[0] * 16;
+        const int16_t z = position[2] * 16;
+        const int16_t height = position[1] * 16;
+        auto body = cuboid(materials, { x, 0, z }, { int16_t(x + 64), height, int16_t(z + 64) });
+        rectUvs(body[Down], Down, { 8, 1, 12, 5 });
+        rectUvs(body[Up], Up, { 4, 1, 8, 5 });
+        static constexpr uint16_t U[6] = { 8, 12, 0, 0, 4, 0 };
+        for (uint32_t side : { West, East, North, South }) {
+            rectUvs(body[side], side, { U[side], 5, uint16_t(U[side] + 4), uint16_t(5 + position[1]) });
+        }
+        result.insert(result.end(), body.begin(), body.end());
+        auto inside = makeQuad(Up, { x, int16_t(height - 1), z }, { int16_t(x + 64), int16_t(height - 1), int16_t(z + 64) }, material, false);
+        rectUvs(inside, Up, { 8, 1, 12, 5 });
+        result.push_back(inside);
+        if (!dead) {
+            const int16_t cx = x + 32;
+            const int16_t cz = z + 32;
+            result.push_back(uprightPlane(material, cx - 8, cz - 8, cx + 8, cz + 8, height - 13, height + 43, { 1, 0, 3, 5 }));
+            result.push_back(uprightPlane(material, cx + 8, cz - 8, cx - 8, cz + 8, height - 13, height + 43, { 13, 0, 15, 5 }));
+        }
+    }
+    return result;
+}
+
+std::vector<ModelQuad> dripleaf(const Materials& materials, bool head, uint32_t tilt, uint32_t turns)
+{
+    std::vector<ModelQuad> quads;
+    if (head) {
+        auto leaf = flatPlane(materials[South], 240);
+        quads.insert(quads.end(), leaf.begin(), leaf.end());
+        quads.push_back(uprightPlane(materials[Down], 0, 0, Full, 0, 176, 240, { 0, 0, 16, 4 }));
+        quads.push_back(uprightPlane(materials[Up], 0, 0, 0, Full, 176, 240, { 0, 0, 16, 4 }));
+        quads.push_back(uprightPlane(materials[Up], Full, Full, Full, 0, 176, 240, { 0, 0, 16, 4 }));
+        if (tilt >= 2) {
+            const float angle = tilt == 2 ? -0.3926990817f : -0.7853981634f;
+            const float sine = std::sin(angle);
+            const float cosine = std::cos(angle);
+            for (auto& quad : quads) {
+                quad.flags = QuadTwoSided | faceId(Up);
+                for (auto& position : quad.positions) {
+                    float y = position[1] - 240;
+                    float z = position[2] - Full;
+                    position[1] = static_cast<int16_t>(std::lround(240 + y * cosine - z * sine));
+                    position[2] = static_cast<int16_t>(std::lround(Full + y * sine + z * cosine));
+                }
+            }
+        }
+    }
+    int16_t stemTop = head ? 240 : Full;
+    quads.push_back(uprightPlane(materials[North], 80, 144, 176, 240, 0, stemTop, { 3, 0, 14, 16 }));
+    quads.push_back(uprightPlane(materials[North], 176, 144, 80, 240, 0, stemTop, { 3, 0, 14, 16 }));
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> chain(uint32_t first, uint32_t second, uint32_t facing)
+{
+    return orient({
+        uprightPlane(first, 104, 104, 152, 152, 0, Full, { 0, 0, 3, 16 }),
+        uprightPlane(second, 152, 104, 104, 152, 0, Full, { 0, 0, 3, 16 }),
+    }, facing);
+}
+
+namespace {
+
+void tiltQuad(ModelQuad& quad, uint32_t axis, Point origin, float angle, bool rescale = false)
+{
+    const uint32_t a = (axis + 1) % 3;
+    const uint32_t b = (axis + 2) % 3;
+    const float sine = std::sin(angle);
+    const float cosine = std::cos(angle);
+    const float scale = rescale ? 1.0f / cosine : 1.0f;
+    for (auto& point : quad.positions) {
+        const float x = point[a] - origin[a];
+        const float y = point[b] - origin[b];
+        point[a] = static_cast<int16_t>(std::lround(origin[a] + scale * (x * cosine - y * sine)));
+        point[b] = static_cast<int16_t>(std::lround(origin[b] + scale * (x * sine + y * cosine)));
+    }
+}
+
+std::vector<ModelQuad> radialPetals(uint32_t material, int16_t height, int16_t pivotHeight, float angle)
+{
+    ModelQuad petal = makeQuad(Up, { 128, height, 0 }, { 384, height, Full }, material, false);
+    rectUvs(petal, Up, { 0, 0, 16, 16 });
+    petal.flags |= QuadTwoSided;
+    tiltQuad(petal, 2, { 128, pivotHeight, 0 }, angle);
+    std::vector<ModelQuad> quads;
+    for (uint32_t turn = 0; turn < 4; ++turn) {
+        auto rotated = shape({}, { petal }, turn);
+        quads.push_back(rotated.front());
+    }
+    return quads;
+}
+
+}
+
+std::vector<ModelQuad> coralFan(uint32_t material, bool wall, uint32_t turns)
+{
+    constexpr float Angle = 0.3926990817f;
+    std::vector<ModelQuad> quads;
+    if (wall) {
+        for (float angle : { -Angle, Angle }) {
+            auto quad = flatPlane(material, 128).front();
+            tiltQuad(quad, 0, { 128, 128, 224 }, angle, true);
+            quads.push_back(quad);
+        }
+    } else {
+        quads = radialPetals(material, 0, 0, Angle);
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> sporeBlossom(uint32_t base, uint32_t petals)
+{
+    auto quads = radialPetals(petals, 251, Full, -0.3926990817f);
+    auto attachment = makeQuad(Up, { 16, 254, 16 }, { 240, 254, 240 }, base, false);
+    rectUvs(attachment, Up, { 1, 1, 15, 15 });
+    attachment.flags |= QuadTwoSided;
+    quads.push_back(attachment);
+    return quads;
+}
+
+std::vector<ModelQuad> smallDripleaf(const Materials& materials, bool upper, uint32_t turns)
+{
+    const uint32_t stem = materials[upper ? North : South];
+    const auto plane = uprightPlane(stem, 72, 128, 184, 128, 0, upper ? 224 : Full,
+        upper ? std::array<uint16_t, 4> { 4, 0, 12, 14 } : std::array<uint16_t, 4> { 5, 0, 12, 16 });
+    auto quads = rotateSign({ plane }, 2);
+    auto second = rotateSign({ plane }, 14);
+    quads.push_back(second.front());
+    if (upper) {
+        const std::array<std::pair<Point, Point>, 3> leaves { {
+            { { 128, 48, 128 }, { 240, 48, 240 } },
+            { { 16, 128, 16 }, { 128, 128, 128 } },
+            { { 16, 192, 128 }, { 128, 192, 240 } },
+        } };
+        for (size_t index = 0; index < leaves.size(); ++index) {
+            const auto& [min, max] = leaves[index];
+            auto top = makeQuad(Up, min, max, materials[Up], false);
+            rectUvs(top, Up, index == 0 ? std::array<uint16_t, 4> { 8, 8, 0, 0 }
+                                      : std::array<uint16_t, 4> { 0, 0, 8, 8 });
+            if (index == 2) std::rotate(top.uvs.begin(), top.uvs.begin() + 3, top.uvs.end());
+            top.flags |= QuadTwoSided;
+            quads.push_back(top);
+            Point bottom = min;
+            bottom[1] -= 16;
+            for (uint32_t side : { West, East, North, South }) {
+                auto edge = makeQuad(side, bottom, max, materials[Down], false);
+                rectUvs(edge, side, { 0, 0, 8, 1 });
+                edge.flags |= QuadTwoSided;
+                quads.push_back(edge);
+            }
+        }
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> sunflower(uint32_t stem, uint32_t front, uint32_t back, bool upper)
+{
+    auto quads = cross(stem, stem);
+    if (!upper) return quads;
+    for (auto& quad : quads) {
+        for (auto& point : quad.positions) point[1] /= 2;
+        for (auto& uv : quad.uvs) if (uv[1] == 0) uv[1] = 2048;
+    }
+    for (uint32_t side : { West, East }) {
+        // Model pipelines draw both sides; separate the two textures by one subpixel for depth testing.
+        const int16_t x = side == East ? 155 : 153;
+        auto head = makeQuad(side, { x, -16, 16 }, { x, 240, 240 }, side == East ? front : back, false);
+        rectUvs(head, side, { 0, 0, 16, 16 });
+        tiltQuad(head, 2, { 128, 128, 128 }, 0.3926990817f, true);
+        quads.push_back(head);
+    }
+    return quads;
+}
+
+std::vector<ModelQuad> cropStem(uint32_t material, uint32_t growth, int32_t facing)
+{
+    if (facing >= 2 && facing <= 5) {
+        const auto plane = uprightPlane(material, 0, 128, Full, 128, 0, Full, { 0, 0, 16, 16 });
+        static constexpr uint32_t Turns[4] = { 1, 3, 0, 2 };
+        return shape({}, { plane }, Turns[facing - 2]);
+    }
+    const uint16_t height = uint16_t((std::min(growth, 7u) + 1) * 2);
+    return {
+        uprightPlane(material, 0, 0, Full, Full, -16, int16_t((height - 1) * 16), { 0, 0, 16, height }),
+        uprightPlane(material, Full, 0, 0, Full, -16, int16_t((height - 1) * 16), { 0, 0, 16, height }),
+    };
+}
+
+std::vector<ModelQuad> pitcherCrop(const Materials& materials, uint32_t growth, bool upper)
+{
+    growth = std::min(growth, 4u);
+    std::vector<ModelQuad> quads;
+    if (upper && growth < 3) return quads;
+    if (growth > 0) {
+        const auto plane = uprightPlane(materials[upper ? West : South], 0, 128, Full, 128,
+            growth < 3 ? 80 : 0, growth < 3 ? 336 : Full, { 0, 0, 16, 16 });
+        quads = rotateSign({ plane }, 2);
+        auto second = rotateSign({ plane }, 14);
+        quads.push_back(second.front());
+    }
+    if (!upper) {
+        const int16_t inset = growth == 0 ? 5 : 3;
+        const int16_t height = growth == 0 ? 3 : 5;
+        Materials pod;
+        pod.fill(materials[North]);
+        pod[Up] = materials[Up];
+        pod[Down] = materials[Down];
+        auto faces = cuboid(pod, { int16_t(inset * 16), -16, int16_t(inset * 16) },
+            { int16_t((16 - inset) * 16), int16_t(height * 16), int16_t((16 - inset) * 16) });
+        for (uint32_t side = 0; side < 6; ++side) {
+            rectUvs(faces[side], side, side == Up || side == Down
+                    ? std::array<uint16_t, 4> { uint16_t(inset), uint16_t(inset), uint16_t(16 - inset), uint16_t(16 - inset) }
+                    : std::array<uint16_t, 4> { 3, 10, uint16_t(growth == 0 ? 9 : 13), uint16_t(growth == 0 ? 14 : 16) });
+            quads.push_back(faces[side]);
+        }
+    }
+    return quads;
+}
+
+std::vector<ModelQuad> driedGhast(const Materials& materials, uint32_t tentacles, uint32_t turns)
+{
+    auto body = cuboid(materials, { 48, 0, 48 }, { 208, 160, 208 });
+    std::vector<ModelQuad> quads;
+    for (uint32_t side = 0; side < 6; ++side) {
+        rectUvs(body[side], side, side == Down ? std::array<uint16_t, 4> { 10, 0, 0, 10 }
+                                              : std::array<uint16_t, 4> { 0, 0, 10, 10 });
+        if (side == Up) std::rotate(body[side].uvs.begin(), body[side].uvs.begin() + 2, body[side].uvs.end());
+        quads.push_back(body[side]);
+    }
+    Materials uniform;
+    uniform.fill(tentacles);
+    auto appendTentacle = [&](Point min, Point max, const std::array<std::array<uint16_t, 4>, 6>& uvs, uint32_t bottomTurn) {
+        auto faces = cuboid(uniform, min, max);
+        for (uint32_t side = 0; side < 6; ++side) {
+            rectUvs(faces[side], side, uvs[side], 32);
+            const uint32_t turn = side == Up ? 1 : side == Down ? bottomTurn : 0;
+            std::rotate(faces[side].uvs.begin(), faces[side].uvs.begin() + turn, faces[side].uvs.end());
+            quads.push_back(faces[side]);
+        }
+    };
+    for (uint16_t index = 0; index < 2; ++index) {
+        const int16_t z = int16_t(80 + index * 64);
+        const uint16_t leftV = uint16_t(3 + index * 4);
+        appendTentacle({ 0, 0, z }, { 48, 16, int16_t(z + 32) }, { {
+            { 5, leftV, 7, uint16_t(leftV + 1) }, { 0, leftV, 2, uint16_t(leftV + 1) },
+            { 5, leftV, 7, uint16_t(leftV - 3) }, { 5, leftV, 3, uint16_t(leftV - 3) },
+            { 2, leftV, 5, uint16_t(leftV + 1) }, { 7, leftV, 10, uint16_t(leftV + 1) },
+        } }, 1);
+        const uint16_t rightV = uint16_t(15 - index * 4);
+        appendTentacle({ 208, 0, z }, { Full, 16, int16_t(z + 32) }, { {
+            { 2, rightV, 0, uint16_t(rightV + 1) }, { 7, rightV, 5, uint16_t(rightV + 1) },
+            { 5, uint16_t(rightV - 3), 7, rightV }, { 5, uint16_t(rightV - 3), 3, rightV },
+            { 5, rightV, 2, uint16_t(rightV + 1) }, { 10, rightV, 7, uint16_t(rightV + 1) },
+        } }, 1);
+        const int16_t x = int16_t(80 + index * 64);
+        const uint16_t backV = uint16_t(2 + index * 3);
+        appendTentacle({ x, 0, 208 }, { int16_t(x + 32), 16, Full }, { {
+            { 20, backV, 17, uint16_t(backV + 1) }, { 15, backV, 12, uint16_t(backV + 1) },
+            { 15, uint16_t(backV - 2), 18, backV }, { 12, backV, 15, uint16_t(backV - 2) },
+            { 12, backV, 10, uint16_t(backV + 1) }, { 17, backV, 15, uint16_t(backV + 1) },
+        } }, 3);
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> strawBed(uint32_t material, bool head, uint32_t turns)
+{
+    Materials uniform;
+    uniform.fill(material);
+    std::vector<ModelQuad> quads;
+    auto box = [&](Point min, Point max, const std::array<std::array<uint16_t, 4>, 6>& uvs, uint32_t hidden) {
+        auto faces = cuboid(uniform, min, max);
+        for (uint32_t side = 0; side < 6; ++side) {
+            if (hidden & (1u << side)) continue;
+            rectUvs(faces[side], side, uvs[side], 64);
+            quads.push_back(faces[side]);
+        }
+    };
+    if (head) {
+        box({ 0, 0, 0 }, { Full, 64, 128 }, { {
+            { 24, 21, 32, 25 }, { 0, 21, 8, 25 }, { 40, 13, 24, 21 },
+            { 24, 21, 8, 13 }, { 8, 21, 24, 25 }, { 32, 21, 48, 25 },
+        } }, 0);
+        box({ 0, 0, 128 }, { Full, 80, Full }, { {
+            { 24, 8, 32, 13 }, { 0, 8, 8, 13 }, { 40, 0, 24, 8 },
+            { 24, 8, 8, 0 }, { 8, 8, 24, 13 }, { 32, 8, 48, 13 },
+        } }, 0);
+    } else {
+        box({ 0, 0, 0 }, { Full, 64, Full }, { {
+            { 32, 41, 48, 45 }, { 0, 41, 16, 45 }, { 48, 25, 32, 41 },
+            { 32, 41, 16, 25 }, { 16, 41, 32, 45 }, {},
+        } }, 1u << South);
+    }
+    auto fringe = [&](Point min, Point max, std::array<uint16_t, 4> uv, uint32_t turn) {
+        auto quad = makeQuad(Up, min, max, material, false);
+        rectUvs(quad, Up, uv, 64);
+        std::rotate(quad.uvs.begin(), quad.uvs.begin() + turn, quad.uvs.end());
+        quad.flags |= QuadTwoSided;
+        quads.push_back(quad);
+    };
+    if (!head) fringe({ 0, 2, -48 }, { Full, 2, 0 }, { 0, 45, 16, 48 }, 2);
+    fringe({ -48, 2, 0 }, { 0, 2, head ? int16_t(128) : Full },
+        head ? std::array<uint16_t, 4> { 57, 25, 54, 17 } : std::array<uint16_t, 4> { 54, 41, 57, 25 }, 2);
+    fringe({ Full, 2, 0 }, { 304, 2, head ? int16_t(128) : Full },
+        head ? std::array<uint16_t, 4> { 51, 25, 48, 17 } : std::array<uint16_t, 4> { 48, 25, 51, 41 }, 2);
+    if (head) {
+        fringe({ -32, 1, 128 }, { 0, 1, Full }, { 6, 33, 4, 25 }, 0);
+        fringe({ Full, 1, 128 }, { 288, 1, Full }, { 2, 33, 0, 25 }, 0);
+        fringe({ -32, 79, 128 }, { 0, 79, Full }, { 42, 8, 40, 0 }, 0);
+        fringe({ Full, 79, 128 }, { 288, 79, Full }, { 2, 8, 0, 0 }, 0);
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> redstoneWire(uint32_t crossMaterial, uint32_t line, uint32_t connections)
+{
+    uint32_t mask = connections & 15;
+    if (mask == 0) mask = 15;
+    else if (mask == 1 || mask == 4) mask = 5;
+    else if (mask == 2 || mask == 8) mask = 10;
+    std::vector<ModelQuad> quads;
+    auto floor = [&](Point min, Point max, std::array<uint16_t, 4> uv) {
+        auto quad = makeQuad(Up, min, max, crossMaterial, false);
+        rectUvs(quad, Up, uv);
+        quad.flags |= QuadTwoSided;
+        quads.push_back(quad);
+    };
+    floor({ 96, 4, 96 }, { 160, 4, 160 }, { 6, 6, 10, 10 });
+    for (uint32_t side = 0; side < 4; ++side) {
+        if (!(mask & (1u << side))) continue;
+        auto arm = makeQuad(Up, { 96, 4, 0 }, { 160, 4, 96 }, crossMaterial, false);
+        rectUvs(arm, Up, { 6, 0, 10, 6 });
+        arm.flags |= QuadTwoSided;
+        auto rotated = shape({}, { arm }, side);
+        quads.push_back(rotated.front());
+        if (connections & (16u << side)) {
+            auto climb = uprightPlane(line, 0, 4, Full, 4, 0, Full, { 0, 0, 16, 16 });
+            std::rotate(climb.uvs.begin(), climb.uvs.begin() + 1, climb.uvs.end());
+            auto turned = shape({}, { climb }, side);
+            quads.push_back(turned.front());
+        }
+    }
+    return quads;
+}
+
+std::vector<ModelQuad> tripwire(uint32_t material, uint32_t connections, bool attached, bool suspended)
+{
+    uint32_t mask = connections & 15;
+    if (!mask) mask = 15;
+    const int16_t height = suspended ? 56 : 24;
+    const uint16_t v = attached ? 6 : 4;
+    std::vector<ModelQuad> quads;
+    for (uint32_t side = 0; side < 4; ++side) {
+        if (!(mask & (1u << side))) continue;
+        for (int16_t segment = 0; segment < 2; ++segment) {
+            auto quad = makeQuad(Up, { 124, height, int16_t(segment * 64) },
+                { 132, height, int16_t((segment + 1) * 64) }, material, false);
+            rectUvs(quad, Up, { 0, v, 16, uint16_t(v + 2) });
+            std::rotate(quad.uvs.begin(), quad.uvs.begin() + 1, quad.uvs.end());
+            quad.flags |= QuadTwoSided;
+            auto rotated = shape({}, { quad }, side);
+            quads.push_back(rotated.front());
+        }
+    }
+    return quads;
+}
+
+std::vector<ModelQuad> tripwireHook(const Materials& materials, bool attached, bool powered, uint32_t turns)
+{
+    constexpr float QuarterAngle = 0.3926990817f;
+    const float hookAngle = powered ? 0.0f : attached ? -QuarterAngle : -2 * QuarterAngle;
+    const int16_t hookBottom = powered && attached ? 54 : attached || powered ? 67 : 61;
+    const int16_t hookTop = int16_t(hookBottom + 13);
+    const int16_t hookNear = attached || powered ? 107 : 126;
+    const int16_t hookFar = int16_t(hookNear + 58);
+    std::vector<ModelQuad> quads;
+    auto box = [&](uint32_t material, Point min, Point max, const std::array<std::array<uint16_t, 4>, 6>& uvs,
+                   Point pivot, float angle) {
+        Materials uniform;
+        uniform.fill(material);
+        auto faces = cuboid(uniform, min, max);
+        for (uint32_t side = 0; side < 6; ++side) {
+            rectUvs(faces[side], side, uvs[side]);
+            if (angle != 0) tiltQuad(faces[side], 0, pivot, angle);
+            quads.push_back(faces[side]);
+        }
+    };
+    box(materials[Up], { 99, hookBottom, hookNear }, { 157, hookTop, hookFar }, { {
+        { 5, 8, 11, 9 }, { 5, 3, 11, 4 }, { 5, 3, 11, 9 },
+        { 5, 3, 11, 9 }, { 5, 3, 11, 4 }, { 5, 8, 11, 9 },
+    } }, { 128, attached ? int16_t(67) : int16_t(96), attached ? int16_t(107) : int16_t(83) }, hookAngle);
+    for (uint32_t side : { West, East, North, South }) {
+        auto inner = makeQuad(side, { 118, hookBottom, int16_t(hookNear + 19) },
+            { 138, hookTop, int16_t(hookFar - 19) }, materials[Up], false);
+        rectUvs(inner, side, side == West || side == South ? std::array<uint16_t, 4> { 7, 3, 9, 4 }
+                                                          : std::array<uint16_t, 4> { 7, 8, 9, 9 });
+        tiltQuad(inner, 0, { 128, attached ? int16_t(67) : int16_t(96), attached ? int16_t(107) : int16_t(83) }, hookAngle);
+        quads.push_back(inner);
+    }
+    box(materials[Down], { 118, 83, 160 }, { 141, 109, 224 }, { {
+        { 2, 9, 7, 11 }, { 9, 9, 14, 11 }, { 7, 9, 9, 14 },
+        { 7, 2, 9, 7 }, { 7, 9, 9, 11 }, { 7, 9, 9, 11 },
+    } }, { 128, 96, 224 }, powered ? -QuarterAngle : attached ? 0.0f : 2 * QuarterAngle);
+    box(materials[Down], { 96, 16, 224 }, { 160, 144, Full }, { {
+        { 0, 7, 2, 15 }, { 14, 7, 16, 15 }, { 6, 14, 10, 16 },
+        { 6, 0, 10, 2 }, { 6, 7, 10, 15 }, { 6, 7, 10, 15 },
+    } }, {}, 0);
+    if (attached) {
+        const int16_t height = powered ? 8 : 24;
+        auto wire = makeQuad(Up, { 124, height, 0 }, { 132, height, 107 }, materials[South], false);
+        rectUvs(wire, Up, { 0, 6, 16, 8 });
+        std::rotate(wire.uvs.begin(), wire.uvs.begin() + 1, wire.uvs.end());
+        wire.flags |= QuadTwoSided;
+        tiltQuad(wire, 0, { 128, 0, 0 }, -QuarterAngle, true);
+        quads.push_back(wire);
+    }
+    return shape({}, std::move(quads), turns);
+}
+
+std::vector<ModelQuad> lectern(const Materials& materials, uint32_t turns)
+{
+    const uint32_t base = materials[East];
+    const uint32_t front = materials[North];
+    const uint32_t sides = materials[South];
+    std::vector<ShapePart> parts;
+    ShapePart bottom;
+    bottom.min = { 0, 0, 0 };
+    bottom.max = { Full, 32, Full };
+    bottom.materials.fill(base);
+    bottom.materials[Down] = materials[Down];
+    bottom.uvs = std::array<std::array<uint16_t, 4>, 6> { {
+        { 0, 6, 16, 8 }, { 0, 6, 16, 8 }, { 0, 0, 16, 16 }, { 16, 16, 0, 0 },
+        { 0, 14, 16, 16 }, { 0, 6, 16, 8 },
+    } };
+    parts.push_back(bottom);
+    ShapePart column;
+    column.min = { 64, 32, 64 };
+    column.max = { 192, 240, 192 };
+    column.materials.fill(sides);
+    column.materials[North] = column.materials[South] = front;
+    column.hidden = (1u << Up) | (1u << Down);
+    column.uvs = std::array<std::array<uint16_t, 4>, 6> { {
+        { 2, 8, 15, 16 }, { 2, 16, 15, 8 }, {}, {}, { 0, 0, 8, 13 }, { 8, 3, 16, 16 },
+    } };
+    auto quads = shape({ column }, {}, 0);
+    for (size_t side : { West, East }) {
+        const size_t index = side == West ? 0 : 1;
+        auto before = quads[index].uvs;
+        for (size_t corner = 0; corner < 4; ++corner) quads[index].uvs[corner] = before[(corner + 1) % 4];
+    }
+    auto fixed = shape(parts, std::move(quads), 0);
+    ShapePart top;
+    top.min = { 0, 192, 48 };
+    top.max = { Full, Full, Full };
+    top.materials.fill(sides);
+    top.materials[Up] = materials[Up];
+    top.materials[Down] = materials[Down];
+    top.uvs = std::array<std::array<uint16_t, 4>, 6> { {
+        { 0, 4, 13, 8 }, { 0, 4, 13, 8 }, { 0, 0, 16, 13 }, { 16, 14, 0, 1 },
+        { 0, 0, 16, 4 }, { 0, 4, 16, 8 },
+    } };
+    auto sloped = shape({ top }, {}, 0);
+    constexpr float angle = -22.5f * 3.14159265f / 180.0f;
+    for (auto& quad : sloped) {
+        quad.flags = (quad.flags & QuadFaceMask) | QuadTwoSided;
+        for (auto& point : quad.positions) {
+            const float y = float(point[1]) - 128.0f;
+            const float z = float(point[2]) - 128.0f;
+            point[1] = int16_t(std::lround(128 + y * std::cos(angle) - z * std::sin(angle)));
+            point[2] = int16_t(std::lround(128 + y * std::sin(angle) + z * std::cos(angle)));
+        }
+    }
+    fixed.insert(fixed.end(), sloped.begin(), sloped.end());
+    return shape({}, std::move(fixed), turns);
+}
+
+std::vector<ModelQuad> candleCake(const Materials& materials, uint32_t candleMaterial)
+{
+    const auto faces = cuboid(materials, { 16, 0, 16 }, { 240, 128, 240 });
+    std::vector<ModelQuad> quads(faces.begin(), faces.end());
+    auto candle = candles(candleMaterial, 1);
+    for (auto& quad : candle) {
+        for (auto& position : quad.positions) position[1] += 128;
+    }
+    quads.insert(quads.end(), candle.begin(), candle.end());
+    return quads;
 }
 
 std::vector<ModelQuad> orientedCross(uint32_t material, uint32_t facing)
