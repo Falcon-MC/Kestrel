@@ -563,6 +563,52 @@ void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners
     appendTiled(placed, layer, tileGridOf(layer), shadeWord, out);
 }
 
+void Client::appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
+{
+    if (!blockAssets) return;
+    const double time = secondsNow() * TicksPerSecond;
+    const float yaw = float(std::fmod(time, 160.0) * 2.25 - 45.0) * 3.14159265f / 180.0f;
+    const float cosine = std::cos(yaw);
+    const float sine = std::sin(yaw);
+    for (const BeaconBeamView& beam : beaconBeamViews) {
+        for (const world::BeaconBeamSection& section : beam.sections) {
+            for (bool shell : { false, true }) {
+                const auto layer = blockAssets->beaconBeamLayer(shell);
+                if (!layer) continue;
+                const std::array<std::array<float, 2>, 4> edge = shell
+                    ? std::array<std::array<float, 2>, 4> { { { -0.25f, -0.25f }, { -0.25f, 0.25f }, { 0.25f, 0.25f }, { 0.25f, -0.25f } } }
+                    : std::array<std::array<float, 2>, 4> { { { 0, 0.2f }, { -0.2f, 0 }, { 0, -0.2f }, { 0.2f, 0 } } };
+                const float repeat = shell ? 1.0f : 2.5f;
+                for (int32_t bottom = section.bottom; bottom < section.top; bottom += 4) {
+                    const int32_t top = std::min(bottom + 4, section.top);
+                    double scroll = -time * 0.2 + (bottom - beam.cell[1]) * repeat;
+                    const float lowV = float(scroll - std::floor(scroll));
+                    const float highV = lowV + (top - bottom) * repeat;
+                    for (size_t side = 0; side < 4; ++side) {
+                        auto point = [&](size_t edgeIndex, int32_t y) {
+                            const auto& vertex = edge[edgeIndex & 3];
+                            const float x = shell ? vertex[0] : vertex[0] * cosine - vertex[1] * sine;
+                            const float z = shell ? vertex[1] : vertex[0] * sine + vertex[1] * cosine;
+                            return std::array<float, 3> {
+                                (float(beam.cell[0] - origin[0]) + 0.5f + x) * 256.0f,
+                                float(y - origin[1]) * 256.0f,
+                                (float(beam.cell[2] - origin[2]) + 0.5f + z) * 256.0f,
+                            };
+                        };
+                        const std::array<QuadCorner, 4> corners { {
+                            { point(side, bottom), { 0, lowV } }, { point(side + 1, bottom), { 1, lowV } },
+                            { point(side + 1, top), { 1, highV } }, { point(side, top), { 0, highV } },
+                        } };
+                        auto gpu = packCorners(corners, *layer, EntityQuadFlag | FoggedQuadFlag | (1u << 9));
+                        gpu.words[14] = 0x80000000u | section.color;
+                        (shell ? blended : out).push_back(gpu);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /**
  * The quads of every entity close enough to the camera, placed around origin
  * in 1/256 block: players within 192 blocks, anything else within 72 blocks
@@ -588,6 +634,44 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     }
     double now = secondsNow();
     double worldTime = currentWorldTime(timeState);
+    const size_t actualActors = actorViews.size();
+    std::set<uint64_t> occupied;
+    for (const ActorView& actor : actorViews) occupied.insert(actor.runtimeId);
+    std::map<std::array<int32_t, 3>, SpawnerPose> shownSpawners;
+    for (const SpawnerView& view : spawnerViews) {
+        SpawnerPose pose;
+        if (const auto found = spawnerPoses.find(view.cell); found != spawnerPoses.end()) pose = found->second;
+        if (pose.identifier != view.display.identifier || occupied.contains(pose.id)) {
+            if (pose.id) {
+                animators.erase(pose.id);
+                actorPoses.erase(pose.id);
+                swimAmounts.erase(pose.id);
+            }
+            pose = {};
+        }
+        if (!pose.id) {
+            pose.id = LocalActorId - 1;
+            while (occupied.contains(pose.id)) --pose.id;
+            pose.identifier = view.display.identifier;
+            pose.time = now;
+        }
+        occupied.insert(pose.id);
+        pose.spin = world::spawnerDisplaySpin(pose.spin, now - pose.time, view.display.delay);
+        pose.time = now;
+        shownSpawners.emplace(view.cell, pose);
+        ActorView actor;
+        actor.runtimeId = pose.id;
+        actor.identifier = pose.identifier;
+        actor.x = view.cell[0] + 0.5;
+        actor.y = view.cell[1] + 0.4;
+        actor.z = view.cell[2] + 0.5;
+        actor.yaw = actor.headYaw = pose.spin;
+        actor.width = view.display.width;
+        actor.height = view.display.height;
+        actor.scale = world::spawnerDisplayScale(view.display);
+        actorViews.push_back(std::move(actor));
+    }
+    spawnerPoses = std::move(shownSpawners);
     double tickStart = playerView.tickTime;
     if (tickStart <= 0.0 || tickStart > now || now - tickStart > 2.0 / TicksPerSecond) {
         tickStart = std::floor(now * TicksPerSecond) / TicksPerSecond;
@@ -1359,6 +1443,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         lightQuads(out, firstWorn, light);
     }
     appendFrameItems(origin, out);
+    appendShelfItems(origin, out);
+    appendVaultItems(origin, out);
+    appendPots(origin, out);
+    appendBeaconBeams(origin, out, blended);
+    appendPistons(origin, out, blended);
     for (auto it = animators.begin(); it != animators.end();) {
         if (present.count(it->first)) {
             ++it;
@@ -1398,6 +1487,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
     }
     lastActorTime = now;
+    actorViews.resize(actualActors);
 }
 
 /**

@@ -37,6 +37,7 @@ namespace kestrel::modding {
 struct HostState;
 class ModSlot;
 class ChatService;
+class WorldCanvas;
 
 /**
  * Which blocks to draw as air: the listed names, or every block except them
@@ -223,7 +224,7 @@ public:
      * positions relative to camera. client draws the client's own world
      * shapes through the same painter, before the mods.
      */
-    void drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(mod::WorldPainter&)>& client = {});
+    void drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(WorldCanvas&)>& client = {});
 
     /**
      * Runs the mods' post processing passes over the world just drawn.

@@ -1405,7 +1405,7 @@ void ModManager::drawNotices(mod::Canvas& canvas, float width)
     }
 }
 
-void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(mod::WorldPainter&)>& client)
+void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(WorldCanvas&)>& client)
 {
     host->worldViewProjection = viewProjection;
     host->worldCamera = camera;

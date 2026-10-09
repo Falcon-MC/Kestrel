@@ -1185,6 +1185,15 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         crystalBeamTexture = entityTextureLayers();
         entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
     }
+    if (pack.readTexture("textures/entity/beacon_beam", beamImage)
+        && ui::decodeImage(beamImage, beamWidth, beamHeight, beamPixels) && beamWidth && beamHeight) {
+        auto resized = resizeNearest(beamPixels, beamWidth, beamHeight, EntityTextureSize);
+        beaconBeamTexture = entityTextureLayers();
+        entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
+        for (size_t pixel = 3; pixel < resized.size(); pixel += 4) resized[pixel] = uint8_t(resized[pixel] / 8);
+        beaconBeamShellTexture = entityTextureLayers();
+        entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
+    }
     geometries = std::make_shared<const GeometryLibrary>(std::move(library));
 }
 

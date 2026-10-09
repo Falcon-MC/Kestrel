@@ -4,6 +4,7 @@
 #include "client/HandVisibility.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
+#include "modding/Painters.h"
 
 #include "platform/Paths.h"
 #include "platform/Window.h"
@@ -655,6 +656,9 @@ int Client::run()
                 blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
                 appendParticles(deltaSeconds, entityOrigin, entityQuads, blendedQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
+                appendEnchantingBooks(entityOrigin, deltaSeconds, entityQuads);
+                appendConduits(entityOrigin, entityQuads);
+                appendBanners(entityOrigin, entityQuads, blendedQuads);
                 if (!menu.hudHidden()) {
                     if (handVisible(menu.hudHidden(), menu.option("hide_hand", 0) != 0)) {
                         appendFirstPerson(entityOrigin, handQuads);
@@ -693,10 +697,11 @@ int Client::run()
             mods->setEnvironment(environment);
             renderer->drawWorld(view);
             std::shared_ptr<const SessionSnapshot> shapesSnapshot = seenSessionSnapshot;
-            std::function<void(mod::WorldPainter&)> serverShapes;
-            if (shapesSnapshot && !shapesSnapshot->debugShapes.empty()) {
-                serverShapes = [shapesSnapshot](mod::WorldPainter& painter) {
-                    drawDebugShapes(painter, *shapesSnapshot, secondsNow());
+            std::function<void(modding::WorldCanvas&)> serverShapes;
+            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty()) {
+                serverShapes = [this, shapesSnapshot](modding::WorldCanvas& painter) {
+                    if (shapesSnapshot) drawDebugShapes(painter, *shapesSnapshot, secondsNow());
+                    drawSignTexts(painter);
                 };
             }
             mods->drawWorld(view.viewProjection, environment.camera, serverShapes);
@@ -1455,6 +1460,17 @@ void Client::syncSession()
         crackViews = snapshot.cracks;
         chestLidViews = snapshot.chestLids;
         frameItemViews = snapshot.frameItems;
+        shelfItemViews = snapshot.shelfItems;
+        enchantingBookViews = snapshot.enchantingBooks;
+        beaconBeamViews = snapshot.beaconBeams;
+        conduitViews = snapshot.conduits;
+        bannerViews = snapshot.banners;
+        signTextViews = snapshot.signTexts;
+        spawnerViews = snapshot.spawners;
+        vaultItemViews = snapshot.vaultItems;
+        potViews = snapshot.pots;
+        pistonViews = snapshot.pistons;
+        movingBlockViews = snapshot.movingBlocks;
     }
     ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
     targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();

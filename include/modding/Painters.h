@@ -66,6 +66,8 @@ public:
     void wireBox(const mod::Vec3& min, const mod::Vec3& max, mod::Color color, float width, bool throughWalls) override;
     void filledBox(const mod::Vec3& min, const mod::Vec3& max, mod::Color color, bool throughWalls) override;
     void text3d(const mod::Vec3& position, std::string_view text, mod::Color color, float scale, bool throughWalls) override;
+    void textOnPlane(const mod::Vec3& position, std::string_view text, mod::Color color,
+        const std::array<float, 3>& right, const std::array<float, 3>& up, float pixel, float width);
 
 private:
     void pushSolid(float x, float y, float z, uint32_t color);

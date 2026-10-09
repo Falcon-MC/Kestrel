@@ -8,11 +8,15 @@
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
+#include "client/BlockEntityText.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
 #include "client/WorldClock.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
+#include "world/BeaconBeam.h"
+#include "world/SpawnerDisplay.h"
+#include "world/PistonDisplay.h"
 #include "world/BlockBreaking.h"
 #include "world/BlockCollisions.h"
 #include "world/MeshScheduler.h"
@@ -145,6 +149,76 @@ struct FrameItemView {
     int32_t facing = 2;
     HudItem item;
     float rotation = 0.0f;
+};
+
+struct ShelfItemView {
+    std::array<int32_t, 3> cell {};
+    uint32_t rotation = 0;
+    std::array<HudItem, 3> items;
+};
+
+struct EnchantingBookView {
+    std::array<int32_t, 3> cell {};
+    float rotation = 0.0f;
+    bool lectern = false;
+};
+
+struct SignTextView {
+    std::array<int32_t, 3> cell {};
+    std::string name;
+    int32_t rotation = 0;
+    int32_t facing = 2;
+    bool hanging = false;
+    std::array<SignText, 2> sides;
+};
+
+struct BeaconBeamView {
+    std::array<int32_t, 3> cell {};
+    std::vector<world::BeaconBeamSection> sections;
+};
+
+struct ConduitView {
+    std::array<int32_t, 3> cell {};
+    bool open = false;
+};
+
+struct BannerView {
+    std::array<int32_t, 3> cell {};
+    bool wall = false;
+    float rotation = 0;
+    world::BannerDisplay display;
+};
+
+struct SpawnerView {
+    std::array<int32_t, 3> cell {};
+    world::SpawnerDisplay display;
+};
+
+struct VaultItemView {
+    std::array<int32_t, 3> cell {};
+    HudItem item;
+};
+
+struct PistonView {
+    std::array<int32_t, 3> cell {};
+    uint32_t head = world::NoModelTemplate;
+    int facing = 1;
+    world::PistonAnimation animation;
+};
+
+struct MovingBlockView {
+    std::array<int32_t, 3> cell {};
+    std::array<int32_t, 3> piston {};
+    uint32_t value = 0;
+    bool expanding = true;
+};
+
+struct PotView {
+    std::array<int32_t, 3> cell {};
+    std::array<uint8_t, 4> patterns {};
+    float rotation = 0;
+    int animation = 0;
+    double animationStart = 0;
 };
 
 /**
@@ -730,6 +804,17 @@ struct SessionSnapshot {
     std::vector<BlockCrack> cracks;
     std::vector<ChestLidView> chestLids;
     std::vector<FrameItemView> frameItems;
+    std::vector<ShelfItemView> shelfItems;
+    std::vector<EnchantingBookView> enchantingBooks;
+    std::vector<BeaconBeamView> beaconBeams;
+    std::vector<ConduitView> conduits;
+    std::vector<BannerView> banners;
+    std::vector<SignTextView> signTexts;
+    std::vector<SpawnerView> spawners;
+    std::vector<VaultItemView> vaultItems;
+    std::vector<PotView> pots;
+    std::vector<PistonView> pistons;
+    std::vector<MovingBlockView> movingBlocks;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -1092,6 +1177,12 @@ private:
     void tickChestLids();
     void tickFrameItems();
     uint32_t frameScanTicks = 0;
+    std::set<std::array<int32_t, 4>> activeConduitCells;
+    std::set<std::array<int32_t, 4>> activeBannerCells;
+    std::set<std::array<int32_t, 4>> activePotCells;
+    std::map<std::array<int32_t, 3>, std::pair<int, double>> potAnimations;
+    std::map<std::array<int32_t, 3>, world::PistonAnimation> pistonAnimations;
+    std::set<std::array<int32_t, 4>> activePistonCells;
     void markChestLid(const std::array<int32_t, 3>& cell, bool moving);
     void publishBreaking();
     double boomFraction();

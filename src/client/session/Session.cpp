@@ -420,6 +420,13 @@ void Session::resetSnapshot(std::string name, std::string target)
     std::lock_guard<std::mutex> guard(mutex);
     current = SessionSnapshot {};
     worldClock = {};
+    frameScanTicks = 0;
+    activeConduitCells.clear();
+    activeBannerCells.clear();
+    activePotCells.clear();
+    potAnimations.clear();
+    pistonAnimations.clear();
+    activePistonCells.clear();
     current.state = resolvesOnline(target) ? SessionState::Resolving : SessionState::Connecting;
     current.name = std::move(name);
     current.target = std::move(target);
@@ -1435,8 +1442,34 @@ void Session::handleWorldPacket(std::string& payload)
             }
         }
     } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
-        world.handle(actor, payloadSize);
         std::array<int32_t, 3> cell { actor->mBlockPosition.x, actor->mBlockPosition.y, actor->mBlockPosition.z };
+        const std::string id = actor->mData.getString("id", "");
+        if (id == "PistonArm") {
+            const Tag* state = actor->mData.get("State");
+            const int type = state && state->getType() == Tag::Type::Byte ? state->asByte() : -1;
+            const float progress = world::pistonProgress(actor->mData);
+            const double now = secondsNow();
+            if (pistonAnimations.contains(cell) || pistonAnimations.size() < 256) {
+                auto& animation = pistonAnimations[cell];
+                if (type == 1 || type == 3) animation = { progress, type == 1 ? 1.0f : 0.0f, now };
+                else if (now - animation.start >= 0.1) animation = { progress, progress, now };
+            }
+            if (activePistonCells.contains({ current.dimension, cell[0], cell[1], cell[2] })) actor->mData.putByte(world::PistonMovingKey, 1);
+            frameScanTicks = 10;
+        } else if (id == "MovingBlock") {
+            frameScanTicks = 10;
+        }
+        world.handle(actor, payloadSize);
+        if (actor->mData.getString("id", "") == "DecoratedPot") {
+            const Tag* animation = actor->mData.get("animation");
+            const int type = animation && animation->getType() == Tag::Type::Byte ? animation->asByte() : 0;
+            if ((type == 1 || type == 2) && (potAnimations.contains(cell) || potAnimations.size() < 256)) {
+                potAnimations[cell] = { type, secondsNow() };
+            } else if (!type) {
+                potAnimations.erase(cell);
+            }
+            frameScanTicks = 10;
+        }
         if (chestLidStates.contains(cell)) {
             markChestLid(cell, true);
         }
@@ -1507,6 +1540,9 @@ void Session::handleWorldPacket(std::string& payload)
         }
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
         motionDimension = dimension->mDimension;
+        frameScanTicks = 10;
+        potAnimations.clear();
+        pistonAnimations.clear();
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
         motionHistory.clear();
         serverMotions.clear();

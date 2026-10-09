@@ -1,6 +1,8 @@
 #pragma once
 
 #include "world/BiomeTints.h"
+#include "world/BannerDisplay.h"
+#include "world/DecoratedPot.h"
 #include "world/BlockCollisions.h"
 #include "world/BlockRegistry.h"
 #include "world/EntityAnimation.h"
@@ -55,6 +57,10 @@ enum ModelTemplateFlag : uint32_t {
     TemplateGateAxisX = 1 << 5,
     TemplateGateAxisZ = 1 << 6,
     TemplateDoor = 1 << 7,
+    TemplateChorus = 1 << 8,
+    TemplateChorusFlower = 1 << 9,
+    TemplateChorusSupport = 1 << 10,
+    TemplateRedstoneWire = 1 << 11,
 };
 
 enum ModelQuadFlag : uint32_t {
@@ -137,6 +143,12 @@ enum BlockEntityKind : uint8_t {
     EntityWallSkull,
     EntityCopperChest,
     EntityShulkerBox,
+    EntityCopperGolemStatue,
+    EntityConduit,
+    EntityStrawBed,
+    EntityDecoratedPot,
+    EntityPiston,
+    EntityFlowerPot,
 };
 
 inline constexpr size_t ChestKinds = 7;
@@ -153,6 +165,8 @@ inline constexpr const char* ChestLidMovingKey = "KestrelLidMoving";
 struct ChestLid {
     uint32_t modelTemplate = NoModelTemplate;
     uint32_t rotation = 0;
+    bool shulker = false;
+    uint32_t facing = 1;
 };
 
 /**
@@ -172,7 +186,22 @@ struct BlockEntityTemplates {
     std::array<std::array<uint32_t, 4>, SkullKinds> wallSkull {};
     std::array<std::array<uint32_t, FineRotations>, DyeColors> standingBanner {};
     std::array<std::array<uint32_t, 4>, DyeColors> wallBanner {};
-    std::array<uint32_t, DyeColors + 1> shulkerBox {};
+    std::array<uint32_t, FineRotations> standingBannerBody {};
+    std::array<uint32_t, 4> wallBannerBody {};
+    std::array<std::array<uint32_t, DyeColors>, 2> bannerCloth {};
+    std::array<std::array<uint32_t, BannerPatternNames.size() + 1>, 2> bannerPattern {};
+    std::array<std::array<uint32_t, 6>, DyeColors + 1> shulkerBox {};
+    std::array<std::array<uint32_t, 6>, DyeColors + 1> shulkerBody {};
+    std::array<uint32_t, DyeColors + 1> shulkerLid {};
+    std::array<std::array<std::array<uint32_t, 4>, 4>, 4> copperGolemStatue {};
+    uint32_t conduit = NoModelTemplate;
+    std::array<std::array<uint32_t, 4>, 2> strawBed {};
+    std::array<uint32_t, 7> enchantingBook {};
+    std::array<uint32_t, 5> activeConduit {};
+    uint32_t potBody = NoModelTemplate;
+    uint32_t potBlank = NoModelTemplate;
+    std::unordered_map<uint32_t, uint32_t> pottedPlants;
+    std::array<std::array<uint32_t, 4>, PotPatterns.size() + 1> potSides {};
 };
 
 struct BlockVisual {
@@ -187,6 +216,7 @@ struct BlockVisual {
     uint8_t lightFilter = 0;
     bool powderSnow = false;
     uint8_t doorState = 0;
+    uint8_t redstoneConnections = 0;
 
     bool emitsCubeGeometry() const
     {
@@ -471,6 +501,33 @@ public:
         return quads;
     }
 
+    const std::array<uint32_t, 7>& enchantingBookTemplates() const
+    {
+        return entityTemplates.enchantingBook;
+    }
+
+    const std::array<uint32_t, 5>& activeConduitTemplates() const
+    {
+        return entityTemplates.activeConduit;
+    }
+
+    uint32_t bannerClothTemplate(bool wall, uint8_t color) const
+    {
+        return entityTemplates.bannerCloth[wall ? 1 : 0][color & 15];
+    }
+
+    uint32_t bannerPatternTemplate(bool wall, size_t pattern) const
+    {
+        return pattern <= BannerPatternNames.size() ? entityTemplates.bannerPattern[wall ? 1 : 0][pattern] : NoModelTemplate;
+    }
+
+    uint32_t potBodyTemplate() const { return entityTemplates.potBody; }
+
+    uint32_t potSideTemplate(size_t pattern, size_t side) const
+    {
+        return pattern <= PotPatterns.size() && side < 4 ? entityTemplates.potSides[pattern][side] : NoModelTemplate;
+    }
+
     const BiomeTints& biomeTints() const
     {
         return biomes;
@@ -539,6 +596,7 @@ public:
     }
 
     std::optional<uint32_t> crystalBeamLayer() const { return crystalBeamTexture; }
+    std::optional<uint32_t> beaconBeamLayer(bool shell) const { return shell ? beaconBeamShellTexture : beaconBeamTexture; }
 
     uint32_t entityTextureLayers() const
     {
@@ -678,6 +736,8 @@ private:
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::optional<uint32_t> crystalBeamTexture;
+    std::optional<uint32_t> beaconBeamTexture;
+    std::optional<uint32_t> beaconBeamShellTexture;
     uint32_t armorGlintTexture = NoEntityChoice;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;

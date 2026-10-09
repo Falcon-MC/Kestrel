@@ -1,7 +1,11 @@
 #include "client/Session.h"
+#include "client/BlockEntityItems.h"
+#include "world/ConduitState.h"
+#include "world/EntityDisplayDimensions.h"
 
 #include "Protocol/Packets/ClientboundMapItemDataPacket.h"
 #include "Protocol/Packets/MapInfoRequestPacket.h"
+#include "Protocol/BlockStateHasher.h"
 
 #include <algorithm>
 #include <cmath>
@@ -54,6 +58,13 @@ HudItem frameItem(const Tag& item)
  */
 void Session::tickFrameItems()
 {
+    const double now = secondsNow();
+    for (const auto& [cell, animation] : pistonAnimations) {
+        if (now - animation.start < 0.15 && animation.from != animation.to) {
+            frameScanTicks = FrameScanInterval;
+            break;
+        }
+    }
     if (++frameScanTicks < FrameScanInterval || !assets) {
         return;
     }
@@ -63,15 +74,233 @@ void Session::tickFrameItems()
     int32_t chunkY = static_cast<int32_t>(std::floor(feet.y)) >> 4;
     int32_t chunkZ = static_cast<int32_t>(std::floor(feet.z)) >> 4;
     std::vector<FrameItemView> frames;
-    for (int32_t x = chunkX - FrameScanChunks; x <= chunkX + FrameScanChunks && frames.size() < MaxFrames; ++x) {
-        for (int32_t z = chunkZ - FrameScanChunks; z <= chunkZ + FrameScanChunks && frames.size() < MaxFrames; ++z) {
-            for (int32_t y = chunkY - FrameScanSections; y <= chunkY + FrameScanSections && frames.size() < MaxFrames; ++y) {
+    std::vector<ShelfItemView> shelves;
+    std::vector<EnchantingBookView> books;
+    std::vector<BeaconBeamView> beacons;
+    std::vector<ConduitView> conduits;
+    std::vector<BannerView> banners;
+    std::vector<SignTextView> signs;
+    std::vector<SpawnerView> spawners;
+    std::vector<VaultItemView> vaults;
+    std::vector<PotView> pots;
+    std::vector<PistonView> pistons;
+    std::vector<MovingBlockView> movingBlocks;
+    std::set<std::array<int32_t, 4>> activeCells;
+    std::set<std::array<int32_t, 4>> bannerCells;
+    std::set<std::array<int32_t, 4>> potCells;
+    std::set<std::array<int32_t, 4>> pistonCells;
+    auto count = [&] { return frames.size() + shelves.size() + books.size() + beacons.size() + conduits.size() + banners.size() + signs.size() + spawners.size() + vaults.size() + pots.size() + pistons.size() + movingBlocks.size(); };
+    std::unordered_map<uint32_t, std::string> names;
+    auto nameOf = [&](uint32_t value) -> const std::string& {
+        auto found = names.find(value);
+        if (found == names.end()) {
+            std::string name = assets->blockName(value, ids.hashed, ids.sequential.get());
+            if (!name.empty() && name.find(':') == std::string::npos) name.insert(0, "minecraft:");
+            found = names.emplace(value, std::move(name)).first;
+        }
+        return found->second;
+    };
+    for (int32_t x = chunkX - FrameScanChunks; x <= chunkX + FrameScanChunks && count() < MaxFrames; ++x) {
+        for (int32_t z = chunkZ - FrameScanChunks; z <= chunkZ + FrameScanChunks && count() < MaxFrames; ++z) {
+            for (int32_t y = chunkY - FrameScanSections; y <= chunkY + FrameScanSections && count() < MaxFrames; ++y) {
                 std::shared_ptr<const world::BlockEntityMap> entities = world.store().blockEntities({ current.dimension, x, y, z });
                 if (!entities) {
                     continue;
                 }
                 for (const auto& [index, data] : *entities) {
+                    if (count() >= MaxFrames) break;
                     std::string id = data.getString("id", "");
+                    const std::array<int32_t, 3> cell { x * 16 + int32_t((index >> 8) & 15), y * 16 + int32_t(index & 15), z * 16 + int32_t((index >> 4) & 15) };
+                    if ((id == "Shelf" && !nameOf(blockAt(cell[0], cell[1], cell[2])).ends_with("_shelf"))
+                        || (id == "EnchantTable" && nameOf(blockAt(cell[0], cell[1], cell[2])) != "minecraft:enchanting_table")
+                        || (id == "Lectern" && nameOf(blockAt(cell[0], cell[1], cell[2])) != "minecraft:lectern")
+                        || ((id == "Sign" || id == "HangingSign") && !nameOf(blockAt(cell[0], cell[1], cell[2])).ends_with("sign"))
+                        || (id == "MobSpawner" && nameOf(blockAt(cell[0], cell[1], cell[2])) != "minecraft:mob_spawner")
+                        || (id == "Banner" && !nameOf(blockAt(cell[0], cell[1], cell[2])).ends_with("banner"))
+                        || (id == "Beacon" && nameOf(blockAt(cell[0], cell[1], cell[2])) != "minecraft:beacon")
+                        || (id == "Conduit" && nameOf(blockAt(cell[0], cell[1], cell[2])) != "minecraft:conduit")) {
+                        continue;
+                    }
+                    if (id == "PistonArm") {
+                        const auto& visual = assets->visual(blockAt(cell[0], cell[1], cell[2]), ids.hashed, ids.sequential.get());
+                        if (visual.blockEntity != world::EntityPiston) continue;
+                        PistonView piston;
+                        piston.cell = cell;
+                        piston.head = visual.modelTemplate + 3;
+                        piston.facing = int(visual.variant);
+                        const float progress = world::pistonProgress(data);
+                        piston.animation = { progress, progress, now };
+                        if (const auto found = pistonAnimations.find(cell); found != pistonAnimations.end()) piston.animation = found->second;
+                        pistons.push_back(piston);
+                        pistonCells.insert({ current.dimension, cell[0], cell[1], cell[2] });
+                        if (!data.get(world::PistonMovingKey)) {
+                            Tag updated = data;
+                            updated.putByte(world::PistonMovingKey, 1);
+                            world.store().setBlockEntity(current.dimension, cell[0], cell[1], cell[2], std::move(updated));
+                        }
+                    } else if (id == "MovingBlock" && nameOf(blockAt(cell[0], cell[1], cell[2])) == "minecraft:moving_block") {
+                        const Tag* state = data.get("movingBlock");
+                        const Tag* name = state ? state->get("name") : nullptr;
+                        const Tag* properties = state ? state->get("states") : nullptr;
+                        if (!name || name->getType() != Tag::Type::String || name->asString().size() > 256
+                            || !properties || !properties->isCompound()) continue;
+                        MovingBlockView moving;
+                        moving.cell = cell;
+                        bool valid = true;
+                        static constexpr const char* Keys[3] = { "pistonPosX", "pistonPosY", "pistonPosZ" };
+                        for (size_t axis = 0; axis < 3; ++axis) {
+                            const Tag* position = data.get(Keys[axis]);
+                            if (!position || position->getType() != Tag::Type::Int
+                                || std::abs(int64_t(position->asInt()) - cell[axis]) > 13) { valid = false; break; }
+                            moving.piston[axis] = position->asInt();
+                        }
+                        if (!valid) continue;
+                        const Tag* expanding = data.get("expanding");
+                        moving.expanding = expanding && expanding->getType() == Tag::Type::Byte && expanding->asByte() != 0;
+                        std::string blockName = name->asString();
+                        if (blockName.find(':') == std::string::npos) blockName.insert(0, "minecraft:");
+                        const uint32_t hash = uint32_t(BlockStateHasher::hash(blockName, *properties));
+                        const auto value = assets->networkValueForState(hash, ids.hashed, ids.sequential.get());
+                        if (!value) continue;
+                        moving.value = *value;
+                        movingBlocks.push_back(moving);
+                    } else if (id == "DecoratedPot" && nameOf(blockAt(cell[0], cell[1], cell[2])) == "minecraft:decorated_pot") {
+                        PotView pot;
+                        pot.cell = cell;
+                        pot.patterns = world::potPatterns(data);
+                        pot.rotation = float(assets->visual(blockAt(cell[0], cell[1], cell[2]), ids.hashed, ids.sequential.get()).variant & 3) * 1.5707963f;
+                        if (const auto found = potAnimations.find(cell); found != potAnimations.end()) {
+                            pot.animation = found->second.first;
+                            pot.animationStart = found->second.second;
+                        }
+                        pots.push_back(pot);
+                        potCells.insert({ current.dimension, cell[0], cell[1], cell[2] });
+                        if (!data.get(world::PotMovingKey)) {
+                            Tag updated = data;
+                            updated.putByte(world::PotMovingKey, 1);
+                            world.store().setBlockEntity(current.dimension, cell[0], cell[1], cell[2], std::move(updated));
+                        }
+                    } else if (id == "Shelf") {
+                        ShelfItemView shelf;
+                        shelf.cell = cell;
+                        shelf.items = shelfItems(data);
+                        uint32_t value = blockAt(cell[0], cell[1], cell[2]);
+                        if (const Tag* states = assets->blockStates(value, ids.hashed, ids.sequential.get())) {
+                            const std::string direction = states->getString("minecraft:cardinal_direction", "south");
+                            shelf.rotation = direction == "west" ? 1 : direction == "north" ? 2 : direction == "east" ? 3 : 0;
+                        }
+                        shelves.push_back(std::move(shelf));
+                    } else if (id == "Banner") {
+                        BannerView banner;
+                        banner.cell = cell;
+                        const auto& visual = assets->visual(blockAt(cell[0], cell[1], cell[2]), ids.hashed, ids.sequential.get());
+                        if (visual.blockEntity != world::EntityWallBanner && visual.blockEntity != world::EntityStandingBanner) continue;
+                        banner.wall = visual.blockEntity == world::EntityWallBanner;
+                        banner.rotation = float(visual.variant & (banner.wall ? 3u : 15u)) * (banner.wall ? 1.5707963f : 0.3926991f);
+                        banner.display = world::bannerDisplay(data);
+                        banners.push_back(std::move(banner));
+                        bannerCells.insert({ current.dimension, cell[0], cell[1], cell[2] });
+                        if (!data.get(world::BannerMovingKey)) {
+                            Tag updated = data;
+                            updated.putByte(world::BannerMovingKey, 1);
+                            world.store().setBlockEntity(current.dimension, cell[0], cell[1], cell[2], std::move(updated));
+                        }
+                    } else if (id == "Conduit") {
+                        auto water = [&](int dx, int dy, int dz) {
+                            for (uint32_t layer = 0; layer < 2; ++layer) {
+                                uint32_t value = blockAt(cell[0] + dx, cell[1] + dy, cell[2] + dz, layer);
+                                if (value != world::ImplicitAir && assets->visual(value, ids.hashed, ids.sequential.get()).liquid == 1) return true;
+                            }
+                            return false;
+                        };
+                        const int frame = world::conduitFrameCount(water, [&](int dx, int dy, int dz) {
+                            return world::conduitFrame(nameOf(blockAt(cell[0] + dx, cell[1] + dy, cell[2] + dz)));
+                        });
+                        const bool active = frame >= 16;
+                        if (active) {
+                            conduits.push_back({ cell, frame == 42 });
+                            activeCells.insert({ current.dimension, cell[0], cell[1], cell[2] });
+                        }
+                        if ((data.get(world::ConduitActiveKey) != nullptr) != active) {
+                            Tag updated = data;
+                            if (active) updated.putByte(world::ConduitActiveKey, 1);
+                            else updated.remove(world::ConduitActiveKey);
+                            world.store().setBlockEntity(current.dimension, cell[0], cell[1], cell[2], std::move(updated));
+                        }
+                    } else if (id == "Beacon" && beacons.size() < 32) {
+                        bool base = true;
+                        for (int dx = -1; dx <= 1 && base; ++dx) {
+                            for (int dz = -1; dz <= 1; ++dz) {
+                                if (!world::beaconBase(nameOf(blockAt(cell[0] + dx, cell[1] - 1, cell[2] + dz)))) {
+                                    base = false;
+                                    break;
+                                }
+                            }
+                        }
+                        world::DimensionRange range;
+                        if (base && world::vanillaDimensionRange(current.dimension, range)) {
+                            BeaconBeamView beacon;
+                            beacon.cell = cell;
+                            beacon.sections = world::beaconSections(cell[1], (range.baseSubChunkY + range.subChunkCount) * 16,
+                                [&](int32_t height) {
+                                    uint32_t value = blockAt(cell[0], height, cell[2]);
+                                    const std::string& name = nameOf(value);
+                                    const auto color = world::beaconGlassColor(name);
+                                    bool blocked = value != world::ImplicitAir && !color && name != "minecraft:bedrock"
+                                        && assets->visual(value, ids.hashed, ids.sequential.get()).lightFilter >= 15;
+                                    return world::BeaconColumnBlock { blocked, color };
+                                });
+                            if (!beacon.sections.empty()) beacons.push_back(std::move(beacon));
+                        }
+                    } else if (id == "EnchantTable" || id == "Lectern") {
+                        EnchantingBookView book;
+                        book.cell = cell;
+                        book.lectern = id == "Lectern";
+                        if (book.lectern) {
+                            const Tag* item = data.get("book");
+                            if (!item || !item->isCompound() || frameItem(*item).empty()) continue;
+                            if (const Tag* states = assets->blockStates(blockAt(cell[0], cell[1], cell[2]), ids.hashed, ids.sequential.get())) {
+                                const std::string facing = states->getString("minecraft:cardinal_direction", "south");
+                                book.rotation = (facing == "west" ? 1 : facing == "north" ? 2 : facing == "east" ? 3 : 0) * 1.5707963f;
+                            }
+                        } else {
+                            const Tag* rotation = data.get("rott");
+                            if (rotation && rotation->getType() == Tag::Type::Float && std::isfinite(rotation->asFloat())) {
+                                book.rotation = std::remainder(rotation->asFloat(), 6.2831853f);
+                            }
+                        }
+                        books.push_back(book);
+                    } else if (id == "MobSpawner" || nameOf(blockAt(cell[0], cell[1], cell[2])) == "minecraft:trial_spawner") {
+                        auto display = world::spawnerDisplay(data, id != "MobSpawner");
+                        if (id != "MobSpawner") {
+                            if (const auto size = world::entityDisplaySize(display.identifier)) {
+                                display.width = size->width;
+                                display.height = size->height;
+                            }
+                        }
+                        if (!display.identifier.empty()) spawners.push_back({ cell, std::move(display) });
+                    } else if (nameOf(blockAt(cell[0], cell[1], cell[2])) == "minecraft:vault") {
+                        const Tag* item = data.get("display_item");
+                        if (item) {
+                            auto displayed = blockEntityItem(*item);
+                            if (!displayed.empty()) vaults.push_back({ cell, std::move(displayed) });
+                        }
+                    } else if (id == "Sign" || id == "HangingSign") {
+                        SignTextView sign;
+                        sign.cell = cell;
+                        sign.name = nameOf(blockAt(cell[0], cell[1], cell[2]));
+                        sign.sides = signTexts(data);
+                        if (const Tag* states = assets->blockStates(blockAt(cell[0], cell[1], cell[2]), ids.hashed, ids.sequential.get())) {
+                            sign.rotation = states->getInt("ground_sign_direction", 0);
+                            sign.facing = states->getInt("facing_direction", 2);
+                            const Tag* hanging = states->get("hanging");
+                            sign.hanging = hanging && hanging->getType() == Tag::Type::Byte && hanging->asByte() != 0;
+                        }
+                        signs.push_back(std::move(sign));
+                    }
+                    if (count() >= MaxFrames) {
+                        break;
+                    }
                     if (id != "ItemFrame" && id != "GlowItemFrame") {
                         continue;
                     }
@@ -95,15 +324,80 @@ void Session::tickFrameItems()
                         }
                     }
                     frames.push_back(std::move(view));
-                    if (frames.size() >= MaxFrames) {
+                    if (count() >= MaxFrames) {
                         break;
                     }
                 }
             }
         }
     }
+    for (const auto& cell : activeConduitCells) {
+        if (activeCells.contains(cell)) continue;
+        const auto entities = world.store().blockEntities({ cell[0], cell[1] >> 4, cell[2] >> 4, cell[3] >> 4 });
+        if (!entities) continue;
+        const auto index = static_cast<uint16_t>(world::linearIndex(uint32_t(cell[1] & 15), uint32_t(cell[2] & 15), uint32_t(cell[3] & 15)));
+        const auto found = entities->find(index);
+        if (found == entities->end() || !found->second.get(world::ConduitActiveKey)) continue;
+        Tag data = found->second;
+        data.remove(world::ConduitActiveKey);
+        world.store().setBlockEntity(cell[0], cell[1], cell[2], cell[3], std::move(data));
+    }
+    activeConduitCells = std::move(activeCells);
+    for (const auto& cell : activeBannerCells) {
+        if (bannerCells.contains(cell)) continue;
+        const auto entities = world.store().blockEntities({ cell[0], cell[1] >> 4, cell[2] >> 4, cell[3] >> 4 });
+        if (!entities) continue;
+        const auto index = static_cast<uint16_t>(world::linearIndex(uint32_t(cell[1] & 15), uint32_t(cell[2] & 15), uint32_t(cell[3] & 15)));
+        const auto found = entities->find(index);
+        if (found == entities->end() || !found->second.get(world::BannerMovingKey)) continue;
+        Tag data = found->second;
+        data.remove(world::BannerMovingKey);
+        world.store().setBlockEntity(cell[0], cell[1], cell[2], cell[3], std::move(data));
+    }
+    activeBannerCells = std::move(bannerCells);
+    for (const auto& cell : activePotCells) {
+        if (potCells.contains(cell)) continue;
+        const auto entities = world.store().blockEntities({ cell[0], cell[1] >> 4, cell[2] >> 4, cell[3] >> 4 });
+        if (!entities) continue;
+        const auto index = static_cast<uint16_t>(world::linearIndex(uint32_t(cell[1] & 15), uint32_t(cell[2] & 15), uint32_t(cell[3] & 15)));
+        const auto found = entities->find(index);
+        if (found == entities->end() || !found->second.get(world::PotMovingKey)) continue;
+        Tag data = found->second;
+        data.remove(world::PotMovingKey);
+        world.store().setBlockEntity(cell[0], cell[1], cell[2], cell[3], std::move(data));
+    }
+    activePotCells = std::move(potCells);
+    for (const auto& cell : activePistonCells) {
+        if (pistonCells.contains(cell)) continue;
+        const auto entities = world.store().blockEntities({ cell[0], cell[1] >> 4, cell[2] >> 4, cell[3] >> 4 });
+        if (!entities) continue;
+        const auto index = uint16_t(world::linearIndex(uint32_t(cell[1] & 15), uint32_t(cell[2] & 15), uint32_t(cell[3] & 15)));
+        const auto found = entities->find(index);
+        if (found == entities->end() || !found->second.get(world::PistonMovingKey)) continue;
+        Tag data = found->second;
+        data.remove(world::PistonMovingKey);
+        world.store().setBlockEntity(cell[0], cell[1], cell[2], cell[3], std::move(data));
+    }
+    activePistonCells = std::move(pistonCells);
+    std::erase_if(pistonAnimations, [&](const auto& entry) {
+        return !activePistonCells.contains({ current.dimension, entry.first[0], entry.first[1], entry.first[2] }) && now - entry.second.start > 0.2;
+    });
+    std::erase_if(potAnimations, [&](const auto& entry) {
+        return !activePotCells.contains({ current.dimension, entry.first[0], entry.first[1], entry.first[2] });
+    });
     std::lock_guard<std::mutex> guard(mutex);
     current.frameItems = std::move(frames);
+    current.shelfItems = std::move(shelves);
+    current.enchantingBooks = std::move(books);
+    current.beaconBeams = std::move(beacons);
+    current.conduits = std::move(conduits);
+    current.banners = std::move(banners);
+    current.signTexts = std::move(signs);
+    current.spawners = std::move(spawners);
+    current.vaultItems = std::move(vaults);
+    current.pots = std::move(pots);
+    current.pistons = std::move(pistons);
+    current.movingBlocks = std::move(movingBlocks);
 }
 
 /**
