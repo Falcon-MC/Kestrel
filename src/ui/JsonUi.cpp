@@ -10,6 +10,41 @@
 
 namespace kestrel::ui {
 
+UiEvent jsonui::collectionTarget(const Node& node)
+{
+    UiEvent result;
+    bool namedCollection = false;
+    for (const Node* at = &node; at; at = at->parent) {
+        if (at->index >= 0 && !at->collection.empty()) {
+            namedCollection = true;
+            break;
+        }
+    }
+    for (const Node* at = &node; at; at = at->parent) {
+        if (at->index < 0 || (namedCollection && at->collection.empty())) {
+            continue;
+        }
+        if (result.index < 0) {
+            result.index = at->index;
+            result.collection = at->collection;
+        } else {
+            result.outerIndex = at->index;
+            break;
+        }
+    }
+    if (result.index < 0) {
+        // Standalone container cells bind the first row without a grid ancestor.
+        for (const Node* at = &node; at; at = at->parent) {
+            if (!at->detailsCollection.empty()) {
+                result.collection = at->detailsCollection;
+                result.index = 0;
+                break;
+            }
+        }
+    }
+    return result;
+}
+
 UiValue UiValue::of(bool value)
 {
     UiValue result;
