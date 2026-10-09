@@ -44,6 +44,24 @@ enum class Family {
 enum class ModelKind {
     None,
     Honey,
+    Piston,
+    Azalea,
+    CandleCake,
+    SculkSensor,
+    SculkShrieker,
+    SeaPickle,
+    Chorus,
+    Dripleaf,
+    SmallDripleaf,
+    CoralFan,
+    SporeBlossom,
+    Sunflower,
+    CropStem,
+    PitcherCrop,
+    DriedGhast,
+    RedstoneWire,
+    Tripwire,
+    TripwireHook,
     Slab,
     Stair,
     Fence,
@@ -125,6 +143,9 @@ struct ShapeBox {
     // Pixel rects per face when the box uses part of a texture, like an end rod's rod.
     std::optional<std::array<std::array<uint16_t, 4>, 6>> uvs;
     uint8_t hidden = 0;
+    uint16_t uvSize = 16;
+    uint16_t textureVariant = 0;
+    std::array<int16_t, 3> offset {};
 };
 
 /**
@@ -140,6 +161,7 @@ struct BlockShape {
     int facing = -1;
     int crossSide = -1;
     int planeSide = -1;
+    int16_t planeHeight = 16;
 };
 
 bool isShapeName(const std::string& name);

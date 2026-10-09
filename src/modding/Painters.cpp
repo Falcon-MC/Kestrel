@@ -293,6 +293,30 @@ void WorldCanvas::text3d(const mod::Vec3& position, std::string_view text, mod::
     queueSolid(throughWalls);
 }
 
+void WorldCanvas::textOnPlane(const mod::Vec3& position, std::string_view text, mod::Color color,
+    const std::array<float, 3>& planeRight, const std::array<float, 3>& planeUp, float pixel, float width)
+{
+    if (!font || text.empty() || !(pixel > 0) || !std::isfinite(pixel)) return;
+    label.reset(1.0f, font->whiteU(), font->whiteV());
+    label.setClip({ -width * 0.5f, 0, width, 40 });
+    font->drawNameTag(label, text, color, false);
+    const Point center = relativeTo(position, eye);
+    const auto& vertices = label.vertices();
+    scratch.clear();
+    scratch.reserve(vertices.size() / 4 * 6);
+    for (size_t quad = 0; quad + 3 < vertices.size(); quad += 4) {
+        for (int corner : { 0, 1, 2, 0, 2, 3 }) {
+            const auto& vertex = vertices[quad + corner];
+            const float across = vertex.x * pixel;
+            const float down = (vertex.y - 19.0f) * pixel;
+            scratch.push_back({ center[0] + planeRight[0] * across - planeUp[0] * down,
+                center[1] + planeRight[1] * across - planeUp[1] * down,
+                center[2] + planeRight[2] * across - planeUp[2] * down, vertex.u, vertex.v, vertex.color });
+        }
+    }
+    queueSolid(false);
+}
+
 void WorldCanvas::pushSolid(float x, float y, float z, uint32_t color)
 {
     float u = font ? font->whiteU() : 0.0f;

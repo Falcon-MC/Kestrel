@@ -906,8 +906,11 @@ void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField
 
 class ModelContext {
 public:
-    ModelContext(const BlockAssets& assets, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours)
+    ModelContext(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, const PaletteFacts& facts,
+        const std::array<const PaletteFacts*, 6>& neighbours)
         : assets(assets)
+        , ids(ids)
+        , input(input)
         , facts(facts)
         , neighbours(neighbours)
     {
@@ -953,6 +956,40 @@ public:
     uint32_t flagsOf(const BlockVisual& visual) const
     {
         return assets.templateFlags(visual);
+    }
+
+    const BlockVisual& relative(int32_t x, int32_t y, int32_t z) const
+    {
+        if (x >= 0 && x < 16 && y >= 0 && y < 16 && z >= 0 && z < 16) return facts.at(uint32_t(x), uint32_t(y), uint32_t(z));
+        const int32_t dx = x < 0 ? -1 : x >= 16 ? 1 : 0;
+        const int32_t dy = y < 0 ? -1 : y >= 16 ? 1 : 0;
+        const int32_t dz = z < 0 ? -1 : z >= 16 ? 1 : 0;
+        const auto& chunk = input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)];
+        static const BlockVisual air { FlagAir, {} };
+        if (!chunk || chunk->storages().empty()) return air;
+        const auto& storage = chunk->storages().front();
+        const uint32_t value = storage.palette()[storage.paletteIndex(linearIndex(uint32_t(x - dx * 16), uint32_t(y - dy * 16), uint32_t(z - dz * 16)))];
+        return hiddenValue(ids, value) ? air : assets.visual(value, ids.hashed, ids.sequential.get());
+    }
+
+    uint32_t redstoneMask(uint32_t x, uint32_t y, uint32_t z) const
+    {
+        static constexpr std::array<std::array<int32_t, 2>, 4> Offsets { { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } } };
+        const bool covered = adjacent(x, y, z, Face::PositiveY).flags & FlagOccludesFullFace;
+        uint32_t mask = 0;
+        for (uint32_t side = 0; side < 4; ++side) {
+            const int32_t nx = int32_t(x) + Offsets[side][0];
+            const int32_t nz = int32_t(z) + Offsets[side][1];
+            const auto& neighbour = relative(nx, int32_t(y), nz);
+            if (neighbour.redstoneConnections & (1u << ((side + 2) & 3))) {
+                mask |= 1u << side;
+            } else if (neighbour.flags & FlagOccludesFullFace) {
+                if (!covered && (flagsOf(relative(nx, int32_t(y) + 1, nz)) & TemplateRedstoneWire)) mask |= 17u << side;
+            } else if (flagsOf(relative(nx, int32_t(y) - 1, nz)) & TemplateRedstoneWire) {
+                mask |= 1u << side;
+            }
+        }
+        return mask;
     }
 
     uint32_t connectedMask(uint32_t x, uint32_t y, uint32_t z, uint32_t connectionFlag) const
@@ -1042,6 +1079,20 @@ public:
     {
         uint32_t flags = flagsOf(visual);
         count = 1;
+        if (flags & TemplateRedstoneWire) {
+            return { visual.modelTemplate + redstoneMask(x, y, z), NoModelTemplate };
+        }
+        if (flags & TemplateChorus) {
+            uint32_t mask = 0;
+            for (uint32_t side = 0; side < 6; ++side) {
+                const uint32_t neighbourFlags = flagsOf(adjacent(x, y, z, static_cast<Face>(side)));
+                if ((neighbourFlags & (TemplateChorus | TemplateChorusFlower))
+                    || (side == static_cast<uint32_t>(Face::NegativeY) && (neighbourFlags & TemplateChorusSupport))) {
+                    mask |= 1u << side;
+                }
+            }
+            return { visual.modelTemplate + mask, NoModelTemplate };
+        }
         if (flags & TemplateDoor) {
             uint8_t state = visual.doorState;
             const BlockVisual& other = adjacent(x, y, z, (state & DoorUpper) ? Face::NegativeY : Face::PositiveY);
@@ -1068,6 +1119,8 @@ public:
 
 private:
     const BlockAssets& assets;
+    const IdMapping& ids;
+    const MeshInput& input;
     const PaletteFacts& facts;
     const std::array<const PaletteFacts*, 6>& neighbours;
 };
@@ -1173,12 +1226,12 @@ void meshBlockEntity(const BlockAssets& assets, const BlockVisual& visual, const
     }
 }
 
-void meshModels(const BlockAssets& assets, const MeshInput& input, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, TintSampler& tints, const LightField& field, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
+void meshModels(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, const PaletteFacts& facts, const std::array<const PaletteFacts*, 6>& neighbours, TintSampler& tints, const LightField& field, std::vector<ModelQuadGpu>& opaque, std::vector<ModelQuadGpu>& translucent)
 {
     if (const BlockVisual* uniform = facts.uniformVisual(); uniform && !uniform->hasModel()) {
         return;
     }
-    ModelContext context(assets, facts, neighbours);
+    ModelContext context(assets, ids, input, facts, neighbours);
     const std::vector<ModelTemplate>& templates = assets.modelTemplates();
     const std::vector<ModelQuad>& quads = assets.modelQuads();
     for (uint32_t x = 0; x < Side; ++x) {
@@ -1586,7 +1639,7 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
             greedySlice(facts, tints, field, face, slice, rows, mesh.cubes, mesh.translucentCubes);
         }
     }
-    meshModels(assets, input, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
+    meshModels(assets, ids, input, facts, neighbours, tints, field, mesh.models, mesh.translucentModels);
     if (cancelled()) return {};
     LiquidMesher(assets, ids, input, tints, field).mesh(mesh.models, mesh.translucentModels);
     if (cancelled()) return {};

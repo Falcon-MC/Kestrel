@@ -45,12 +45,13 @@ bool isCropName(const std::string& name)
 bool isCrossName(const std::string& name)
 {
     static const char* const crosses[] = {
-        "short_grass", "tall_grass", "short_dry_grass", "tall_dry_grass", "fern", "large_fern", "deadbush", "bush",
-        "red_flower", "yellow_flower", "dandelion", "poppy", "blue_orchid", "allium", "azure_bluet", "oxeye_daisy",
+        "short_grass", "tall_grass", "short_dry_grass", "tall_dry_grass", "fern", "large_fern", "deadbush", "bush", "red_shrub",
+        "red_flower", "yellow_flower", "dandelion", "golden_dandelion", "poppy", "blue_orchid", "allium", "azure_bluet", "oxeye_daisy",
+        "red_tulip", "orange_tulip", "white_tulip", "pink_tulip",
         "cornflower", "lily_of_the_valley", "wither_rose", "sunflower", "lilac", "rose_bush", "peony", "brown_mushroom",
-        "red_mushroom", "crimson_fungus", "warped_fungus", "crimson_roots", "warped_roots", "nether_sprouts",
+        "red_mushroom", "crimson_fungus", "warped_fungus", "crimson_roots", "warped_roots", "nether_sprouts", "pitcher_plant",
         "mangrove_propagule", "hanging_roots", "pale_hanging_moss", "firefly_bush", "reeds", "weeping_vines",
-        "twisting_vines", "web", "fire", "soul_fire", "torchflower",
+        "twisting_vines", "web", "fire", "soul_fire", "torchflower", "open_eyeblossom", "closed_eyeblossom", "pointed_dripstone", "sulfur_spike",
     };
     if (name == "chorus_flower") {
         return false;
@@ -73,9 +74,9 @@ bool isEndPortalName(const std::string& name)
 
 bool isDeferredName(const std::string& name)
 {
-    return name == "chest" || name == "trapped_chest" || name == "ender_chest" || endsWith(name, "copper_chest") || name == "bed"
+    return name == "decorated_pot" || name == "conduit" || name == "chest" || name == "trapped_chest" || name == "ender_chest" || endsWith(name, "copper_chest") || name == "bed"
         || endsWith(name, "_bed") || name == "standing_banner" || name == "wall_banner" || contains(name, "shulker_box")
-        || name == "skull" || endsWith(name, "_skull") || endsWith(name, "_head");
+        || name == "skull" || endsWith(name, "_skull") || endsWith(name, "_head") || contains(name, "copper_golem_statue");
 }
 
 Family classify(const std::string& name)
@@ -83,7 +84,7 @@ Family classify(const std::string& name)
     if (name == "air") {
         return Family::Air;
     }
-    if (name == "water" || name == "flowing_water" || name == "lava" || name == "flowing_lava") {
+    if (name == "water" || name == "flowing_water" || name == "bubble_column" || name == "lava" || name == "flowing_lava") {
         return Family::Liquid;
     }
     if (isDeferredName(name)) {
@@ -96,7 +97,11 @@ Family classify(const std::string& name)
     if (name == "bone_block" || name == "hay_block" || name == "chiseled_quartz_block" || name == "purpur_block" || name == "quartz_block" || name == "smooth_quartz" || name == "tnt" || endsWith(name, "_glazed_terracotta")) {
         return Family::Cube;
     }
-    if (isShapeName(name) || name == "soul_sand" || name == "mud" || name == "honey_block"
+    if (name == "piston" || name == "sticky_piston" || isShapeName(name) || name == "azalea" || name == "flowering_azalea" || endsWith(name, "candle_cake")
+        || name == "sculk_sensor" || name == "calibrated_sculk_sensor" || name == "sculk_shrieker" || name == "sea_pickle"
+        || name == "big_dripleaf" || name == "chorus_plant" || name == "small_dripleaf_block" || name == "spore_blossom" || name == "dried_ghast"
+        || name == "redstone_wire" || name == "trip_wire" || name == "tripwire_hook"
+        || name == "soul_sand" || name == "mud" || name == "honey_block"
         || contains(name, "trapdoor") || endsWith(name, "_door") || name == "wooden_door" || endsWith(name, "_stairs")
         || contains(name, "slab") || contains(name, "fence_gate") || endsWith(name, "_wall") || name == "cobblestone_wall" || name == "border_block"
         || endsWith(name, "_fence") || name == "fence" || name == "nether_brick_fence" || contains(name, "glass_pane")
@@ -106,7 +111,7 @@ Family classify(const std::string& name)
         || endsWith(name, "_button") || name == "stone_button" || contains(name, "pressure_plate")
         || endsWith(name, "_carpet") || name == "carpet" || name == "snow_layer"
         || isAquaticName(name) || isCropName(name) || name == "vine" || name == "glow_lichen" || name == "sculk_vein" || name == "resin_clump" || name == "cactus"
-        || name == "cake" || name == "farmland" || isCrossName(name) || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
+        || name == "cake" || name == "farmland" || name == "grass_path" || name == "dirt_path" || isCrossName(name) || name == "ladder" || name == "waterlily" || name == "lily_pad" || name == "bamboo"
         || name == "amethyst_cluster" || endsWith(name, "_amethyst_bud") || name == "chain" || endsWith(name, "_chain")) {
         return Family::Model;
     }
@@ -123,6 +128,60 @@ Family classify(const std::string& name)
 
 ModelKind modelKind(const std::string& name)
 {
+    if (name == "piston" || name == "sticky_piston") {
+        return ModelKind::Piston;
+    }
+    if (name == "tripwire_hook") {
+        return ModelKind::TripwireHook;
+    }
+    if (name == "redstone_wire") {
+        return ModelKind::RedstoneWire;
+    }
+    if (name == "trip_wire") {
+        return ModelKind::Tripwire;
+    }
+    if (name == "dried_ghast") {
+        return ModelKind::DriedGhast;
+    }
+    if (name == "melon_stem" || name == "pumpkin_stem") {
+        return ModelKind::CropStem;
+    }
+    if (name == "pitcher_crop") {
+        return ModelKind::PitcherCrop;
+    }
+    if (contains(name, "coral_fan") || contains(name, "coral_wall_fan")) {
+        return ModelKind::CoralFan;
+    }
+    if (name == "small_dripleaf_block") {
+        return ModelKind::SmallDripleaf;
+    }
+    if (name == "spore_blossom") {
+        return ModelKind::SporeBlossom;
+    }
+    if (name == "sunflower") {
+        return ModelKind::Sunflower;
+    }
+    if (name == "chorus_plant") {
+        return ModelKind::Chorus;
+    }
+    if (name == "big_dripleaf") {
+        return ModelKind::Dripleaf;
+    }
+    if (name == "sculk_sensor" || name == "calibrated_sculk_sensor") {
+        return ModelKind::SculkSensor;
+    }
+    if (name == "sculk_shrieker") {
+        return ModelKind::SculkShrieker;
+    }
+    if (name == "sea_pickle") {
+        return ModelKind::SeaPickle;
+    }
+    if (name == "azalea" || name == "flowering_azalea") {
+        return ModelKind::Azalea;
+    }
+    if (endsWith(name, "candle_cake")) {
+        return ModelKind::CandleCake;
+    }
     if (name == "honey_block") {
         return ModelKind::Honey;
     }
@@ -263,7 +322,7 @@ uint8_t blockTint(const std::string& name, int face)
         static constexpr uint8_t Faces[6] = { Grass | TintOverlay, Grass | TintOverlay, 0, Grass, Grass | TintOverlay, Grass | TintOverlay };
         return Faces[face];
     }
-    if (name == "water" || name == "flowing_water") {
+    if (name == "water" || name == "flowing_water" || name == "bubble_column") {
         return uint8_t(TintKind::Water);
     }
     if (name == "oak_leaves" || name == "dark_oak_leaves" || name == "jungle_leaves" || name == "acacia_leaves" || name == "mangrove_leaves" || name == "vine") {
@@ -275,6 +334,9 @@ uint8_t blockTint(const std::string& name, int face)
     if (name == "spruce_leaves") {
         return Foliage | (uint8_t(FoliageVariant::Evergreen) << TintVariantShift);
     }
+    if (name == "leaf_litter") {
+        return Foliage | (uint8_t(FoliageVariant::Dry) << TintVariantShift);
+    }
     if (name == "short_grass" || name == "tall_grass" || name == "fern" || name == "large_fern" || name == "bush") {
         return Grass;
     }
@@ -283,7 +345,7 @@ uint8_t blockTint(const std::string& name, int face)
 
 bool isTranslucentName(const std::string& name)
 {
-    return contains(name, "stained_glass") || name == "water" || name == "flowing_water" || name == "ice" || name == "slime"
+    return contains(name, "stained_glass") || name == "water" || name == "flowing_water" || name == "bubble_column" || name == "ice" || name == "slime"
         || name == "honey_block" || name == "portal" || name == "tinted_glass";
 }
 
@@ -314,6 +376,27 @@ uint8_t facingDirectionRotation(int32_t facing)
 
 bool classifyBlockEntity(const std::string& name, const Tag& states, BlockVisual& visual)
 {
+    if (name == "straw_bed") {
+        visual.blockEntity = EntityStrawBed;
+        visual.variant = facingRotation(stateString(states, "minecraft:cardinal_direction")) | (stateInt(states, "head_piece_bit").value_or(0) ? 4u : 0u);
+        return true;
+    }
+    if (name == "conduit") {
+        visual.blockEntity = EntityConduit;
+        return true;
+    }
+    if (name == "decorated_pot") {
+        visual.blockEntity = EntityDecoratedPot;
+        const std::string facing = stateString(states, "minecraft:cardinal_direction");
+        visual.variant = facing.empty() ? uint32_t(stateInt(states, "direction").value_or(0)) & 3 : facingRotation(facing);
+        return true;
+    }
+    if (contains(name, "copper_golem_statue")) {
+        visual.blockEntity = EntityCopperGolemStatue;
+        const uint32_t oxidation = contains(name, "oxidized") ? 3 : contains(name, "weathered") ? 2 : contains(name, "exposed") ? 1 : 0;
+        visual.variant = facingRotation(stateString(states, "minecraft:cardinal_direction")) | (oxidation << 2);
+        return true;
+    }
     static constexpr const char* Skulls[SkullKinds] = { "skeleton_skull", "wither_skeleton_skull", "zombie_head", "creeper_head", "player_head", "piglin_head", "dragon_head" };
     static constexpr const char* ShulkerColors[DyeColors] = {
         "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",

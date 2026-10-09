@@ -1071,6 +1071,61 @@ void Client::appendFrameItems(const std::array<int32_t, 3>& origin, std::vector<
     }
 }
 
+void Client::appendShelfItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    for (const ShelfItemView& shelf : shelfItemViews) {
+        const float yaw = float(shelf.rotation) * Pi * 0.5f;
+        const float cosine = std::cos(yaw);
+        const float sine = std::sin(yaw);
+        for (size_t slot = 0; slot < shelf.items.size(); ++slot) {
+            const HudItem& item = shelf.items[slot];
+            if (item.empty()) {
+                continue;
+            }
+            HeldItemMesh* mesh = heldMesh(item);
+            if (!mesh || mesh->faces.empty()) {
+                continue;
+            }
+            const float scale = 0.25f / (mesh->block ? HeldCubeSize : HeldItemSize);
+            const float offset = (float(slot) - 1.0f) * 0.3125f;
+            auto place = [&](const Vec3& point, bool) {
+                const float x = offset + point[0] * scale;
+                const float z = -0.25f + point[2] * scale;
+                return Vec3 {
+                    (float(shelf.cell[0] - origin[0]) + 0.5f + x * cosine - z * sine) * 256.0f,
+                    (float(shelf.cell[1] - origin[1]) + 0.5f + point[1] * scale) * 256.0f,
+                    (float(shelf.cell[2] - origin[2]) + 0.5f + x * sine + z * cosine) * 256.0f,
+                };
+            };
+            const size_t first = out.size();
+            appendHeldItem(item, place, out);
+            lightQuads(out, first, lightCorners(shelf.cell[0] + 0.5 - sine * 0.5, shelf.cell[1] + 0.5, shelf.cell[2] + 0.5 + cosine * 0.5));
+        }
+    }
+}
+
+void Client::appendVaultItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    const float yaw = float(std::fmod((secondsNow() - startSeconds) * 3.4906585, 2.0 * Pi));
+    const float cosine = std::cos(yaw);
+    const float sine = std::sin(yaw);
+    for (const VaultItemView& vault : vaultItemViews) {
+        HeldItemMesh* mesh = heldMesh(vault.item);
+        if (!mesh || mesh->faces.empty()) continue;
+        const float scale = mesh->block ? 0.5f : 0.5f / HeldItemSize;
+        auto place = [&](const Vec3& point, bool) {
+            return Vec3 {
+                (float(vault.cell[0] - origin[0]) + 0.5f + (point[0] * cosine - point[2] * sine) * scale) * 256,
+                (float(vault.cell[1] - origin[1]) + 0.4f + point[1] * scale) * 256,
+                (float(vault.cell[2] - origin[2]) + 0.5f + (point[0] * sine + point[2] * cosine) * scale) * 256,
+            };
+        };
+        const size_t first = out.size();
+        appendHeldItem(vault.item, place, out);
+        lightQuads(out, first, lightCorners(vault.cell[0] + 0.5, vault.cell[1] + 0.4, vault.cell[2] + 0.5));
+    }
+}
+
 /**
  * A filled map held in first person the way the game shows it: in front of
  * the view, raised toward the eye as the player looks down and lowered while
