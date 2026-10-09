@@ -210,6 +210,10 @@ public:
 
         uiTextures = device->createTextureSet(1, false, SamplerMode::PixelClamp);
         worldTextures = device->createTextureSet(WorldTextureCount, true, SamplerMode::TerrainWrap);
+        // Index 5 selects corner 3 in the existing shaders while shared indices reuse the other corners.
+        static constexpr uint32_t QuadIndices[6] = { 0, 1, 2, 0, 2, 5 };
+        quadIndices = device->createPersistentBuffer(sizeof(QuadIndices));
+        device->uploadBuffer(*quadIndices, QuadIndices, sizeof(QuadIndices));
 
         PipelineDesc primitive;
         primitive.library = ShaderLibrary::Primitive;
@@ -438,6 +442,7 @@ public:
         }
         FrameBuffers& buffers = frames[device->frameSlot()];
         WorldConstants constants(view);
+        device->setIndexBuffer(*quadIndices, 6 * sizeof(uint32_t));
         auto bind = [&](const Pipeline& pipeline, float x, float y, float z) {
             device->setPipeline(pipeline);
             device->setTextures(*worldTextures);
@@ -451,7 +456,7 @@ public:
             }
             bind(pipeline, static_cast<float>(chunk.origin[0] - view.cameraX), static_cast<float>(chunk.origin[1] - view.cameraY), static_cast<float>(chunk.origin[2] - view.cameraZ));
             device->setVertexBuffer(*chunk.buffers[stream], StreamStride[stream], static_cast<size_t>(count) * StreamStride[stream]);
-            device->draw(6, count, 0, 0);
+            device->drawIndexed(6, count, 0);
         };
 
         if (view.backgroundCount) {
@@ -494,7 +499,7 @@ public:
             device->setDepthRange(maxDepth);
             bind(pipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
             device->setVertexBuffer(*buffers.entities, ModelQuadBytes, entityBytes);
-            device->draw(6, count, 0, first);
+            device->drawIndexed(6, count, first);
             device->setDepthRange(1.0f);
         };
         drawEntities(*modelPipeline, 0, view.entityQuadCount, 1.0f);
@@ -512,7 +517,7 @@ public:
             auto constants = draw.constants;
             device->setActorConstants(constants.data(), static_cast<uint32_t>(constants.size()));
             device->setVertexBuffer(*mesh.buffer, ModelQuadBytes, size_t(draw.total) * ModelQuadBytes);
-            device->draw(6, draw.count, 0, draw.first);
+            device->drawIndexed(6, draw.count, draw.first);
         };
         for (uint32_t index = 0; index < view.actorDrawCount; ++index) {
             if (!view.actorDraws[index].blended) drawActor(index);
@@ -635,7 +640,7 @@ public:
             }
             size_t stream = first.stream - 2;
             device->setVertexBuffer(*buffers.translucent[stream], StreamStride[first.stream], sortedCounts[stream] * StreamStride[first.stream]);
-            device->draw(6, count, 0, first.quad);
+            device->drawIndexed(6, count, first.quad);
             index += count;
         }
         drawEntities(*overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0f);
@@ -959,6 +964,7 @@ private:
     std::unique_ptr<Pipeline> skyPipeline;
     std::unique_ptr<TextureSet> uiTextures;
     std::unique_ptr<TextureSet> worldTextures;
+    std::unique_ptr<Buffer> quadIndices;
     std::unique_ptr<Texture> atlas;
     uint32_t atlasWidth = 0;
     uint32_t atlasHeight = 0;
