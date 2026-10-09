@@ -342,22 +342,6 @@ float wrapDegrees(float degrees)
 }
 
 /**
- * The yaw an actor's model is placed with in the world: sprite bones carry
- * the camera's rotation in a half turned basis, projectile bones carry their
- * absolute rotation, and everything else turns with its body.
- */
-float actorWorldYaw(const ActorView& actor)
-{
-    if (world::cameraFacingSprite(actor.identifier)) {
-        return 180.0f;
-    }
-    if (world::targetRotationIsAbsolute(actor.identifier)) {
-        return 0.0f;
-    }
-    return wrapDegrees(actor.yaw);
-}
-
-/**
  * A player's body trailing its head the way the game turns it, advanced by
  * ticks while it moves stepX and stepZ blocks a tick: it swings toward the
  * walking direction (facing forward while backing up), never lets the head
@@ -650,6 +634,17 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             continue;
         }
+        if (actor.identifier == "minecraft:tnt") {
+            if (!invisible) {
+                if (const world::BlockVisual* visual = blockAssets->itemCube("minecraft:tnt")) {
+                    size_t first = out.size(), firstBlended = blended.size();
+                    appendActorBlock(actor, *visual, origin, out, blended);
+                    lightQuads(out, first, light);
+                    lightQuads(blended, firstBlended, light);
+                }
+            }
+            continue;
+        }
         const world::EntityModel* model = actor.slim ? blockAssets->entityModel(actor.identifier + "#slim") : nullptr;
         if (!model) {
             model = blockAssets->entityModel(actor.identifier);
@@ -679,6 +674,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         input.horseFlags = actor.horseFlags;
         input.nativeVelocity = actor.velocity;
         input.metadataQueries = actor.animationQueries;
+        input.properties = actor.animationProperties;
         input.skinId = actor.skinId;
         input.identifier = actor.identifier;
         input.name = actor.name;
@@ -782,6 +778,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
         uint32_t rigIndex = controller ? pickChoice(animator, controller->geometry, controller->geometryChoices) : 0;
         const world::EntityRig* chosenRig = &model->rigs[rigIndex < model->rigs.size() ? rigIndex : 0];
+        const world::EntityRig* geometryRig = chosenRig;
         if (combined) {
             chosenRig = &model->combined;
         } else if (actor.skinSlot != NoSkin) {
@@ -791,12 +788,19 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         }
         const world::EntityRig& rig = *chosenRig;
         ActorPose& pose = actorPoses[actor.runtimeId];
-        bool stale = animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
+        const world::EntityRig* poseSource = combined ? geometryRig : chosenRig;
+        bool geometryChanged = pose.source != poseSource;
+        if (geometryChanged) {
+            pose.source = poseSource;
+            if (combined) pose.bones = world::poseBonesForGeometry(rig.bones, geometryRig->bones);
+        }
+        const auto& animationBones = combined ? pose.bones : rig.bones;
+        bool stale = geometryChanged || animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
         bool billboard = world::cameraFacingSprite(actor.identifier);
         if (stale || pose.tick != actorTickStart || billboard) {
             Profiler::Section section(profiler, "  animation");
             if (billboard) input.now = now;
-            animator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, input);
+            animator.update(model->scripts.get(), &blockAssets->animationLibrary(), animationBones, input);
             pose.previous = stale || billboard ? animator.matrices() : std::move(pose.current);
             pose.current = animator.matrices();
             pose.tick = actorTickStart;
@@ -878,7 +882,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 while (walker >= 0 && size_t(walker) < rig.bones.size() && actorPartState[size_t(walker)] == 0) {
                     actorPartState[size_t(walker)] = 1;
                     actorPartPath.push_back(size_t(walker));
-                    walker = rig.bones[size_t(walker)].parent;
+                    walker = animationBones[size_t(walker)].parent;
                 }
                 uint8_t inherited = walker >= 0 && size_t(walker) < rig.bones.size() && actorPartState[size_t(walker)] == 2 ? hidden[size_t(walker)] : 0;
                 for (auto it = actorPartPath.rbegin(); it != actorPartPath.rend(); ++it) {
@@ -893,7 +897,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             uint32_t chosen = source ? pickChoice(animator, source->texture, source->textureChoices) : world::NoEntityChoice;
             return chosen != world::NoEntityChoice ? chosen : model->layer;
         };
-        float radians = (180.0f - actorWorldYaw(actor)) * 3.14159265f / 180.0f;
+        float radians = (180.0f - world::entityModelYaw(actor.identifier, actor.yaw)) * 3.14159265f / 180.0f;
         float cosine = std::cos(radians);
         float sine = std::sin(radians);
         std::optional<std::array<float, 2>> glide = glideRotation(actor, now, actorPartialTick);
@@ -968,6 +972,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             return matched;
         };
         const world::EntityRenderController* renderingController = nullptr;
+        world::EntityMaterialChoice renderingMaterial;
         std::array<float, 36> surfaceConstants {};
         auto emitQuad = [&](const world::ModelQuad& quad, const world::BoneMatrix* matrix, uint32_t layer, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim, float offsetV) {
             auto place = [&](const std::array<float, 3>& point) {
@@ -1035,7 +1040,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (!lit) shadeWord |= FoggedQuadFlag;
-            if (renderingController && renderingController->material == world::EntityMaterial::AlphaTest) shadeWord |= 1u << 14;
+            if (renderingMaterial.material == world::EntityMaterial::AlphaTest) shadeWord |= 1u << 14;
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
@@ -1060,6 +1065,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         pose.gpuTransforms.resize(rig.bones.size() + 1);
         auto setSurface = [&](const world::EntityRenderController* controller, uint32_t layer) {
             renderingController = controller;
+            renderingMaterial = controller ? controller->selectedMaterial(animator.evaluate(controller->materialSelector)) : world::EntityMaterialChoice {};
             surfaceConstants.fill(0.0f);
             surfaceConstants[4] = surfaceConstants[5] = surfaceConstants[6] = surfaceConstants[7] = 1.0f;
             surfaceConstants[8] = surfaceConstants[9] = surfaceConstants[10] = surfaceConstants[11] = 1.0f;
@@ -1100,7 +1106,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 surfaceConstants[22 + index * 4] = grid.coverX;
                 surfaceConstants[23 + index * 4] = grid.coverY;
             }
-            surfaceConstants[19] = std::bit_cast<float>(controller ? uint32_t(controller->material) : 0u);
+            surfaceConstants[19] = std::bit_cast<float>(uint32_t(renderingMaterial.material));
             surfaceConstants[35] = surfaceConstants[15];
         };
         auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided, world::EntityBlend blend) {
@@ -1270,7 +1276,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 for (size_t quad = 0; quad < rig.quads.size(); ++quad) {
                     const world::CombinedQuadSource& from = model->combinedSources[quad];
                     if (from.controller == index && from.rig == picked) {
-                        emit(quad, layer, hidden, source.blend, source.oneSided, !source.ignoreLighting, uvAnim);
+                        emit(quad, layer, hidden, renderingMaterial.blend, renderingMaterial.oneSided, !source.ignoreLighting, uvAnim);
                     }
                 }
             }
@@ -1278,13 +1284,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             uint32_t layer = skinView && skinView->base.present ? blockAssets->skinLayerBase() + skinView->base.layer : textureOf(controller);
             actorPartHidden.clear();
             const std::vector<uint8_t>& hidden = controller ? hiddenBones(*controller).get() : actorPartHidden;
-            world::EntityBlend blend = controller ? controller->blend : world::EntityBlend::Opaque;
-            bool oneSided = controller && controller->oneSided;
             bool lit = !controller || !controller->ignoreLighting;
             std::array<uint32_t, 2> uvAnim = uvAnimOf(controller);
             setSurface(controller, layer);
             for (size_t index = 0; index < rig.quads.size(); ++index) {
-                emit(index, layer, hidden, blend, oneSided, lit, uvAnim);
+                emit(index, layer, hidden, renderingMaterial.blend, renderingMaterial.oneSided, lit, uvAnim);
             }
             if (skinView) {
                 double lifeTime = animator.evaluate(lifeTimeScript());

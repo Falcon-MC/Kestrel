@@ -483,7 +483,7 @@ if(KESTREL_BUILD_TESTS)
         src/util/JsonText.cpp
         src/util/Text.cpp)
     target_include_directories(KestrelEntityRenderingTest PRIVATE include)
-    target_link_libraries(KestrelEntityRenderingTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    target_link_libraries(KestrelEntityRenderingTest PRIVATE FalconNetwork FalconProtocol ZLIB::ZLIB)
     add_test(NAME entity-rendering COMMAND KestrelEntityRenderingTest)
     add_executable(KestrelCrystalAnchorTest tests/CrystalAnchor.cpp)
     target_include_directories(KestrelCrystalAnchorTest PRIVATE include)

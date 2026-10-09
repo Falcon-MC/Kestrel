@@ -1,6 +1,8 @@
 #include "client/ActorEquipment.h"
+#include "client/ActorProperties.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
+#include "world/EntityMaterialBlend.h"
 #include "world/Geometry.h"
 #include "world/ItemGlint.h"
 #include "Core/Json/Json.h"
@@ -8,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 void require(bool condition, const char* message)
 {
@@ -26,6 +29,153 @@ int main()
 {
     using namespace kestrel;
     using namespace kestrel::world;
+    for (const char* identifier : { "minecraft:xp_orb", "minecraft:fireball", "minecraft:small_fireball", "minecraft:dragon_fireball" }) {
+        require(entityModelYaw(identifier, 75.0f) == 0.0f, "South-facing sprites must keep their visible face toward the camera");
+    }
+    require(entityModelYaw("minecraft:snowball", 75.0f) == 180.0f, "North-facing sprites must retain their authored basis");
+    require(entityModelYaw("minecraft:arrow", 75.0f) == 0.0f, "Projectile animations must retain absolute yaw");
+    require(entityModelYaw("minecraft:cow", 435.0f) == 75.0f, "Regular actors must turn with their body yaw");
+    EntityMaterialBlendLibrary materials;
+    auto materialDocument = json::parse(R"({"materials":{"base":{"+states":["Blending"],"blendSrc":"One","blendDst":"One"},"middle:base":{},"overlay:middle":{},"alpha:base":{"blendDst":"OneMinusSrcAlpha"},"opaque:overlay":{"-states":["Blending"]},"reset:base":{"states":[]},"cycle_a:cycle_b":{},"cycle_b:cycle_a":{}}})");
+    materials.parse(*materialDocument);
+    require(materials.find("overlay") == EntityBlend::Additive, "Entity overlays must inherit additive blending through material parents");
+    require(materials.find("alpha") == EntityBlend::Blend, "A child material must override inherited blend factors");
+    require(materials.find("opaque") == EntityBlend::Opaque && materials.find("reset") == EntityBlend::Opaque,
+        "Removing or replacing states must disable inherited blending");
+    require(!materials.find("missing") && !materials.find("cycle_a"), "Missing and cyclic material parents must not recurse indefinitely");
+    auto emissiveDocument = json::parse(R"({"materials":{"glow":{"+defines":["USE_EMISSIVE"]},"mob:glow":{},"masked:mob":{"-defines":["USE_EMISSIVE"]}}})");
+    materials.parse(*emissiveDocument);
+    require(materials.emissive("mob") == true, "Entity materials must inherit the shader that preserves low-alpha emissive pixels");
+    require(materials.emissive("masked") == false && !materials.emissive("cycle_a"), "Removed defines and cycles must not enable emissive shading");
+    auto multiDocument = json::parse(R"({"materials":{"multi":{"+defines":["USE_MULTITEXTURE"]},"decor:multi":{},"plain:decor":{"-defines":["USE_MULTITEXTURE"]},"replace:decor":{"defines":[]}}})");
+    materials.parse(*multiDocument);
+    require(materials.multitexture("decor") == true, "Material aliases must inherit layered textures for entity decorations");
+    require(materials.multitexture("plain") == false && materials.multitexture("replace") == false,
+        "Removed or replaced defines must disable inherited texture layers");
+    EntityRenderController materialController;
+    materialController.materialChoices = { { EntityMaterial::Dragon, EntityBlend::Opaque, false }, { EntityMaterial::AlphaTest, EntityBlend::Additive, true } };
+    require(materialController.selectedMaterial(0).material == EntityMaterial::Dragon && materialController.selectedMaterial(1).blend == EntityBlend::Additive,
+        "Material selectors must change shader and blending together");
+    require(materialController.selectedMaterial(-1).material == EntityMaterial::Dragon
+            && materialController.selectedMaterial(std::numeric_limits<double>::quiet_NaN()).material == EntityMaterial::Dragon
+            && materialController.selectedMaterial(1e300).oneSided,
+        "Malformed material indices must select a bounded fallback without integer overflow");
+    Tag propertyData = Tag::ofCompound();
+    propertyData.putString("type", "test:mob");
+    Tag propertyList = Tag::ofList(Tag::Type::Compound);
+    for (const auto& [name, type] : { std::pair { "test:state", 3 }, { "test:amount", 1 }, { "test:visible", 2 } }) {
+        Tag entry = Tag::ofCompound();
+        entry.putString("name", name);
+        entry.putInt("type", type);
+        if (type == 3) entry.put("enum", Tag::ofList(Tag::Type::String, { Tag::ofString("idle"), Tag::ofString("moving") }));
+        propertyList.addToList(std::move(entry));
+    }
+    propertyData.put("properties", propertyList);
+    auto propertySchema = ActorPropertySchema::read(propertyData);
+    require(propertySchema.has_value(), "Valid server property schemas must retain their wire order");
+    EntityProperties properties;
+    properties.mIntProperties = { { 0, 1 }, { 2, 0 } };
+    properties.mFloatProperties = { { 1, 0.75f } };
+    AnimationInput propertyInput;
+    propertySchema->apply(properties, propertyInput.properties);
+    std::vector<EntityBone> propertyBones(1);
+    EntityAnimator propertyAnimator;
+    propertyAnimator.update(nullptr, nullptr, propertyBones, propertyInput);
+    require(expression(propertyAnimator, "query.property('test:state') == 'moving'") == 1, "Enum properties must compare as Molang strings");
+    require(expression(propertyAnimator, "query.property('test:amount')") == 0.75, "Float properties must use their schema index");
+    require(expression(propertyAnimator, "query.has_property('test:visible')") == 1, "A false property is still present");
+    require(expression(propertyAnimator, "query.has_property('test:unknown')") == 0, "Unknown properties must remain absent");
+    auto tempDocument = json::parse(R"({"scripts":{"initialize":["t.state = 'moving';"],"pre_animation":["v.leaked = t.state == 'moving';","t.state = q.property('test:state');","v.selected = t.state == 'moving';"]}})");
+    auto tempScripts = readEntityScripts(*tempDocument);
+    EntityAnimator tempAnimator;
+    tempAnimator.update(tempScripts.get(), nullptr, propertyBones, propertyInput);
+    require(expression(tempAnimator, "v.selected") == 1, "Temporary values must survive between lines in one animation script block");
+    require(expression(tempAnimator, "v.leaked") == 0, "Temporary values must not leak between initialization and pre-animation blocks");
+    tempAnimator.update(tempScripts.get(), nullptr, propertyBones, propertyInput);
+    require(expression(tempAnimator, "v.leaked") == 0, "Temporary values must be reset before the next pre-animation block");
+    properties.mIntProperties = { { 0, 0 } };
+    properties.mFloatProperties.clear();
+    propertySchema->apply(properties, propertyInput.properties);
+    require(propertyInput.properties.at("test:amount") == 0.75, "Partial property updates must preserve unchanged values");
+    require(propertyInput.properties.at("test:state") == molang::internString("idle"), "An enum update must replace its previous value");
+    properties.mIntProperties = { { -1, 1 }, { 0, 99 }, { 1, 9 }, { 2, 2 }, { 999, 0 } };
+    properties.mFloatProperties = { { 1, std::numeric_limits<float>::infinity() }, { 0, 1.0f } };
+    propertySchema->apply(properties, propertyInput.properties);
+    require(propertyInput.properties.at("test:state") == molang::internString("idle") && propertyInput.properties.at("test:amount") == 0.75 && propertyInput.properties.at("test:visible") == 0,
+        "Invalid indices, types and values must not corrupt actor properties");
+    require(!ActorPropertySchema::read(Tag::ofInt(0)), "Non-compound property schemas must be rejected");
+    Tag invalidData = propertyData;
+    invalidData.get("properties")->addToList(propertyList.getList().front());
+    require(!ActorPropertySchema::read(invalidData), "Duplicate property names must not shift wire indices");
+    std::vector<EntityBone> combinedBones(3);
+    combinedBones[0].name = "arm";
+    combinedBones[0].pivot = { 0, 6, 0 };
+    combinedBones[0].parent = 1;
+    combinedBones[1].name = "body";
+    combinedBones[2].name = "overlay";
+    combinedBones[2].parent = 1;
+    std::vector<EntityBone> adultBones(2);
+    adultBones[0].name = "Body";
+    adultBones[0].pivot = { 0, 20, 0 };
+    adultBones[1].name = "Arm";
+    adultBones[1].parent = 0;
+    adultBones[1].pivot = { 0, 22, 0 };
+    auto adultPose = poseBonesForGeometry(combinedBones, adultBones);
+    require(adultPose[0].pivot[1] == 22 && adultPose[0].parent == 1 && adultPose[1].parent == -1,
+        "Selected adult geometry must replace baby pivots and remap parent indices");
+    require(adultPose[2].name == "overlay" && adultPose[2].parent == 1,
+        "Selecting a geometry must preserve additional controller bones");
+    auto babyBones = adultBones;
+    babyBones[1].pivot[1] = 6;
+    auto babyPose = poseBonesForGeometry(combinedBones, babyBones);
+    require(babyPose[0].pivot[1] == 6, "Switching variants must restore the selected geometry's pivot");
+    auto absoluteDescription = json::parse(R"({"animations":{"move":"animation.guardian.spikes"},"scripts":{"animate":["move"]}})");
+    auto absoluteScripts = readEntityScripts(*absoluteDescription);
+    auto absoluteDocument = json::parse(R"({"animations":{"animation.guardian.spikes":{"loop":true,"bones":{"spike":{"position":["-this","16-this","-this"]}}}}})");
+    AnimationLibrary absoluteLibrary;
+    absoluteLibrary.parse(*absoluteDocument);
+    std::vector<EntityBone> absoluteBones(1);
+    absoluteBones[0].name = "spike";
+    absoluteBones[0].pivot = { 0, 24, 0 };
+    AnimationInput absoluteInput;
+    absoluteInput.identifier = "minecraft:guardian";
+    EntityAnimator absoluteAnimator;
+    absoluteAnimator.update(absoluteScripts.get(), &absoluteLibrary, absoluteBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == -8, "Absolute guardian positions must subtract their geometry pivot");
+    absoluteInput.identifier = "minecraft:elder_guardian";
+    absoluteAnimator.update(absoluteScripts.get(), &absoluteLibrary, absoluteBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == -8, "Elder guardians must use the same absolute spike coordinates");
+    auto polarDescription = json::parse(R"({"animations":{"move":"animation.polarbear.move"},"scripts":{"animate":["move"]}})");
+    auto polarScripts = readEntityScripts(*polarDescription);
+    auto polarDocument = json::parse(R"({"animations":{"animation.polarbear.move":{"loop":true,"bones":{"body":{"position":[0,"-9-this",0]},"leg":{"position":[0,0,0]}}}}})");
+    AnimationLibrary polarLibrary;
+    polarLibrary.parse(*polarDocument);
+    std::vector<EntityBone> polarBones(2);
+    polarBones[0].name = "body";
+    polarBones[0].pivot = { 0, 15, 0 };
+    polarBones[1].name = "leg";
+    polarBones[1].pivot = { 0, 10, 0 };
+    polarBones[1].parent = 0;
+    absoluteInput.identifier = "minecraft:polar_bear";
+    absoluteAnimator.update(polarScripts.get(), &polarLibrary, polarBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == 0 && absoluteAnimator.matrices()[1][7] == 0,
+        "Legacy polar bear body coordinates must not translate its legs through the floor");
+    auto endermanDescription = json::parse(R"({"animations":{"pose":"animation.enderman.base_pose"},"scripts":{"animate":["pose"]}})");
+    auto endermanScripts = readEntityScripts(*endermanDescription);
+    auto endermanDocument = json::parse(R"({"animations":{"animation.enderman.base_pose":{"loop":true,"bones":{"body":{"position":[0,"11-this",0]},"head":{"position":[0,"-this",0]},"hat":{"position":[0,"-this",0]},"leg":{"position":[0,"-5-this",0]}}}}})");
+    AnimationLibrary endermanLibrary;
+    endermanLibrary.parse(*endermanDocument);
+    std::vector<EntityBone> endermanBones(4);
+    for (size_t index = 0; index < endermanBones.size(); ++index) {
+        endermanBones[index].name = std::array { "body", "head", "hat", "leg" }[index];
+        endermanBones[index].pivot[1] = std::array { 38.0f, 24.0f, 38.0f, 26.0f }[index];
+        endermanBones[index].parent = std::array { -1, 0, 1, 0 }[index];
+    }
+    absoluteInput.identifier = "minecraft:enderman";
+    absoluteAnimator.update(endermanScripts.get(), &endermanLibrary, endermanBones, absoluteInput);
+    const auto& endermanMatrices = absoluteAnimator.matrices();
+    require(endermanMatrices[0][7] == -3 && endermanMatrices[1][7] == 11 && endermanMatrices[2][7] == -3 && endermanMatrices[3][7] == 4,
+        "Legacy Enderman positions must use each parent origin rather than stacking absolute offsets");
     static_assert(sizeof(ActorDraw::constants) == 240);
     ModelQuadGpu glintQuad;
     glintQuad.words[10] = 8191;
@@ -139,6 +289,14 @@ int main()
     animator.update(nullptr, nullptr, bones, input);
     require(expression(animator, "query.is_item_name_any('slot.armor.body', 'minecraft:diamond_horse_armor')") == 0, "Removing body armor must hide the attachable");
     require(expression(animator, "query.armor_texture_slot(5)") == 0, "Out-of-range armor slots must remain invalid");
+
+    input.identifier = "minecraft:llama";
+    for (const auto& [item, index] : { std::pair { "minecraft:white_carpet", 1 }, { "minecraft:light_gray_carpet", 9 },
+             { "minecraft:red_carpet", 15 }, { "minecraft:black_carpet", 16 }, { "minecraft:diamond_horse_armor", 0 }, { "", 0 } }) {
+        input.armorItems[4] = item;
+        animator.update(nullptr, nullptr, bones, input);
+        require(expression(animator, "v.DecorTextureIndex") == index, "Llama decorations must follow equipped carpet colors and clear on removal");
+    }
 
     input.identifier = "minecraft:wolf";
     input.armorItems[4] = "minecraft:wolf_armor";
