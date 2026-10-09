@@ -6,6 +6,7 @@
 #include "util/JsonText.h"
 #include "util/Text.h"
 #include "world/EntityAnimation.h"
+#include "world/EntityMaterialBlend.h"
 #include "world/Geometry.h"
 #include "world/ItemInfo.h"
 #include "world/MolangScript.h"
@@ -477,7 +478,8 @@ struct RenderControllerSource {
     std::array<molang::Script, 4> hurtColor;
     std::array<molang::Script, 4> fireColor;
     std::vector<EntityPartRule> parts;
-    std::string material;
+    molang::Script material;
+    std::vector<std::string> materialChoices;
     bool ignoreLighting = false;
     std::array<molang::Script, 4> uvAnim;
     bool uvAnimated = false;
@@ -601,6 +603,7 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
         const json::Value* arrays = controller.get("arrays");
         ControllerArrays textureArrays = readControllerArrays(arrays ? arrays->get("textures") : nullptr);
         ControllerArrays geometryArrays = readControllerArrays(arrays ? arrays->get("geometries") : nullptr);
+        ControllerArrays materialArrays = readControllerArrays(arrays ? arrays->get("materials") : nullptr);
         RenderControllerSource parsed;
         std::string geometry = "Geometry.default";
         if (const json::Value* value = controller.get("geometry"); value && value->isString()) {
@@ -631,14 +634,16 @@ void readRenderControllers(const std::string& text, std::unordered_map<std::stri
         colorOf("overlay_color", parsed.overlay, { 0, 0, 0, 0 });
         colorOf("is_hurt_color", parsed.hurtColor, { 1, 0, 0, 0.5 });
         colorOf("on_fire_color", parsed.fireColor, { 1, 1, 1, 0 });
+        std::string material = "Material.default";
         if (const json::Value* list = controller.get("materials"); list && list->isArray() && !list->mArray.empty()) {
             const json::Value& first = *list->mArray.front();
             if (!first.mKeys.empty()) {
                 if (const json::Value* value = first.get(first.mKeys.front()); value && value->isString()) {
-                    parsed.material = lowercase(value->mString);
+                    material = value->mString;
                 }
             }
         }
+        parsed.material = molang::Script::compile(rewriteSelector(material, materialArrays, "material", parsed.materialChoices));
         if (const json::Value* value = controller.get("ignore_lighting"); value && value->mType == json::Value::Type::Boolean) {
             parsed.ignoreLighting = value->mBoolean;
         }
@@ -797,6 +802,13 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
     // Server packs come after, file by file, so a pack's player.animation.json
     // adds to the game's animations instead of hiding the whole file.
     PackSource nativeModels(pack.root());
+    EntityMaterialBlendLibrary materialBlends;
+    auto materialLayers = nativeModels.readTextLayers("materials/entity.material");
+    for (auto layer = materialLayers.rbegin(); layer != materialLayers.rend(); ++layer) {
+        if (auto document = json::parse(stripJsonComments(*layer))) {
+            materialBlends.parse(*document);
+        }
+    }
     for (const char* archive : { "models", "models/entity" }) {
         for (const std::string& name : nativeModels.archiveEntries(archive)) {
             auto layers = nativeModels.readArchivedLayers(archive, name);
@@ -817,17 +829,13 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         }
     }
     for (const std::string& name : pack.archiveEntries("render_controllers")) {
-        std::string text;
-        if (pack.readBaseArchived("render_controllers", name, text)) {
-            readRenderControllers(text, controllerSources);
-        }
+        auto layers = nativeModels.readArchivedLayers("render_controllers", name);
+        for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer) readRenderControllers(*layer, controllerSources);
     }
     for (const char* archive : { "animations", "animation_controllers" }) {
         for (const std::string& name : pack.archiveEntries(archive)) {
-            std::string text;
-            if (pack.readBaseArchived(archive, name, text)) {
-                parseAnimations(text);
-            }
+            auto layers = nativeModels.readArchivedLayers(archive, name);
+            for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer) parseAnimations(*layer);
         }
     }
     std::error_code error;
@@ -1047,20 +1055,28 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             for (size_t index = 0; index < 2; ++index) {
                 for (const std::string& choice : source->second.extraTextureChoices[index]) controller.extraTextureChoices[index].push_back(layerOf(choice));
             }
-            const std::string& material = source->second.material;
-            if (startsWith(material, "material.")) {
-                if (auto named = definition.materials.find(material.substr(std::string("material.").size())); named != definition.materials.end()) {
-                    controller.blend = blendOf(named->second);
-                    controller.oneSided = named->second.find("one_sided") != std::string::npos;
-                    if (named->second == "ender_dragon") controller.material = EntityMaterial::Dragon;
-                    else if (named->second == "ender_crystal") controller.material = EntityMaterial::AlphaTest;
-                    else if (startsWith(named->second, "entity_dissolve_layer0")) controller.material = EntityMaterial::DissolveDepth;
-                    else if (startsWith(named->second, "entity_dissolve_layer1")) controller.material = EntityMaterial::DissolveColor;
-                    else if (named->second.find("change_color") != std::string::npos) controller.material = EntityMaterial::ColorMask;
-                    else if (named->second == "wolf_armor") controller.material = EntityMaterial::DyedArmor;
-                    else if (named->second == "horse" || named->second == "horse_leather_armor") controller.material = EntityMaterial::Horse;
-                    else if (named->second.find("multitexture") != std::string::npos) controller.material = EntityMaterial::Multitexture;
+            controller.materialSelector = source->second.material;
+            for (const std::string& material : source->second.materialChoices) {
+                EntityMaterialChoice choice;
+                auto named = startsWith(material, "material.") ? definition.materials.find(material.substr(9)) : definition.materials.end();
+                if (named != definition.materials.end()) {
+                    choice.blend = materialBlends.find(named->second).value_or(blendOf(named->second));
+                    choice.oneSided = named->second.find("one_sided") != std::string::npos;
+                    if (named->second == "ender_dragon" || materialBlends.emissive(named->second).value_or(false)) choice.material = EntityMaterial::Dragon;
+                    else if (named->second == "ender_crystal") choice.material = EntityMaterial::AlphaTest;
+                    else if (startsWith(named->second, "entity_dissolve_layer0")) choice.material = EntityMaterial::DissolveDepth;
+                    else if (startsWith(named->second, "entity_dissolve_layer1")) choice.material = EntityMaterial::DissolveColor;
+                    else if (named->second.find("change_color") != std::string::npos) choice.material = EntityMaterial::ColorMask;
+                    else if (named->second == "wolf_armor") choice.material = EntityMaterial::DyedArmor;
+                    else if (named->second == "horse" || named->second == "horse_leather_armor") choice.material = EntityMaterial::Horse;
+                    else if (materialBlends.multitexture(named->second).value_or(named->second.find("multitexture") != std::string::npos)) choice.material = EntityMaterial::Multitexture;
                 }
+                controller.materialChoices.push_back(choice);
+            }
+            if (!controller.materialChoices.empty()) {
+                controller.material = controller.materialChoices.front().material;
+                controller.blend = controller.materialChoices.front().blend;
+                controller.oneSided = controller.materialChoices.front().oneSided;
             }
             model.controllers.push_back(std::move(controller));
         }

@@ -142,6 +142,8 @@ struct EntityBone {
  */
 using BoneMatrix = std::array<float, 12>;
 
+std::vector<EntityBone> poseBonesForGeometry(const std::vector<EntityBone>& combined, const std::vector<EntityBone>& selected);
+
 /**
  * Movement and look of one entity for a frame.
  */
@@ -167,6 +169,7 @@ struct AnimationInput {
     float onFireTime = 0.0f;
     uint64_t horseFlags = 0;
     std::unordered_map<std::string, double> metadataQueries;
+    std::unordered_map<std::string, double> properties;
     bool onGround = true;
     float swimAmount = 0.0f;
     std::optional<bool> inWater;
@@ -208,6 +211,7 @@ bool targetRotationIsAbsolute(const std::string& identifier);
  * animation, placed in the camera basis rather than by its body yaw.
  */
 bool cameraFacingSprite(const std::string& identifier);
+float entityModelYaw(const std::string& identifier, float bodyYaw);
 bool projectileEntity(const std::string& identifier);
 
 /**

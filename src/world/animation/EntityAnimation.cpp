@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <string_view>
 
 namespace kestrel::world {
 
@@ -530,6 +531,16 @@ bool cameraFacingSprite(const std::string& identifier)
     });
 }
 
+float entityModelYaw(const std::string& identifier, float bodyYaw)
+{
+    if (cameraFacingSprite(identifier)) {
+        bool southFacing = identifier == "minecraft:xp_orb" || identifier == "minecraft:fireball"
+            || identifier == "minecraft:dragon_fireball" || identifier == "minecraft:small_fireball";
+        return southFacing ? 0.0f : 180.0f;
+    }
+    return targetRotationIsAbsolute(identifier) ? 0.0f : static_cast<float>(wrapDegrees(bodyYaw));
+}
+
 bool projectileEntity(const std::string& identifier)
 {
     return targetRotationIsAbsolute(identifier) || (cameraFacingSprite(identifier) && identifier != "minecraft:xp_orb")
@@ -540,8 +551,8 @@ bool projectileEntity(const std::string& identifier)
 
 void EntityAnimator::runScripts(const std::vector<molang::Script>& scripts)
 {
+    scope.temps.clear();
     for (const molang::Script& script : scripts) {
-        scope.temps.clear();
         script.run(scope);
     }
 }
@@ -729,6 +740,13 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
     // old 24-pixel model origin, rather than offsets from the geometry.
     bool legacyWolfPose = current.identifier == "minecraft:wolf" && activeLibrary
         && (&clip == activeLibrary->clip("animation.wolf.setup") || &clip == activeLibrary->clip("animation.wolf.sitting"));
+    bool guardianAbsolutePosition = (current.identifier == "minecraft:guardian" || current.identifier == "minecraft:elder_guardian") && activeLibrary
+        && (&clip == activeLibrary->clip("animation.guardian.spikes") || &clip == activeLibrary->clip("animation.guardian.move_eye"));
+    bool polarBearMove = current.identifier == "minecraft:polar_bear" && activeLibrary
+        && &clip == activeLibrary->clip("animation.polarbear.move");
+    bool endermanAbsolutePosition = current.identifier == "minecraft:enderman" && activeLibrary
+        && (&clip == activeLibrary->clip("animation.enderman.base_pose") || &clip == activeLibrary->clip("animation.enderman.base_pose_v1.0")
+            || &clip == activeLibrary->clip("animation.enderman.scary_face") || &clip == activeLibrary->clip("animation.enderman.scary_face_v1.0"));
     for (const AnimationBone& track : clip.bones) {
         auto found = boneIndex.find(track.bone);
         if (found == boneIndex.end()) {
@@ -757,10 +775,22 @@ bool EntityAnimator::playClip(const std::string& key, const AnimationClip& clip,
         }
         if (track.position.present()) {
             std::array<float, 3> inherited { -pose.position[0], pose.position[1], pose.position[2] };
-            if (legacyWolfPose) {
+            if (legacyWolfPose || (polarBearMove && track.bone == "body")) {
                 inherited[0] -= bone.pivot[0];
                 inherited[1] += bone.pivot[1] - 24.0f;
                 inherited[2] += bone.pivot[2];
+            } else if (guardianAbsolutePosition) {
+                inherited[0] -= bone.pivot[0];
+                inherited[1] += bone.pivot[1];
+                inherited[2] += bone.pivot[2];
+            } else if (endermanAbsolutePosition) {
+                std::array<float, 3> parent { 0.0f, 24.0f, 0.0f };
+                if (bone.parent >= 0 && size_t(bone.parent) < activeBones->size()) {
+                    parent = (*activeBones)[size_t(bone.parent)].pivot;
+                }
+                inherited[0] -= bone.pivot[0] - parent[0];
+                inherited[1] += bone.pivot[1] - parent[1];
+                inherited[2] += bone.pivot[2] - parent[2];
             }
             std::array<float, 3> value = sample(track.position, sampleTime, inherited);
             pose.position[0] -= value[0] * w;
@@ -937,6 +967,27 @@ void EntityAnimator::play(const std::string& alias, double weight, int depth, bo
     }
 }
 
+std::vector<EntityBone> poseBonesForGeometry(const std::vector<EntityBone>& combined, const std::vector<EntityBone>& selected)
+{
+    std::vector<EntityBone> output = combined;
+    std::unordered_map<std::string, int32_t> indices;
+    for (size_t index = 0; index < combined.size(); ++index) {
+        indices.emplace(lowercase(combined[index].name), static_cast<int32_t>(index));
+    }
+    for (const EntityBone& bone : selected) {
+        auto target = indices.find(lowercase(bone.name));
+        if (target == indices.end()) continue;
+        EntityBone replacement = bone;
+        replacement.parent = -1;
+        if (bone.parent >= 0 && size_t(bone.parent) < selected.size()) {
+            auto parent = indices.find(lowercase(selected[size_t(bone.parent)].name));
+            if (parent != indices.end()) replacement.parent = parent->second;
+        }
+        output[size_t(target->second)] = std::move(replacement);
+    }
+    return output;
+}
+
 void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary* library, const std::vector<EntityBone>& bones, const AnimationInput& input)
 {
     activeScripts = scripts;
@@ -1009,6 +1060,21 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     }
     bool horse = input.identifier == "minecraft:horse" || input.identifier == "minecraft:donkey" || input.identifier == "minecraft:mule"
         || input.identifier == "minecraft:zombie_horse" || input.identifier == "minecraft:skeleton_horse";
+    if (input.identifier == "minecraft:llama" || input.identifier == "minecraft:trader_llama") {
+        static constexpr std::string_view Colors[] = {
+            "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+            "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black",
+        };
+        std::string_view item = input.armorItems[4];
+        double decoration = 0.0;
+        if (item.starts_with("minecraft:") && item.ends_with("_carpet")) {
+            std::string_view color = item.substr(10, item.size() - 17);
+            for (size_t index = 0; index < std::size(Colors); ++index) {
+                if (color == Colors[index]) decoration = double(index + 1);
+            }
+        }
+        variables["decortextureindex"] = decoration;
+    }
     if (input.identifier == "minecraft:cod" || input.identifier == "minecraft:salmon" || input.identifier == "minecraft:pufferfish" || input.identifier == "minecraft:tropicalfish") {
         float speed = std::sqrt(input.nativeVelocity[0] * input.nativeVelocity[0] + input.nativeVelocity[1] * input.nativeVelocity[1] + input.nativeVelocity[2] * input.nativeVelocity[2]);
         for (int tick = 0; tick < ticks; ++tick) {
@@ -1168,6 +1234,12 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     auto argument = [&](size_t index) {
         return index < arguments.size() ? arguments[index] : 0.0;
     };
+    if (name == "property" || name == "has_property") {
+        if (arguments.empty()) return 0.0;
+        auto found = current.properties.find(molang::stringOf(argument(0)));
+        if (name == "has_property") return found != current.properties.end() ? 1.0 : 0.0;
+        return found != current.properties.end() ? found->second : 0.0;
+    }
     double speed = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
     if (name == "key_frame_lerp_time") return variables["key_frame_lerp_time"];
     if (name == "anim_time") {
