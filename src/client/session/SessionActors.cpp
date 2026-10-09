@@ -360,7 +360,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     }
     actor->second.x = x;
     actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
-    if (actor->second.identifier == "minecraft:falling_block") actor->second.y -= 0.49;
+    if (actor->second.identifier == "minecraft:falling_block" || actor->second.identifier == "minecraft:tnt") actor->second.y -= 0.49;
     actor->second.z = z;
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;

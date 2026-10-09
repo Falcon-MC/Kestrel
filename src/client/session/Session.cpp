@@ -55,6 +55,7 @@
 #include "Protocol/Packets/UpdatePlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "Protocol/Packets/SetActorDataPacket.h"
+#include "Protocol/Packets/SyncActorPropertyPacket.h"
 #include "Protocol/Packets/SetActorLinkPacket.h"
 #include "Protocol/Packets/ServerboundLoadingScreenPacket.h"
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
@@ -998,6 +999,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::MoveActorAbsolute:
     case MinecraftPacketIds::MoveActorDelta:
     case MinecraftPacketIds::SetActorData:
+    case MinecraftPacketIds::SyncActorProperty:
     case MinecraftPacketIds::SetActorLink:
     case MinecraftPacketIds::ContainerOpen:
     case MinecraftPacketIds::ContainerClose:
@@ -1268,10 +1270,20 @@ void Session::handleWorldPacket(std::string& payload)
             actor.held = hudItemOf(player->mHand);
             actor.scale = metadataScale(player->mMetadata, 1.0f);
             applyActorMetadata(player->mMetadata, actor);
+            if (auto schema = actorPropertySchemas.find(actor.identifier); schema != actorPropertySchemas.end()) {
+                schema->second.apply(player->mProperties, actor.animationProperties);
+            }
             actors[runtime] = actor;
             runtimeByUnique[player->mRuntimeActorId] = runtime;
             refreshActorRiders(player->mRuntimeActorId);
             moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true, true);
+        }
+    } else if (auto schemaPacket = std::dynamic_pointer_cast<SyncActorPropertyPacket>(packet)) {
+        if (auto schema = ActorPropertySchema::read(schemaPacket->mData)) {
+            if (actorPropertySchemas.contains(schema->identifier) || actorPropertySchemas.size() < 512) {
+                std::string identifier = schema->identifier;
+                actorPropertySchemas[identifier] = std::move(*schema);
+            }
         }
     } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
         uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
@@ -1281,6 +1293,9 @@ void Session::handleWorldPacket(std::string& payload)
         actor.identifier = added->mIdentifier;
         actor.scale = metadataScale(added->mMetadata, 1.0f);
         applyActorMetadata(added->mMetadata, actor);
+        if (auto schema = actorPropertySchemas.find(actor.identifier); schema != actorPropertySchemas.end()) {
+            schema->second.apply(added->mProperties, actor.animationProperties);
+        }
         for (const auto& attribute : added->mAttributes) {
             if (attribute.mName == "minecraft:health" && std::isfinite(attribute.mValue)) {
                 actor.health = attribute.mValue;
@@ -1327,6 +1342,9 @@ void Session::handleWorldPacket(std::string& payload)
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
             actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);
             applyActorMetadata(data->mMetadata, actor->second);
+            if (auto schema = actorPropertySchemas.find(actor->second.identifier); schema != actorPropertySchemas.end()) {
+                schema->second.apply(data->mProperties, actor->second.animationProperties);
+            }
         }
     } else if (auto link = std::dynamic_pointer_cast<SetActorLinkPacket>(packet)) {
         const EntityLinkData& data = link->mActorLink;
@@ -1362,7 +1380,7 @@ void Session::handleWorldPacket(std::string& payload)
         auto actor = actors.find(delta->mRuntimeActorId);
         if (actor != actors.end()) {
             double eye = actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0;
-            if (actor->second.identifier == "minecraft:falling_block") eye = 0.49;
+            if (actor->second.identifier == "minecraft:falling_block" || actor->second.identifier == "minecraft:tnt") eye = 0.49;
             moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : actor->second.x, delta->mHasY ? delta->mY : actor->second.y + eye,
                 delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
                 delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);
@@ -2118,6 +2136,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         pendingCameraEvents.clear();
         pendingSkins.clear();
         actors.clear();
+        actorPropertySchemas.clear();
         runtimeByUnique.clear();
         debugShapes.clear();
         current.debugShapes.clear();

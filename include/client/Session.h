@@ -5,6 +5,7 @@
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
 #include "client/ActorRiders.h"
+#include "client/ActorProperties.h"
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
@@ -200,6 +201,7 @@ struct ActorView {
     float maxHealth = 20.0f;
     uint64_t horseFlags = 0;
     std::unordered_map<std::string, double> animationQueries;
+    std::unordered_map<std::string, double> animationProperties;
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
@@ -1163,6 +1165,7 @@ private:
     int sentRadius = 0;
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
+    std::unordered_map<std::string, ActorPropertySchema> actorPropertySchemas;
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, DebugShapeView> debugShapes;
     ActorRiders actorRiders;

@@ -353,6 +353,12 @@ enum class EntityMaterial : uint8_t {
     Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest, DyedArmor, Horse,
 };
 
+struct EntityMaterialChoice {
+    EntityMaterial material = EntityMaterial::Default;
+    EntityBlend blend = EntityBlend::Opaque;
+    bool oneSided = false;
+};
+
 struct EntityRenderController {
     molang::Script condition;
     molang::Script geometry;
@@ -366,12 +372,24 @@ struct EntityRenderController {
     std::array<molang::Script, 4> hurtColor;
     std::array<molang::Script, 4> fireColor;
     EntityMaterial material = EntityMaterial::Default;
+    molang::Script materialSelector;
+    std::vector<EntityMaterialChoice> materialChoices;
     std::vector<EntityPartRule> parts;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
     bool ignoreLighting = false;
     std::array<molang::Script, 4> uvAnim;
     bool uvAnimated = false;
+
+    EntityMaterialChoice selectedMaterial(double selection) const
+    {
+        if (materialChoices.empty()) {
+            return { material, blend, oneSided };
+        }
+        size_t index = !std::isfinite(selection) || selection <= 0.0 ? 0
+            : selection >= double(materialChoices.size() - 1) ? materialChoices.size() - 1 : static_cast<size_t>(selection);
+        return materialChoices[index];
+    }
 };
 
 /**
