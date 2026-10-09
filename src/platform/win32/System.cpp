@@ -1,5 +1,7 @@
 #include "platform/System.h"
 
+#include <thread>
+
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -8,6 +10,40 @@
 #include <psapi.h>
 
 namespace kestrel::platform {
+
+void waitUntil(std::chrono::steady_clock::time_point deadline)
+{
+    auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+        return;
+    }
+
+    struct Timer {
+        HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+        ~Timer()
+        {
+            if (handle) {
+                CloseHandle(handle);
+            }
+        }
+    };
+    thread_local Timer timer;
+    if (timer.handle) {
+        using TimerTicks = std::chrono::duration<long long, std::ratio<1, 10000000>>;
+        while (now < deadline) {
+            LARGE_INTEGER due;
+            due.QuadPart = -std::chrono::ceil<TimerTicks>(deadline - now).count();
+            if (!SetWaitableTimer(timer.handle, &due, 0, nullptr, nullptr, FALSE)
+                || WaitForSingleObject(timer.handle, INFINITE) != WAIT_OBJECT_0) {
+                break;
+            }
+            now = std::chrono::steady_clock::now();
+        }
+    }
+    if (now < deadline) {
+        std::this_thread::sleep_until(deadline);
+    }
+}
 
 MemoryUsage memoryUsage()
 {

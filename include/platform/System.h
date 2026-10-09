@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 
@@ -12,5 +13,6 @@ struct MemoryUsage {
 
 MemoryUsage memoryUsage();
 std::string processorName();
+void waitUntil(std::chrono::steady_clock::time_point deadline);
 
 }
