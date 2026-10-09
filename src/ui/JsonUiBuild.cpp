@@ -1106,6 +1106,7 @@ void JsonUiRuntime::syncFactories(Node& node, int depth)
 void JsonUiRuntime::bind(Node& node)
 {
     node.dataToggle = false;
+    node.detailsCollection.clear();
     const json::Value* bindings = property(node, "bindings");
     if (!bindings || !bindings->isArray()) {
         return;
@@ -1121,6 +1122,9 @@ void JsonUiRuntime::bind(Node& node)
             detailsGiven = true;
             const json::Value* named = resolve(node, binding->get("binding_collection_name"));
             detailsCollection = named && named->isString() ? named->mString : std::string();
+            if (!binding->get("ignored") || !ignores(node, binding->get("ignored"))) {
+                node.detailsCollection = detailsCollection;
+            }
         }
     }
     auto visible = [&] {
