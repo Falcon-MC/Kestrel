@@ -452,7 +452,9 @@ ui::UiData hudData(const HudView& view)
 void drawHudRenderer(ui::Context& ui, const HudView& view, const std::string& renderer, const ui::Rect& rect, float alpha, const ui::UiLookup& lookup)
 {
     ui::Color tint = faded(alpha);
-    if (renderer == "hotbar_renderer") {
+    if (renderer == "cursor_renderer") {
+        if (view.crosshair) ui.spriteRegion(rect, "textures/gui/icons", { 0.0f, 0.0f, 16.0f, 16.0f }, tint);
+    } else if (renderer == "hotbar_renderer") {
         int slot = static_cast<int>(lookup("#hotbar_slot").toNumber());
         ui.sprite(rect, "ui/hotbar_" + std::to_string(std::clamp(slot, 0, 8)), tint);
         // The off hand has no control of its own; the game draws it with the first slot.
