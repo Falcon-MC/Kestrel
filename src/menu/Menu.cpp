@@ -1599,19 +1599,28 @@ void Menu::gameView(Context& ui, float width, float height)
     }
     drawHudScreen(ui, width, height);
 
-    if (!hud.crosshair) {
+    if (!hud.crosshair || !jsonUi) {
         return;
     }
+    if (!crosshairScreen) {
+        crosshairScreen = std::make_unique<ui::JsonUiScreen>(jsonUi, "hud_crosshair.hud_crosshair_screen");
+        crosshairScreen->setRenderer([this](Context& context, const std::string& renderer, const Rect& rect, float alpha, const ui::UiLookup& lookup) {
+            drawHudRenderer(context, hud, renderer, rect, alpha, lookup);
+        });
+    }
     WholeScreen whole(ui, screenBounds);
-    float cx = std::floor(screenBounds.w * 0.5f - 7.5f);
-    float cy = std::floor(screenBounds.h * 0.5f - 7.5f);
-    ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });
+    bool blocked = ui.isBlocked();
+    ui.setBlocked(true);
+    crosshairScreen->draw(ui, { 0.0f, 0.0f, screenBounds.w, screenBounds.h }, hudData(hud));
+    ui.setBlocked(blocked);
+    crosshairScreen->takeEvents();
 }
 
 void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
 {
     jsonUi = std::move(definitions);
     hudScreen.reset();
+    crosshairScreen.reset();
     safeZoneScreen.reset();
     chatUi.reset();
     chatSettingsUi.reset();

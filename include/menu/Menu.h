@@ -1332,6 +1332,7 @@ private:
     HudView hud;
     std::shared_ptr<const ui::JsonUi> jsonUi;
     std::unique_ptr<ui::JsonUiScreen> hudScreen;
+    std::unique_ptr<ui::JsonUiScreen> crosshairScreen;
     std::unique_ptr<ui::JsonUiScreen> safeZoneScreen;
     // The whole window in the coordinates of the safe area.
     ui::Rect screenBounds;
