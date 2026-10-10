@@ -1,6 +1,7 @@
 #include "client/session/SessionData.h"
 #include "client/CrystalMetadata.h"
 #include "client/ActorAimAssist.h"
+#include "client/ActorPose.h"
 #include "client/ProjectileMotion.h"
 
 #include "Protocol/Types/SerializedSkin.h"
@@ -338,6 +339,9 @@ std::vector<SkinUpload> Session::takeSkinUploads()
  */
 void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition)
 {
+    if (!validActorPose({ x, y, z }, { yaw, headYaw, pitch })) {
+        return;
+    }
     auto actor = actors.find(runtimeId);
     if (actor == actors.end()) {
         return;

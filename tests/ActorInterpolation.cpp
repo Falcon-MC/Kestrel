@@ -1,5 +1,6 @@
 #include "client/ActorInterpolation.h"
 #include "client/ActorMotion.h"
+#include "client/ActorPose.h"
 #include "client/ProjectileMotion.h"
 
 #include <cstdio>
@@ -42,6 +43,20 @@ void constantMovement(int framesPerTick)
 
 int main()
 {
+    const std::array<double, 3> validPosition { 10.0, 64.0, -20.0 };
+    const std::array<float, 3> validTurn { 90.0f, 45.0f, -10.0f };
+    require(kestrel::validActorPose(validPosition, validTurn), "Finite actor poses must remain accepted");
+    for (size_t axis = 0; axis < 3; ++axis) {
+        for (double invalid : { std::numeric_limits<double>::quiet_NaN(),
+                 std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() }) {
+            auto position = validPosition;
+            auto turn = validTurn;
+            position[axis] = invalid;
+            require(!kestrel::validActorPose(position, validTurn), "Non-finite spawn and movement positions must be rejected");
+            turn[axis] = static_cast<float>(invalid);
+            require(!kestrel::validActorPose(validPosition, turn), "Non-finite actor rotations must be rejected");
+        }
+    }
     std::array<double, 3> arrow {};
     const std::array<double, 3> target { 6.0, 3.0, -3.0 };
     const std::array<float, 3> velocity { 2.0f, 1.0f, -1.0f };

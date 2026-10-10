@@ -15,6 +15,12 @@ namespace kestrel {
  */
 inline std::optional<double> enterBox(const std::array<double, 3>& origin, const std::array<double, 3>& direction, const std::array<double, 3>& low, const std::array<double, 3>& high, int* entryAxis = nullptr)
 {
+    for (size_t axis = 0; axis < 3; ++axis) {
+        if (!std::isfinite(origin[axis]) || !std::isfinite(direction[axis])
+            || !std::isfinite(low[axis]) || !std::isfinite(high[axis]) || low[axis] > high[axis]) {
+            return std::nullopt;
+        }
+    }
     double entry = 0.0;
     double exit = std::numeric_limits<double>::max();
     int axisOfEntry = -1;
@@ -45,6 +51,9 @@ inline std::optional<double> enterBox(const std::array<double, 3>& origin, const
 inline std::optional<double> actorRayDistance(const std::array<double, 3>& origin, const std::array<double, 3>& direction,
     const std::array<double, 3>& low, const std::array<double, 3>& high, double reach, double margin)
 {
+    if (!std::isfinite(reach) || !std::isfinite(margin) || reach < 0.0 || margin < 0.0) {
+        return std::nullopt;
+    }
     auto entry = enterBox(origin, direction, low, high);
     return entry && *entry + margin < reach ? entry : std::nullopt;
 }

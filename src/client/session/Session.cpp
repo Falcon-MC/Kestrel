@@ -1,6 +1,7 @@
 #include "client/session/SessionData.h"
 #include "platform/System.h"
 #include "client/ActorEquipment.h"
+#include "client/ActorPose.h"
 
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"
@@ -1288,6 +1289,10 @@ void Session::handleWorldPacket(std::string& payload)
             moveActor(static_cast<uint64_t>(move->mRuntimeActorId), move->mPosition.x, move->mPosition.y, move->mPosition.z, move->mRotation.y, move->mRotation.z, move->mRotation.x, teleport, move->mOnGround);
         }
     } else if (auto player = std::dynamic_pointer_cast<AddPlayerPacket>(packet)) {
+        if (!validActorPose({ player->mPosition.x, player->mPosition.y, player->mPosition.z },
+                { player->mRotation.y, player->mRotation.z, player->mRotation.x })) {
+            return;
+        }
         uint64_t runtime = static_cast<uint64_t>(player->mRuntimeActorId);
         if (runtime != localRuntimeId) {
             ActorView actor;
@@ -1323,6 +1328,10 @@ void Session::handleWorldPacket(std::string& payload)
             }
         }
     } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
+        if (!validActorPose({ added->mPosition.x, added->mPosition.y, added->mPosition.z },
+                { added->mRotation.y, added->mHeadRotation, added->mRotation.x }) || !std::isfinite(added->mBodyRotation)) {
+            return;
+        }
         uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
         ActorView actor;
         actor.runtimeId = runtime;
@@ -1350,6 +1359,9 @@ void Session::handleWorldPacket(std::string& payload)
             arrow ? added->mRotation.y : added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, !movingArrow, true);
         if (arrow) setActorMotion(runtime, added->mMotion.x, added->mMotion.y, added->mMotion.z);
     } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
+        if (!validActorPose({ dropped->mPosition.x, dropped->mPosition.y, dropped->mPosition.z }, {})) {
+            return;
+        }
         uint64_t runtime = dropped->mRuntimeActorId;
         ActorView actor;
         actor.runtimeId = runtime;
