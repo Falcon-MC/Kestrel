@@ -460,6 +460,7 @@ private:
     uint64_t handMotionTeleports = 0;
     world::EntityAnimator paperDollAnimator;
     HeldAttachable handAttachable;
+    HeldAttachable handOffhandAttachable;
     HeldAttachable bodyAttachable;
     HeldAttachable bodyOffhandAttachable;
     double paperDollShownAt = 0.0;
@@ -514,7 +515,9 @@ private:
     double swingStart = -1.0;
     HotbarSelection hotbarSelection;
     HandEquip handTransition;
+    HandEquip offhandTransition;
     float handEquip = 0.0f;
+    float offhandEquip = 0.0f;
     double consumeStarted = 0.0;
     std::string consumeIdentity;
     uint64_t heldItemFrame = 0;

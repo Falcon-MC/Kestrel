@@ -1638,10 +1638,22 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     input.worldTime = currentWorldTime(timeState);
     input.identifier = held.identifier;
     input.mainHandItem = held.identifier;
+    if (leftHand) input.offHandItem = held.identifier;
     input.flags[0] = held.enchanted ? uint64_t(1) << 52 : 0;
+    if (firstPerson) {
+        if (seenSessionSnapshot) input.flags = seenSessionSnapshot->localActorFlags;
+        input.flags[0] = (input.flags[0] & ~(uint64_t(1) << 52)) | (held.enchanted ? uint64_t(1) << 52 : 0);
+        for (const auto& [name, value] : handAnimator.variableValues()) {
+            input.engineVariables.emplace_back(name, value);
+        }
+    }
     input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
+    if (firstPerson) {
+        input.contextVariables.emplace_back("player_offhand_arm_height", offhandEquip);
+        input.engineVariables.emplace_back("player_arm_height", handEquip);
+    }
     state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
     const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
     if (matrices.size() != state.bones.size()) {

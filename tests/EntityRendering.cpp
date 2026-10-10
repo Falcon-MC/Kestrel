@@ -1,5 +1,6 @@
 #include "client/ActorEquipment.h"
 #include "client/ActorProperties.h"
+#include "client/FirstPersonAnimation.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/EntityMaterialBlend.h"
@@ -29,6 +30,66 @@ int main()
 {
     using namespace kestrel;
     using namespace kestrel::world;
+    auto handDescription = json::parse(R"({"animations":{"pose":"animation.test.hand"},"scripts":{"animate":["pose"]}})");
+    auto handScripts = readEntityScripts(*handDescription);
+    auto handDocument = json::parse(R"({"animations":{"animation.test.hand":{"loop":true,"bones":{"body":{"rotation":["q.target_x_rotation","q.target_y_rotation",0]}}}}})");
+    AnimationLibrary handLibrary;
+    handLibrary.parse(*handDocument);
+    std::vector<EntityBone> cameraBones(1);
+    cameraBones[0].name = "body";
+    cameraBones[0].pivot = { 0.0f, 24.0f, 0.0f };
+    for (float pitch : { -89.0f, 0.0f, 89.0f }) {
+        for (float yaw : { 0.0f, 90.0f, 180.0f, 270.0f }) {
+            AnimationInput cameraInput;
+            cameraInput.identifier = "minecraft:player";
+            cameraInput.pitch = pitch;
+            cameraInput.yaw = yaw;
+            cameraInput.headYaw = yaw + 45.0f;
+            cameraInput.engineVariables = { { "player_x_rotation", pitch } };
+            cameraLocalHandPose(cameraInput);
+            EntityAnimator cameraAnimator;
+            cameraAnimator.update(handScripts.get(), &handLibrary, cameraBones, cameraInput);
+            require(cameraAnimator.matrices()[0] == BoneMatrix { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 },
+                "First-person view rotations must not rotate the animated body a second time");
+            require(expression(cameraAnimator, "v.player_x_rotation") == pitch,
+                "Camera-local hand poses must preserve the pitch driver used by map animations");
+        }
+    }
+    std::vector<EntityBone> handBones(1);
+    handBones[0].name = "leftItem";
+    handBones[0].pivot = { -6.0f, 15.0f, 1.0f };
+    EntityAnimator owner;
+    AnimationInput ownerInput;
+    ownerInput.engineVariables = { { "player_arm_height", 0.75 }, { "attack_time", 0.25 } };
+    owner.update(nullptr, nullptr, handBones, ownerInput);
+    require(expression(owner, "q.get_default_bone_pivot('leftitem', 0)") == 6.0
+            && expression(owner, "q.get_default_bone_pivot('LEFTITEM', 1)") == 15.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 2)") == 1.0,
+        "Hand placement queries must read authored pivots in the original geometry basis");
+    require(expression(owner, "q.get_default_bone_pivot('missing', 1)") == 0.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 3)") == 0.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 0.5)") == 0.0,
+        "Missing bones and invalid pivot axes must remain bounded");
+    EntityAnimator mainAttachable, offAttachable;
+    AnimationInput attachableInput;
+    for (const auto& [name, value] : owner.variableValues()) {
+        attachableInput.engineVariables.emplace_back(name, value);
+    }
+    attachableInput.contextVariables = { { "is_first_person", 1.0 },
+        { "item_slot", molang::internString("main_hand") }, { "player_offhand_arm_height", 0.2 } };
+    mainAttachable.update(nullptr, nullptr, handBones, attachableInput);
+    attachableInput.contextVariables[1].second = molang::internString("off_hand");
+    offAttachable.update(nullptr, nullptr, handBones, attachableInput);
+    require(expression(offAttachable, "v.player_arm_height") == 0.75
+            && expression(offAttachable, "c.player_offhand_arm_height") == 0.2,
+        "First-person attachables must inherit owner variables and independent offhand height");
+    require(expression(mainAttachable, "c.item_slot == 'main_hand'") == 1
+            && expression(offAttachable, "c.item_slot == 'off_hand'") == 1,
+        "Main and offhand attachables must retain separate animation contexts");
+    expression(offAttachable, "v.player_arm_height = 0.1;");
+    require(expression(mainAttachable, "v.player_arm_height") == 0.75
+            && expression(owner, "v.player_arm_height") == 0.75,
+        "Offhand animation variables must not mutate the owner or main-hand animator");
     for (const char* identifier : { "minecraft:xp_orb", "minecraft:fireball", "minecraft:small_fireball", "minecraft:dragon_fireball" }) {
         require(entityModelYaw(identifier, 75.0f) == 0.0f, "South-facing sprites must keep their visible face toward the camera");
     }

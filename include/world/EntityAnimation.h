@@ -244,6 +244,11 @@ public:
     double evaluate(const molang::Script& script);
     double evaluateWithThis(const molang::Script& script, double base);
 
+    const std::unordered_map<std::string, double>& variableValues() const
+    {
+        return variables;
+    }
+
     /**
      * The rotation, in degrees, the clip gives each of its bones at that
      * time on its own, for posing a still preview.

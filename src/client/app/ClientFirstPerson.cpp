@@ -1,4 +1,7 @@
 #include "client/Client.h"
+#include "client/FirstPersonAnimation.h"
+#include "client/FirstPersonPlacement.h"
+#include "client/session/SessionData.h"
 
 
 #include "render/Renderer.h"
@@ -111,74 +114,15 @@ Vec3 rotate(const Vec3& point, const Vec3& degrees)
     return p;
 }
 
-using Mat4 = std::array<float, 16>;
-
-Mat4 identity()
-{
-    return { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-}
-
-/**
- * Row-major product a * b, so b applies to a point first.
- */
-Mat4 operator*(const Mat4& a, const Mat4& b)
-{
-    Mat4 out {};
-    for (size_t row = 0; row < 4; ++row) {
-        for (size_t column = 0; column < 4; ++column) {
-            for (size_t k = 0; k < 4; ++k) {
-                out[row * 4 + column] += a[row * 4 + k] * b[k * 4 + column];
-            }
-        }
-    }
-    return out;
-}
-
-Mat4 translation(float x, float y, float z)
-{
-    Mat4 m = identity();
-    m[3] = x;
-    m[7] = y;
-    m[11] = z;
-    return m;
-}
-
-Mat4 uniformScale(float s)
-{
-    Mat4 m = identity();
-    m[0] = s;
-    m[5] = s;
-    m[10] = s;
-    return m;
-}
-
-Mat4 rotationX(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { 1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0, 0, 0, 1 };
-}
-
-Mat4 rotationY(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1 };
-}
-
-Mat4 rotationZ(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-}
-
-Vec3 transformed(const Mat4& m, const Vec3& p)
-{
-    return { m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
-        m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
-        m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] };
-}
+using first_person::Mat4;
+using first_person::identity;
+using first_person::operator*;
+using first_person::translation;
+using first_person::uniformScale;
+using first_person::rotationX;
+using first_person::rotationY;
+using first_person::rotationZ;
+using first_person::transformed;
 
 /**
  * The default transforms the game applies to a flat sprite in hand: the 1.5
@@ -305,11 +249,8 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
 }
 
 /**
- * The local player's arm and held item as the game draws them in first
- * person: the player model runs its own first person animations (arm pose,
- * swing, walking bob, equip dip, breathing), shows its right arm only while
- * the hand is empty, and the held item hangs from the right item bone,
- * blocks as a cube and other items as their texture extruded one pixel deep.
+ * Both hands share the player's animated camera-space rig. Ordinary items
+ * use independent camera placements; attachables bind to their own item bone.
  */
 void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
 {
@@ -342,6 +283,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     float attackTime = swingProgress();
 
     const HudItem& held = handTransition.item;
+    const HudItem& offhand = offhandTransition.item;
     std::string heldIdentity = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
     std::string heldName = held.empty() ? std::string() : held.identifier;
 
@@ -352,9 +294,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.x = camera.x();
     input.y = camera.y() - eye;
     input.z = camera.z();
-    input.yaw = yaw;
-    input.headYaw = yaw;
-    input.pitch = pitch;
+    cameraLocalHandPose(input);
     input.now = now;
     input.walkDistance = firstPersonMotion.distance + (firstPersonMotion.distance - firstPersonMotion.oldDistance) * partialTick;
     if (seenSessionSnapshot && seenSessionSnapshot->playerTicks && !seenSessionSnapshot->playerTicks->empty()) {
@@ -369,7 +309,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.maxHealth = hudState.maxHealth;
     input.hurtTime = hudState.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - hudState.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
     input.mainHandItem = heldName;
-    input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
+    input.offHandItem = offhand.empty() ? std::string() : offhand.identifier;
     input.itemUseTicks = localItemUseTicks();
     input.engineVariables = {
         { "is_first_person", 1.0 },
@@ -379,7 +319,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         { "attack_time", attackTime },
         { "player_arm_height", handEquip },
         { "is_holding_right", heldName.empty() ? 0.0 : 1.0 },
-        { "is_holding_left", 0.0 },
+        { "is_holding_left", offhand.empty() ? 0.0 : 1.0 },
         { "bob_animation", bobbing ? 1.0 : 0.0 },
         { "is_using_vr", 0.0 },
         { "is_paperdoll", 0.0 },
@@ -391,6 +331,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         { "is_vertical_splitscreen", 0.0 },
     };
     input.swimAmount = localSwimAmount;
+    input.contextVariables = { { "player_offhand_arm_height", offhandEquip } };
     if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot,
         { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.1, eyePosition[2] }, false).first == 1;
     input.flags[0] |= playerView.sprinting && input.inWater.value_or(false) ? uint64_t(1) << 57 : 0;
@@ -401,7 +342,6 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     }
 
     int32_t itemBone = -1;
-    int32_t bodyBone = -1;
     std::vector<uint8_t> shown(rig.bones.size(), 0);
     HeldItemMesh* mapMesh = held.identifier == "minecraft:filled_map" ? heldMesh(held) : nullptr;
     bool holdingMap = mapMesh && mapMesh->map;
@@ -410,54 +350,24 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         if (name == "rightitem") {
             itemBone = static_cast<int32_t>(bone);
         }
-        if (name == "body") {
-            bodyBone = static_cast<int32_t>(bone);
-        }
         if ((heldName.empty() || holdingMap) && (name == "rightarm" || name == "rightsleeve")) {
             shown[bone] = 1;
         }
-        if (holdingMap && hudState.offhand.empty() && (name == "leftarm" || name == "leftsleeve")) {
+        if (((holdingMap && offhand.empty()) || offhand.identifier == "minecraft:filled_map")
+            && (name == "leftarm" || name == "leftsleeve")) {
             shown[bone] = 1;
         }
     }
-    if (bodyBone < 0) {
-        return;
-    }
-    const world::BoneMatrix& body = matrices[static_cast<size_t>(bodyBone)];
-    std::array<float, 9> inverse {};
-    {
-        const float a = body[0], b = body[1], c = body[2];
-        const float d = body[4], e = body[5], f = body[6];
-        const float g = body[8], h = body[9], i = body[10];
-        float determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-        if (std::abs(determinant) < 1.0e-8f) {
-            return;
-        }
-        float s = 1.0f / determinant;
-        inverse = {
-            (e * i - f * h) * s, (c * h - b * i) * s, (b * f - c * e) * s,
-            (f * g - d * i) * s, (a * i - c * g) * s, (c * d - a * f) * s,
-            (d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s,
-        };
-    }
-    const Vec3& neck = rig.bones[static_cast<size_t>(bodyBone)].pivot;
     std::array<Vec3, 3> axes = cameraAxes(yaw, pitch);
     Vec3 eyePoint {
         static_cast<float>((camera.x() - origin[0]) * 256.0),
         static_cast<float>((camera.y() - origin[1]) * 256.0),
         static_cast<float>((camera.z() - origin[2]) * 256.0),
     };
-    float unit = handAnimator.scale() * 16.0f;
     float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
     float handZoom = camera.halfVerticalTangent(aspect) / std::tan(HandFovDegrees * 0.5f * Pi / 180.0f);
     auto posedToWorld = [&](const Vec3& model) {
-        Vec3 posed { model[0] - body[3], model[1] - body[7], model[2] - body[11] };
-        Vec3 local {
-            inverse[0] * posed[0] + inverse[1] * posed[1] + inverse[2] * posed[2] - neck[0],
-            inverse[3] * posed[0] + inverse[4] * posed[1] + inverse[5] * posed[2] - neck[1],
-            inverse[6] * posed[0] + inverse[7] * posed[1] + inverse[8] * posed[2] - neck[2],
-        };
-        Vec3 view = transformed(viewMotion, { -local[0] * unit / 256.0f, local[1] * unit / 256.0f, -local[2] * unit / 256.0f });
+        Vec3 view = transformed(viewMotion, first_person::rigPoint(model, handAnimator.scale(), static_cast<float>(session::PlayerEyeHeight)));
         Vec3 offset = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
         return add(eyePoint, scaled(offset, 256.0f));
     };
@@ -494,6 +404,20 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
     }
     appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown, &hudState.armor);
+    if (!offhand.empty() && !appendAttachable(offhand, 0.0, rig, matrices, true,
+            handOffhandAttachable, posedToWorld, out, true)) {
+        Mat4 blockPlacement = viewMotion * first_person::offhandPlacement(true, false);
+        Mat4 spritePlacement = viewMotion * first_person::offhandPlacement(false, offhand.handEquipped);
+        auto placeOffhand = [&](const Vec3& local, bool block) {
+            Vec3 shaped = block ? scaled(local, 1.0f / HeldCubeSize)
+                : Vec3 { -(local[0] / HeldItemSize + 0.5f), local[1] / HeldItemSize + 0.5f,
+                    local[2] / HeldItemSize - 1.0f / 32.0f };
+            Vec3 view = transformed(block ? blockPlacement : spritePlacement, shaped);
+            Vec3 offset = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
+            return add(eyePoint, scaled(offset, 256.0f));
+        };
+        appendHeldItem(offhand, placeOffhand, out, true);
+    }
     if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, viewMotion, out)) {
         return;
     }

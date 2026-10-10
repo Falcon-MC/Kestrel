@@ -1234,6 +1234,15 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     auto argument = [&](size_t index) {
         return index < arguments.size() ? arguments[index] : 0.0;
     };
+    if (name == "get_default_bone_pivot") {
+        double axis = argument(1);
+        if (!activeBones || arguments.size() < 2 || !std::isfinite(axis)
+            || axis < 0.0 || axis > 2.0 || axis != std::floor(axis)) return 0.0;
+        auto found = boneIndex.find(lowercase(molang::stringOf(argument(0))));
+        if (found == boneIndex.end()) return 0.0;
+        size_t component = static_cast<size_t>(axis);
+        return (*activeBones)[size_t(found->second)].pivot[component] * (component == 0 ? -1.0 : 1.0);
+    }
     if (name == "property" || name == "has_property") {
         if (arguments.empty()) return 0.0;
         auto found = current.properties.find(molang::stringOf(argument(0)));

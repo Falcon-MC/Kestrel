@@ -439,6 +439,8 @@ int Client::run()
                 int slot = std::clamp(hudState.selectedSlot, 0, 8);
                 handTransition.update(hudState.inventory[size_t(slot)], slot, handTime);
                 handEquip = handTransition.sample(handTime);
+                offhandTransition.update(hudState.offhand, 0, handTime);
+                offhandEquip = offhandTransition.sample(handTime);
             }
             updateEmotes(secondsNow());
             updateGameTips();
@@ -1428,8 +1430,12 @@ void Client::prepareSessionRender()
         droppedIconKeys = {};
         nextDroppedIcon = 0;
         handTransition = {};
+        offhandTransition = {};
+        handAttachable = {};
+        handOffhandAttachable = {};
         hotbarSelection = {};
         handEquip = 0.0f;
+        offhandEquip = 0.0f;
         firstPersonMotion = {};
         handMotionTickSerial = 0;
         handMotionTeleports = snapshot.player.teleports;

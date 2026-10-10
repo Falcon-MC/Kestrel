@@ -40,6 +40,25 @@ int main()
 
         HudItem stone = item("minecraft:stone");
         HudItem dirt = item("minecraft:dirt");
+        HandEquip mainHand, offHand;
+        HudItem shield = item("minecraft:shield");
+        for (int tick = 0; tick <= 4; ++tick) {
+            mainHand.update(stone, 0, tick * 0.05);
+            offHand.update(shield, 0, tick * 0.05);
+        }
+        mainHand.update(dirt, 1, 0.25);
+        offHand.update(shield, 0, 0.25);
+        close(offHand.height, 1.0f, "Main-hand changes must not lower the offhand");
+        close(mainHand.sample(0.275), 0.8f, "Main-hand transitions must retain their own interpolation");
+        mainHand.update(dirt, 1, 0.30);
+        offHand.update({}, 0, 0.30);
+        close(offHand.sample(0.325), 0.8f, "Offhand transitions must interpolate their own height pair");
+        require(offHand.item.identifier == shield.identifier, "Offhand removal must retain the cached item until its exchange threshold");
+        offHand.update({}, 0, 0.35);
+        offHand.update({}, 0, 0.40);
+        require(offHand.item.empty(), "Offhand removal must exchange the cached stack independently");
+        require(mainHand.item.identifier == stone.identifier, "Offhand ticks must not advance the main-hand stack");
+
         HandEquip hand;
         hand.update(stone, 0, 0.0);
         for (int tick = 1; tick <= 4; ++tick) hand.update(stone, 0, tick * 0.05);
