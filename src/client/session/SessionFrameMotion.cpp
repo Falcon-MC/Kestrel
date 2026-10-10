@@ -69,6 +69,7 @@ void Session::drainFrameMotion()
     for (const auto& prepared : outgoing) {
         if (prepared.revision != movementRevision || prepared.tick.number != clientTick + 1) continue;
         tickProjectiles(prepared.tick.due);
+        tickActors(prepared.tick.due);
         runMotionTick(prepared.tick.due, &prepared.tick, &prepared.after, prepared.trace);
     }
     if (!outgoing.empty()) sendMapRequests();

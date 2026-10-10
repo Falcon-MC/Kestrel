@@ -10,6 +10,7 @@
 #include "client/ActorRiders.h"
 #include "client/ActorHitboxes.h"
 #include "client/ActorProperties.h"
+#include "client/ActorInterpolation.h"
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
@@ -317,6 +318,7 @@ struct ActorView {
     uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    ActorInterpolation interpolation;
     // Blocks per tick as the server last set it, and a count of launch turns to show at once.
     std::array<float, 3> velocity {};
     uint64_t launchTurns = 0;
@@ -1151,6 +1153,7 @@ private:
     void updateActorLink(int64_t vehicle, int64_t rider, bool remove);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
     void tickProjectiles(double tickTime);
+    void tickActors(double tickTime);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);
@@ -1295,6 +1298,7 @@ private:
     int sentRadius = 0;
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
+    std::map<uint64_t, ActorMoveQueue> actorMoveQueues;
     std::unordered_map<std::string, ActorPropertySchema> actorPropertySchemas;
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, DebugShapeView> debugShapes;

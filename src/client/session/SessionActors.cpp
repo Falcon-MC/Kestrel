@@ -332,8 +332,8 @@ std::vector<SkinUpload> Session::takeSkinUploads()
 
 /**
  * Spawn packets give feet positions; player movement packets give eye positions.
- * Every move counts as a new sample for
- * the renderer to glide toward, and a teleport tells it to jump instead.
+ * Keep the last network position separate from the tick interpolation so
+ * omitted delta-packet coordinates come from the last packet, not the pose.
  */
 void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition)
 {
@@ -368,6 +368,29 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;
     actor->second.pitch = pitch;
+    if (!world::projectileEntity(actor->second.identifier)) {
+        auto position = std::array<double, 3> { actor->second.x, actor->second.y, actor->second.z };
+        auto turn = std::array<float, 3> { yaw, headYaw, pitch };
+        if (teleport || !actor->second.interpolation.initialized) {
+            actorMoveQueues.erase(runtimeId);
+            actor->second.interpolation.retarget(position, turn, true);
+        } else {
+            actorMoveQueues[runtimeId].push(position, turn);
+        }
+    }
+}
+
+void Session::tickActors(double tickTime)
+{
+    for (auto& [id, actor] : actors) {
+        if (world::projectileEntity(actor.identifier)) continue;
+        if (auto queue = actorMoveQueues.find(id); queue != actorMoveQueues.end()) {
+            ActorMoveTarget sample;
+            if (queue->second.pop(sample)) actor.interpolation.retarget(sample.position, sample.turn, false);
+        }
+        actor.interpolation.tick(tickTime);
+    }
+    std::erase_if(actorMoveQueues, [&](const auto& entry) { return !actors.contains(entry.first); });
 }
 
 /**

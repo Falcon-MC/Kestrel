@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "platform/System.h"
 #include "client/ActorEquipment.h"
 
 #include "Core/Json/Json.h"
@@ -1598,6 +1599,7 @@ void Session::handleWorldPacket(std::string& payload)
         serverMotions.clear();
         motionStarted = false;
         actors.clear();
+        actorMoveQueues.clear();
         runtimeByUnique.clear();
         actorRiders.clear();
         std::vector<std::string> worn;
@@ -2011,6 +2013,10 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     settings.mGameVersion = GameVersion;
     settings.mAuthentication = authentication;
     settings.mIdentity.mDisplayName = offlineName;
+    settings.mClientData.mSkinColor = "#0";
+    settings.mClientData.mDeviceOS = platform::bedrockDeviceOS();
+    settings.mClientData.mDefaultInputMode = 1;
+    settings.mClientData.mCurrentInputMode = 1;
     applyDefaultSkin(settings.mClientData);
     settings.mChunkRadius = requestedRadius.load();
     settings.mTimeoutMs = TimeoutMs;
@@ -2249,6 +2255,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         acknowledgedCameraPerspective = -1;
         pendingSkins.clear();
         actors.clear();
+        actorMoveQueues.clear();
         actorPropertySchemas.clear();
         runtimeByUnique.clear();
         debugShapes.clear();

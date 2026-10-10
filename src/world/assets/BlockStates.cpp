@@ -35,6 +35,22 @@ std::optional<int32_t> stateInt(const Tag& states, const std::string& key)
     }
 }
 
+uint32_t stairVariant(const Tag& states)
+{
+    // The model faces north; Bedrock's stair directions are east, west, south, north.
+    static constexpr uint32_t Rotations[4] = { 1, 3, 2, 0 };
+    uint32_t variant = Rotations[uint32_t(stateInt(states, "weirdo_direction").value_or(0)) & 3];
+    if (stateInt(states, "upside_down_bit").value_or(0)) variant |= 4;
+
+    // Zero preserves neighbour-derived corners for states from older servers.
+    static constexpr const char* Corners[5] = { "none", "inner_right", "inner_left", "outer_left", "outer_right" };
+    const std::string corner = stateString(states, "minecraft:corner");
+    for (uint32_t shape = 0; shape < 5; ++shape) {
+        if (corner == Corners[shape]) return variant | ((shape + 1) << 3);
+    }
+    return variant;
+}
+
 Axis stateAxis(const Tag& states)
 {
     std::string axis = stateString(states, "pillar_axis");

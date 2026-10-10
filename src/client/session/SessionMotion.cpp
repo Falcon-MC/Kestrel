@@ -376,6 +376,7 @@ void Session::tickMotion()
         double stamp = nextMotionTick - TickSeconds * (due - index);
         inputLatency.tick(secondsNow() - stamp);
         tickProjectiles(stamp);
+        tickActors(stamp);
         // stamp the tick with when it was due, not when this loop got around to it, or the camera hitches by the delay
         runMotionTick(stamp);
     }
