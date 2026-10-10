@@ -14,7 +14,7 @@ namespace kestrel {
 
 namespace {
 
-constexpr const char* GameVersion = "1.26.51";
+constexpr const char* GameVersion = "1.26.52";
 constexpr const char* DiscoveryUrl = "https://client.discovery.minecraft-services.net/api/v1.0/discovery/MinecraftPE/builds/";
 constexpr const char* ServerScid = "4fc10100-5f7a-4470-899b-280835760c07";
 constexpr const char* ServerFilter = "(contentType eq '3PP_V2.0') and platforms/any(tp: tp eq 'android.googleplay') and platforms/any(tp: tp eq 'title.bedrockvanilla')";

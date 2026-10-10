@@ -137,7 +137,7 @@ const BlockStateUpgrader& blockStateUpgrader()
 }
 
 constexpr int ProtocolVersion = 2193;
-constexpr const char* GameVersion = "1.26.51";
+constexpr const char* GameVersion = "1.26.52";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr const char* ExperiencePrefix = "experience_id/";
 constexpr const char* SessionHandlePrefix = "session_handle/";

@@ -1195,7 +1195,7 @@ void Menu::title(Context& ui, float width, float height)
     playerModel(ui, modelX, modelY, ModelPixel, false, titleModelRotation);
 
     backedLabel(ui, "Kestrel, not affiliated with Mojang", CornerMargin, labelY);
-    constexpr std::string_view Version = "v1.26.51";
+    constexpr std::string_view Version = "v1.26.52";
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
 }
 

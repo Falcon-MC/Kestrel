@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-	<img src="https://img.shields.io/badge/Bedrock-v1.26.51-56383E" alt="Bedrock">
+	<img src="https://img.shields.io/badge/Bedrock-v1.26.52-56383E" alt="Bedrock">
 	<img src="https://img.shields.io/badge/protocol-2193-blue" alt="Protocol">
 	<img src="https://img.shields.io/badge/language-C%2B%2B20-00599C" alt="C++20">
 	<img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="Platform">
