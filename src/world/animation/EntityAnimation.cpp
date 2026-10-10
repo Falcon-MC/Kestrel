@@ -1269,6 +1269,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return velocity[1];
     }
     if (name == "walk_distance" || name == "distance_moved") {
+        if (current.walkDistance) return *current.walkDistance;
         return previousWalkDistance + (walkDistance - previousWalkDistance) * partialTick;
     }
     if (name == "distance_from_camera" || name == "rotation_to_camera") {

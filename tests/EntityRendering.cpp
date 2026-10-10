@@ -338,6 +338,16 @@ int main()
     walking.setRenderContext(input, input.now, 1.0f);
     require(expression(walking, "query.modified_move_speed") == 0, "Riding must stop the walk cycle");
 
+    input.walkDistance = 0.75;
+    input.now = 1.153;
+    walking.update(nullptr, nullptr, bones, input);
+    require(expression(walking, "query.walk_distance") == 0.75, "First-person animations must use the supplied native walking phase");
+    require(expression(walking, "query.distance_moved") == 0.75, "Walking phase aliases must agree");
+    input.walkDistance = 0.0;
+    input.now = 1.204;
+    walking.update(nullptr, nullptr, bones, input);
+    require(expression(walking, "query.walk_distance") == 0.0, "A reset walking phase must override the accumulated animation distance");
+
     EntityAnimator fish;
     input = AnimationInput {};
     input.identifier = "minecraft:tropicalfish";

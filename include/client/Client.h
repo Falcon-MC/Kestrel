@@ -15,6 +15,7 @@
 #include "client/AimAssist.h"
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
+#include "client/FirstPersonMotion.h"
 #include "client/LaunchOptions.h"
 #include "client/ParticleRenderer.h"
 #include "client/Profiler.h"
@@ -451,8 +452,9 @@ private:
     bool featuredListed = false;
     bool featuredDirty = false;
     world::EntityAnimator handAnimator;
-    world::EntityAnimator handRestAnimator;
-    world::EntityAnimator handMotionAnimator;
+    FirstPersonMotion firstPersonMotion;
+    uint64_t handMotionTickSerial = 0;
+    uint64_t handMotionTeleports = 0;
     world::EntityAnimator paperDollAnimator;
     HeldAttachable handAttachable;
     HeldAttachable bodyAttachable;
@@ -573,7 +575,7 @@ private:
     void appendConduits(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBanners(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void drawSignTexts(modding::WorldCanvas& painter);
-    bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, std::vector<world::ModelQuadGpu>& out);
+    bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, std::vector<world::ModelQuadGpu>& out);
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;
