@@ -110,6 +110,7 @@ private:
     void syncSocial();
     void syncDressingRoom();
     void syncSession();
+    void prepareSessionRender();
     void updateAimAssist();
     void drawAimAssist(ui::Context& context, float scale);
     void syncFeatured();
@@ -254,7 +255,6 @@ private:
     double padClock = 0.0;
     float padScroll = 0.0f;
     std::array<float, 2> padMove {};
-    bool sneakWasHeld = false;
     bool sneakFromPad = false;
     bool sneakToggled = false;
     bool sneakActive = false;
@@ -315,6 +315,8 @@ private:
     uint64_t seenJoin = 0;
     uint64_t seenTeleport = 0;
     std::shared_ptr<const SessionSnapshot> seenSessionSnapshot;
+    std::shared_ptr<const SessionSnapshot> renderedSessionSnapshot;
+    bool resetChunkMeshes = false;
     PlayerView playerView;
     std::unique_ptr<audio::SoundEngine> soundEngine;
     std::future<std::unique_ptr<audio::SoundEngine>> pendingSoundEngine;

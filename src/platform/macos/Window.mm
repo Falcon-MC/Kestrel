@@ -83,6 +83,26 @@ public:
         @autoreleasepool {
             NSEvent* event;
             while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:nil inMode:NSDefaultRunLoopMode dequeue:YES])) {
+                switch (event.type) {
+                case NSEventTypeKeyDown:
+                case NSEventTypeKeyUp:
+                case NSEventTypeMouseMoved:
+                case NSEventTypeLeftMouseDragged:
+                case NSEventTypeRightMouseDragged:
+                case NSEventTypeLeftMouseDown:
+                case NSEventTypeLeftMouseUp:
+                case NSEventTypeRightMouseDown:
+                case NSEventTypeRightMouseUp:
+                case NSEventTypeOtherMouseDown:
+                case NSEventTypeOtherMouseUp:
+                case NSEventTypeScrollWheel:
+                    if (event.window == window) {
+                        state.recordReceipt();
+                    }
+                    break;
+                default:
+                    break;
+                }
                 if (event.type == NSEventTypeKeyDown && event.window == window) {
                     heldKey(event.keyCode, true);
                     key(event);
@@ -107,7 +127,7 @@ public:
                     mouse(event);
                     if (event.window == window && (event.modifierFlags & NSEventModifierFlagControl)) {
                         state.rightMouseDown = true;
-                        state.rightMousePressed = true;
+                        state.recordMousePress(true);
                         controlClickDown = true;
                         break;
                     }
@@ -117,7 +137,7 @@ public:
                         continue;
                     }
                     state.mouseDown = true;
-                    state.mousePressed = true;
+                    state.recordMousePress(false);
                     break;
                 case NSEventTypeLeftMouseUp:
                     mouse(event);
@@ -132,7 +152,7 @@ public:
                     break;
                 case NSEventTypeRightMouseDown:
                     state.rightMouseDown = true;
-                    state.rightMousePressed = true;
+                    state.recordMousePress(true);
                     break;
                 case NSEventTypeRightMouseUp:
                     state.rightMouseDown = false;

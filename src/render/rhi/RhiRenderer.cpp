@@ -252,6 +252,16 @@ public:
         return device->deviceName();
     }
 
+    double frameFenceWaitMilliseconds() const override
+    {
+        return device->frameFenceWaitMilliseconds();
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return device->frameSubmissionTimeSeconds();
+    }
+
     uint64_t submittedFrames() const override
     {
         return device->submittedFrames();

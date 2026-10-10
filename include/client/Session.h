@@ -4,6 +4,9 @@
 #include "Protocol/Types/DebugShapeData.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/InputLatency.h"
+#include "client/FrameMotion.h"
+#include "client/MotionInputBuffer.h"
 #include "client/ActorRiders.h"
 #include "client/ActorHitboxes.h"
 #include "client/ActorProperties.h"
@@ -680,6 +683,8 @@ struct LoadedBlocks {
     std::map<world::SubChunkKey, std::shared_ptr<const world::SubChunk>> subChunks;
     // The loaded columns of the dimension as x and z, sorted.
     std::vector<std::array<int32_t, 2>> columns;
+    std::vector<world::SubChunkKey> pending;
+    bool settled = false;
     std::shared_ptr<const world::BlockAssets> assets;
     world::IdMapping ids;
 
@@ -746,6 +751,19 @@ struct CameraFovRequest {
     float easeSeconds = 0.0f;
     int easeType = 0;
     bool clear = false;
+};
+
+struct MotionFeed {
+    PlayerMotion seed;
+    MotionInput equipment;
+    std::optional<std::array<double, 3>> breakTarget;
+    uint64_t tick = 0;
+    uint64_t revision = 0;
+    uint32_t locks = 0;
+    uint64_t hardRevision = 0;
+    uint64_t glideStart = 0, glideEnd = 0;
+    uint64_t dolphinStart = 0, dolphinEnd = 0;
+    std::vector<std::pair<uint64_t, MotionVector>> impulses;
 };
 
 struct SessionSnapshot {
@@ -881,6 +899,7 @@ struct SessionSnapshot {
     world::MiningConditions mining;
     std::shared_ptr<const PlayerMotion> motion;
     MotionInput motionInput;
+    std::shared_ptr<const MotionFeed> motionFeed;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
     SidebarView sidebar;
@@ -935,7 +954,11 @@ public:
     void acknowledgeResourceReload(uint64_t serial, const world::BlockAssets* expectedAssets);
     void selectHotbarSlot(int slot);
     void requestRespawn();
-    void setMotionInput(const MotionInput& input);
+    void setMotionInput(const MotionInput& input, uint64_t trace = 0);
+    void enableFrameMotion() { frameDriven = true; }
+    PlayerView advanceFrameMotion(const MotionInput& input, uint64_t trace, bool captured);
+    void submitFrameMotion();
+    InputLatency inputLatency;
 
     /**
      * Queues a click for the network thread: a right click uses the held
@@ -1091,7 +1114,9 @@ private:
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
-    void runMotionTick(double now);
+    void runMotionTick(double now, const FrameMotion::Tick* prepared = nullptr, const PlayerMotion* after = nullptr, uint64_t trace = 0);
+    void publishMotionFeed();
+    void drainFrameMotion();
     void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
     void replayFrom(size_t index);
     void applyMotionBoosts(MotionInput& input, uint64_t tick) const;
@@ -1319,7 +1344,7 @@ private:
     bool dimensionAckReceived = false;
     bool dimensionSpawnReceived = false;
     std::atomic<bool> useRequested { false };
-    std::atomic<bool> attackRequested { false };
+    std::atomic<uint32_t> attackRequested { 0 };
     std::atomic<bool> attackHeld { false };
     std::atomic<bool> useHeld { false };
     std::atomic<bool> modAttackHeld { false };
@@ -1443,8 +1468,27 @@ private:
     MotionBoost dolphinBoost;
     bool enderChestOpen = false;
     std::mutex motionInputMutex;
+    MotionInputBuffer bufferedMotionInput;
+    FrameMotion frameMotion;
+    uint64_t frameJoin = 0;
+    uint64_t frameRevision = 0;
+    uint64_t frameHardRevision = 0;
+    double nextMotionFeed = 0.0;
+    std::atomic<bool> frameDriven { false };
+    uint64_t movementRevision = 1;
+    uint64_t hardMovementRevision = 1;
+    struct PreparedMotion {
+        FrameMotion::Tick tick;
+        PlayerMotion after;
+        uint64_t revision = 0;
+        uint64_t trace = 0;
+    };
+    std::mutex frameOutgoingMutex;
+    std::deque<PreparedMotion> frameOutgoing;
+    std::deque<PreparedMotion> frameStaged;
     MotionInput motionInput;
     MotionInput lastMotionInput;
+    uint64_t motionInputTrace = 0;
     uint32_t movementInputLocks = 0;
     bool motionStarted = false;
     bool teleportHandled = false;
@@ -1452,7 +1496,6 @@ private:
     std::atomic<int32_t> pendingRiptide { 0 };
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
-    double lastMotionFrame = 0.0;
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;

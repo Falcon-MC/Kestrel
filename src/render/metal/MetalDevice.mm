@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -401,6 +402,8 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
         encoder = nil;
         drawable = nil;
         id<MTLTexture> color = nil;
@@ -417,7 +420,9 @@ public:
         if (!color) {
             return submissions + 1;
         }
+        const auto waitStarted = std::chrono::steady_clock::now();
         dispatch_semaphore_wait(completion->slots, DISPATCH_TIME_FOREVER);
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         actorCursor = 0;
 
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -443,6 +448,16 @@ public:
         bound = nullptr;
         boundTextures = nullptr;
         return submissions + 1;
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
     }
 
     bool recording() const override
@@ -565,6 +580,7 @@ public:
             dispatch_semaphore_signal(state->slots);
         }];
         [commandBuffer commit];
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         if (capturing) {
             [commandBuffer waitUntilCompleted];
             finishCapture();
@@ -595,6 +611,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     void ensureOffscreenColor()
     {
         if (offscreenColor && offscreenColor.width == surfaceWidth && offscreenColor.height == surfaceHeight) {

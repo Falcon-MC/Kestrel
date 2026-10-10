@@ -423,6 +423,7 @@ bool Menu::handleChatKeys(const InputState& input)
         return false;
     }
     if (chatSettingsOpen || chatSettingsClosed) {
+        if (chatSettingsOpen && input.escape) closeChatSettings();
         chatSettingsClosed = false;
         return input.escape || input.enter || input.tab || input.pressedKey == Key::Up || input.pressedKey == Key::Down;
     }
@@ -662,6 +663,7 @@ void Menu::chatScreen(Context& ui, float width, float height)
         if (event.kind != ui::UiEvent::Kind::Button) {
             continue;
         }
+        if (inputPrepared && ui.input().escape) continue;
         if (event.name == "copy_coordinates_button" && !coordinates.empty()) {
             platform::copyText(coordinates);
             continue;
@@ -678,12 +680,11 @@ void Menu::chatScreen(Context& ui, float width, float height)
             continue;
         }
         if (event.name == "button.send") {
-            if (!blank(chatDraft)) {
+            if (!ui.input().enter && !blank(chatDraft)) {
                 submitChat();
             }
         } else if (event.name == "button.menu_exit" || event.name == "button.chat_menu_cancel") {
             closeChat();
-            chatClosedByScreen = ui.input().escape;
         } else if (event.name == "button.click_autocomplete" && event.index >= 0 && static_cast<size_t>(event.index) < rows.size()) {
             if (const std::optional<std::string>& pick = rows[static_cast<size_t>(event.index)].pick) {
                 chatDraft = *pick;
