@@ -14,3 +14,21 @@ server at `127.0.0.1:19134`.
 - `spectator/first-person.png`: spectator mode, no hand or held item.
 
 These are rendered screenshots, not extracted game assets.
+
+## Mob animation weights
+
+Windows / Direct3D 12, same local Bedrock server. An adult test pig was allowed
+to walk, then stopped with Slowness 255. Its position was sampled repeatedly.
+
+- `mob-animation/before-stopped-close.png`: stationary pig with fully bent walking legs before the correction.
+- `mob-animation/after-stopped.png`: legs return to neutral after walking and stopping with the correction. Two later samples had identical position and rotation.
+
+The pig also resumed movement after Slowness was cleared and a carrot was held.
+No game model or UI file was changed: the animation runner now applies the numeric
+`scripts.animate` blend weight instead of converting it to a boolean. This matches
+the [documented animation blend expressions](https://learn.microsoft.com/en-us/minecraft/creator/documents/animations/animationsoverview?view=minecraft-bedrock-stable).
+
+The regression failed before the correction; the Windows build and all 55 tests
+passed afterwards. These are Kestrel before/after captures, not an official-client
+comparison. The test pig was removed and the player's inventory, position and FOV
+were restored.
