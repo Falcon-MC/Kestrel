@@ -32,6 +32,7 @@ NSString* functionName(std::string_view entry)
         { "ps_main", "ui_fragment" },
         { "vs_world", "world_vertex" },
         { "vs_model", "model_vertex" },
+        { "vs_hand", "hand_vertex" },
         { "vs_actor", "actor_vertex" },
         { "vs_overlay", "overlay_vertex" },
         { "vs_sky", "sky_vertex" },

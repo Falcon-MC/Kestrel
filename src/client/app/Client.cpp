@@ -696,6 +696,7 @@ int Client::run()
             view.backgroundCount = static_cast<uint32_t>(background.size());
             std::array<int32_t, 3> entityOrigin { int32_t(std::floor(camera.x())), int32_t(std::floor(camera.y())), int32_t(std::floor(camera.z())) };
             std::vector<world::ModelQuadGpu> entityQuads;
+            std::vector<world::HandQuadGpu> preciseHandQuads;
             {
                 Profiler::Section section(profiler, "entities");
                 const auto& self = renderSelf;
@@ -717,9 +718,9 @@ int Client::run()
                 appendBanners(entityOrigin, entityQuads, blendedQuads);
                 if (!menu.hudHidden()) {
                     if (handVisible(menu.hudHidden(), menu.option("hide_hand", 0) != 0)) {
-                        appendFirstPerson(entityOrigin, handQuads);
+                        appendFirstPerson(entityOrigin, preciseHandQuads);
                     }
-                    lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
+                    lightQuads(preciseHandQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
                     if (self) {
                         appendPaperDoll(*self, entityOrigin, handQuads);
                     }
@@ -736,6 +737,8 @@ int Client::run()
             view.actorDraws = actorDraws.data();
             view.actorDrawCount = static_cast<uint32_t>(actorDraws.size());
             view.entityQuads = entityQuads.data();
+            view.preciseHandQuads = preciseHandQuads.data();
+            view.preciseHandQuadCount = static_cast<uint32_t>(preciseHandQuads.size());
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
             mod::Environment environment;
@@ -1265,7 +1268,7 @@ uint32_t Client::lightCorners(double x, double y, double z) const
  * by their light and keep their tint in the upper bits, so only entity quads
  * get the shaded flag.
  */
-void Client::lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, uint32_t corners) const
+void Client::lightQuads(ModelQuadOutput quads, size_t first, uint32_t corners) const
 {
     for (size_t index = first; index < quads.size(); ++index) {
         world::ModelQuadGpu& quad = quads[index];

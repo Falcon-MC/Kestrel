@@ -70,6 +70,9 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "vs_model") {
             return spirv(shaders::ModelVertex);
         }
+        if (entry == "vs_hand") {
+            return spirv(shaders::HandVertex);
+        }
         if (entry == "vs_overlay") {
             return spirv(shaders::OverlayVertex);
         }

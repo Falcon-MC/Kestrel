@@ -339,6 +339,27 @@ vertex WorldOut overlay_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_i
     return placeModel(in, vertexId, draw, 1024.0);
 }
 
+struct HandIn {
+    uint4 a [[attribute(0)]], b [[attribute(1)]], c [[attribute(2)]], d [[attribute(3)]];
+    float4 glint [[attribute(4)]], glintTexture [[attribute(5)]], glintUvTransform [[attribute(6)]];
+    float4 positions0 [[attribute(7)]], positions1 [[attribute(8)]], positions2 [[attribute(9)]];
+};
+
+vertex WorldOut hand_vertex(HandIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    ModelIn model = { in.a, in.b, in.c, in.d, in.glint, in.glintTexture, in.glintUvTransform };
+    WorldOut out = placeModel(model, vertexId, draw, 256.0);
+    const uint corners[6] = { 0, 1, 2, 0, 2, 3 };
+    float positions[12] = { in.positions0.x, in.positions0.y, in.positions0.z, in.positions0.w,
+        in.positions1.x, in.positions1.y, in.positions1.z, in.positions1.w,
+        in.positions2.x, in.positions2.y, in.positions2.z, in.positions2.w };
+    uint component = corners[vertexId] * 3;
+    float3 position = draw.origin.xyz + float3(positions[component], positions[component + 1], positions[component + 2]);
+    out.position = draw.viewProjection * float4(position, 1.0);
+    out.relative = position;
+    return out;
+}
+
 float4 sampleLayer(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, float2 uv, uint layer)
 {
     float4 low = blocks.sample(blockSampler, uv, min(layer, 2047u));

@@ -48,6 +48,7 @@ inline constexpr uint32_t EntityTexturePageLayers = 2048;
 inline constexpr uint32_t EntityTexturePages = 4;
 inline constexpr uint32_t CubeQuadBytes = 20;
 inline constexpr uint32_t ModelQuadBytes = 112;
+inline constexpr uint32_t HandQuadBytes = 160;
 
 enum SkyVertexFlag : uint32_t {
     SkyTextured = 1 << 0,
@@ -131,7 +132,7 @@ struct WorldView {
     /**
      * Entity quads in four runs: entityQuadCount opaque ones, then
      * entityBlendCount alpha blended ones drawn after translucent terrain,
-     * then handQuadCount first person ones drawn last in a sliver of the depth
+     * then handQuadCount HUD ones drawn last in a sliver of the depth
      * range so walls never cut into the hand, then overlayQuadCount block
      * cracks and outline edges. Overlays are placed in 1/1024 block and
      * multiply the color under them: entity quads shade it like 40% black, the rest
@@ -145,6 +146,9 @@ struct WorldView {
     uint32_t handQuadCount = 0;
     uint32_t overlayQuadCount = 0;
     std::array<float, 3> entityOrigin {};
+    const void* preciseHandQuads = nullptr;
+    // First-person geometry uses HandQuadBytes with float positions, separate from the packed world stream.
+    uint32_t preciseHandQuadCount = 0;
 
     uint32_t entityTotal() const
     {

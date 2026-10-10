@@ -252,7 +252,7 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
  * Both hands share the player's animated camera-space rig. Ordinary items
  * use independent camera placements; attachables bind to their own item bone.
  */
-void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOutput out)
 {
     if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached) {
         return;
@@ -726,7 +726,7 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
  * the item, in blocks around its center, to 1/256 block around the draw
  * origin; it is told whether the item is a cube so it can pose it.
  */
-void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite)
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite)
 {
     HeldItemMesh* cached = heldMesh(held);
     if (!cached) {
@@ -750,7 +750,7 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
         uint32_t posedFace = world::posedShadeFace(face.shade & world::QuadFaceMask, center, 1.0f / 16.0f, [&](const Vec3& point) {
             return place(point, mesh.block);
         });
-        out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace));
+        out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace), corners);
         if (held.enchanted) {
             world::applyItemGlint(out.back(), blockAssets->itemGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->itemGlintLayer()));
         }
@@ -1010,7 +1010,7 @@ void Client::appendVaultItems(const std::array<int32_t, 3>& origin, std::vector<
  * the hand comes up, following the swing. The arms are posed by the pack's
  * map animations. False while the map content has not arrived.
  */
-bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, std::vector<world::ModelQuadGpu>& out)
+bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, ModelQuadOutput out)
 {
     HeldItemMesh* mesh = heldMesh(held);
     if (!mesh || !mesh->map) {
@@ -1034,7 +1034,7 @@ bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const s
     auto quad = [&](float low, float high, float z, uint32_t layer) {
         std::array<Vec3, 4> corners { corner(low, low, z), corner(high, low, z), corner(high, high, z), corner(low, high, z) };
         std::array<std::array<uint16_t, 2>, 4> uvs { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
-        out.push_back(packQuad(corners, uvs, layer, shade));
+        out.push_back(packQuad(corners, uvs, layer, shade), corners);
     };
     quad(-7.0f, 135.0f, 0.0f, mapBackgroundLayer());
     quad(0.0f, 128.0f, 0.004f, contentLayer);

@@ -22,6 +22,11 @@ layout(location = 3) in uvec4 inD;
 layout(location = 4) in vec4 inGlint;
 layout(location = 5) in vec4 inGlintTexture;
 layout(location = 6) in vec4 inGlintUvTransform;
+#ifdef HAND
+layout(location = 7) in vec4 inPositions0;
+layout(location = 8) in vec4 inPositions1;
+layout(location = 9) in vec4 inPositions2;
+#endif
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
@@ -82,6 +87,13 @@ void main()
     }
     uint uvWord = words[6u + corner];
 
+#ifdef HAND
+    float positions[12] = float[12](inPositions0.x, inPositions0.y, inPositions0.z, inPositions0.w,
+        inPositions1.x, inPositions1.y, inPositions1.z, inPositions1.w,
+        inPositions2.x, inPositions2.y, inPositions2.z, inPositions2.w);
+    uint component = corner * 3u;
+    local = vec3(positions[component], positions[component + 1u], positions[component + 2u]);
+#endif
     vec3 position = draw.origin.xyz + local;
     gl_Position = draw.viewProjection * vec4(position, 1.0);
     gl_Position.y = -gl_Position.y;

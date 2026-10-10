@@ -16,6 +16,7 @@
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/FirstPersonMotion.h"
+#include "client/ModelQuadOutput.h"
 #include "client/LaunchOptions.h"
 #include "client/ParticleRenderer.h"
 #include "client/Profiler.h"
@@ -136,12 +137,12 @@ private:
     size_t visibleTerrain() const;
     uint8_t lightAt(double x, double y, double z) const;
     uint32_t lightCorners(double x, double y, double z) const;
-    void lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, uint32_t corners) const;
+    void lightQuads(ModelQuadOutput quads, size_t first, uint32_t corners) const;
     void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
     ActorView localActorView(float deltaSeconds);
     std::optional<std::array<float, 2>> glideRotation(const ActorView& actor, double now, float alpha) const;
-    void appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
+    void appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOutput out);
     uint32_t heldItemLayer() const;
 
     /**
@@ -196,22 +197,22 @@ private:
      * origin and UVs over the whole texture, cut over the layers its texture
      * is spread on.
      */
-    void appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out) const;
+    void appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, ModelQuadOutput out) const;
     const world::EntityModel* localPlayerModel(const world::EntityRig*& rig, uint32_t& skinLayer) const;
     float swingProgress();
     float swingProgressSince(double start, double now) const;
     void startSwing(double now);
-    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite = false);
+    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite = false);
     struct HeldAttachable {
         std::string identifier;
         world::EntityAnimator animator;
         std::vector<world::EntityBone> bones;
     };
     void appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand = false);
-    bool appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand = false);
+    bool appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, ModelQuadOutput out, bool leftHand = false);
     double localItemUseTicks() const;
     double actorItemUseTicks(const ActorView& actor, double now);
-    void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones = nullptr, const std::array<HudItem, 4>* items = nullptr);
+    void appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, ModelQuadOutput out, const std::vector<uint8_t>* shownBones = nullptr, const std::array<HudItem, 4>* items = nullptr);
     bool paperDollVisible();
     void appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBlockOverlays(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
@@ -580,7 +581,7 @@ private:
     void appendConduits(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out);
     void appendBanners(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void drawSignTexts(modding::WorldCanvas& painter);
-    bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, std::vector<world::ModelQuadGpu>& out);
+    bool appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, ModelQuadOutput out);
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> partMatches;
     std::map<std::pair<const void*, const void*>, std::vector<int32_t>> armorBoneMatches;
     std::chrono::steady_clock::time_point fpsWindowStart;

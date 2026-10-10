@@ -81,6 +81,14 @@ struct ModelQuadGpu {
 
 static_assert(sizeof(ModelQuadGpu) == 112);
 
+// Camera-close geometry keeps its transformed positions instead of snapping to the terrain grid.
+struct HandQuadGpu {
+    ModelQuadGpu model;
+    std::array<float, 12> positions {};
+};
+
+static_assert(sizeof(HandQuadGpu) == 160);
+
 /**
  * Light holds the solved light of every cell, block light in the low nibble
  * and sky light in the high one, at linearIndex(x, y, z). Entities read it to

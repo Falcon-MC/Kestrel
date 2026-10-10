@@ -351,6 +351,39 @@ WorldOut vs_overlay(ModelIn input)
     return placeModel(input, 1024.0);
 }
 
+struct HandIn
+{
+    uint4 a : MODEL0;
+    uint4 b : MODEL1;
+    uint4 c : MODEL2;
+    uint4 d : MODEL3;
+    float4 glint : MODEL4;
+    float4 glintTexture : MODEL5;
+    float4 glintUvTransform : MODEL6;
+    float4 positions0 : MODEL7;
+    float4 positions1 : MODEL8;
+    float4 positions2 : MODEL9;
+    uint vertexId : SV_VertexID;
+};
+
+WorldOut vs_hand(HandIn input)
+{
+    ModelIn model = (ModelIn)0;
+    model.a = input.a; model.b = input.b; model.c = input.c; model.d = input.d;
+    model.glint = input.glint; model.glintTexture = input.glintTexture;
+    model.glintUvTransform = input.glintUvTransform; model.vertexId = input.vertexId;
+    WorldOut output = placeModel(model, 256.0);
+    static const uint corners[6] = { 0, 1, 2, 0, 2, 3 };
+    float positions[12] = { input.positions0.x, input.positions0.y, input.positions0.z, input.positions0.w,
+        input.positions1.x, input.positions1.y, input.positions1.z, input.positions1.w,
+        input.positions2.x, input.positions2.y, input.positions2.z, input.positions2.w };
+    uint component = corners[input.vertexId] * 3;
+    float3 position = origin.xyz + float3(positions[component], positions[component + 1], positions[component + 2]);
+    output.position = mul(viewProjection, float4(position, 1.0));
+    output.relative = position;
+    return output;
+}
+
 float4 sampleLayer(float2 uv, uint layer)
 {
     float4 low = blocks.Sample(blockSampler, float3(uv, min(layer, 2047u)));

@@ -182,7 +182,7 @@ std::vector<QuadCorner> clipUv(const std::vector<QuadCorner>& polygon, size_t ax
  * clipped to each tile its UVs reach, and every piece is fanned into
  * triangles drawn as quads repeating their last corner.
  */
-void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, ModelQuadOutput out)
 {
     std::vector<QuadCorner> triangle { corners[0], corners[1], corners[2] };
     std::array<float, 2> low { 1.0f, 1.0f };
@@ -226,7 +226,8 @@ void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t laye
             }
             for (size_t fan = 1; fan + 1 < piece.size(); ++fan) {
                 std::array<QuadCorner, 4> part { piece[0], piece[fan], piece[fan + 1], piece[fan + 1] };
-                out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord));
+                out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord),
+                    { part[0].position, part[1].position, part[2].position, part[3].position });
                 out.back().glintUvTransform = { float(tileX) / (tiles[0] * grid.coverX), float(tileY) / (tiles[1] * grid.coverY),
                     1.0f / (tiles[0] * grid.coverX), 1.0f / (tiles[1] * grid.coverY) };
             }
@@ -240,10 +241,11 @@ void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t laye
  * layer under it with its UVs moved into that tile; a quad repeating its last
  * corner is a triangle and is clipped to the tiles instead.
  */
-void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, ModelQuadOutput out)
 {
     if (grid.single()) {
-        out.push_back(packCorners(corners, layer, shadeWord));
+        out.push_back(packCorners(corners, layer, shadeWord),
+            { corners[0].position, corners[1].position, corners[2].position, corners[3].position });
         return;
     }
     if (corners[2].position == corners[3].position && corners[2].uv == corners[3].uv) {
@@ -304,7 +306,8 @@ void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world:
                 corner.uv[0] = std::clamp(corner.uv[0] * float(tilesX) - float(tileX), 0.0f, 1.0f);
                 corner.uv[1] = std::clamp(corner.uv[1] * float(tilesY) - float(tileY), 0.0f, 1.0f);
             }
-            out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord));
+            out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord),
+                { piece[0].position, piece[1].position, piece[2].position, piece[3].position });
             out.back().glintUvTransform = { float(tileX) / (tilesX * grid.coverX), float(tileY) / (tilesY * grid.coverY),
                 1.0f / (tilesX * grid.coverX), 1.0f / (tilesY * grid.coverY) };
         }
@@ -521,7 +524,7 @@ world::EntityTileGrid Client::tileGridOf(uint32_t layer) const
     return blockAssets->entityTileGrid(layer);
 }
 
-void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out) const
+void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, ModelQuadOutput out) const
 {
     std::array<QuadCorner, 4> placed;
     for (size_t corner = 0; corner < 4; ++corner) {
@@ -1508,7 +1511,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
  * share the humanoid's names, so each armor bone follows the pose of the
  * wearer's bone of the same name, whatever geometry the skin brings.
  */
-void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones, const std::array<HudItem, 4>* items)
+void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, ModelQuadOutput out, const std::vector<uint8_t>* shownBones, const std::array<HudItem, 4>* items)
 {
     for (size_t slot = 0; slot < armor.size(); ++slot) {
         if (armor[slot].empty()) {
@@ -1607,7 +1610,7 @@ double Client::actorItemUseTicks(const ActorView& actor, double now)
  * attachable without a binding hangs from that bone as a whole. Returns false
  * when the item has no attachable, so the caller draws it as usual.
  */
-bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
+bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, ModelQuadOutput out, bool leftHand)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
     if (!model || model->wearable || model->rigs.empty()) {

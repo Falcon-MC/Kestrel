@@ -1,6 +1,7 @@
 #include "client/ActorEquipment.h"
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
+#include "client/ModelQuadOutput.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/EntityMaterialBlend.h"
@@ -9,6 +10,7 @@
 #include "Core/Json/Json.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -28,6 +30,57 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
+    static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
+    static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);
+    std::vector<kestrel::world::HandQuadGpu> precise;
+    std::vector<kestrel::world::ModelQuadGpu> packed;
+    kestrel::ModelQuadOutput handOutput(precise), worldOutput(packed);
+    kestrel::world::ModelQuadGpu material;
+    material.words[10] = 123;
+    material.words[14] = 0xa0123456;
+    material.glint = { 1.0f, 2.0f, 0.75f, 0.4f };
+    kestrel::ModelQuadOutput::Positions fractional { { { 0.125f, -0.75f, 300.5f },
+        { 0.25f, -0.5f, 300.25f }, { 0.5f, -0.25f, 300.125f }, { 0.75f, -0.125f, 300.0f } } };
+    kestrel::packEntityPositions(fractional, material.words);
+    handOutput.push_back(material, fractional);
+    worldOutput.push_back(material, fractional);
+    require(packed[0].words == material.words && precise[0].model.words == material.words
+            && precise[0].model.glint == material.glint, "Hand precision must preserve material, UV, tint, light and glint data");
+    for (size_t corner = 0; corner < 4; ++corner) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            require(precise[0].positions[corner * 3 + axis] == fractional[corner][axis] / 256.0f,
+                "Hand positions must reach the GPU without integer rounding");
+        }
+    }
+    fractional[0][0] += 0.001f;
+    handOutput.push_back(material, fractional);
+    require(precise[1].positions[0] != precise[0].positions[0], "Sub-grid animation movement must not snap to a terrain step");
+    handOutput[1].words[12] = 0x87654321;
+    handOutput.back().glint[2] = 0.5f;
+    require(precise[1].model.words[12] == 0x87654321 && precise[1].model.glint[2] == 0.5f,
+        "Post-emission lighting and glint must update the precise hand stream");
+    for (int frame = 0; frame < 100; ++frame) {
+        float bob = std::sin(frame * 0.17f) * 0.011f;
+        std::array<float, 3> start { 143.125f, -132.25f + bob * 256.0f, -184.375f };
+        std::array<float, 3> end { 126.5f + bob, -32.75f, -159.25f };
+        for (int step = 0; step <= 64; ++step) {
+            float t = step / 64.0f;
+            kestrel::ModelQuadOutput::Positions edge {};
+            for (size_t axis = 0; axis < 3; ++axis) edge[0][axis] = start[axis] + (end[axis] - start[axis]) * t;
+            handOutput.push_back(material, edge);
+            for (size_t axis = 0; axis < 3; ++axis) {
+                float expected = (start[axis] + (end[axis] - start[axis]) * t) / 256.0f;
+                require(handOutput.size() == precise.size() && precise.back().positions[axis] == expected,
+                    "Animated boundary strips must retain the same edge as the front face");
+            }
+        }
+    }
+    fractional[0][0] = std::numeric_limits<float>::quiet_NaN();
+    fractional[0][1] = std::numeric_limits<float>::infinity();
+    handOutput.push_back(material, fractional);
+    require(precise.back().positions[0] == 0.0f && precise.back().positions[1] == 0.0f,
+        "Non-finite hand geometry must not reach the vertex shader");
     using namespace kestrel;
     using namespace kestrel::world;
     auto handDescription = json::parse(R"({"animations":{"pose":"animation.test.hand"},"scripts":{"animate":["pose"]}})");
