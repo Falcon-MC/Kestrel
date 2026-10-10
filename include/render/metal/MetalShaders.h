@@ -255,7 +255,7 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
-    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
+    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 1839u : 0u;
     if ((out.entity & 256u) != 0u) out.light.z = float((in.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (out.entity != 0u) {
         out.tint = in.d.w == 0u && ((in.d.z | out.material) & 0x80000000u) != 0u ? in.d.z : 0u;
@@ -586,6 +586,7 @@ fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 1024u) != 0u) texel.a *= 0.3;
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
 
     if ((in.entity & 4u) != 0u) {
@@ -682,6 +683,7 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 1024u) != 0u) texel.a *= 0.3;
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
 
     if ((in.entity & 4u) != 0u) {
