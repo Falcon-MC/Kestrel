@@ -85,17 +85,27 @@ int main()
         check(scheduler.takeResults().empty(), "reset published cancelled results");
 
         SubChunkKey key {0, 0, 0, 0};
-        check(scheduler.submit(key, 3, input(true), assets, {}), "post-reset job rejected");
-        scheduler.invalidate(key, 4);
-        waitUntil([&] { return scheduler.pending() == 0; }, [&] { scheduler.takeResults(); });
-        check(scheduler.submit(key, 4, input(true), assets, {}, true), "replacement job rejected");
-        bool fresh = false;
-        waitUntil([&] { return fresh; }, [&] {
-            for (const auto& result : scheduler.takeResults()) {
-                check(result.generation == 4 && scheduler.isCurrent(result), "invalidated generation was published");
-                fresh = true;
-            }
-        });
+        for (bool completed : { false, true }) {
+            check(scheduler.submit(key, 3, input(true), assets, {}), "post-reset job rejected");
+            if (completed) waitUntil([&] { return scheduler.pending() == 0; }, [] {});
+            scheduler.invalidate(key, 4);
+            auto discardInvalidated = [&] {
+                for (const auto& result : scheduler.takeResults()) {
+                    check(result.generation == 3 && !scheduler.isCurrent(result), "invalidated result remained current");
+                }
+            };
+            waitUntil([&] { return scheduler.pending() == 0; }, discardInvalidated);
+            // Completed results can remain queued after pending reaches zero.
+            discardInvalidated();
+            check(scheduler.submit(key, 4, input(true), assets, {}, true), "replacement job rejected");
+            bool fresh = false;
+            waitUntil([&] { return fresh; }, [&] {
+                for (const auto& result : scheduler.takeResults()) {
+                    check(result.generation == 4 && scheduler.isCurrent(result), "invalidated generation was published");
+                    fresh = true;
+                }
+            });
+        }
 
         for (int index = 0; index < 24; ++index) {
             check(scheduler.submit({0, index, 2, 0}, 5, input(true), assets, {}), "cancellation batch rejected");
