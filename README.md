@@ -36,3 +36,13 @@ The regression failed before the correction; the Windows build and all 55 tests
 passed afterwards. These are Kestrel before/after captures, not an official-client
 comparison. The test pig was removed and the player's inventory, position and FOV
 were restored.
+
+## In-game issue audit
+
+Captures in `issues-2026-10-10/` support issues
+[72](https://github.com/Falcon-MC/Kestrel/issues/72) through
+[81](https://github.com/Falcon-MC/Kestrel/issues/81): crossbow charging, fishing
+line, pumpkin mask, Blindness fog, sign editor, fire overlay, clock dial,
+precipitation, boat model and Nausea distortion. Each issue records its live
+Kestrel MCP reproduction and inspected source paths. Images are linked from
+immutable commits. No official-client side-by-side comparison was performed.
