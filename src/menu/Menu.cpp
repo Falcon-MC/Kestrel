@@ -979,9 +979,10 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         float depth;
         float light;
         std::string_view texture;
+        bool enchanted = false;
     };
     std::vector<Face> faces;
-    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate, std::string_view texture, bool mirror) {
+    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate, std::string_view texture, bool mirror, bool enchanted = false) {
         float x0 = part.min[0] - inflate;
         float y0 = part.min[1] - inflate;
         float z0 = part.min[2] - inflate;
@@ -1032,6 +1033,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             face.depth = depth * 0.25f + inflate;
             face.light = 0.6f + 0.4f * std::clamp(facing[2] * 0.8f + facing[1] * 0.4f, 0.0f, 1.0f);
             face.texture = texture;
+            face.enchanted = enchanted;
             faces.push_back(face);
         }
     };
@@ -1076,7 +1078,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
     }
     for (const ArmorBox& box : ArmorBoxes) {
         if (!armor[box.slot].empty()) {
-            addBox(Parts[box.part], box.uv, box.inflate, armor[box.slot], box.mirror);
+            addBox(Parts[box.part], box.uv, box.inflate, armor[box.slot], box.mirror, inventory.state.slots[inventory::Armor + box.slot].enchanted);
         }
     }
     std::stable_sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) {
@@ -1084,7 +1086,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
     });
     for (const Face& face : faces) {
         uint8_t shade = static_cast<uint8_t>(std::clamp(face.light, 0.0f, 1.0f) * 255.0f);
-        ui.spriteQuad(face.points, face.texture, face.texels, { shade, shade, shade, 255 });
+        ui.spriteQuad(face.points, face.texture, face.texels, { shade, shade, shade, 255 }, face.enchanted);
     }
 }
 

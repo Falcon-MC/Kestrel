@@ -922,7 +922,15 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         uint32_t layer = entityTextureLayers();
         uint32_t tilesX = std::clamp<uint32_t>((width + EntityTextureSize - 1) / EntityTextureSize, 1, MaxEntityTiles);
         uint32_t tilesY = std::clamp<uint32_t>((height + EntityTextureSize - 1) / EntityTextureSize, 1, MaxEntityTiles);
-        if (tilesX * tilesY == 1) {
+        if (tilesX * tilesY == 1 && (path == "textures/misc/enchanted_item_glint" || path == "textures/misc/enchanted_actor_glint")) {
+            for (uint32_t y = 0; y < EntityTextureSize; ++y) {
+                for (uint32_t x = 0; x < EntityTextureSize; ++x) {
+                    const uint8_t* texel = rgba.data() + (size_t(y % height) * width + x % width) * 4;
+                    entityPixels.insert(entityPixels.end(), texel, texel + 4);
+                }
+            }
+            entityTiles.emplace(layer, EntityTileGrid { 1, 1, float(width) / EntityTextureSize, float(height) / EntityTextureSize });
+        } else if (tilesX * tilesY == 1) {
             std::vector<uint8_t> resized = resizeNearest(rgba, width, height, EntityTextureSize);
             entityPixels.insert(entityPixels.end(), resized.begin(), resized.end());
         } else {
@@ -1066,6 +1074,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
                 if (named != definition.materials.end()) {
                     choice.blend = materialBlends.find(named->second).value_or(blendOf(named->second));
                     choice.oneSided = named->second.find("one_sided") != std::string::npos;
+                    choice.glint = materialBlends.glint(named->second).value_or(named->second.find("glint") != std::string::npos);
                     if (named->second == "ender_dragon" || materialBlends.emissive(named->second).value_or(false)) choice.material = EntityMaterial::Dragon;
                     else if (named->second == "ender_crystal") choice.material = EntityMaterial::AlphaTest;
                     else if (startsWith(named->second, "entity_dissolve_layer0")) choice.material = EntityMaterial::DissolveDepth;
@@ -1195,6 +1204,7 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         }
     }
     armorGlintTexture = textureLayer("textures/misc/enchanted_actor_glint").value_or(NoEntityChoice);
+    itemGlintTexture = textureLayer("textures/misc/enchanted_item_glint").value_or(NoEntityChoice);
     std::string beamImage;
     uint32_t beamWidth = 0, beamHeight = 0;
     std::vector<uint8_t> beamPixels;

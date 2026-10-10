@@ -29,7 +29,7 @@ struct BlockTextureUpload {
 };
 
 /**
- * Cube quads are 12 bytes each; model quads are 48 bytes (twelve words) each.
+ * Cube quads are 20 bytes each; model quads are 112 bytes including foil parameters.
  */
 struct ChunkMeshUpload {
     const void* cubes = nullptr;
@@ -47,7 +47,7 @@ inline constexpr uint32_t BlockTexturePages = 2;
 inline constexpr uint32_t EntityTexturePageLayers = 2048;
 inline constexpr uint32_t EntityTexturePages = 4;
 inline constexpr uint32_t CubeQuadBytes = 20;
-inline constexpr uint32_t ModelQuadBytes = 64;
+inline constexpr uint32_t ModelQuadBytes = 112;
 
 enum SkyVertexFlag : uint32_t {
     SkyTextured = 1 << 0,
@@ -80,7 +80,7 @@ struct ActorDraw {
     uint32_t total = 0;
     uint32_t first = 0;
     uint32_t count = 0;
-    std::array<float, 60> constants {};
+    std::array<float, 68> constants {};
     bool blended = false;
     bool depthOnly = false;
     bool equalDepth = false;

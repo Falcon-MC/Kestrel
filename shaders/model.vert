@@ -19,6 +19,9 @@ layout(location = 0) in uvec4 inA;
 layout(location = 1) in uvec4 inB;
 layout(location = 2) in uvec4 inC;
 layout(location = 3) in uvec4 inD;
+layout(location = 4) in vec4 inGlint;
+layout(location = 5) in vec4 inGlintTexture;
+layout(location = 6) in vec4 inGlintUvTransform;
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
@@ -34,6 +37,9 @@ layout(location = 10) flat out vec4 outActorGrid0;
 layout(location = 11) flat out vec4 outActorGrid1;
 layout(location = 12) flat out vec4 outActorGrid2;
 layout(location = 13) flat out float outActorDissolve;
+layout(location = 14) flat out vec4 outGlint;
+layout(location = 15) flat out vec4 outGlintTexture;
+layout(location = 16) out vec2 outGlintUv;
 
 const float lightCurve[16] = float[16](
     0.0, 0.01754386, 0.037037037, 0.05882353,
@@ -83,6 +89,9 @@ void main()
     if ((words[11] & 0x10u) != 0u) {
         outUv.y -= fract(draw.origin.w / 32.0);
     }
+    outGlintUv = inGlintUvTransform.xy + outUv * inGlintUvTransform.zw;
+    outGlint = inGlint;
+    outGlintTexture = inGlintTexture;
     outMaterial = words[10];
     outShade = faceShade[min(words[11] & 0xfu, 6u)];
     outRelative = position;

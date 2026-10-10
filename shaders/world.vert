@@ -25,6 +25,9 @@ layout(location = 10) flat out vec4 outActorGrid0;
 layout(location = 11) flat out vec4 outActorGrid1;
 layout(location = 12) flat out vec4 outActorGrid2;
 layout(location = 13) flat out float outActorDissolve;
+layout(location = 14) flat out vec4 outGlint;
+layout(location = 15) flat out vec4 outGlintTexture;
+layout(location = 16) out vec2 outGlintUv;
 
 const float lightCurve[16] = float[16](
     0.0, 0.01754386, 0.037037037, 0.05882353,
@@ -108,4 +111,7 @@ void main()
     outTint = inQuad.z;
     outLight = cornerLight(inQuad.w, inAo, corner);
     outEntity = 0u;
+    outGlint = vec4(0);
+    outGlintTexture = vec4(0);
+    outGlintUv = outUv;
 }

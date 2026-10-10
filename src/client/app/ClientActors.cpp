@@ -229,6 +229,8 @@ void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t laye
             for (size_t fan = 1; fan + 1 < piece.size(); ++fan) {
                 std::array<QuadCorner, 4> part { piece[0], piece[fan], piece[fan + 1], piece[fan + 1] };
                 out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord));
+                out.back().glintUvTransform = { float(tileX) / (tiles[0] * grid.coverX), float(tileY) / (tiles[1] * grid.coverY),
+                    1.0f / (tiles[0] * grid.coverX), 1.0f / (tiles[1] * grid.coverY) };
             }
         }
     }
@@ -305,6 +307,8 @@ void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world:
                 corner.uv[1] = std::clamp(corner.uv[1] * float(tilesY) - float(tileY), 0.0f, 1.0f);
             }
             out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord));
+            out.back().glintUvTransform = { float(tileX) / (tilesX * grid.coverX), float(tileY) / (tilesY * grid.coverY),
+                1.0f / (tilesX * grid.coverX), 1.0f / (tilesY * grid.coverY) };
         }
     }
 }
@@ -818,6 +822,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         float swimStep = static_cast<float>(std::clamp(now - lastActorTime, 0.0, 0.25) * 4.0);
         swimAmount = std::clamp(swimAmount + (swimmingFlag ? swimStep : -swimStep), 0.0f, 1.0f);
         input.swimAmount = swimAmount;
+        input.engineVariables.push_back({ "is_enchanted", (input.flags[0] & (uint64_t(1) << 52)) != 0 ? 1.0 : 0.0 });
         input.engineVariables.push_back({ "swim_amount", swimAmount });
         input.engineVariables.push_back({ "left_arm_swim_amount", swimAmount });
         input.engineVariables.push_back({ "right_arm_swim_amount", swimAmount });
@@ -1039,7 +1044,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         };
         const world::EntityRenderController* renderingController = nullptr;
         world::EntityMaterialChoice renderingMaterial;
-        std::array<float, 36> surfaceConstants {};
+        std::array<float, 44> surfaceConstants {};
         auto emitQuad = [&](const world::ModelQuad& quad, const world::BoneMatrix* matrix, uint32_t layer, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim, float offsetV) {
             auto place = [&](const std::array<float, 3>& point) {
                 float x = point[0];
@@ -1123,6 +1128,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 for (size_t channel = 0; channel < 3; ++channel) rgb |= uint32_t(std::clamp(surfaceConstants[8 + channel], 0.0f, 1.0f) * 255.0f) << (16 - channel * 8);
                 for (size_t placed = first; placed < target.size(); ++placed) target[placed].words[14] = 0x80000000u | rgb;
             }
+            if (renderingMaterial.glint) {
+                uint32_t foil = std::bit_cast<uint32_t>(surfaceConstants[17]);
+                for (size_t placed = first; placed < target.size(); ++placed) world::applyItemGlint(target[placed], foil, now,
+                    visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(foil));
+            }
             if (lit) {
                 lightQuads(target, first, light);
             }
@@ -1174,6 +1184,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             surfaceConstants[19] = std::bit_cast<float>(uint32_t(renderingMaterial.material));
             surfaceConstants[35] = surfaceConstants[15];
+            if (renderingMaterial.glint && textures[1] < 8192) {
+                auto parameters = world::itemGlintParameters(now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                parameters[3] = float(textures[1]);
+                auto texture = blockAssets->glintTextureParameters(textures[1]);
+                std::copy(parameters.begin(), parameters.end(), surfaceConstants.begin() + 36);
+                std::copy(texture.begin(), texture.end(), surfaceConstants.begin() + 40);
+            }
         };
         auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided, world::EntityBlend blend) {
             auto& cached = actorGeometry[&rig];
@@ -1396,7 +1413,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                         emitQuad(wings.quads[index], &placed, layer, world::EntityBlend::Opaque, false, true, {}, 0.0f);
                         const HudItem& chest = actor.runtimeId == LocalActorId ? hudState.armor[1] : actor.armorItems[1];
                         if (chest.enchanted) for (size_t q = first; q < out.size(); ++q) {
-                            world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                            world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->armorGlintLayer()));
                         }
                     }
                 }
@@ -1539,7 +1556,7 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
             }
             if (items && (*items)[slot].enchanted) {
                 for (size_t q = first; q < out.size(); ++q) {
-                    world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                    world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->armorGlintLayer()));
                 }
             }
         }
@@ -1611,6 +1628,8 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     input.worldTime = currentWorldTime(timeState);
     input.identifier = held.identifier;
     input.mainHandItem = held.identifier;
+    input.flags[0] = held.enchanted ? uint64_t(1) << 52 : 0;
+    input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", offhand ? 1.0 : 0.0 } };
     state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
@@ -1621,6 +1640,8 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     // The render controller picks the frame, like the bow's pull stages, by geometry and texture.
     const world::EntityRig* chosenRig = &model->rigs.front();
     uint32_t layer = model->layer;
+    uint32_t foilLayer = blockAssets->itemGlintLayer();
+    bool glint = held.enchanted;
     for (const world::EntityRenderController& controller : model->controllers) {
         if (!controller.condition.empty() && state.animator.evaluate(controller.condition) == 0.0) {
             continue;
@@ -1632,6 +1653,10 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
         if (uint32_t chosen = pickChoice(state.animator, controller.texture, controller.textureChoices); chosen != world::NoEntityChoice) {
             layer = chosen;
         }
+        auto material = controller.selectedMaterial(state.animator.evaluate(controller.materialSelector));
+        glint = material.glint;
+        uint32_t foil = pickChoice(state.animator, controller.extraTextures[0], controller.extraTextureChoices[0]);
+        if (foil != world::NoEntityChoice) foilLayer = foil;
         break;
     }
     const world::EntityRig& rig = *chosenRig;
@@ -1690,7 +1715,10 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
             corners[corner].position = place(point);
             corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
         }
+        size_t first = out.size();
         appendTiled(corners, layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag, out);
+        if (glint) for (size_t q = first; q < out.size(); ++q) world::applyItemGlint(out[q], foilLayer, input.now,
+            visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(foilLayer));
     }
     return true;
 }

@@ -90,22 +90,22 @@ inline OpaqueModelRuns partitionModelQuads(const void* source, uint32_t count, s
 {
     OpaqueModelRuns result;
     const auto* data = static_cast<const uint8_t*>(source);
-    auto solid = [&](const std::array<uint32_t, 16>& quad) {
+    auto solid = [&](const std::array<uint32_t, ModelQuadBytes / sizeof(uint32_t)>& quad) {
         // Entity-textured block models use another atlas and its material rules.
         return !(quad[11] & 0x20u) && solidCubeMaterial(quad[10], 0, opaque);
     };
     for (uint32_t index = 0; index < count; ++index) {
-        std::array<uint32_t, 16> quad;
+        std::array<uint32_t, ModelQuadBytes / sizeof(uint32_t)> quad;
         std::memcpy(quad.data(), data + size_t(index) * ModelQuadBytes, ModelQuadBytes);
         result.solidCount += solid(quad);
     }
     uint32_t nextSolid = 0, nextCutout = result.solidCount;
-    result.words.resize(size_t(count) * 16);
+    result.words.resize(size_t(count) * (ModelQuadBytes / sizeof(uint32_t)));
     for (uint32_t index = 0; index < count; ++index) {
-        std::array<uint32_t, 16> quad;
+        std::array<uint32_t, ModelQuadBytes / sizeof(uint32_t)> quad;
         std::memcpy(quad.data(), data + size_t(index) * ModelQuadBytes, ModelQuadBytes);
         uint32_t destination = solid(quad) ? nextSolid++ : nextCutout++;
-        std::memcpy(result.words.data() + size_t(destination) * 16, quad.data(), ModelQuadBytes);
+        std::memcpy(result.words.data() + size_t(destination) * (ModelQuadBytes / sizeof(uint32_t)), quad.data(), ModelQuadBytes);
     }
     return result;
 }

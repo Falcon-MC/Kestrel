@@ -176,19 +176,47 @@ int main()
     const auto& endermanMatrices = absoluteAnimator.matrices();
     require(endermanMatrices[0][7] == -3 && endermanMatrices[1][7] == 11 && endermanMatrices[2][7] == -3 && endermanMatrices[3][7] == 4,
         "Legacy Enderman positions must use each parent origin rather than stacking absolute offsets");
-    static_assert(sizeof(ActorDraw::constants) == 240);
+    static_assert(sizeof(ActorDraw::constants) == 272);
     ModelQuadGpu glintQuad;
     glintQuad.words[10] = 8191;
     glintQuad.words[14] = 0xa0123456u;
     applyItemGlint(glintQuad, 8191, 1.0, 100.0f, 100.0f);
     require((glintQuad.words[10] & 0x1fffu) == 8191, "Glint metadata must preserve the base texture layer");
-    require(((glintQuad.words[10] >> 13) & 0x1fffu) == 8191, "Glint must address all entity texture pages");
-    require((glintQuad.words[14] & 0xe0ffffffu) == 0xa0123456u, "Glint must preserve leather dye and cutout mode");
+    require(glintQuad.glint[3] == 8191.0f, "Glint must address all entity texture pages");
+    require(glintQuad.words[14] == 0xa0123456u, "Glint must preserve leather dye and cutout mode");
+    auto phase = itemGlintParameters(1.0, 1.0f, 100.0f);
+    require(std::abs(phase[0] + 4.0f / 7.0f) < 1e-6f && std::abs(phase[1] - 1.0f / 3.0f) < 1e-6f,
+        "Foil layers must use independent 1750 ms and 3000 ms clocks");
+    require(phase[2] == 0.01f, "Low foil strength must not disappear through five-bit quantization");
+    auto advanced = itemGlintParameters(1.01, 100.0f, 100.0f);
+    require(advanced[0] != phase[0] && advanced[1] != phase[1], "Foil must advance within the old 125 ms frame");
+    require(itemGlintParameters(2.0, 1.0f, 50.0f) == phase, "Half speed must preserve the two relative layer periods");
+    require(itemGlintParameters(22.0, 1.0f, 100.0f) == phase, "The combined foil animation repeats after 21 seconds");
+    auto stopped = itemGlintParameters(1234.0, 100.0f, 0.0f);
+    require(stopped[0] == 0.0f && stopped[1] == 0.0f, "Zero speed must stop both layers");
+    auto uv = itemGlintUv(0.5f, 0.5f, stopped);
+    require(uv == std::array<float, 4> { 0.25f, 0.25f, 0.25f, 0.25f }, "Foil rotation must be centered before the half UV scale");
+    auto right = itemGlintUv(1.0f, 0.5f, stopped);
+    require(std::abs(right[0] - 0.48492315f) < 1e-6f && std::abs(right[1] - 0.33550504f) < 1e-6f
+        && std::abs(right[2] - 0.29341204f) < 1e-6f && std::abs(right[3] - 0.00379806f) < 1e-6f,
+        "Foil must use real minus-20 and plus-80 degree rotations instead of shears");
+    ModelQuadGpu animated;
+    animated.words[10] = 0xdedbe123u;
+    animated.words[14] = 0x12345678u;
+    animated.words[15] = 0x3c003c00u;
+    auto baseWords = animated.words;
+    applyItemGlint(animated, 42, 1.0, 50.0f, 100.0f, { 0.5f, 0.5f, 300.0f, 200.0f });
+    require(animated.words == baseWords && animated.glint[3] == 42 && animated.glintTexture[2] == 300,
+        "Foil must preserve animated base materials and dye, including HD texture dimensions");
     ModelQuadGpu unchanged;
     applyItemGlint(unchanged, NoEntityChoice, 1.0, 100.0f, 100.0f);
     require(unchanged.words[10] == 0, "Missing glint textures must leave the base material intact");
     applyItemGlint(unchanged, 1, 1.0, 0.0f, 100.0f);
     require(unchanged.words[10] == 0, "Disabling glint must preserve the base material");
+    auto foilMaterials = json::parse(R"({"materials":{"foil":{"+defines":["GLINT"]},"inherit:foil":{},"remove:inherit":{"-defines":["GLINT"]},"replace:inherit":{"defines":[]}}})");
+    materials.parse(*foilMaterials);
+    require(materials.glint("inherit") == true && materials.glint("remove") == false && materials.glint("replace") == false,
+        "Foil material inheritance must honor added, removed and replaced defines");
     static_assert(actorEquipmentIsOffhand("minecraft:armor_stand", 0, 1));
     static_assert(!actorEquipmentIsOffhand("minecraft:armor_stand", 0, 0));
     static_assert(!actorEquipmentIsOffhand("minecraft:player", 0, 1));

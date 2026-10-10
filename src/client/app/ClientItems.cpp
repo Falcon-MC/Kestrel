@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "world/ItemGlint.h"
 
 #include <algorithm>
 #include <cmath>
@@ -223,6 +224,9 @@ void Client::appendDroppedItem(const ActorView& actor, const std::array<int32_t,
                 };
             }
             out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
+            if (actor.item.enchanted) world::applyItemGlint(out.back(), blockAssets->itemGlintLayer(), now,
+                visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()),
+                blockAssets->glintTextureParameters(blockAssets->itemGlintLayer()));
         }
     }
 }

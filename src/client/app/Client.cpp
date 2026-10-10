@@ -402,6 +402,7 @@ int Client::run()
             updateAimAssist();
         }
         session.inputLatency.mark(inputTrace, InputLatency::Camera);
+        hotbarSelection.tick();
         handleHotbarInput();
         session.submitFrameMotion();
         discord.update();
@@ -433,6 +434,12 @@ int Client::run()
 
         {
             Profiler::Section section(profiler, "hud");
+            if (worldShown && playerView.active) {
+                double handTime = secondsNow();
+                int slot = std::clamp(hudState.selectedSlot, 0, 8);
+                handTransition.update(hudState.inventory[size_t(slot)], slot, handTime);
+                handEquip = handTransition.sample(handTime);
+            }
             updateEmotes(secondsNow());
             updateGameTips();
             menu.setHud(buildHudView());
@@ -473,6 +480,7 @@ int Client::run()
         skin.beginFrame();
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
+        context.setGlint(secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
         context.recordWidgets(agentServer != nullptr && !mods->uiOpen());
         {
             Profiler::Section section(profiler, "menu ui");
@@ -494,6 +502,8 @@ int Client::run()
             if (agentServer) agentWidgets = context.widgets();
             context.endFrame();
         }
+
+        if (skin.dirty()) uploadAtlas(false);
 
         if (!firstFrameLogged) {
             firstFrameLogged = true;
@@ -1415,9 +1425,8 @@ void Client::prepareSessionRender()
         droppedMeshes.clear();
         droppedIconKeys = {};
         nextDroppedIcon = 0;
-        lastHeldIdentity.clear();
-        handItem = {};
-        handUpdatedAt = 0.0;
+        handTransition = {};
+        hotbarSelection = {};
         handEquip = 0.0f;
         firstPersonMotion = {};
         handMotionTickSerial = 0;
