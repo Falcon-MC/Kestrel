@@ -110,7 +110,7 @@ void main()
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
     outLight = cornerLight(inD.x, (inD.y & 0x80000000u) != 0u ? 0u : inD.y, corner);
-    outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
+    outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 1839u : 0u;
     if ((outEntity & 256u) != 0u) outLight.z = float((inD.x >> (corner * 8u)) & 255u) / 255.0;
     if (outEntity != 0u) {
         outTint = inD.w == 0u && ((inD.z | outMaterial) & 0x80000000u) != 0u ? inD.z : 0u;

@@ -264,7 +264,7 @@ WorldOut placeModel(ModelIn input, float positionScale)
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
-    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 815 : 0;
+    output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 1839 : 0;
     if ((output.entity & 256u) != 0u) output.light.z = float((input.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (output.entity != 0) {
         output.tint = input.d.w == 0 && ((input.d.z | output.material) & 0x80000000u) != 0 ? input.d.z : 0;
@@ -615,6 +615,7 @@ float4 surfaceTexel(WorldOut input)
             : entities3.Load(at);
         texel = applyTint(texel, input.tint);
         if ((input.entity & 512u) != 0u && texel.a < 0.5) discard;
+        if ((input.entity & 1024u) != 0u) texel.a *= 0.3;
         if ((input.entity & 256u) != 0u) texel.rgb *= input.light.z;
 
         if ((input.entity & 4) != 0) {

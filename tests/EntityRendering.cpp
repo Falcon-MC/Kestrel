@@ -2,6 +2,7 @@
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
 #include "client/ModelQuadOutput.h"
+#include "client/SpectatorRendering.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/EntityMaterialBlend.h"
@@ -83,6 +84,31 @@ int main()
         "Non-finite hand geometry must not reach the vertex shader");
     using namespace kestrel;
     using namespace kestrel::world;
+    for (int32_t mode : { 0, 1, 2, 6 }) {
+        require(localSpectatorRendering(true, mode) == (mode == motion::GameSpectator),
+            "Only the local spectator may use head-only rendering");
+        require(!localSpectatorRendering(false, mode), "Remote players must retain their rendering");
+    }
+    std::vector<EntityBone> spectatorBones(10);
+    spectatorBones[0].name = "body";
+    spectatorBones[1].name = "HEAD";
+    spectatorBones[1].parent = 0;
+    spectatorBones[2].name = "hat";
+    spectatorBones[3].name = "face";
+    spectatorBones[3].parent = 1;
+    spectatorBones[4].name = "hair";
+    spectatorBones[4].parent = 3;
+    spectatorBones[5].name = "rightArm";
+    spectatorBones[5].parent = 0;
+    spectatorBones[6].name = "orphan";
+    spectatorBones[6].parent = 100;
+    spectatorBones[7].parent = 8;
+    spectatorBones[8].parent = 7;
+    spectatorBones[9].parent = 4;
+    require(spectatorHeadBones(spectatorBones) == std::vector<uint8_t> { 0, 1, 1, 1, 1, 0, 0, 0, 0, 1 },
+        "Spectators must keep head descendants and hat, not body, limbs or malformed hierarchies");
+    require(spectatorHeadBones({}).empty(), "Empty spectator geometry must be safe");
+    require((SpectatorHeadQuadFlag >> 5) == 1024u, "Spectator alpha must use the same GPU flag on each backend");
     auto handDescription = json::parse(R"({"animations":{"pose":"animation.test.hand"},"scripts":{"animate":["pose"]}})");
     auto handScripts = readEntityScripts(*handDescription);
     auto handDocument = json::parse(R"({"animations":{"animation.test.hand":{"loop":true,"bones":{"body":{"rotation":["q.target_x_rotation","q.target_y_rotation",0]}}}}})");

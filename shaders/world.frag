@@ -304,6 +304,7 @@ void main()
     }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 512u) != 0u && texel.a < 0.5) discard;
+    if ((inEntity & 1024u) != 0u) texel.a *= 0.3;
     if ((inEntity & 256u) != 0u) texel.rgb *= inLight.z;
 
     if ((inEntity & 4u) != 0u) {

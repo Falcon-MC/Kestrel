@@ -2,6 +2,7 @@
 #include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
+#include "client/SpectatorRendering.h"
 #include "client/motion/MotionMath.h"
 #include "world/CrystalBeam.h"
 #include "world/ItemGlint.h"
@@ -670,7 +671,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         if (actor.scale <= 0.0f) {
             continue;
         }
-        bool invisible = (actor.flags[0] & InvisibleFlag) != 0;
+        bool spectator = localSpectatorRendering(actor.runtimeId == LocalActorId, hudState.gameType);
+        bool invisible = !spectator && (actor.flags[0] & InvisibleFlag) != 0;
         double dx = actor.x - origin[0];
         double dy = actor.y - origin[1];
         double dz = actor.z - origin[2];
@@ -879,6 +881,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             if (combined) pose.bones = world::poseBonesForGeometry(rig.bones, geometryRig->bones);
         }
         const auto& animationBones = combined ? pose.bones : rig.bones;
+        const auto spectatorParts = spectator ? spectatorHeadBones(animationBones) : std::vector<uint8_t> {};
         bool stale = geometryChanged || animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
         bool billboard = world::cameraFacingSprite(actor.identifier);
         if (stale || pose.tick != actorTickStart || billboard) {
@@ -1124,7 +1127,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (!lit) shadeWord |= FoggedQuadFlag;
-            if (renderingMaterial.material == world::EntityMaterial::AlphaTest) shadeWord |= 1u << 14;
+            if (spectator) {
+                shadeWord = (shadeWord & ~AdditiveQuadFlag) | SpectatorHeadQuadFlag;
+                blend = world::EntityBlend::Blend;
+            } else if (renderingMaterial.material == world::EntityMaterial::AlphaTest) {
+                shadeWord |= 1u << 14;
+            }
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
@@ -1333,6 +1341,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
+            if (spectator && (bone >= spectatorParts.size() || !spectatorParts[bone])) {
+                return;
+            }
             if (bone < hidden.size() && hidden[bone]) {
                 return;
             }
@@ -1348,6 +1359,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             for (size_t index = 0; index < worn.quads.size(); ++index) {
                 size_t piece = index < worn.quadBones.size() ? worn.quadBones[index] : wearer.size();
                 int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
+                if (spectator && (bone < 0 || size_t(bone) >= spectatorParts.size() || !spectatorParts[size_t(bone)])) {
+                    continue;
+                }
                 if (bone >= 0 && size_t(bone) < hidden.size() && hidden[size_t(bone)]) {
                     std::string name = lowercase(worn.bones[piece].name);
                     if (!showHead || (name != "head" && name != "hat")) {
@@ -1394,11 +1408,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     emitWorn(*animation.rig, wornBones(*animation.rig, rig), hidden, blockAssets->skinLayerBase() + animation.texture.layer, offsetV, true);
                 }
                 const world::EntityRig* cape = blockAssets->capeRig();
-                if (cape && skinView->cape.present && actor.armor[1] != "minecraft:elytra") {
+                if (!spectator && cape && skinView->cape.present && actor.armor[1] != "minecraft:elytra") {
                     emitWorn(*cape, wornBones(*cape, rig), hidden, blockAssets->skinLayerBase() + skinView->cape.layer, 0.0f, false);
                 }
             }
-            const world::EntityModel* elytra = actor.armor[1] == "minecraft:elytra" ? blockAssets->attachableModel("minecraft:elytra") : nullptr;
+            const world::EntityModel* elytra = !spectator && actor.armor[1] == "minecraft:elytra" ? blockAssets->attachableModel("minecraft:elytra") : nullptr;
             int32_t body = -1;
             for (size_t bone = 0; elytra && bone < rig.bones.size(); ++bone) {
                 if (lowercase(rig.bones[bone].name) == "body") {
@@ -1431,6 +1445,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     }
                 }
             }
+        }
+        if (spectator) {
+            continue;
         }
         size_t firstWorn = out.size();
         auto toWorld = [&](const std::array<float, 3>& posed) {

@@ -1,6 +1,7 @@
 #include "client/Client.h"
 #include "client/FirstPersonAnimation.h"
 #include "client/FirstPersonPlacement.h"
+#include "client/SpectatorRendering.h"
 #include "client/session/SessionData.h"
 
 
@@ -254,7 +255,8 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
  */
 void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOutput out)
 {
-    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached) {
+    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached
+        || localSpectatorRendering(true, hudState.gameType)) {
         return;
     }
     const world::EntityRig* chosenRig = nullptr;
@@ -472,7 +474,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOu
 
 bool Client::paperDollVisible()
 {
-    if (!blockAssets || !worldShown || !playerView.active || menu.paperDollHidden() || menu.inventoryPanel().active) {
+    if (!blockAssets || !worldShown || !playerView.active || menu.paperDollHidden() || menu.inventoryPanel().active
+        || localSpectatorRendering(true, hudState.gameType)) {
         return false;
     }
     double now = secondsNow();
