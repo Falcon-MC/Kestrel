@@ -45,6 +45,7 @@ void Session::pollGlobalPacks()
                 configurePaletteResolver();
                 mesher->clear();
                 meshGenerations.clear();
+                invalidatedVisibility.clear();
                 meshedGenerations.clear();
                 meshes.clear();
                 meshQuads = 0;

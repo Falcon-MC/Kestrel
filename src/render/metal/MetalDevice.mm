@@ -35,6 +35,7 @@ NSString* functionName(std::string_view entry)
         { "vs_overlay", "overlay_vertex" },
         { "vs_sky", "sky_vertex" },
         { "ps_world", "world_fragment" },
+        { "ps_solid", "solid_fragment" },
         { "ps_blend", "blend_fragment" },
         { "ps_overlay", "overlay_fragment" },
         { "ps_sky", "sky_fragment" },
@@ -136,6 +137,7 @@ public:
     id<MTLDepthStencilState> depth;
     bool constantsVertexOnly = false;
     bool actorConstants = false;
+    bool cullBackFaces = false;
 };
 
 class MetalTextureSet final : public TextureSet {
@@ -380,6 +382,7 @@ public:
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
         pipeline->actorConstants = desc.bindings.actorConstants;
+        pipeline->cullBackFaces = desc.cullBackFaces;
         return pipeline;
     }
 
@@ -458,6 +461,8 @@ public:
         }
         [encoder setRenderPipelineState:chosen->state];
         [encoder setDepthStencilState:chosen->depth];
+        [encoder setCullMode:chosen->cullBackFaces ? MTLCullModeBack : MTLCullModeNone];
+        [encoder setFrontFacingWinding:chosen->cullBackFaces ? MTLWindingCounterClockwise : MTLWindingClockwise];
         bound = chosen;
     }
 

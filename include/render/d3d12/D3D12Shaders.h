@@ -523,6 +523,12 @@ float4 surfaceTexel(WorldOut input)
     return applyTint(sampleMaterial(input.material, input.uv), input.tint);
 }
 
+float4 ps_solid(WorldOut input) : SV_Target
+{
+    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
+    return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light), 1.0);
+}
+
 float4 ps_world(WorldOut input) : SV_Target
 {
     if (isEndPortal(input)) {

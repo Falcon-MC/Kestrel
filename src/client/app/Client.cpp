@@ -1118,6 +1118,10 @@ void Client::uploadAtlas(bool fontChanged)
 void Client::applyMeshUpdate(const MeshUpdate& update)
 {
     const world::SubChunkKey& key = update.key;
+    if (update.visibilityOnly) {
+        renderer->setChunkVisibility(key.x, key.y, key.z, nullptr);
+        return;
+    }
     uint64_t id = subChunkId(key);
     if (update.mesh) {
         ChunkMeshUpload upload;
@@ -1141,6 +1145,7 @@ void Client::applyMeshUpdate(const MeshUpdate& update)
         opaqueChunks.erase(id);
         litChunks.erase(id);
     }
+    renderer->setChunkVisibility(key.x, key.y, key.z, update.visibility);
 }
 
 void Client::applyMeshUpdates()

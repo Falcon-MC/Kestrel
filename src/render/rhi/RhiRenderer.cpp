@@ -1,5 +1,7 @@
 #include "render/rhi/Device.h"
 #include "render/Renderer.h"
+#include "render/OpaqueTerrain.h"
+#include "world/ChunkVisibility.h"
 
 #include "client/DebugLog.h"
 #include "ui/DrawList.h"
@@ -186,7 +188,11 @@ public:
         uiPipeline = device->createPipeline(ui);
 
         cubePipeline = device->createPipeline(worldPipeline("vs_world", "ps_world", cubeLayout(), BlendMode::None, true, DepthCompare::Less));
+        auto solidDesc = worldPipeline("vs_world", "ps_solid", cubeLayout(), BlendMode::None, true, DepthCompare::Less);
+        solidDesc.cullBackFaces = true;
+        solidCubePipeline = device->createPipeline(solidDesc);
         modelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less));
+        solidModelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_solid", modelLayout(), BlendMode::None, true, DepthCompare::Less));
         auto actorDesc = worldPipeline("vs_actor", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less);
         actorDesc.bindings.actorConstants = true;
         actorPipeline = device->createPipeline(actorDesc);
@@ -298,6 +304,9 @@ public:
             return;
         }
         device->waitIdle();
+        opaqueLayers = opaqueTextureLayers(textures);
+        ++textureRevision;
+        visibilityGraph.clear();
         for (uint32_t page = 0; page < BlockTexturePages; ++page) {
             uint32_t first = page * BlockTexturePageLayers;
             uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
@@ -381,6 +390,13 @@ public:
         ChunkBuffer chunk;
         const void* sources[4] = { mesh.cubes, mesh.models, mesh.translucentCubes, mesh.translucentModels };
         uint32_t counts[4] = { mesh.cubeCount, mesh.modelCount, mesh.translucentCubeCount, mesh.translucentModelCount };
+        OpaqueCubeRuns cubeRuns = partitionCubeQuads(mesh.cubes, mesh.cubeCount, opaqueLayers);
+        sources[0] = cubeRuns.words.data();
+        OpaqueModelRuns modelRuns = partitionModelQuads(mesh.models, mesh.modelCount, opaqueLayers);
+        sources[1] = modelRuns.words.data();
+        chunk.solidModels = modelRuns.solidCount;
+        chunk.cubeOffsets = cubeRuns.offsets;
+        chunk.textureRevision = textureRevision;
         for (size_t stream = 0; stream < 4; ++stream) {
             size_t bytes = static_cast<size_t>(counts[stream]) * StreamStride[stream];
             if (bytes != 0) {
@@ -419,7 +435,13 @@ public:
             retire(chunk);
         }
         chunks.clear();
+        visibilityGraph.clear();
         ++meshRevision;
+    }
+
+    void setChunkVisibility(int32_t x, int32_t y, int32_t z, std::shared_ptr<const world::ChunkVisibility> visibility) override
+    {
+        visibilityGraph.set({ x, y, z }, std::move(visibility));
     }
 
     void beginFrame(float r, float g, float b) override
@@ -469,18 +491,48 @@ public:
         }
 
         ChunkFrustum frustum(view);
+        visibilityGraph.update({ view.cameraX, view.cameraY, view.cameraZ });
         visible.clear();
         visible.reserve(chunks.size());
         for (const auto& [id, chunk] : chunks) {
-            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
+            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])
+                && visibilityGraph.contains({ chunk.origin[0] / 16, chunk.origin[1] / 16, chunk.origin[2] / 16 })) {
                 visible.push_back(&chunk);
             }
         }
         for (const ChunkBuffer* chunk : visible) {
-            drawStream(*cubePipeline, *chunk, 0);
+            if (chunk->textureRevision != textureRevision) {
+                drawStream(*cubePipeline, *chunk, 0);
+                continue;
+            }
+            if (!chunk->counts[0]) continue;
+            device->setVertexBuffer(*chunk->buffers[0], CubeQuadBytes, size_t(chunk->counts[0]) * CubeQuadBytes);
+            if (chunk->cubeOffsets[6]) {
+                bind(*solidCubePipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                uint8_t facing = facingCubeDirections(chunk->origin, { view.cameraX, view.cameraY, view.cameraZ });
+                drawSolidCubeRuns(chunk->cubeOffsets, facing, [&](uint32_t first, uint32_t count) { device->drawIndexed(6, count, first); });
+            }
+            uint32_t first = chunk->cubeOffsets[6];
+            if (first < chunk->counts[0]) {
+                bind(*cubePipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->counts[0] - first, first);
+            }
         }
         for (const ChunkBuffer* chunk : visible) {
-            drawStream(*modelPipeline, *chunk, 1);
+            if (chunk->textureRevision != textureRevision) {
+                drawStream(*modelPipeline, *chunk, 1);
+                continue;
+            }
+            if (!chunk->counts[1]) continue;
+            device->setVertexBuffer(*chunk->buffers[1], ModelQuadBytes, size_t(chunk->counts[1]) * ModelQuadBytes);
+            if (chunk->solidModels) {
+                bind(*solidModelPipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->solidModels);
+            }
+            if (chunk->solidModels < chunk->counts[1]) {
+                bind(*modelPipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->counts[1] - chunk->solidModels, chunk->solidModels);
+            }
         }
         recording.opaqueChunks = static_cast<uint32_t>(std::count_if(visible.begin(), visible.end(), [](const ChunkBuffer* chunk) {
             return chunk->counts[0] || chunk->counts[1];
@@ -803,6 +855,9 @@ private:
         std::array<std::unique_ptr<Buffer>, 4> buffers;
         std::array<uint32_t, 4> counts {};
         std::array<int32_t, 3> origin {};
+        std::array<uint32_t, 8> cubeOffsets {};
+        uint64_t textureRevision = 0;
+        uint32_t solidModels = 0;
         std::array<std::vector<std::array<float, 3>>, 2> centers;
         std::array<std::vector<uint8_t>, 2> translucent;
     };
@@ -969,10 +1024,15 @@ private:
     uint32_t atlasWidth = 0;
     uint32_t atlasHeight = 0;
     std::array<std::unique_ptr<Texture>, BlockTexturePages> blockTextures;
+    std::unique_ptr<Pipeline> solidCubePipeline;
+    std::unique_ptr<Pipeline> solidModelPipeline;
+    std::vector<uint8_t> opaqueLayers;
+    uint64_t textureRevision = 0;
     std::array<std::unique_ptr<Texture>, EntityTexturePages> entityTextures;
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
+    world::ChunkVisibilityGraph visibilityGraph;
     std::vector<PooledBuffer> pool;
     std::vector<const ChunkBuffer*> visible;
     std::vector<TransparentQuad> transparent;

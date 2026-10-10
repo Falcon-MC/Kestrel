@@ -15,6 +15,7 @@
 namespace kestrel {
 
 class Window;
+namespace world { struct ChunkVisibility; }
 
 namespace ui {
 class DrawList;
@@ -344,6 +345,7 @@ public:
     virtual void setChunkMesh(uint64_t id, int32_t originX, int32_t originY, int32_t originZ, const ChunkMeshUpload& mesh) = 0;
     virtual void removeChunkMesh(uint64_t id) = 0;
     virtual void clearChunkMeshes() = 0;
+    virtual void setChunkVisibility(int32_t x, int32_t y, int32_t z, std::shared_ptr<const world::ChunkVisibility> visibility) = 0;
 
     /**
      * Entity textures: square RGBA layers sampled by entity quads, which set
