@@ -72,6 +72,11 @@ A [nightly](https://github.com/Falcon-MC/Kestrel/releases/tag/nightly) is built 
 something changed. Kestrel reads its textures from an installed copy of Minecraft: Bedrock Edition, or from a
 vanilla resource pack you are entitled to use.
 
+Kestrel checks for a newer stable release at startup. Choose **Update and restart** to download the official
+package, verify its SHA-256 checksum and replace the executable after the client closes, or **Later** to keep
+playing. The installation directory must be writable. Settings, accounts, packs and mods are preserved.
+The updater keeps the previous executable as a backup. Nightly releases are not offered automatically.
+
 ## Building
 
 Requires CMake 3.24+, a C++20 compiler and zlib. Linux also needs the Vulkan SDK and `glslc`; Vulkan shaders

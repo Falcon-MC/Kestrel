@@ -476,6 +476,14 @@ void Menu::frame(Context& ui, float width, float height)
 
 void Menu::safeFrame(Context& ui, float width, float height)
 {
+    updates.check();
+    UpdateView update = updates.view();
+    if (!updateOffered && update.status == UpdateStatus::Available && !inGame()
+        && screen == Screen::Title && dialog == Dialog::None && !socialOpen && !forms.active()) {
+        updateOffered = true;
+        dialog = Dialog::Update;
+    }
+    if (update.status == UpdateStatus::Ready && updates.install()) quit = true;
     static bool timed = false;
     std::optional<StartupTimer> timer;
     if (!timed) {
@@ -643,6 +651,9 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
 {
     switch (which) {
     case Dialog::None:
+        break;
+    case Dialog::Update:
+        updateDialog(ui, width, height);
         break;
     case Dialog::Pause:
         pause(ui, width, height);
@@ -1197,6 +1208,12 @@ void Menu::title(Context& ui, float width, float height)
     backedLabel(ui, "Kestrel, not affiliated with Mojang", CornerMargin, labelY);
     constexpr std::string_view Version = "v1.26.52";
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
+    UpdateView update = updates.view();
+    if (!update.version.empty() && update.status != UpdateStatus::Current
+        && ui.classicButton("title:update", tr("kestrel.update.availableButton", "Update available"),
+            { width - CornerMargin - 120.0f, labelY - 25.0f, 120.0f, 20.0f })) {
+        dialog = Dialog::Update;
+    }
 }
 
 /**
@@ -1555,6 +1572,43 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
     cancelled = ui.classicButton("dialog:cancel", cancel, { well.x + 4.0f, y + 22.0f, well.w - 8.0f, 20.0f });
 }
 
+void Menu::updateDialog(Context& ui, float width, float height)
+{
+    UpdateView update = updates.view();
+    bool downloading = update.status == UpdateStatus::Downloading || update.status == UpdateStatus::Ready;
+    std::string body;
+    if (downloading) {
+        body = trf("kestrel.update.downloading", "Downloading %1$s... (%2$s MB)\nKestrel will close and restart when the update is ready.",
+            { update.version, std::to_string(update.downloaded / (1024 * 1024)) });
+    } else if (update.status == UpdateStatus::Failed) {
+        body = update.error;
+    } else {
+        body = trf("kestrel.update.available", "Kestrel %1$s is available.\nCurrent version: %2$s\nInstall the update and restart Kestrel?", { update.version, KestrelVersion });
+    }
+    bool confirmed = false, cancelled = false;
+    bool blocked = ui.isBlocked();
+    // Keep cancellation usable while the download owns the confirm button.
+    if (downloading) {
+        ui.fill(screenBounds, { 0, 0, 0, 150 });
+        float w = std::min(260.0f, width - 16.0f);
+        float bodyHeight = ui.paragraphHeight(body, TextStyle::Pixel, w - 16.0f);
+        Rect frame { std::round((width - w) * 0.5f), std::round((height - bodyHeight - 64.0f) * 0.5f), w, bodyHeight + 64.0f };
+        ui.nineSlice(frame, "ui/dialog_background_opaque");
+        ui.textCentered(tr("kestrel.update.title", "Kestrel update"), TextStyle::Pixel, { frame.x, frame.y + 5.0f, frame.w, 12.0f }, DialogInk);
+        ui.paragraph(body, TextStyle::Pixel, frame.x + 8.0f, frame.y + 22.0f, w - 16.0f, DialogInk);
+        cancelled = ui.classicButton("update:cancel", tr("gui.cancel", "Cancel"), { frame.x + 8.0f, frame.bottom() - 26.0f, w - 16.0f, 20.0f });
+    } else {
+        messageDialog(ui, width, height, tr("kestrel.update.title", "Kestrel update"), body,
+            tr("kestrel.update.install", "Update and restart"), tr("kestrel.update.later", "Later"), confirmed, cancelled);
+    }
+    if (blocked) return;
+    if (confirmed) updates.download();
+    if (cancelled) {
+        updates.cancel();
+        dialog = Dialog::None;
+    }
+}
+
 namespace {
 
 void debugColumn(Context& ui, const std::vector<std::string>& lines, float width, bool alignRight)
@@ -1844,7 +1898,10 @@ void Menu::handleKeys(const InputState& input)
     if (!input.escape) {
         return;
     }
-    if (dialog == Dialog::JoinRealm) {
+    if (dialog == Dialog::Update) {
+        updates.cancel();
+        dialog = Dialog::None;
+    } else if (dialog == Dialog::JoinRealm) {
         requestSocial(SocialAction::CancelRealmCode);
         dialog = Dialog::None;
         field = Field::None;

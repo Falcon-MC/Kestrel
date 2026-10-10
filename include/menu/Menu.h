@@ -2,6 +2,7 @@
 #include "world/GlobalResources.h"
 
 #include "client/SocialModel.h"
+#include "client/Updates.h"
 #include "menu/ChatCommands.h"
 #include "menu/FormScreen.h"
 #include "menu/Hud.h"
@@ -204,6 +205,7 @@ enum class Dialog {
     JoinRealm,
     ConfirmRemoveFriend,
     Emotes,
+    Update,
 };
 
 enum class Field {
@@ -1142,6 +1144,7 @@ private:
     void progressDialog(ui::Context& ui, float width, float height);
     void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
+    void updateDialog(ui::Context& ui, float width, float height);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
     void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false, float rotation = 0.0f);
     void screenContent(ui::Context& ui, float width, float height, Screen which);
@@ -1251,6 +1254,8 @@ private:
     bool profileStatsTab = false;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
+    Updates updates;
+    bool updateOffered = false;
     Field field = Field::None;
     bool socialOpen = false;
     bool socialArmed = false;
