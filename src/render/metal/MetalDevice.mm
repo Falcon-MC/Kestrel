@@ -57,6 +57,8 @@ MTLVertexFormat vertexFormat(VertexFormat format)
         return MTLVertexFormatFloat;
     case VertexFormat::Float2:
         return MTLVertexFormatFloat2;
+    case VertexFormat::Float4:
+        return MTLVertexFormatFloat4;
     case VertexFormat::Float3:
         return MTLVertexFormatFloat3;
     case VertexFormat::UByte4Norm:
@@ -495,9 +497,9 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!encoder || !bound || !bound->actorConstants || !values || count != 60) return;
+        if (!encoder || !bound || !bound->actorConstants || !values || count != 68) return;
         constexpr size_t pageBytes = 1024 * 1024;
-        constexpr size_t stride = 256;
+        constexpr size_t stride = 512;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
         auto& pages = actorPages[frame];

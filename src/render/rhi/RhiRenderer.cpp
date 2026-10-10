@@ -76,6 +76,9 @@ VertexLayout uiLayout()
             { "TEXCOORD", 2, VertexFormat::Float2, 28 },
             { "TEXCOORD", 3, VertexFormat::Float2, 36 },
             { "TEXCOORD", 4, VertexFormat::Float, 44 },
+            { "TEXCOORD", 5, VertexFormat::Float4, 48 },
+            { "TEXCOORD", 6, VertexFormat::Float4, 64 },
+            { "TEXCOORD", 7, VertexFormat::Float, 80 },
         },
         sizeof(ui::UiVertex),
         false,
@@ -102,6 +105,9 @@ VertexLayout modelLayout()
             { "MODEL", 1, VertexFormat::UInt4, 16 },
             { "MODEL", 2, VertexFormat::UInt4, 32 },
             { "MODEL", 3, VertexFormat::UInt4, 48 },
+            { "MODEL", 4, VertexFormat::Float4, 64 },
+            { "MODEL", 5, VertexFormat::Float4, 80 },
+            { "MODEL", 6, VertexFormat::Float4, 96 },
         },
         ModelQuadBytes,
         true,
@@ -925,7 +931,7 @@ private:
     static std::array<float, 3> quadCenter(const void* data, bool cube)
     {
         const auto* bytes = static_cast<const uint8_t*>(data);
-        uint32_t words[16] {};
+        uint32_t words[ModelQuadBytes / sizeof(uint32_t)] {};
         std::memcpy(words, bytes, cube ? CubeQuadBytes : ModelQuadBytes);
         std::array<float, 3> center {};
         if (cube) {

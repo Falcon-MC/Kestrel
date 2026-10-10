@@ -33,6 +33,11 @@ struct HudItem {
      */
     int64_t mapId = 0;
     int32_t useTicks = 0;
+    // Preserve stack data for the vanilla in-hand item comparison.
+    Tag userData;
+    std::vector<std::string> canPlace;
+    std::vector<std::string> canBreak;
+    int32_t blockRuntimeId = -1;
     bool empty() const { return identifier.empty() || count <= 0; }
     bool operator==(const HudItem&) const = default;
 };

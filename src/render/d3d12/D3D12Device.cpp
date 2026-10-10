@@ -143,6 +143,8 @@ DXGI_FORMAT vertexFormat(VertexFormat format)
         return DXGI_FORMAT_R32_FLOAT;
     case VertexFormat::Float2:
         return DXGI_FORMAT_R32G32_FLOAT;
+    case VertexFormat::Float4:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
     case VertexFormat::Float3:
         return DXGI_FORMAT_R32G32B32_FLOAT;
     case VertexFormat::UByte4Norm:
@@ -678,9 +680,9 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!active || !boundActorConstants || !values || count != 60) return;
+        if (!active || !boundActorConstants || !values || count != 68) return;
         constexpr size_t pageBytes = 1024 * 1024;
-        constexpr size_t stride = 256;
+        constexpr size_t stride = 512;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
         auto& pages = actorPages[frameIndex];

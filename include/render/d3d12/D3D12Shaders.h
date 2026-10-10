@@ -17,6 +17,9 @@ struct VertexIn
     float2 halfSize : TEXCOORD2;
     float2 shape : TEXCOORD3;
     float depth : TEXCOORD4;
+    float4 glintUv : TEXCOORD5;
+    float4 glintRegion : TEXCOORD6;
+    float glintStrength : TEXCOORD7;
 };
 
 struct VertexOut
@@ -27,6 +30,9 @@ struct VertexOut
     float2 local : TEXCOORD1;
     float2 halfSize : TEXCOORD2;
     float2 shape : TEXCOORD3;
+    float4 glintUv : TEXCOORD5;
+    nointerpolation float4 glintRegion : TEXCOORD6;
+    nointerpolation float glintStrength : TEXCOORD7;
 };
 
 Texture2D atlas : register(t0);
@@ -41,7 +47,26 @@ VertexOut vs_main(VertexIn input)
     output.local = input.local;
     output.halfSize = input.halfSize;
     output.shape = input.shape;
+    output.glintUv = input.glintUv; output.glintRegion = input.glintRegion; output.glintStrength = input.glintStrength;
     return output;
+}
+
+float3 uiGlintTexel(float2 cell, float4 region)
+{
+    uint width, height; atlas.GetDimensions(width, height);
+    float2 dimensions = float2(width, height);
+    float2 size = round((region.zw - region.xy) * dimensions);
+    float2 at = round(region.xy * dimensions) + floor(frac(cell / size) * size);
+    return atlas.Load(int3(at, 0)).rgb;
+}
+
+float3 uiGlintSample(float2 uv, float4 region)
+{
+    uint width, height; atlas.GetDimensions(width, height);
+    float2 pixel = frac(uv) * round((region.zw - region.xy) * float2(width, height)) - 0.5;
+    float2 cell = floor(pixel), weight = frac(pixel);
+    return lerp(lerp(uiGlintTexel(cell, region), uiGlintTexel(cell + float2(1, 0), region), weight.x),
+        lerp(uiGlintTexel(cell + float2(0, 1), region), uiGlintTexel(cell + float2(1, 1), region), weight.x), weight.y);
 }
 
 float4 ps_main(VertexOut input) : SV_Target
@@ -55,7 +80,12 @@ float4 ps_main(VertexOut input) : SV_Target
         float distance = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
         coverage *= saturate(0.5 - distance / max(input.shape.y, 1.0));
     }
-    return float4(input.color.rgb * texel.rgb, input.color.a * coverage);
+    float3 rgb = input.color.rgb * texel.rgb;
+    if (input.glintStrength > 0.0 && texel.a > 0.00390625) {
+        float3 foil = (uiGlintSample(input.glintUv.xy, input.glintRegion) + uiGlintSample(input.glintUv.zw, input.glintRegion)) * float3(0.38, 0.19, 0.608) * input.color.rgb;
+        rgb += foil * foil * input.glintStrength;
+    }
+    return float4(rgb, input.color.a * coverage);
 }
 )";
 
@@ -101,6 +131,9 @@ struct WorldOut
     nointerpolation float4 actorGrid1 : TEXCOORD11;
     nointerpolation float4 actorGrid2 : TEXCOORD12;
     nointerpolation float actorDissolve : TEXCOORD13;
+    nointerpolation float4 glint : TEXCOORD14;
+    nointerpolation float4 glintTexture : TEXCOORD15;
+    float2 glintUv : TEXCOORD16;
 };
 
 static const float lightCurve[16] = {
@@ -188,6 +221,9 @@ struct ModelIn
     uint4 b : MODEL1;
     uint4 c : MODEL2;
     uint4 d : MODEL3;
+    float4 glint : MODEL4;
+    float4 glintTexture : MODEL5;
+    float4 glintUvTransform : MODEL6;
     uint vertexId : SV_VertexID;
 };
 
@@ -218,6 +254,9 @@ WorldOut placeModel(ModelIn input, float positionScale)
     if ((words[11] & 0x10) != 0) {
         output.uv.y -= frac(origin.w / 32.0);
     }
+    output.glintUv = input.glintUvTransform.xy + output.uv * input.glintUvTransform.zw;
+    output.glint = input.glint;
+    output.glintTexture = input.glintTexture;
     output.material = words[10];
     static const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
     output.shade = faceShade[min(words[11] & 0xf, 6u)];
@@ -252,6 +291,8 @@ cbuffer ActorData : register(b1)
     float4 actorGrid1;
     float4 actorGrid2;
     float4 actorOptions;
+    float4 actorGlint;
+    float4 actorGlintTexture;
 };
 
 float3 actorPose(float3 position)
@@ -283,6 +324,8 @@ WorldOut vs_actor(ModelIn input)
     WorldOut output = (WorldOut)0;
     output.position=mul(viewProjection,float4(position,1));
     output.uv=actorUv.xy+float2(uvWord&65535u,uvWord>>16)/4096.0*actorUv.zw;
+    output.glintUv=float2(uvWord&65535u,uvWord>>16)/4096.0;
+    output.glint=actorGlint; output.glintTexture=actorGlintTexture;
     output.material=asuint(actorParams.y);
     output.shade=shade;
     output.relative=position;
@@ -350,13 +393,18 @@ float3 fogWorld(float3 color, float3 relative, bool additive)
     return lerp(color, fogColor, amount);
 }
 
-float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
+float worldLight(float3 cornerLevels)
 {
     float daylight = max(saturate(params.y), 0.2);
     float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
     channel = lerp(channel, 1.0, saturate(params.z));
     float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
-    return fogWorld(rgb * shade * pow(light, 1.0 / 2.2), relative, false);
+    return pow(light, 1.0 / 2.2);
+}
+
+float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
+{
+    return fogWorld(rgb * shade * worldLight(cornerLevels), relative, false);
 }
 
 float4 applyTint(float4 texel, uint tint)
@@ -435,18 +483,39 @@ float4 actorTexture(uint layer, float4 grid, float2 uv)
     return sampleEntity(layer + tile.y * uint(grid.x) + tile.x, frac(coordinate));
 }
 
-float4 applyGlint(float4 texel, float2 uv, uint material, uint tint)
+float3 glintTexel(uint layer, float2 pixel, float2 size)
 {
-    if ((material & 0x80000000u) == 0u || texel.a == 0.0) return texel;
-    uint layer = (material >> 13) & 0x1fffu;
-    float frame = float((material >> 26) & 31u);
-    float strength = float((tint >> 24) & 31u) / 31.0;
-    float2 pixel = uv * 64.0;
-    for (uint glintPass = 0u; glintPass < 2u; ++glintPass) {
-        float2 shifted = float2(pixel.x + (glintPass != 0u ? pixel.y : 64.0 - pixel.y) + frame * (glintPass != 0u ? 3.0 : 5.0), pixel.y + frame * (glintPass != 0u ? 5.0 : 2.0)) / 128.0;
-        float4 glint = sampleEntity(layer, frac(shifted));
-        texel.rgb = min(float3(1.0, 1.0, 1.0), texel.rgb + glint.rgb * float3(0.5, 0.25, 0.8) * glint.a * 0.35 * strength);
+    pixel = frac(pixel / size) * size;
+    float2 tile = floor(pixel / 128.0);
+    uint at = layer + uint(tile.y) * uint(ceil(size.x / 128.0)) + uint(tile.x);
+    float2 cell = pixel - tile * 128.0;
+    return sampleEntity(at, (cell + float2(0.5, 0.5)) / 128.0).rgb;
+}
+
+float3 sampleGlint(uint layer, float2 uv, float2 size)
+{
+    float2 pixel = frac(uv) * size - 0.5;
+    float2 cell = floor(pixel), weight = frac(pixel);
+    return lerp(lerp(glintTexel(layer, cell, size), glintTexel(layer, cell + float2(1, 0), size), weight.x),
+        lerp(glintTexel(layer, cell + float2(0, 1), size), glintTexel(layer, cell + float2(1, 1), size), weight.x), weight.y);
+}
+
+float4 applyGlint(float4 texel, WorldOut input, float illumination)
+{
+    if (input.glint.z <= 0.0 || texel.a <= 0.0) return texel;
+    uint layer = uint(input.glint.w);
+    if (layer >= 8192u) return texel;
+    float2 centered = input.glintUv - 0.5;
+    float3 foil = float3(0, 0, 0);
+    for (uint pass = 0u; pass < 2u; ++pass) {
+        float angle = (pass == 0u ? -20.0 : 80.0) * 0.017453292519943295;
+        float c = cos(angle), sn = sin(angle);
+        float2 rotated = float2(c * centered.x + sn * centered.y, -sn * centered.x + c * centered.y);
+        float2 uv = (rotated + 0.5) * input.glintTexture.xy + float2(input.glint[pass], 0);
+        foil += sampleGlint(layer, uv, input.glintTexture.zw);
     }
+    foil *= float3(0.38, 0.19, 0.608) * illumination;
+    texel.rgb += foil * foil * input.glint.z;
     return texel;
 }
 
@@ -486,9 +555,11 @@ float4 actorSurface(WorldOut input, float2 uv)
         texel.rgb = lerp(lerp(texel.rgb, second.rgb, second.a), third.rgb, third.a);
     }
     if (mode != 3u) texel.rgb = lerp(texel.rgb, input.actorOverlay.rgb, input.actorOverlay.a);
-    float3 unlit = fogWorld(texel.rgb, input.relative, (input.entity & 2u) != 0u);
-    float3 lit = (input.entity & 8u) != 0u ? shadeWorld(texel.rgb, input.shade, input.relative, input.light) : unlit;
-    texel.rgb = mode == 1u ? lerp(unlit, lit, texel.a) : lit;
+    float illumination = (input.entity & 8u) != 0u ? worldLight(input.light) : 1.0;
+    float3 lit = texel.rgb * input.shade * illumination;
+    texel.rgb = (input.entity & 8u) == 0u ? texel.rgb : mode == 1u ? lerp(texel.rgb, lit, texel.a) : lit;
+    texel = applyGlint(texel, input, illumination);
+    texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2u) != 0u);
     if (mode != 0u) texel.a = 1.0;
     return texel;
 }
@@ -509,18 +580,29 @@ float4 surfaceTexel(WorldOut input)
             : page == 1 ? entitiesHigh.Load(at)
             : page == 2 ? entities2.Load(at)
             : entities3.Load(at);
+        texel = applyTint(texel, input.tint);
         if ((input.entity & 512u) != 0u && texel.a < 0.5) discard;
         if ((input.entity & 256u) != 0u) texel.rgb *= input.light.z;
-        if ((input.entity & 8) != 0) texel.rgb = shadeWorld(texel.rgb, input.shade, input.relative, input.light);
-        else if ((input.entity & 32) != 0) texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2) != 0);
+
         if ((input.entity & 4) != 0) {
             uint hit = asuint(sun.w);
             float4 flash = hit == 0 ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255, (hit >> 8) & 255, (hit >> 16) & 255, hit >> 24) / 255.0;
             texel.rgb = lerp(texel.rgb, flash.rgb, flash.a);
         }
-        return applyGlint(applyTint(texel, input.tint), input.uv, input.material, input.tint);
+        float illumination = (input.entity & 8u) != 0u ? worldLight(input.light) : 1.0;
+        if ((input.entity & 8u) != 0u) texel.rgb *= input.shade * illumination;
+        texel = applyGlint(texel, input, illumination);
+        if ((input.entity & (8u | 32u)) != 0u) texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2u) != 0u);
+        return texel;
     }
-    return applyTint(sampleMaterial(input.material, input.uv), input.tint);
+    float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
+    if (input.glint.z > 0.0) {
+        float illumination = worldLight(input.light);
+        texel.rgb *= input.shade * illumination;
+        texel = applyGlint(texel, input, illumination);
+        texel.rgb = fogWorld(texel.rgb, input.relative, false);
+    }
+    return texel;
 }
 
 float4 ps_solid(WorldOut input) : SV_Target
@@ -544,7 +626,7 @@ float4 ps_world(WorldOut input) : SV_Target
     if (texel.a < 0.5) {
         discard;
     }
-    return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light), 1.0);
+    return float4(input.glint.z > 0.0 ? texel.rgb : shadeWorld(texel.rgb, input.shade, input.relative, input.light), 1.0);
 }
 
 float4 ps_blend(WorldOut input) : SV_Target
@@ -559,7 +641,7 @@ float4 ps_blend(WorldOut input) : SV_Target
     if (input.entity != 0) {
         return float4(texel.rgb * texel.a, (input.entity & 2) != 0 ? 0.0 : texel.a);
     }
-    return float4(shadeWorld(texel.rgb, input.shade, input.relative, input.light) * texel.a, texel.a);
+    return float4((input.glint.z > 0.0 ? texel.rgb : shadeWorld(texel.rgb, input.shade, input.relative, input.light)) * texel.a, texel.a);
 }
 
 float4 ps_overlay(WorldOut input) : SV_Target
