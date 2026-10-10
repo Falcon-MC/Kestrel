@@ -1,5 +1,6 @@
 #include "client/session/SessionData.h"
 #include "client/CrystalMetadata.h"
+#include "client/ActorAimAssist.h"
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"
@@ -233,6 +234,8 @@ float metadataScale(const EntityDataMap& metadata, float fallback)
 void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
 {
     for (const EntityDataEntry& entry : metadata.mEntries) {
+        applyActorHitboxes(entry, actor.hitboxes);
+        applyActorAimAssist(entry, actor.aimAssistIndices);
         applyCrystalBeamTarget(entry, actor.crystalBeamTarget);
         switch (entry.mId) {
         case 0:

@@ -459,6 +459,7 @@ public:
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    const std::vector<std::string>& blockTags(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**
      * Every block name, vanilla and custom, once each, sorted and with its
@@ -736,6 +737,7 @@ private:
 
     BlockRegistry registry;
     std::vector<CustomBlock> customs;
+    std::unordered_map<std::string, std::vector<std::string>> customTags;
     std::vector<CustomState> customStates;
     // Collision boxes of the custom states, which their collision states point into.
     std::vector<CollisionBox> customBoxes;

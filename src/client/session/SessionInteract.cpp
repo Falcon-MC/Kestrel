@@ -1,4 +1,5 @@
 #include "client/ActorExtent.h"
+#include "client/ActorTarget.h"
 #include "client/session/SessionData.h"
 #include "client/RespawnAnchor.h"
 #include "client/RayBox.h"
@@ -203,11 +204,8 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
         if (runtimeId == localRuntimeId || !pickable(actor)) {
             continue;
         }
-        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5 + ActorPickMargin;
-        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
-        int axis = -1;
-        std::optional<double> entry = enterBox(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, &axis);
-        if (entry && axis >= 0 && *entry + ActorPickMargin < reach && *entry < distance) {
+        std::optional<double> entry = actorTargetDistance(actor, origin, direction, reach, ActorPickMargin);
+        if (entry && *entry < distance) {
             distance = *entry;
             target = &actor;
         }
@@ -866,16 +864,18 @@ void Session::runModActions()
             continue;
         }
         const ActorView& actor = found->second;
-        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5;
-        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
-        std::array<double, 3> low { actor.x - half, actor.y, actor.z - half };
-        std::array<double, 3> high { actor.x + half, actor.y + height, actor.z + half };
         std::array<double, 3> point {};
-        double reach = 0.0;
-        for (size_t axis = 0; axis < 3; ++axis) {
-            point[axis] = std::clamp(tickEye[axis], low[axis], high[axis]);
-            reach += (point[axis] - tickEye[axis]) * (point[axis] - tickEye[axis]);
-        }
+        double reach = std::numeric_limits<double>::infinity();
+        visitActorTargetBoxes(actor, { actor.x, actor.y, actor.z }, [&](const ActorTargetBox& box) {
+            std::array<double, 3> candidate;
+            double squared = 0.0;
+            for (size_t axis = 0; axis < 3; ++axis) {
+                candidate[axis] = std::clamp(tickEye[axis], box.low[axis], box.high[axis]);
+                squared += (candidate[axis] - tickEye[axis]) * (candidate[axis] - tickEye[axis]);
+            }
+            if (squared < reach) { reach = squared; point = candidate; }
+            return true;
+        });
         if (reach > entityReach * entityReach) {
             continue;
         }

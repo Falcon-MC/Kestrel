@@ -25,6 +25,12 @@
 #include "Protocol/Packets/CameraInstructionPacket.h"
 #include "Protocol/Packets/CameraPresetsPacket.h"
 #include "Protocol/Packets/CameraShakePacket.h"
+#include "Protocol/Packets/CameraAimAssistPacket.h"
+#include "Protocol/Packets/CameraAimAssistPresetsPacket.h"
+#include "Protocol/Packets/CameraAimAssistActorPriorityPacket.h"
+#include "client/AimAssistRay.h"
+#include "client/ActorAimAssist.h"
+#include "Protocol/Packets/ClientCameraAimAssistPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/AddItemActorPacket.h"
@@ -598,6 +604,12 @@ void Session::setLookRay(const std::array<double, 3>& origin, const std::array<f
     requestedLookDirection = direction;
 }
 
+void Session::setAimAssistTarget(const std::optional<std::array<double, 3>>& point)
+{
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedAimPoint = point;
+}
+
 void Session::configurePaletteResolver()
 {
     world.setBlockPaletteResolver([blockAssets = assets, mapping = ids,
@@ -675,14 +687,27 @@ void Session::setCameraBoom(const std::array<double, 3>& origin, const std::arra
 
 void Session::collectViewInput()
 {
-    std::lock_guard<std::mutex> guard(viewInputMutex);
-    lookOrigin = requestedLookOrigin;
-    renderedCamera = requestedRenderedCamera;
-    lookDirection = requestedLookDirection;
-    boomOrigin = requestedBoomOrigin;
-    boomDelta = requestedBoomDelta;
-    serverBoomOrigin = requestedServerBoomOrigin;
-    serverBoomDelta = requestedServerBoomDelta;
+    {
+        std::lock_guard<std::mutex> guard(viewInputMutex);
+        lookOrigin = requestedLookOrigin;
+        renderedCamera = requestedRenderedCamera;
+        lookDirection = requestedLookDirection;
+        aimPoint = requestedAimPoint;
+        aimAssistDirection(lookOrigin, aimPoint, lookDirection);
+        boomOrigin = requestedBoomOrigin;
+        boomDelta = requestedBoomDelta;
+        serverBoomOrigin = requestedServerBoomOrigin;
+        serverBoomDelta = requestedServerBoomDelta;
+    }
+    int perspective = std::clamp(requestedCameraPerspective.load(), 0, 2);
+    if (!cameraNetworkActive && perspective != acknowledgedCameraPerspective) {
+        ClientCameraAimAssistPacket activate;
+        activate.mPresetId = perspective == 0 ? "minecraft:first_person"
+            : perspective == 1 ? "minecraft:third_person" : "minecraft:third_person_front";
+        activate.mAllowAimAssist = true;
+        transmit(activate);
+        acknowledgedCameraPerspective = perspective;
+    }
 }
 
 void Session::setRenderedCamera(const std::array<double, 3>& origin)
@@ -984,6 +1009,9 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::CameraInstruction:
     case MinecraftPacketIds::CameraPresets:
     case MinecraftPacketIds::CameraShake:
+    case MinecraftPacketIds::CameraAimAssist:
+    case MinecraftPacketIds::CameraAimAssistPresets:
+    case MinecraftPacketIds::CameraAimAssistActorPriority:
     case MinecraftPacketIds::PlayStatus:
     case MinecraftPacketIds::BlockActorData:
     case MinecraftPacketIds::LevelChunk:
@@ -1340,6 +1368,7 @@ void Session::handleWorldPacket(std::string& payload)
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (static_cast<uint64_t>(data->mRuntimeActorId) == localRuntimeId) {
             for (const EntityDataEntry& entry : data->mMetadata.mEntries) {
+                applyActorAimAssist(entry, current.localAimAssistIndices);
                 if (entry.mFormat != EntityDataFormat::Long) continue;
                 if (entry.mId == 0) current.localActorFlags[0] = static_cast<uint64_t>(entry.mLongValue);
                 if (entry.mId == 92) current.localActorFlags[1] = static_cast<uint64_t>(entry.mLongValue);
@@ -1580,7 +1609,11 @@ void Session::handleWorldPacket(std::string& payload)
         }
         std::lock_guard<std::mutex> guard(mutex);
         pendingParticles.clear();
-        std::erase_if(pendingCameraEvents, [](const auto& event) { return dynamic_cast<const CameraPresetsPacket*>(event.get()) == nullptr; });
+        std::erase_if(pendingCameraEvents, [](const auto& event) {
+            return !dynamic_cast<const CameraPresetsPacket*>(event.get())
+                && !dynamic_cast<const CameraAimAssistPresetsPacket*>(event.get())
+                && !dynamic_cast<const CameraAimAssistActorPriorityPacket*>(event.get());
+        });
         current.cameraFov = {};
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
@@ -1590,6 +1623,24 @@ void Session::handleWorldPacket(std::string& payload)
             dimensionAckReceived = true;
         }
     } else if (auto camera = std::dynamic_pointer_cast<CameraInstructionPacket>(packet)) {
+        if (camera->mHasClear && camera->mClear) {
+            cameraNetworkActive = false;
+            acknowledgedCameraPerspective = -1;
+            ClientCameraAimAssistPacket activate;
+            activate.mAction = AimAssistAction::Clear;
+            activate.mAllowAimAssist = true;
+            transmit(activate);
+        } else if (camera->mHasSetInstruction && cameraNetworkPresets) {
+            const auto* definitions = dynamic_cast<const CameraPresetsPacket*>(cameraNetworkPresets.get());
+            int32_t id = camera->mSetInstruction.mPresetRuntimeId;
+            if (definitions && id >= 0 && size_t(id) < definitions->mPresets.size()) {
+                cameraNetworkActive = true;
+                ClientCameraAimAssistPacket activate;
+                activate.mPresetId = definitions->mPresets[size_t(id)].mIdentifier;
+                activate.mAllowAimAssist = true;
+                transmit(activate);
+            }
+        }
         {
             std::lock_guard<std::mutex> guard(mutex);
             pendingCameraEvents.push_back(camera);
@@ -1603,9 +1654,12 @@ void Session::handleWorldPacket(std::string& payload)
             current.cameraFov.easeType = static_cast<int>(fov.mEaseType);
             current.cameraFov.clear = fov.mClear;
         }
-    } else if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet) || std::dynamic_pointer_cast<CameraShakePacket>(packet)) {
+    } else if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet) || std::dynamic_pointer_cast<CameraShakePacket>(packet)
+        || std::dynamic_pointer_cast<CameraAimAssistPacket>(packet) || std::dynamic_pointer_cast<CameraAimAssistPresetsPacket>(packet)
+        || std::dynamic_pointer_cast<CameraAimAssistActorPriorityPacket>(packet)) {
+        if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet)) cameraNetworkPresets = packet;
         std::lock_guard<std::mutex> guard(mutex);
-        pendingCameraEvents.push_back(packet);
+        if (pendingCameraEvents.size() < 512) pendingCameraEvents.push_back(packet);
     }
 }
 
@@ -2170,6 +2224,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         pendingUpdates.clear();
         current.serverBoomFraction = 0.0;
         pendingCameraEvents.clear();
+        cameraNetworkPresets.reset();
+        cameraNetworkActive = false;
+        acknowledgedCameraPerspective = -1;
         pendingSkins.clear();
         actors.clear();
         actorPropertySchemas.clear();
