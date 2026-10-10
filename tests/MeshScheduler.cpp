@@ -115,6 +115,33 @@ int main()
         check(scheduler.takeResults().empty(), "cancelled phase published a result");
     }
     {
+        MeshScheduler scheduler(8);
+        // Block changes must still finish when urgent work arrives during staged lighting.
+        for (int batch = 0; batch < 16; ++batch) {
+            size_t submitted = 0;
+            for (int index = 0; index < 64; ++index) {
+                submitted += scheduler.submit({0, index, batch + 10, 0}, 1, input(true), assets, {});
+            }
+            std::this_thread::sleep_for(10ms);
+            for (int index = 0; index < 16; ++index) {
+                MeshDeferred displaced;
+                if (scheduler.submit({0, index, batch + 10, 1}, 1, input(true), assets, {}, true, &displaced)) {
+                    ++submitted;
+                    if (displaced.key.y == batch + 10) --submitted;
+                }
+            }
+            size_t completed = 0;
+            waitUntil([&] { return completed == submitted; }, [&] {
+                for (const auto& result : scheduler.takeResults()) {
+                    check(scheduler.isCurrent(result), "mixed-priority batch returned a stale mesh");
+                    check(!result.mesh.empty(), "mixed-priority batch lost its geometry");
+                    ++completed;
+                }
+            });
+            waitUntil([&] { return scheduler.pending() == 0; }, [] {});
+        }
+    }
+    {
         MeshScheduler scheduler(2);
         for (int index = 0; index < 64; ++index) scheduler.submit({0, index, 0, 0}, 1, input(), assets, {});
         std::this_thread::sleep_for(50ms);
