@@ -325,7 +325,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     const world::EntityRig& rig = *chosenRig;
     double now = secondsNow();
     bool bobbing = menu.option("view_bobbing", 1) != 0;
-    float partialTick = static_cast<float>(std::clamp((now - playerView.tickTime) / 0.05, 0.0, 1.0));
+    double movementTickTime = seenSessionSnapshot ? seenSessionSnapshot->player.tickTime : playerView.tickTime;
+    float partialTick = static_cast<float>(std::clamp((now - movementTickTime) / 0.05, 0.0, 1.0));
     Mat4 viewMotion = identity();
     if (bobbing) {
         firstPersonMotion.look(now, camera.minecraftPitch(), camera.minecraftYaw());
