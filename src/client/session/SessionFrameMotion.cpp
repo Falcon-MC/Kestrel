@@ -174,12 +174,7 @@ PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace,
         return prepare(value, tick);
     });
     const auto& result = frameMotion.lastResult();
-    MotionInput preview;
-    {
-        std::lock_guard guard(motionInputMutex);
-        preview = prepare(bufferedMotionInput.preview(), frameMotion.tick() + 1);
-    }
-    MotionVector visual = frameMotion.predict(preview, lookup, ready);
+    MotionVector visual = frameMotion.interpolate();
     view.current = view.previous = {visual.x, visual.y, visual.z};
     view.tickTime = now;
     view.velocity = {result.velocity.x, result.velocity.y, result.velocity.z};

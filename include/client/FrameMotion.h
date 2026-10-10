@@ -35,7 +35,7 @@ public:
     void correct(uint64_t tick, const MotionVector& position, const MotionVector* velocity,
         bool grounded, const PlayerMotion::CellLookup& lookup);
     void knockback(uint64_t tick, const MotionVector& velocity, const PlayerMotion::CellLookup& lookup);
-    MotionVector predict(const MotionInput& input, const PlayerMotion::CellLookup& lookup, const AreaReady& ready);
+    MotionVector interpolate() const;
 
     const PlayerMotion& state() const { return motion; }
     uint64_t tick() const { return currentTick; }
@@ -61,7 +61,6 @@ private:
     static void anchor(PlayerMotion& target, const MotionTick& result);
 
     PlayerMotion motion;
-    PlayerMotion preview;
     MotionTick latest;
     std::deque<History> history;
     std::deque<Impulse> impulses;

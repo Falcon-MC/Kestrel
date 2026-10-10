@@ -1,4 +1,5 @@
 #include "client/FrameMotion.h"
+#include "client/BodyRotation.h"
 
 #include <cmath>
 #include <cstdio>
@@ -51,6 +52,24 @@ void retainedDebt()
     require(frame.tick() == 101, "A stall must not discard movement ticks");
 }
 
+void continuousPrediction()
+{
+    for (int fps : {30, 60, 144}) {
+        FrameMotion frame;
+        frame.reset(flying(), 0, 0.0);
+        MotionInput input;
+        input.forward = 1.0f;
+        MotionVector previous = frame.state().position();
+        for (int i = 0; i < fps * 5; ++i) {
+            frame.advance(double(i) / fps, [&](uint64_t) { return input; }, Empty, Ready,
+                [](const auto&, const auto&) {});
+            const MotionVector visual = frame.interpolate();
+            require(visual.z >= previous.z, "Steady movement must never move the camera backwards");
+            previous = visual;
+        }
+    }
+}
+
 void prediction()
 {
     FrameMotion frame;
@@ -60,15 +79,70 @@ void prediction()
     frame.advance(0.025, [&](uint64_t) { return input; }, Empty, Ready, [](const auto&, const auto&) {});
     const MotionVector authoritative = frame.state().position();
     const MotionVector velocity = frame.state().currentVelocity();
-    PlayerMotion expected = frame.state().detached();
-    const MotionTick next = expected.step(input, Empty);
-    const MotionVector visual = frame.predict(input, Empty, Ready);
-    near(visual, authoritative + (next.position - authoritative).scaled(0.5f), "Prediction must use the same collision engine");
+    const MotionVector visual = frame.interpolate();
+    near(visual, authoritative - frame.lastResult().movement.scaled(0.5f), "Rendering must interpolate completed collision-tested motion");
     near(frame.state().position(), authoritative, "Prediction must not move authoritative physics");
     near(frame.state().currentVelocity(), velocity, "Prediction must not change authoritative velocity");
     require(frame.tick() == 1, "Prediction must not produce network ticks");
-    near(frame.predict(input, Empty, [](const MotionVector&) { return false; }), authoritative,
-        "Prediction must stop at unavailable terrain");
+}
+
+void releasedPrediction()
+{
+    FrameMotion frame;
+    frame.reset(flying(), 0, 0.0);
+    MotionInput input;
+    input.forward = 1.0f;
+    frame.advance(0.975, [&](uint64_t) { return input; }, Empty, Ready, [](const auto&, const auto&) {});
+    frame.advance(0.999, [&](uint64_t) { return input; }, Empty, Ready, [](const auto&, const auto&) {});
+    const MotionVector before = frame.interpolate();
+    input.forward = 0.0f;
+    frame.advance(0.9995, [&](uint64_t) { return input; }, Empty, Ready, [](const auto&, const auto&) {});
+    const MotionVector after = frame.interpolate();
+    require(after.z >= before.z, "Releasing forward must not rewind motion already shown within a tick");
+    MotionVector previous = after;
+    for (int i = 0; i < 200; ++i) {
+        frame.advance(1.0 + double(i) / 144, [&](uint64_t) { return input; }, Empty, Ready,
+            [](const auto&, const auto&) {});
+        const MotionVector visual = frame.interpolate();
+        require(visual.z >= previous.z, "A released input must remain continuous across later ticks");
+        previous = visual;
+    }
+}
+
+void rebasedVisualContinuity()
+{
+    FrameMotion frame;
+    frame.reset(flying(), 0, 0.0);
+    MotionInput input;
+    input.forward = 1.0f;
+    frame.advance(0.025, [&](uint64_t) { return input; }, Empty, Ready, [](const auto&, const auto&) {});
+    const MotionVector before = frame.interpolate();
+    PlayerMotion seed = frame.state().detached();
+    seed.setHunger(19.0f);
+    frame.rebase(seed, frame.tick());
+    near(frame.interpolate(), before, "A settings update must preserve the visible movement segment");
+}
+
+void localBodyFollowsMotion()
+{
+    FrameMotion frame;
+    frame.reset(flying(), 0, 0.0);
+    MotionInput input;
+    input.forward = 1.0f;
+    input.sprint = true;
+    input.yaw = 180.0f;
+    float body = 0.0f;
+    for (int i = 0; i < 120; ++i) {
+        frame.advance(double(i) / 60, [&](uint64_t) { return input; }, Empty, Ready,
+            [](const auto&, const auto&) {});
+        const auto& velocity = frame.lastResult().velocity;
+        body = actor::trailBody(body, input.yaw, velocity.x, velocity.z, 20.0f / 60.0f);
+    }
+    require(std::abs(actor::wrapDegrees(body - input.yaw)) < 0.1f,
+        "Local body must align with a straight run despite identical current/previous render positions");
+    for (int i = 0; i < 60; ++i) body = actor::trailBody(body, 180.0f, 0.0, 0.2, 20.0f / 60.0f);
+    require(std::abs(actor::wrapDegrees(body - 180.0f)) < 0.1f,
+        "Walking backwards must not turn the body away from the head");
 }
 
 void correctionReplay()
@@ -142,7 +216,7 @@ void predictedCollision()
     frame.advance(0.04, [&](uint64_t) { return input; }, wall, Ready, [](const auto&, const auto&) {});
     const MotionVector before = frame.state().position();
     for (int i = 0; i < 10; ++i) {
-        const MotionVector visual = frame.predict(input, wall, Ready);
+        const MotionVector visual = frame.interpolate();
         require(visual.z <= 0.7001f, "Visual prediction must not pass through a solid wall");
         near(frame.state().position(), before, "Repeated prediction must not accumulate authoritative movement");
     }
@@ -254,7 +328,11 @@ void pendingInputsOutlivePhysicsHistory()
 int main()
 {
     retainedDebt();
+    continuousPrediction();
     prediction();
+    releasedPrediction();
+    rebasedVisualContinuity();
+    localBodyFollowsMotion();
     correctionReplay();
     unavailableTerrain();
     rebasedUnsentTicks();
