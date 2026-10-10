@@ -69,7 +69,9 @@ public:
     void setLayer(float offsetX, float offsetY, float opacity);
     void clearLayer();
 
-    void spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint);
+    void spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint, bool enchanted = false);
+
+    void setGlint(double now, float strength, float speed);
 
     const std::vector<Rect>& interactiveRects() const
     {
@@ -158,6 +160,8 @@ private:
     void labelLast(std::string_view label);
     float shadowOffset(TextStyle style) const;
 
+    std::array<float, 4> glintParameters {};
+    void applyGlint(size_t first, const Sprite& source, bool armor = false);
     DrawList& drawList;
     const Font& font;
     Skin& art;

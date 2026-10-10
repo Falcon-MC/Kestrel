@@ -39,13 +39,12 @@ HudItem frameItem(const Tag& item)
     }
     const Tag* damage = item.get("Damage");
     out.aux = damage && damage->getType() == Tag::Type::Short ? damage->asShort() : 0;
+    out.enchanted = itemHasIntrinsicGlint(out.identifier);
     if (const Tag* tag = item.get("tag"); tag && tag->isCompound()) {
         if (const Tag* map = tag->get("map_uuid"); map && map->getType() == Tag::Type::Long) {
             out.mapId = map->asLong();
         }
-        if (const Tag* enchantments = tag->get("ench"); enchantments && enchantments->isList()) {
-            out.enchanted = !enchantments->getList().empty();
-        }
+        out.enchanted = itemHasGlint(out.identifier, *tag);
     }
     return out;
 }
@@ -59,6 +58,11 @@ HudItem frameItem(const Tag& item)
 void Session::tickFrameItems()
 {
     const double now = secondsNow();
+    auto applyComponentGlint = [&](HudItem& item) {
+        if (auto definition = itemDefinitions.getDefinition(item.identifier)) {
+            item.enchanted |= itemComponentHasGlint(definition->getComponentData());
+        }
+    };
     for (const auto& [cell, animation] : pistonAnimations) {
         if (now - animation.start < 0.15 && animation.from != animation.to) {
             frameScanTicks = FrameScanInterval;
@@ -184,6 +188,7 @@ void Session::tickFrameItems()
                         ShelfItemView shelf;
                         shelf.cell = cell;
                         shelf.items = shelfItems(data);
+                        for (HudItem& item : shelf.items) applyComponentGlint(item);
                         uint32_t value = blockAt(cell[0], cell[1], cell[2]);
                         if (const Tag* states = assets->blockStates(value, ids.hashed, ids.sequential.get())) {
                             const std::string direction = states->getString("minecraft:cardinal_direction", "south");
@@ -283,6 +288,7 @@ void Session::tickFrameItems()
                         const Tag* item = data.get("display_item");
                         if (item) {
                             auto displayed = blockEntityItem(*item);
+                            applyComponentGlint(displayed);
                             if (!displayed.empty()) vaults.push_back({ cell, std::move(displayed) });
                         }
                     } else if (id == "Sign" || id == "HangingSign") {
@@ -311,6 +317,7 @@ void Session::tickFrameItems()
                     FrameItemView view;
                     view.cell = { x * 16 + int32_t((index >> 8) & 15), y * 16 + int32_t(index & 15), z * 16 + int32_t((index >> 4) & 15) };
                     view.item = frameItem(*item);
+                    applyComponentGlint(view.item);
                     if (view.item.empty()) {
                         continue;
                     }

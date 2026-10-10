@@ -110,6 +110,8 @@ VkFormat vertexFormat(VertexFormat format)
         return VK_FORMAT_R32_SFLOAT;
     case VertexFormat::Float2:
         return VK_FORMAT_R32G32_SFLOAT;
+    case VertexFormat::Float4:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
     case VertexFormat::Float3:
         return VK_FORMAT_R32G32B32_SFLOAT;
     case VertexFormat::UByte4Norm:
@@ -742,7 +744,7 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!active || !bound || !bound->actorConstants || !values || count != 60) return;
+        if (!active || !bound || !bound->actorConstants || !values || count != 68) return;
         size_t pageBytes = actorStride * 4096;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
@@ -759,7 +761,7 @@ public:
             allocation.descriptorSetCount = 1;
             allocation.pSetLayouts = &actorLayout;
             check(vkAllocateDescriptorSets(device, &allocation, &created.set), "vkAllocateDescriptorSets: actor constants");
-            VkDescriptorBufferInfo info { buffer, 0, 60 * sizeof(uint32_t) };
+            VkDescriptorBufferInfo info { buffer, 0, 68 * sizeof(uint32_t) };
             VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             write.dstSet = created.set;
             write.dstBinding = 0;
@@ -1163,7 +1165,7 @@ private:
         if (actorLayout) return actorLayout;
         VkPhysicalDeviceProperties properties {};
         vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-        actorStride = std::max<size_t>(256, properties.limits.minUniformBufferOffsetAlignment);
+        actorStride = std::max<size_t>(512, properties.limits.minUniformBufferOffsetAlignment);
         VkDescriptorSetLayoutBinding binding {};
         binding.binding = 0;
         binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;

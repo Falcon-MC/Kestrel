@@ -387,6 +387,7 @@ struct EntityMaterialChoice {
     EntityMaterial material = EntityMaterial::Default;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
+    bool glint = false;
 };
 
 struct EntityRenderController {
@@ -579,6 +580,12 @@ public:
     }
 
     uint32_t armorGlintLayer() const { return armorGlintTexture; }
+    uint32_t itemGlintLayer() const { return itemGlintTexture; }
+    std::array<float, 4> glintTextureParameters(uint32_t layer) const
+    {
+        auto grid = entityTileGrid(layer);
+        return { 0.5f, 0.5f, grid.tilesX * grid.coverX * EntityTextureSize, grid.tilesY * grid.coverY * EntityTextureSize };
+    }
 
     /**
      * How armor in the given slot looks, or no rig for items without an
@@ -759,6 +766,7 @@ private:
     std::optional<uint32_t> beaconBeamTexture;
     std::optional<uint32_t> beaconBeamShellTexture;
     uint32_t armorGlintTexture = NoEntityChoice;
+    uint32_t itemGlintTexture = NoEntityChoice;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;

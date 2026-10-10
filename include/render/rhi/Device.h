@@ -22,6 +22,7 @@ enum class VertexFormat {
     Float,
     Float2,
     Float3,
+    Float4,
     UByte4Norm,
     UInt,
     UInt4,

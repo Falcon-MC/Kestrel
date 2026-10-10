@@ -21,6 +21,8 @@
 #include "client/Profiler.h"
 #include "client/ServerPinger.h"
 #include "client/Session.h"
+#include "client/HandEquip.h"
+#include "client/HotbarSelection.h"
 #include "client/Social.h"
 #include "world/EntityAnimation.h"
 #include "world/BookAnimation.h"
@@ -373,7 +375,6 @@ private:
     std::unordered_map<uint64_t, ActorMotion> motions;
     HudState hudState;
     std::map<std::string, bool> itemIcons;
-    std::map<std::string, int> itemIconFrames;
     std::vector<std::shared_ptr<const world::PackFiles>> artPacks;
     std::vector<std::string> packSprites;
     bool jsonUiLoaded = false;
@@ -511,12 +512,11 @@ private:
     ServerFovBlend serverFov;
     bool localSlim = false;
     double swingStart = -1.0;
-    std::string lastHeldIdentity;
-    double handUpdatedAt = 0.0;
+    HotbarSelection hotbarSelection;
+    HandEquip handTransition;
     float handEquip = 0.0f;
     double consumeStarted = 0.0;
     std::string consumeIdentity;
-    HudItem handItem;
     uint64_t heldItemFrame = 0;
     struct HeldItemFace {
         std::array<std::array<float, 3>, 4> corners;

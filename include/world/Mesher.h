@@ -69,13 +69,17 @@ static_assert(sizeof(PackedQuad) == 20);
  * 1/256 block, four words of 16-bit UVs in 1/4096 texture, the material word,
  * the face shade index with the tint, then the corner light and occlusion and,
  * for entity quads, the texture offset and scale as two pairs of half floats
- * (both zero when the texture is not animated).
+ * (both zero when the texture is not animated). Foil parameters, texture size
+ * and the untiled UV transform follow without changing those base words.
  */
 struct ModelQuadGpu {
     std::array<uint32_t, 16> words {};
+    std::array<float, 4> glint {};
+    std::array<float, 4> glintTexture { 0.5f, 0.5f, 128.0f, 128.0f };
+    std::array<float, 4> glintUvTransform { 0.0f, 0.0f, 1.0f, 1.0f };
 };
 
-static_assert(sizeof(ModelQuadGpu) == 64);
+static_assert(sizeof(ModelQuadGpu) == 112);
 
 /**
  * Light holds the solved light of every cell, block light in the low nibble

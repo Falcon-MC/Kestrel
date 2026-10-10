@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/Inventory.h"
+#include "client/ItemGlintState.h"
 
 #include <algorithm>
 
@@ -16,9 +17,10 @@ inline HudItem blockEntityItem(const Tag& entry)
     item.identifier = name;
     item.count = count->asByte();
     if (const Tag* damage = entry.get("Damage"); damage && damage->getType() == Tag::Type::Short) item.aux = damage->asShort();
+    item.enchanted = itemHasIntrinsicGlint(item.identifier);
     if (const Tag* tag = entry.get("tag"); tag && tag->isCompound()) {
         if (const Tag* map = tag->get("map_uuid"); map && map->getType() == Tag::Type::Long) item.mapId = map->asLong();
-        if (const Tag* ench = tag->get("ench"); ench && ench->isList()) item.enchanted = !ench->getList().empty();
+        item.enchanted = itemHasGlint(item.identifier, *tag);
     }
     return item;
 }

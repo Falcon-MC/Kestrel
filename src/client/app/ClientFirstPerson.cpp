@@ -341,18 +341,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     float idleBob = bobbing ? static_cast<float>(std::sin(now * 2.0)) * 0.011f : 0.0f;
     float attackTime = swingProgress();
 
-    int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
-    const HudItem& selected = hudState.inventory[static_cast<size_t>(slot)];
-    std::string heldIdentity = selected.identifier + "#" + std::to_string(selected.aux) + "#" + selected.icon;
-    float elapsed = handUpdatedAt > 0.0 ? static_cast<float>(std::clamp(now - handUpdatedAt, 0.0, 0.1)) : 0.0f;
-    handUpdatedAt = now;
-    bool changing = heldIdentity != lastHeldIdentity;
-    handEquip = std::clamp(handEquip + (changing ? -8.0f : 8.0f) * elapsed, 0.0f, 1.0f);
-    if (!changing || handEquip <= 0.1f) {
-        handItem = selected;
-        lastHeldIdentity = heldIdentity;
-    }
-    const HudItem& held = handItem;
+    const HudItem& held = handTransition.item;
+    std::string heldIdentity = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
     std::string heldName = held.empty() ? std::string() : held.identifier;
 
     float yaw = camera.minecraftYaw();
@@ -837,8 +827,8 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
             return place(point, mesh.block);
         });
         out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace));
-        if (held.enchanted && !mesh.block) {
-            world::applyItemGlint(out.back(), blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+        if (held.enchanted) {
+            world::applyItemGlint(out.back(), blockAssets->itemGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->itemGlintLayer()));
         }
     }
 }
