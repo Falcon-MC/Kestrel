@@ -726,6 +726,8 @@ struct MeshUpdate {
     std::shared_ptr<void> credit;
     bool urgent = false;
     bool refresh = false;
+    std::shared_ptr<const world::ChunkVisibility> visibility;
+    bool visibilityOnly = false;
 };
 
 enum class MeshUpdateKind { All, Terrain, Removal };
@@ -1226,6 +1228,7 @@ private:
     std::unique_ptr<world::MeshScheduler> mesher;
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
     std::map<world::SubChunkKey, uint64_t> meshedGenerations;
+    std::set<world::SubChunkKey> invalidatedVisibility;
     uint64_t nextMeshGeneration = 0;
     std::map<world::SubChunkKey, double> frontierMeshes;
     size_t frontierColumns = 0;

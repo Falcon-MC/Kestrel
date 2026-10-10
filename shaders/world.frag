@@ -225,7 +225,10 @@ vec4 actorSurface(vec2 uv)
 
 void main()
 {
-#ifdef OVERLAY
+#ifdef SOLID
+    vec4 texel = applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    outColor = vec4(shadeWorld(texel.rgb), 1.0);
+#elif defined(OVERLAY)
     // Outline edges darken what is under them like 40% black, cracks multiply it twice over.
     if (inEntity != 0u) {
         outColor = vec4(0.3, 0.3, 0.3, 1.0);

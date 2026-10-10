@@ -1,4 +1,5 @@
 #include "world/MeshScheduler.h"
+#include "render/OpaqueTerrain.h"
 
 #include <algorithm>
 #include <chrono>
@@ -28,20 +29,23 @@ struct MeshMemoryCredit {
     }
 };
 namespace {
+constexpr size_t ForegroundLightBacklog = 8;
+
 size_t meshBytes(const ChunkMesh& mesh)
 {
     return (mesh.cubes.capacity() + mesh.translucentCubes.capacity()) * sizeof(PackedQuad)
         + (mesh.models.capacity() + mesh.translucentModels.capacity()) * sizeof(ModelQuadGpu)
-        + mesh.light.capacity();
+        + mesh.light.capacity() + (mesh.visibility ? mesh.visibility->cells.capacity() * sizeof(uint16_t) + mesh.visibility->exits.capacity() : 0);
 }
 }
 
-MeshScheduler::MeshScheduler()
+MeshScheduler::MeshScheduler(unsigned int workerCount)
     : memory(std::make_shared<MeshBudgetState>())
 {
     unsigned int cores = std::thread::hardware_concurrency();
-    unsigned int count = std::min(8u, std::max(1u, cores > 2 ? cores - 2 : 1u));
-    for (unsigned int i = 0; i < count; ++i) workers.emplace_back([this] { work(); });
+    unsigned int count = workerCount ? std::clamp(workerCount, 1u, 8u) : std::min(8u, std::max(1u, cores > 2 ? cores - 2 : 1u));
+    separateLighting = count > 1;
+    for (unsigned int i = 0; i < count; ++i) workers.emplace_back([this, foreground = separateLighting && i == 0] { work(foreground); });
 }
 
 MeshScheduler::~MeshScheduler()
@@ -53,6 +57,7 @@ MeshScheduler::~MeshScheduler()
         stopping = true;
         for (auto& [key, token] : cancellations) token->store(true);
         queued.clear();
+        prepared.clear();
     }
     wake.notify_all();
     for (std::thread& worker : workers) worker.join();
@@ -85,9 +90,21 @@ bool MeshScheduler::submit(const SubChunkKey& key, uint64_t generation, MeshInpu
         input.cancelled = std::move(token);
         if (boundAssets != assets) {
             boundAssets = assets;
+            const auto& textures = assets->textures();
+            std::array<const uint8_t*, TextureMipLevels> mips;
+            for (size_t level = 0; level < mips.size(); ++level) mips[level] = textures.mips[level].data();
+            auto opaqueLayers = opaqueTextureLayers({ mips.data(), textures.layers, TextureSize, TextureMipLevels });
+            auto coverage = std::make_shared<std::vector<uint8_t>>();
+            coverage->reserve(assets->materials().size());
+            for (const auto& material : assets->materials()) {
+                uint32_t tint = (material.tint & TintOverlay) && material.tintKind() != TintKind::None ? QuadTinted | QuadTintOverlay : 0;
+                coverage->push_back(solidCubeMaterial(material.gpuWord(), tint, opaqueLayers));
+            }
+            opaqueMaterials = std::move(coverage);
             maxTemplateQuads = 0;
             for (const auto& model : assets->modelTemplates()) maxTemplateQuads = std::max(maxTemplateQuads, size_t(model.quadCount));
         }
+        input.opaqueMaterials = opaqueMaterials;
         queued.insert_or_assign(key, Job { key, generation, currentEpoch, urgent, refresh, std::move(input), std::move(assets), std::move(ids), maxTemplateQuads });
     }
     wake.notify_all();
@@ -112,6 +129,11 @@ void MeshScheduler::cancel(const SubChunkKey& key)
     {
         std::lock_guard<std::mutex> guard(mutex);
         queued.erase(key);
+        if (auto ready = prepared.find(key); ready != prepared.end()) {
+            prepared.erase(ready);
+            active.erase(key);
+            --running;
+        }
         if (auto old = cancellations.find(key); old != cancellations.end()) {
             old->second->store(true);
             cancellations.erase(old);
@@ -188,6 +210,9 @@ void MeshScheduler::clear()
         for (auto& [key, token] : cancellations) token->store(true);
         cancellations.clear();
         queued.clear();
+        for (const auto& [key, job] : prepared) active.erase(key);
+        running -= prepared.size();
+        prepared.clear();
         newest.clear();
         results.clear();
         lightCache.clear();
@@ -199,53 +224,75 @@ void MeshScheduler::clear()
     memory->wake.notify_all();
 }
 
-bool MeshScheduler::hasReadyJob() const
+bool MeshScheduler::hasReadyJob(bool foreground) const
 {
-    return std::any_of(queued.begin(), queued.end(), [&](const auto& entry) { return !active.contains(entry.first); });
+    if (!prepared.empty()) return true;
+    return std::any_of(queued.begin(), queued.end(), [&](const auto& entry) {
+        return !active.contains(entry.first) && (!foreground || entry.second.urgent || queued.size() >= ForegroundLightBacklog);
+    });
 }
 
-void MeshScheduler::work()
+void MeshScheduler::work(bool foreground)
 {
     for (;;) {
         Job job;
         std::shared_ptr<const ChunkLighting> previous;
         bool reusable = false;
+        bool ready = false;
+        auto started = std::chrono::steady_clock::now();
+        std::shared_ptr<MeshMemoryCredit> credit;
         {
             std::unique_lock<std::mutex> lock(mutex);
-            wake.wait(lock, [this] { return stopping || (results.size() < ResultCapacity && resultBytes < ResultByteCapacity && hasReadyJob()); });
+            wake.wait(lock, [this, foreground] { return stopping || (results.size() < ResultCapacity && resultBytes < ResultByteCapacity && hasReadyJob(foreground)); });
             if (stopping) return;
+            auto bestPrepared = prepared.end();
+            if (!prepared.empty()) {
+                bestPrepared = std::min_element(prepared.begin(), prepared.end(), [&](const auto& left, const auto& right) {
+                    const auto& a = left.second.job;
+                    const auto& b = right.second.job;
+                    return view.rank(a.key.x, a.key.y, a.key.z, a.urgent, a.refresh) < view.rank(b.key.x, b.key.y, b.key.z, b.urgent, b.refresh);
+                });
+            }
             auto best = queued.end();
             MeshPriority bestPriority;
             for (auto entry = queued.begin(); entry != queued.end(); ++entry) {
-                if (active.contains(entry->first)) continue;
+                if (active.contains(entry->first)
+                    || (foreground && !entry->second.urgent && queued.size() < ForegroundLightBacklog)) continue;
                 const auto& key = entry->first;
                 MeshPriority priority = view.rank(key.x, key.y, key.z, entry->second.urgent, entry->second.refresh);
                 if (best == queued.end() || priority < bestPriority) {
                     best = entry; bestPriority = priority;
                 }
             }
-            job = std::move(best->second);
-            queued.erase(best);
-            active.insert(job.key);
-            ++running;
-            auto cached = lightCache.find(job.key);
-            if (cached != lightCache.end()) {
-                previous = cached->second.lighting;
-                const auto& sources = cached->second.sources;
-                reusable = cached->second.assets == job.assets
-                    && cached->second.ids.hashed == job.ids.hashed
-                    && cached->second.ids.sequential == job.ids.sequential
-                    && cached->second.ids.hidden == job.ids.hidden
-                    && sources.skyLight == job.input.skyLight
-                    && sources.center == job.input.center
-                    && sources.around == job.input.around && sources.above == job.input.above;
+            if (bestPrepared != prepared.end() && (best == queued.end() || !best->second.urgent)) {
+                job = std::move(bestPrepared->second.job);
+                credit = std::move(bestPrepared->second.credit);
+                started = bestPrepared->second.started;
+                prepared.erase(bestPrepared);
+                ready = true;
+            } else {
+                started = std::chrono::steady_clock::now();
+                job = std::move(best->second);
+                queued.erase(best);
+                active.insert(job.key);
+                ++running;
+                auto cached = lightCache.find(job.key);
+                if (cached != lightCache.end()) {
+                    previous = cached->second.lighting;
+                    const auto& sources = cached->second.sources;
+                    reusable = cached->second.assets == job.assets
+                        && cached->second.ids.hashed == job.ids.hashed
+                        && cached->second.ids.sequential == job.ids.sequential
+                        && cached->second.ids.hidden == job.ids.hidden
+                        && sources.skyLight == job.input.skyLight
+                        && sources.center == job.input.center
+                        && sources.around == job.input.around && sources.above == job.input.above;
+                }
             }
         }
-        auto started = std::chrono::steady_clock::now();
-        std::shared_ptr<MeshMemoryCredit> credit;
         auto cancelled = [&] { return job.input.cancelled->load(std::memory_order_relaxed); };
-        if (!cancelled()) {
-            size_t bound = meshOutputBound(*job.assets, job.ids, job.input, job.maxTemplateQuads);
+        if (!ready && !cancelled()) {
+            size_t bound = meshOutputBound(*job.assets, job.ids, job.input, job.maxTemplateQuads) + 4096 * 3;
             std::unique_lock lock(memory->mutex);
             memory->wake.wait(lock, [&] { return memory->stopping || cancelled() || memory->bytes == 0
                 || (bound <= ResultByteCapacity && memory->bytes <= ResultByteCapacity - bound); });
@@ -256,7 +303,22 @@ void MeshScheduler::work()
         }
         ChunkMesh output;
         if (credit && !cancelled()) {
-            job.input.lighting = reusable ? previous : updateChunkLighting(*job.assets, job.ids, job.input, previous);
+            if (!ready) job.input.lighting = reusable ? previous : updateChunkLighting(*job.assets, job.ids, job.input, previous);
+            if (!ready && separateLighting && !job.urgent && !reusable) {
+                {
+                    std::lock_guard lock(mutex);
+                    auto latest = newest.find(job.key);
+                    if (!stopping && !cancelled() && job.epoch == currentEpoch && latest != newest.end() && latest->second == job.generation) {
+                        auto key = job.key;
+                        prepared.emplace(key, PreparedJob { std::move(job), std::move(credit), started });
+                    } else {
+                        --running;
+                        active.erase(job.key);
+                    }
+                }
+                wake.notify_all();
+                continue;
+            }
             if (!cancelled()) output = meshSubChunk(*job.assets, job.ids, job.input);
             credit->reconcile(meshBytes(output));
         }

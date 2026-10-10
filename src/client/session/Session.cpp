@@ -1668,6 +1668,15 @@ void Session::scheduleMeshes()
     }
     std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
     std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
+    {
+        std::lock_guard guard(mutex);
+        for (const auto& key : dirty) {
+            if (!meshedGenerations.contains(key) || !invalidatedVisibility.insert(key).second) continue;
+            MeshUpdate update { key };
+            update.visibilityOnly = true;
+            pendingUpdates.push_front(std::move(update));
+        }
+    }
     // Sub-chunks waiting on a neighbour column only come back when a column arrived or now and then, not on every pass.
     const double now = secondsNow();
     size_t columns = world.store().columnCount();
@@ -1748,10 +1757,11 @@ void Session::scheduleMeshes()
             if (existing != meshes.end()) {
                 meshQuads -= existing->second->quadCount();
                 meshes.erase(existing);
-                std::lock_guard<std::mutex> guard(mutex);
-                std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == key; });
-                pendingUpdates.push_back({ key, nullptr });
             }
+            invalidatedVisibility.erase(key);
+            std::lock_guard<std::mutex> guard(mutex);
+            std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == key; });
+            pendingUpdates.push_back({ key, nullptr });
             continue;
         }
         world::DimensionRange range;
@@ -1809,6 +1819,7 @@ void Session::collectMeshes()
             continue;
         }
         meshedGenerations.insert_or_assign(result.key, result.generation);
+        invalidatedVisibility.erase(result.key);
         auto existing = meshes.find(result.key);
         bool hadMesh = existing != meshes.end();
         if (hadMesh) {
@@ -1832,19 +1843,20 @@ void Session::collectMeshes()
         }
 
         std::shared_ptr<const world::ChunkMesh> mesh;
+        auto visibility = result.mesh.visibility;
         if (!result.mesh.empty()) {
             meshQuads += result.mesh.quadCount();
             mesh = std::make_shared<const world::ChunkMesh>(std::move(result.mesh));
             meshes.emplace(result.key, mesh);
         }
-        if (mesh || hadMesh) {
+        if (mesh || hadMesh || visibility) {
             std::lock_guard<std::mutex> guard(mutex);
             bool refresh = result.refresh;
             for (const auto& update : pendingUpdates) {
-                if (update.key == result.key) refresh &= update.refresh;
+                if (update.key == result.key && !update.visibilityOnly) refresh &= update.refresh;
             }
             std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == result.key; });
-            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit), result.urgent, refresh });
+            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit), result.urgent, refresh, std::move(visibility) });
         }
     }
 }
@@ -2354,6 +2366,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     mesher->clear();
     meshGenerations.clear();
+    invalidatedVisibility.clear();
     meshedGenerations.clear();
     meshes.clear();
     meshQuads = 0;

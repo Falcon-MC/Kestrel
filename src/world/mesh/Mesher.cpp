@@ -1609,6 +1609,28 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
     auto cancelled = [&] { return input.cancelled && input.cancelled->load(std::memory_order_relaxed); };
     if (cancelled()) return mesh;
     PaletteFacts facts(assets, ids, input.center.get());
+    std::bitset<4096> solid;
+    auto opaque = [&](const BlockVisual& visual) {
+        constexpr uint8_t required = FlagCubeGeometry | FlagOccludesFullFace;
+        if ((visual.flags & required) != required || (visual.flags & (FlagAir | FlagTranslucent | FlagDiagnostic))
+            || visual.hasModel() || !input.opaqueMaterials) return false;
+        for (uint32_t material : visual.faces) {
+            if (material >= input.opaqueMaterials->size() || !(*input.opaqueMaterials)[material]) return false;
+        }
+        return true;
+    };
+    if (const auto* uniform = facts.uniformVisual()) {
+        if (opaque(*uniform)) solid.set();
+    } else {
+        for (int z = 0; z < 16; ++z) {
+            for (int y = 0; y < 16; ++y) {
+                for (int x = 0; x < 16; ++x) {
+                    if (opaque(facts.at(x, y, z))) solid.set(ChunkVisibility::index(x, y, z));
+                }
+            }
+        }
+    }
+    mesh.visibility = ChunkVisibility::build(solid);
     if (facts.isAir()) {
         return mesh;
     }

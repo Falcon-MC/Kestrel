@@ -294,6 +294,7 @@ std::string Client::agentState()
         .field("device", renderer->deviceName())
         .field("fps", framesPerSecond)
         .field("frames", renderer->submittedFrames())
+        .field("opaqueChunks", renderer->completedFrame().opaqueChunks)
         .endObject();
     writer.field("session", agent::SessionControl::stateName(session.sharedSnapshot()->state));
     writer.endObject();

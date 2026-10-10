@@ -115,6 +115,7 @@ struct PipelineDesc {
     BlendMode blend = BlendMode::None;
     bool depthWrite = true;
     bool colorWrite = true;
+    bool cullBackFaces = false;
     DepthCompare depthCompare = DepthCompare::Less;
 };
 
