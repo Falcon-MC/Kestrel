@@ -78,6 +78,9 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "ps_world") {
             return spirv(shaders::WorldFragment);
         }
+        if (entry == "ps_solid") {
+            return spirv(shaders::SolidFragment);
+        }
         if (entry == "ps_blend") {
             return spirv(shaders::BlendFragment);
         }
@@ -568,7 +571,7 @@ public:
 
         VkPipelineRasterizationStateCreateInfo rasterizer { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.cullMode = desc.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.lineWidth = 1.0f;
 

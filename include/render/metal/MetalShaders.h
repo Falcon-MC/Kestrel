@@ -596,6 +596,12 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     }
     return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
 }
+
+fragment float4 solid_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+{
+    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
+}
 )";
 
 inline constexpr char PrimitiveShader[] = R"(

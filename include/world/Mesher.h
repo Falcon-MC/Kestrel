@@ -5,6 +5,7 @@
 #include "world/BlockAssets.h"
 #include "world/ChunkStore.h"
 #include "world/SubChunk.h"
+#include "world/ChunkVisibility.h"
 
 #include <array>
 #include <cstdint>
@@ -87,6 +88,7 @@ struct ChunkMesh {
     std::vector<PackedQuad> translucentCubes;
     std::vector<ModelQuadGpu> translucentModels;
     std::vector<uint8_t> light;
+    std::shared_ptr<const ChunkVisibility> visibility;
 
     bool empty() const
     {
@@ -122,6 +124,7 @@ struct MeshInput {
     std::array<int32_t, 3> origin {};
     bool skyLight = true;
     std::shared_ptr<const ChunkLighting> lighting;
+    std::shared_ptr<const std::vector<uint8_t>> opaqueMaterials;
 };
 
 /**

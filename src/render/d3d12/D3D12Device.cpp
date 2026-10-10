@@ -555,7 +555,8 @@ public:
         pipelineDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = desc.colorWrite ? D3D12_COLOR_WRITE_ENABLE_ALL : 0;
         pipelineDesc.SampleMask = UINT_MAX;
         pipelineDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        pipelineDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pipelineDesc.RasterizerState.CullMode = desc.cullBackFaces ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
+        pipelineDesc.RasterizerState.FrontCounterClockwise = desc.cullBackFaces;
         pipelineDesc.RasterizerState.DepthClipEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthEnable = TRUE;
         pipelineDesc.DepthStencilState.DepthWriteMask = desc.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
