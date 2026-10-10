@@ -278,6 +278,10 @@ std::string Client::agentState()
     writer.field("formsOpen", menu.formPanel().openForms().size());
     writer.field("inGame", worldShown);
     writer.field("playing", menu.capturesMouse());
+    writer.field("bodyYaw", localBodyYaw).field("lookYaw", localLookYaw);
+    writer.key("camera").beginObject()
+        .field("x", camera.x()).field("y", camera.y()).field("z", camera.z())
+        .endObject();
     writer.field("debugScreen", menu.debugVisible());
     writer.field("pendingInput", agentInput.size());
     writer.field("lastEvent", agentEvents.last());
