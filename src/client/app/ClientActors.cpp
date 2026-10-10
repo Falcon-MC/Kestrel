@@ -22,8 +22,6 @@ namespace kestrel {
 
 namespace {
 
-constexpr double ActorCandidateRadius = 72.0;
-constexpr double MaxPlayerDistance = 192.0;
 constexpr float PlayerWidth = 0.6f;
 constexpr float PlayerHeight = 1.8f;
 constexpr float DefaultActorWidth = 1.0f;
@@ -653,6 +651,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     cullView.cameraY = camera.y();
     cullView.cameraZ = camera.z();
     ChunkFrustum frustum(cullView);
+    double actorDistance = double(menu.renderDistance()) * 16.0;
+    double actorDistanceSquared = actorDistance * actorDistance;
     bool facing = camera.isFacingSubject();
     float viewYaw = wrapDegrees(camera.minecraftYaw() + (facing ? 180.0f : 0.0f));
     float viewPitch = facing ? -camera.minecraftPitch() : camera.minecraftPitch();
@@ -672,11 +672,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         double dz = actor.z - origin[2];
         bool player = actor.identifier == "minecraft:player";
         std::array<double, 3> fromCamera { actor.x - camera.x(), actor.y + 1.0 - camera.y(), actor.z - camera.z() };
-        if (player) {
-            if (fromCamera[0] * fromCamera[0] + fromCamera[1] * fromCamera[1] + fromCamera[2] * fromCamera[2] > MaxPlayerDistance * MaxPlayerDistance) {
-                continue;
-            }
-        } else if (std::abs(actor.x - camera.x()) > ActorCandidateRadius || std::abs(actor.y - camera.y()) > ActorCandidateRadius || std::abs(actor.z - camera.z()) > ActorCandidateRadius) {
+        if (fromCamera[0] * fromCamera[0] + fromCamera[1] * fromCamera[1] + fromCamera[2] * fromCamera[2] > actorDistanceSquared) {
             continue;
         }
         float boxWidth = actorExtent(actor.width, player ? PlayerWidth : DefaultActorWidth, actor.scale);
