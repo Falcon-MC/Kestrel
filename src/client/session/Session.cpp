@@ -1344,7 +1344,11 @@ void Session::handleWorldPacket(std::string& payload)
         runtimeByUnique[added->mUniqueActorId] = runtime;
         for (const auto& link : added->mActorLinks) updateActorLink(link.mFrom, link.mTo, link.mType == EntityLinkType::Remove);
         refreshActorRiders(added->mUniqueActorId);
-        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
+        const bool arrow = actor.identifier == "minecraft:arrow";
+        const bool movingArrow = arrow && (added->mMotion.x != 0.0f || added->mMotion.y != 0.0f || added->mMotion.z != 0.0f);
+        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z,
+            arrow ? added->mRotation.y : added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, !movingArrow, true);
+        if (arrow) setActorMotion(runtime, added->mMotion.x, added->mMotion.y, added->mMotion.z);
     } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
         uint64_t runtime = dropped->mRuntimeActorId;
         ActorView actor;
@@ -1417,11 +1421,15 @@ void Session::handleWorldPacket(std::string& payload)
     } else if (auto delta = std::dynamic_pointer_cast<MoveActorDeltaPacket>(packet)) {
         auto actor = actors.find(delta->mRuntimeActorId);
         if (actor != actors.end()) {
+            const auto& view = actor->second;
+            const bool projectile = world::projectileEntity(view.identifier);
+            const auto position = projectile ? view.projectileTarget : std::array<double, 3> { view.x, view.y, view.z };
+            const auto turn = projectile ? view.projectileTargetTurn : std::array<float, 3> { view.yaw, view.headYaw, view.pitch };
             double eye = actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0;
             if (actor->second.identifier == "minecraft:falling_block" || actor->second.identifier == "minecraft:tnt") eye = 0.49;
-            moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : actor->second.x, delta->mHasY ? delta->mY : actor->second.y + eye,
-                delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
-                delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);
+            moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : position[0], delta->mHasY ? delta->mY : position[1] + eye,
+                delta->mHasZ ? delta->mZ : position[2], delta->mHasYaw ? delta->mYaw : turn[0], delta->mHasHeadYaw ? delta->mHeadYaw : turn[1],
+                delta->mHasPitch ? delta->mPitch : turn[2], false, delta->mOnGround);
         }
     } else if (auto changed = std::dynamic_pointer_cast<PlayerSkinPacket>(packet)) {
         std::string uuid = changed->mUuid.toString();

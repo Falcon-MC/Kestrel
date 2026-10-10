@@ -1,6 +1,7 @@
 #include "client/session/SessionData.h"
 #include "client/CrystalMetadata.h"
 #include "client/ActorAimAssist.h"
+#include "client/ProjectileMotion.h"
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"
@@ -400,6 +401,7 @@ void Session::tickActors(double tickTime)
  */
 void Session::setActorMotion(uint64_t runtimeId, float x, float y, float z)
 {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;
     auto actor = actors.find(runtimeId);
     if (actor == actors.end()) {
         return;
@@ -433,13 +435,15 @@ void Session::tickProjectiles(double tickTime)
         view.projectileTickTime = tickTime;
         if (view.projectileShakeTicks) --view.projectileShakeTicks;
         view.projectilePositionDelta = {};
-        if (!view.projectileTicksRemaining) continue;
-        const double divisor = view.projectileTicksRemaining--;
-        std::array<double, 3> position;
-        std::array<float, 3> turn;
+        const uint8_t correctionTicks = view.projectileTicksRemaining;
+        const auto position = projectileStep(view.projectilePrevious, view.projectileTarget, view.velocity,
+            correctionTicks, view.identifier == "minecraft:arrow" && !view.onGround);
+        auto turn = view.projectilePreviousTurn;
+        if (correctionTicks) --view.projectileTicksRemaining;
         for (size_t axis = 0; axis < 3; ++axis) {
-            position[axis] = view.projectilePrevious[axis] + (view.projectileTarget[axis] - view.projectilePrevious[axis]) / divisor;
-            turn[axis] = view.projectilePreviousTurn[axis] + std::remainder(view.projectileTargetTurn[axis] - view.projectilePreviousTurn[axis], 360.0f) / float(divisor);
+            if (correctionTicks) {
+                turn[axis] += std::remainder(view.projectileTargetTurn[axis] - view.projectilePreviousTurn[axis], 360.0f) / correctionTicks;
+            }
         }
         view.x = position[0]; view.y = position[1]; view.z = position[2];
         for (size_t axis = 0; axis < 3; ++axis) view.projectilePositionDelta[axis] = position[axis] - view.projectilePrevious[axis];

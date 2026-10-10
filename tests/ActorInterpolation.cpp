@@ -1,8 +1,10 @@
 #include "client/ActorInterpolation.h"
 #include "client/ActorMotion.h"
+#include "client/ProjectileMotion.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 void require(bool condition, const char* message)
 {
@@ -40,6 +42,29 @@ void constantMovement(int framesPerTick)
 
 int main()
 {
+    std::array<double, 3> arrow {};
+    const std::array<double, 3> target { 6.0, 3.0, -3.0 };
+    const std::array<float, 3> velocity { 2.0f, 1.0f, -1.0f };
+    for (uint8_t remaining = 3; remaining > 0; --remaining) {
+        const auto next = kestrel::projectileStep(arrow, target, velocity, remaining, true);
+        require(near(next[0] - arrow[0], 2.0), "Arrow corrections must interpolate over three ticks");
+        arrow = next;
+    }
+    for (int tick = 0; tick < 12; ++tick) {
+        const auto next = kestrel::projectileStep(arrow, target, velocity, 0, true);
+        require(near(next[0] - arrow[0], 2.0) && near(next[1] - arrow[1], 1.0) && near(next[2] - arrow[2], -1.0),
+            "Airborne arrows must keep moving after their correction completes");
+        arrow = next;
+    }
+    require(kestrel::projectileStep(arrow, target, velocity, 0, false) == arrow,
+        "Grounded arrows and non-predicted projectiles must remain stationary");
+    require(kestrel::projectileStep(arrow, arrow, {}, 0, true) == arrow,
+        "Zero server velocity must stop extrapolation");
+    const auto invalidMotion = kestrel::projectileStep(arrow, target,
+        { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), 0.0f }, 0, true);
+    require(invalidMotion == arrow, "Non-finite velocity must not corrupt projectile positions");
+    const auto corrected = kestrel::projectileStep(arrow, target, velocity, 1, false);
+    require(corrected == target, "A grounded server correction must override extrapolated positions");
     kestrel::ActorMotion player;
     player.lastSample = 1.0;
     player.retarget({ 1.0, 0.0, 0.0 }, { 170.0f, 0.0f, 0.0f }, 1.05);
