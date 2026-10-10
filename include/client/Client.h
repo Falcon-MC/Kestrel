@@ -12,6 +12,7 @@
 #include "client/BlockParticles.h"
 #include "client/Camera.h"
 #include "client/ServerCamera.h"
+#include "client/AimAssist.h"
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/LaunchOptions.h"
@@ -108,6 +109,8 @@ private:
     void syncSocial();
     void syncDressingRoom();
     void syncSession();
+    void updateAimAssist();
+    void drawAimAssist(ui::Context& context, float scale);
     void syncFeatured();
     void collectFeaturedImages();
     void syncForms();
@@ -471,6 +474,11 @@ private:
     int perspective = PerspectiveFirst;
     bool cameraDetached = false;
     ServerCamera serverCamera;
+    AimAssist aimAssist;
+    std::optional<AimAssistTarget> aimTarget;
+    std::unordered_map<uint32_t, std::string> aimBlockNames;
+    const void* aimBlockAssets = nullptr;
+    const void* aimBlockIds = nullptr;
     double serverBoomFraction = 0.0;
     int64_t cameraLocalUnique = 0;
     uint64_t cameraSessionJoin = 0;

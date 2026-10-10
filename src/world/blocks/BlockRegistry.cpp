@@ -1,4 +1,5 @@
 #include "world/BlockRegistry.h"
+#include "world/BlockTags.h"
 
 #include "BlockDefinitionsNbt.h"
 #include "BlockPaletteNbt.h"
@@ -131,6 +132,16 @@ bool BlockRegistry::parse(Data& out, std::string& error)
             stream.setEncodingSettings(settings);
             Tag definitions = NbtIo::readTag(stream, NbtVariant::BigEndian);
             collectDefinitionNames(definitions, paletteNames, out.dataDriven);
+            const Tag* entries = definitions.get("blocks");
+            if (entries && entries->isList() && entries->getListType() == Tag::Type::Compound) {
+                for (const Tag& entry : entries->getList()) {
+                    const Tag* name = entry.get("name");
+                    const Tag* properties = entry.get("properties");
+                    if (name && name->getType() == Tag::Type::String && properties) {
+                        out.blockTags.emplace(name->asString(), readBlockTags(*properties));
+                    }
+                }
+            }
         } catch (const std::exception&) {
             out.dataDriven.clear();
         }
@@ -174,6 +185,13 @@ int32_t BlockRegistry::resolve(uint32_t networkValue, bool hashed) const
         return found == data->byHash.end() ? -1 : static_cast<int32_t>(found->second);
     }
     return networkValue < data->entries.size() ? static_cast<int32_t>(networkValue) : -1;
+}
+
+const std::vector<std::string>& BlockRegistry::tags(const std::string& name) const
+{
+    static const std::vector<std::string> empty;
+    auto found = data->blockTags.find(name);
+    return found == data->blockTags.end() ? empty : found->second;
 }
 
 }

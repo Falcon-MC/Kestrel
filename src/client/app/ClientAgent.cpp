@@ -296,6 +296,22 @@ std::string Client::agentState()
         .field("frames", renderer->submittedFrames())
         .endObject();
     writer.field("session", agent::SessionControl::stateName(session.sharedSnapshot()->state));
+    writer.key("aimAssist").beginObject().field("enabled", aimAssist.enabled()).field("hasTarget", aimTarget.has_value());
+    writer.key("localIndices").beginArray();
+    if (seenSessionSnapshot) {
+        for (int32_t index : seenSessionSnapshot->localAimAssistIndices) writer.value(index);
+    }
+    writer.endArray();
+    if (aimTarget) {
+        writer.field("entity", aimTarget->entity).field("runtimeId", aimTarget->runtimeId);
+        writer.key("point").beginArray();
+        for (double value : aimTarget->point) writer.value(value);
+        writer.endArray();
+        writer.key("cell").beginArray();
+        for (int32_t value : aimTarget->cell) writer.value(value);
+        writer.endArray();
+    }
+    writer.endObject();
     writer.endObject();
     return writer.take();
 }

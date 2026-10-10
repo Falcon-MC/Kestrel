@@ -5,6 +5,7 @@
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
 #include "client/ActorRiders.h"
+#include "client/ActorHitboxes.h"
 #include "client/ActorProperties.h"
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
@@ -266,6 +267,8 @@ struct DebugShapeView {
 };
 
 struct ActorView {
+    ActorHitboxList hitboxes;
+    std::array<int32_t, 3> aimAssistIndices {-1, -1, -1};
     int64_t uniqueId = 0;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
@@ -754,6 +757,7 @@ struct SessionSnapshot {
     int64_t localUniqueActorId = 0;
     uint64_t localRuntimeId = 0;
     std::array<uint64_t, 3> localActorFlags {};
+    std::array<int32_t, 3> localAimAssistIndices {-1, -1, -1};
     std::string name;
     std::string target;
     // The host and port the target resolved to, once known. Realms and
@@ -917,6 +921,8 @@ public:
      */
     void sendChat(std::string text);
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
+    void setAimAssistTarget(const std::optional<std::array<double, 3>>& point);
+    void setCameraPerspective(int value) { requestedCameraPerspective.store(value); }
     void setRenderedCamera(const std::array<double, 3>& origin);
     std::pair<uint8_t, uint32_t> cameraEnvironment(const SessionSnapshot& snapshot, const std::array<double, 3>& position, bool renderedSurface = true);
     void setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
@@ -1234,12 +1240,17 @@ private:
     size_t meshQuads = 0;
     std::deque<MeshUpdate> pendingUpdates;
     std::vector<std::shared_ptr<const Packet>> pendingCameraEvents;
+    std::shared_ptr<const Packet> cameraNetworkPresets;
+    bool cameraNetworkActive = false;
+    int acknowledgedCameraPerspective = -1;
+    std::atomic<int> requestedCameraPerspective {0};
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
     int64_t localUniqueId = 0;
     std::string localUuid;
     std::mutex viewInputMutex;
     std::array<double, 3> requestedLookOrigin {};
+    std::optional<std::array<double, 3>> requestedAimPoint, aimPoint;
     std::array<double, 3> requestedRenderedCamera {};
     std::array<double, 3> renderedCamera {};
     std::array<float, 3> requestedLookDirection { 0.0f, 0.0f, -1.0f };
