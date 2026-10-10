@@ -1126,13 +1126,15 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     if (scripts) {
         runScripts(scripts->preAnimation);
         for (const auto& [alias, condition] : scripts->animate) {
+            double weight = 1.0;
             if (!condition.empty()) {
                 scope.temps.clear();
-                if (condition.run(scope) == 0.0) {
-                    continue;
-                }
+                weight = condition.run(scope);
             }
-            play(alias, 1.0, 0, nullptr);
+            if (!std::isfinite(weight) || weight <= 0.0) {
+                continue;
+            }
+            play(alias, weight, 0, nullptr);
         }
         for (const std::string& alias : input.extraAnimations) {
             play(alias, 1.0, 0, nullptr);

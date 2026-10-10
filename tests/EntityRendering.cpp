@@ -336,6 +336,46 @@ int main()
     static_assert(!actorEquipmentIsOffhand("minecraft:player", 0, 1));
     static_assert(actorEquipmentIsOffhand("minecraft:player", 119, 0));
     static_assert(!actorEquipmentIsOffhand("minecraft:armor_stand", 120, 1));
+    auto weightedDescription = json::parse(R"json({"animations":{"base":"animation.test.base","weighted":"animation.test.weighted"},"scripts":{"animate":["base",{"weighted":"q.property('test:weight')"}]}})json");
+    auto weightedScripts = readEntityScripts(*weightedDescription);
+    auto weightedDocument = json::parse(R"({"animations":{"animation.test.base":{"loop":true,"bones":{"leg":{"position":[2,0,0]}}},"animation.test.weighted":{"loop":true,"blend_weight":"0.5","bones":{"leg":{"rotation":[60,0,0]}}}}})");
+    AnimationLibrary weightedLibrary;
+    weightedLibrary.parse(*weightedDocument);
+    std::vector<EntityBone> weightedBones(1);
+    weightedBones[0].name = "leg";
+    EntityAnimator weightedAnimator;
+    AnimationInput weightedInput;
+    for (double weight : { 0.0, 0.25, 0.5, 1.0 }) {
+        weightedInput.properties["test:weight"] = weight;
+        weightedAnimator.update(weightedScripts.get(), &weightedLibrary, weightedBones, weightedInput);
+        const auto& matrix = weightedAnimator.matrices()[0];
+        require(std::abs(matrix[5] - std::cos(weight * 30.0 * 3.14159265359 / 180.0)) < 1e-6,
+            "Top-level animation expressions must multiply clip blend weights, not act as booleans");
+        require(matrix[3] == -2.0f, "Weighted animations must preserve unconditional base clips");
+    }
+    auto walkDescription = json::parse(R"({"animations":{"walk":"animation.test.weighted"},"scripts":{"animate":[{"walk":"q.modified_move_speed"}]}})");
+    auto walkScripts = readEntityScripts(*walkDescription);
+    EntityAnimator walkAnimator;
+    AnimationInput walkInput;
+    walkInput.now = 5.0;
+    walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    for (int tick = 1; tick <= 10; ++tick) {
+        walkInput.now = 5.0 + tick * 0.051;
+        walkInput.x += 0.05;
+        walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    }
+    require(std::abs(walkAnimator.matrices()[0][6]) > 0.01f, "Movement must still animate the legs");
+    for (int tick = 11; tick <= 40; ++tick) {
+        walkInput.now = 5.0 + tick * 0.051;
+        walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    }
+    require(expression(walkAnimator, "q.modified_move_speed") < 1e-6
+            && std::abs(walkAnimator.matrices()[0][6]) < 1e-6f,
+        "Stopping must fade the walking pose back to neutral even while speed remains nonzero");
+    walkInput.now += 0.051;
+    walkInput.x += 0.05;
+    walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    require(std::abs(walkAnimator.matrices()[0][6]) > 0.01f, "Walking must resume after leaving the idle pose");
     auto legacyDescription = json::parse(R"({"animations":{"walk":"animation.test.walk","move":"animation.test.move"},"animation_controllers":[{"move":"controller.animation.test.move"}]})");
     auto legacyScripts = readEntityScripts(*legacyDescription);
     auto legacyDocument = json::parse(R"({"animations":{"animation.test.walk":{"loop":true,"bones":{"leg":{"rotation":[30,0,0]}}},"animation.test.move":{"loop":true,"bones":{"leg":{"rotation":[10,0,0]}}}},"animation_controllers":{"controller.animation.test.move":{"initial_state":"default","states":{"default":{"animations":["walk","move"]}}}}})");
