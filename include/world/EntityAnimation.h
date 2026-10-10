@@ -174,6 +174,7 @@ struct AnimationInput {
     float swimAmount = 0.0f;
     std::optional<bool> inWater;
     std::optional<std::array<double, 3>> tickPositionDelta;
+    std::optional<double> walkDistance;
     std::array<float, 3> nativeVelocity {};
     std::optional<float> frameAlpha;
     float shakeTime = 0.0f;

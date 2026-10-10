@@ -1340,6 +1340,9 @@ void Client::syncSession()
     }
     if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
         seenJoin = snapshot.joinCount;
+        firstPersonMotion = {};
+        handMotionTickSerial = snapshot.playerTickSerial;
+        handMotionTeleports = snapshot.player.teleports;
         seenTeleport = snapshot.teleportCount;
         menu.clearChat();
         popupMessage = {};
@@ -1387,7 +1390,9 @@ void Client::syncSession()
         handItem = {};
         handUpdatedAt = 0.0;
         handEquip = 0.0f;
-        handRestAnimator = world::EntityAnimator();
+        firstPersonMotion = {};
+        handMotionTickSerial = 0;
+        handMotionTeleports = snapshot.player.teleports;
         paperDollAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
         for (const auto& [layer, pixels] : skinPixels) {
@@ -1431,6 +1436,20 @@ void Client::syncSession()
         readinessFrame.reset();
     }
     worldShown = snapshot.state == SessionState::Joined;
+    if (playerView.teleports != handMotionTeleports) {
+        firstPersonMotion = {};
+        handMotionTeleports = playerView.teleports;
+        handMotionTickSerial = snapshot.playerTickSerial;
+    }
+    if (snapshot.playerTicks) {
+        const auto& ticks = *snapshot.playerTicks;
+        uint64_t serial = snapshot.playerTickSerial;
+        size_t count = static_cast<size_t>(std::min<uint64_t>(serial >= handMotionTickSerial ? serial - handMotionTickSerial : 0, ticks.size()));
+        for (size_t index = ticks.size() - count; index < ticks.size(); ++index) {
+            firstPersonMotion.tick(ticks[index].velocity, ticks[index].onGround, snapshot.hud.health > 0, playerView.swimming);
+        }
+        handMotionTickSerial = serial;
+    }
     timeState.worldTime = snapshot.worldTime;
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
     timeState.worldClockPaused = snapshot.worldClockPaused;
