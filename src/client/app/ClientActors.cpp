@@ -1608,7 +1608,7 @@ double Client::actorItemUseTicks(const ActorView& actor, double now)
  * attachable without a binding hangs from that bone as a whole. Returns false
  * when the item has no attachable, so the caller draws it as usual.
  */
-bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool offhand)
+bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
     if (!model || model->wearable || model->rigs.empty()) {
@@ -1616,7 +1616,7 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     }
     int32_t itemBone = -1;
     for (size_t bone = 0; bone < holder.bones.size() && bone < holderMatrices.size(); ++bone) {
-        if (lowercase(holder.bones[bone].name) == (offhand ? "leftitem" : "rightitem")) {
+        if (lowercase(holder.bones[bone].name) == (leftHand ? "leftitem" : "rightitem")) {
             itemBone = static_cast<int32_t>(bone);
         }
     }
@@ -1642,7 +1642,7 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     input.flags[0] = held.enchanted ? uint64_t(1) << 52 : 0;
     input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
-    input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", offhand ? 1.0 : 0.0 } };
+    input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
     state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
     const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
     if (matrices.size() != state.bones.size()) {

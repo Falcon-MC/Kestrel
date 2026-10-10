@@ -1179,6 +1179,17 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
             done[index] = 1;
         }
     }
+    if (scripts) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (scripts->axisScale[axis].empty()) continue;
+            scope.temps.clear();
+            double value = scripts->axisScale[axis].run(scope);
+            if (!std::isfinite(value) || value < 0.0) continue;
+            for (auto& matrix : boneMatrices) {
+                for (size_t column = 0; column < 4; ++column) matrix[axis * 4 + column] *= float(value);
+            }
+        }
+    }
     if (input.identifier != "minecraft:player" && (input.name == "Dinnerbone" || input.name == "Grumm")) {
         auto height = input.metadataQueries.find("upside_down_height");
         if (height != input.metadataQueries.end() && std::isfinite(height->second) && height->second > 0.0 && std::isfinite(modelScale) && modelScale > 0.0f) {

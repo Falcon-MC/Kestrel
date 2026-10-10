@@ -44,13 +44,15 @@ struct BiomeFog {
     std::optional<BiomeFogTransition> transition;
 };
 
-enum class FogMedium : uint8_t { Air, Weather, Water, Lava, LavaResistance };
+enum class FogMedium : uint8_t { Air, Weather, Water, Lava, LavaResistance, PowderSnow };
 
 /**
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
  */
 struct BiomeColors {
     std::optional<BiomeFog> airFog;
+    std::optional<BiomeFog> lavaFog;
+    std::optional<BiomeFog> lavaResistanceFog;
     uint32_t waterFog = 0x44AFF5;
     float waterFogStart = 0.0f;
     float waterFogEnd = 60.0f;
@@ -74,6 +76,7 @@ public:
     void load(PackSource& resources, PackSource& behaviors);
 
     const BiomeColors& colors(uint32_t biomeId) const;
+    const BiomeFog* powderSnowFog() const { return powderSnow ? &*powderSnow : nullptr; }
     const BiomeFog* commandFog(const std::vector<std::string>& stack, FogMedium medium) const;
 
 private:
@@ -83,6 +86,7 @@ private:
         std::optional<BiomeFog> lava;
         std::optional<BiomeFog> resistance;
         std::optional<BiomeFog> weather;
+        std::optional<BiomeFog> powderSnow;
     };
     std::unordered_map<std::string, FogProfiles> fogs;
     std::unordered_map<uint32_t, BiomeColors> byId;

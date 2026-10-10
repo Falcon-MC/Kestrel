@@ -838,10 +838,6 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
             for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer) parseAnimations(*layer);
         }
     }
-    for (const std::string& name : pack.archiveEntries("attachables")) {
-        std::string text;
-        if (pack.readBaseArchived("attachables", name, text)) readClientEntity(text, attachableDefinitions, "minecraft:attachable");
-    }
     std::error_code error;
     auto directory = pack.root().parent_path().parent_path() / "definitions" / "attachables";
     for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
