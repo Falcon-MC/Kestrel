@@ -8,7 +8,6 @@ namespace kestrel {
 void FrameMotion::reset(const PlayerMotion& seed, uint64_t tick, double now)
 {
     motion.copyState(seed);
-    preview.copyState(seed);
     history.clear();
     impulses.clear();
     pendingInputs.clear();
@@ -27,12 +26,18 @@ void FrameMotion::reset(const PlayerMotion& seed, uint64_t tick, double now)
 void FrameMotion::rebase(const PlayerMotion& seed, uint64_t tick)
 {
     acknowledge(tick);
+    MotionTick rebased;
+    auto found = std::find_if(history.begin(), history.end(), [tick](const History& entry) {
+        return entry.tick.number == tick;
+    });
+    if (found != history.end()) rebased = found->tick.result;
     if (tick < currentTick) nextTick -= static_cast<double>(currentTick - tick) * TickSeconds;
     else nextTick += static_cast<double>(tick - currentTick) * TickSeconds;
     motion.copyState(seed);
     history.clear();
     impulses.clear();
     currentTick = tick;
+    latest = rebased;
     latest.position = seed.position();
     latest.velocity = seed.currentVelocity();
     latest.onGround = seed.grounded();
@@ -119,6 +124,8 @@ void FrameMotion::correct(uint64_t tick, const MotionVector& position, const Mot
         motion.correct(position, velocity ? *velocity : motion.currentVelocity(), grounded);
         history.clear();
         impulses.clear();
+        latest.position = motion.position();
+        latest.movement = {};
         return;
     }
     found->after.correct(position, velocity ? *velocity : found->after.currentVelocity(), grounded);
@@ -144,6 +151,8 @@ void FrameMotion::replay(size_t index, const PlayerMotion::CellLookup& lookup)
     restored.keepPendingKnockback(motion);
     restored.takeSettings(motion);
     motion = restored;
+    latest = history.back().tick.result;
+    latest.position = motion.position();
 }
 
 void FrameMotion::knockback(uint64_t tick, const MotionVector& velocity, const PlayerMotion::CellLookup& lookup)
@@ -165,14 +174,13 @@ void FrameMotion::knockback(uint64_t tick, const MotionVector& velocity, const P
     while (impulses.size() > HistoryTicks) impulses.pop_front();
 }
 
-MotionVector FrameMotion::predict(const MotionInput& input, const PlayerMotion::CellLookup& lookup, const AreaReady& ready)
+MotionVector FrameMotion::interpolate() const
 {
-    if (!initialized || !ready(motion.position())) return motion.position();
+    if (!initialized) return motion.position();
     const float fraction = static_cast<float>(std::clamp((frameTime - (nextTick - TickSeconds)) / TickSeconds, 0.0, 1.0));
-    preview.copyState(motion);
-    applyImpulse(preview, currentTick + 1);
-    const MotionTick predicted = preview.step(input, lookup);
-    return motion.position() + (predicted.position - motion.position()).scaled(fraction);
+    // A changed input must not rewrite motion already displayed earlier in this tick.
+    const MotionVector previous = latest.position - latest.movement;
+    return previous + (motion.position() - previous).scaled(fraction);
 }
 
 double FrameMotion::tickDelay(double now) const

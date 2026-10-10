@@ -1,4 +1,5 @@
 #include "client/ActorExtent.h"
+#include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
 #include "client/motion/MotionMath.h"
@@ -335,11 +336,7 @@ std::string lowercase(std::string text)
     return text;
 }
 
-float wrapDegrees(float degrees)
-{
-    float wrapped = std::fmod(degrees + 180.0f, 360.0f);
-    return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
-}
+using actor::wrapDegrees;
 
 /**
  * A player's body trailing its head the way the game turns it, advanced by
@@ -348,22 +345,7 @@ float wrapDegrees(float degrees)
  * turn more than 75 degrees away, and creeps after the head once it is past
  * 50. Servers only send where players look, so every client works this out.
  */
-float trailBody(float body, float head, double stepX, double stepZ, float ticks)
-{
-    if (stepX * stepX + stepZ * stepZ > 0.0025) {
-        float heading = static_cast<float>(std::atan2(-stepX, stepZ) * 180.0 / 3.14159265358979);
-        if (std::abs(wrapDegrees(head - heading)) > 95.0f) {
-            heading += 180.0f;
-        }
-        body += wrapDegrees(heading - body) * (1.0f - std::pow(0.7f, ticks));
-    }
-    float turn = std::clamp(wrapDegrees(head - body), -75.0f, 75.0f);
-    body = head - turn;
-    if (std::abs(turn) > 50.0f) {
-        body += turn * (1.0f - std::pow(0.8f, ticks));
-    }
-    return wrapDegrees(body);
-}
+using actor::trailBody;
 
 /**
  * Case insensitive match of a bone name against a lowercase pattern where '*'
@@ -1868,11 +1850,11 @@ ActorView Client::localActorView(float deltaSeconds)
         self.armor[slot] = hudState.armor[slot].empty() ? std::string() : hudState.armor[slot].identifier;
     }
 
-    double dx = playerView.current[0] - playerView.previous[0];
-    double dz = playerView.current[2] - playerView.previous[2];
+    double dx = playerView.velocity[0];
+    double dz = playerView.velocity[2];
     localBodyYaw = trailBody(localBodyYaw, self.headYaw, dx, dz, deltaSeconds * 20.0f);
     self.yaw = localBodyYaw;
-    self.velocity = { float(dx), float(playerView.current[1] - playerView.previous[1]), float(dz) };
+    self.velocity = playerView.velocity;
     if (!playerView.gliding) {
         localGlideSince = 0.0;
     } else if (localGlideSince == 0.0) {
