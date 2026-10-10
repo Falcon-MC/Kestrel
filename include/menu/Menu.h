@@ -539,6 +539,7 @@ public:
      */
     void openForm(uint32_t id, const std::string& json);
     void prepareInventoryInput(const InputState& input);
+    void prepareInput(const InputState& input);
     void setInventory(const InventoryState& state, bool creative);
 
     void frame(ui::Context& ui, float width, float height);
@@ -1082,6 +1083,8 @@ private:
     FormScreen forms;
     ToastQueue toasts;
     bool inventoryInputHandled = false;
+    bool inputPrepared = false;
+    bool inputBlocked = false;
     enum class ServerGroup {
         Featured,
         Creator,
@@ -1221,7 +1224,7 @@ private:
     std::vector<ServerRow> savedRows() const;
     std::optional<ServerRow> selectedRow() const;
 
-    void handleKeys(ui::Context& ui);
+    void handleKeys(const InputState& input);
     bool handleChatKeys(const InputState& input);
     void openChat(std::string draft);
     void closeChat();
@@ -1411,9 +1414,6 @@ private:
     bool chatSettingsOpen = false;
     // The settings closed this frame, so the key that closed them is used up.
     bool chatSettingsClosed = false;
-    // The chat screen closes itself on Escape before the key handling runs,
-    // which must then not take the same press to open the pause menu.
-    bool chatClosedByScreen = false;
     ChatSettings chatOptions;
     uint64_t chatStyleRevision = 0;
     std::shared_ptr<const std::vector<ChatCommand>> commands;

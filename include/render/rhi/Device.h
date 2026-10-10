@@ -237,6 +237,10 @@ public:
      */
     virtual uint64_t beginFrame(float r, float g, float b) = 0;
 
+    // CPU time waiting for a reusable GPU frame slot in the last beginFrame.
+    virtual double frameFenceWaitMilliseconds() const { return 0.0; }
+    virtual double frameSubmissionTimeSeconds() const { return 0.0; }
+
     /**
      * Whether the current frame records commands; resources written each
      * frame must be left alone otherwise, since the GPU may still read them.

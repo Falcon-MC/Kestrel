@@ -1119,6 +1119,7 @@ void Session::handleWorldPacket(std::string& payload)
         gameType = mode->mGameType;
     }
     if (gameType) {
+        ++movementRevision;
         motion.setGameType(static_cast<int32_t>(*gameType));
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.gameType = static_cast<int32_t>(*gameType);
@@ -1590,7 +1591,9 @@ void Session::handleWorldPacket(std::string& payload)
         frameScanTicks = 10;
         potAnimations.clear();
         pistonAnimations.clear();
+        ++movementRevision;
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
+        ++hardMovementRevision;
         motionHistory.clear();
         serverMotions.clear();
         motionStarted = false;
@@ -2207,6 +2210,12 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     requestedSlot = -1;
     spawnInitialized = false;
+    ++movementRevision;
+    ++hardMovementRevision;
+    {
+        std::lock_guard guard(frameOutgoingMutex);
+        frameOutgoing.clear();
+    }
     motion = PlayerMotion {};
     motionHistory.clear();
     serverMotions.clear();
@@ -2215,7 +2224,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     missedSwing = false;
     clientTick = 0;
     nextMotionTick = 0.0;
-    lastMotionFrame = 0.0;
     glideBoost = {};
     dolphinBoost = {};
     lastMotionInput = MotionInput {};
@@ -2450,8 +2458,9 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     double nextPublication = 0.0;
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
-        world.applyDecoded();
         collectViewInput();
+        drainFrameMotion();
+        world.applyDecoded();
         pollGlobalPacks();
         int waitMs = 5;
         if (spawnInitialized && nextMotionTick > 0.0) {
@@ -2467,6 +2476,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             const double batchDeadline = secondsNow() + 0.004;
             for (size_t count = 1; count < 256 && !cancelled && !transferTarget && secondsNow() < batchDeadline; ++count) {
                 if (world.decodeBacklogged() || !connection->receiveRaw(payload)) break;
+                drainFrameMotion();
                 handleWorldPacket(payload);
                 ++receivedSincePublication;
             }
@@ -2517,16 +2527,16 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         if (respawnRequested.exchange(false)) {
             sendRespawnRequest();
         }
-        if (attackRequested.exchange(false)) {
-            interact(false);
-        }
+        for (uint32_t attacks = attackRequested.exchange(0); attacks > 0; --attacks) interact(false);
         if (int pick = pickRequested.exchange(0); pick != 0) {
             pickBlock(pick == 2);
         }
         flushInventory();
         flushChat();
         flushForms();
-        tickMotion();
+        if (frameDriven) drainFrameMotion();
+        else tickMotion();
+        publishMotionFeed();
         collectMeshes();
         scheduleMeshes();
         finishDimensionChange();

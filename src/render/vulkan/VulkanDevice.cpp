@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -637,6 +638,8 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
         collectTransfers();
         active = false;
         if (requestedWidth == 0 || requestedHeight == 0) {
@@ -646,7 +649,9 @@ public:
             recreateSwapchain();
         }
 
+        const auto waitStarted = std::chrono::steady_clock::now();
         vkWaitForFences(device, 1, &inFlight[frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         if (slotSubmissions[frame] > completed) {
             completed = slotSubmissions[frame];
         }
@@ -694,6 +699,16 @@ public:
         boundSet = VK_NULL_HANDLE;
         active = true;
         return submissions + 1;
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
     }
 
     bool recording() const override
@@ -835,6 +850,7 @@ public:
             submit.pSignalSemaphores = &renderFinished[imageIndex];
         }
         check(vkQueueSubmit(queue, 1, &submit, inFlight[frame]), "vkQueueSubmit");
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         slotSubmissions[frame] = ++submissions;
         if (offscreen) {
             if (capturing) {
@@ -1054,6 +1070,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     struct RetiredBuffer {
         std::unique_ptr<Buffer> buffer;
         uint64_t frame = 0;
