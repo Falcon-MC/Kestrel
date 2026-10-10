@@ -1046,6 +1046,10 @@ public:
         if (!signature) {
             return visual.modelTemplate;
         }
+        uint32_t shape = (visual.variant >> 3) & 7;
+        if (shape >= 1 && shape <= 5) {
+            return visual.modelTemplate + shape - 1;
+        }
         auto [facing, upsideDown] = *signature;
         uint32_t rotatedFacing = (facing + 1) & 3;
         auto closed = stairSignature(adjacent(x, y, z, stairFace(facing)));

@@ -52,8 +52,59 @@ void checkAnvil(const char* name, const Tag& states, bool alongZ)
         "The anvil's long axis must align with the server collision orientation");
 }
 
+void checkStairs()
+{
+    const char* corners[] = { "none", "inner_left", "inner_right", "outer_left", "outer_right" };
+    const models::Materials materials { 1, 2, 3, 4, 5, 6 };
+    for (int direction = 0; direction < 4; ++direction) {
+        for (bool upside : { false, true }) {
+            Tag states = Tag::ofCompound();
+            states.put("weirdo_direction", Tag::ofInt(direction));
+            states.put("upside_down_bit", Tag::ofByte(upside));
+            require((rules::stairVariant(states) >> 3) == 0,
+                "Legacy stairs must continue deriving their corners from neighbours");
+            for (unsigned corner = 0; corner < 5; ++corner) {
+                states.put("minecraft:corner", Tag::ofString(corners[corner]));
+                uint32_t variant = rules::stairVariant(states);
+                require(((variant & 4) != 0) == upside, "Stairs must preserve their vertical half");
+                uint32_t shape = (variant >> 3) & 7;
+                require(shape >= 1 && shape <= 5, "Every explicit stair corner must select a model, including none");
+                auto quads = models::stair(materials, upside, shape - 1);
+                for (int x : { 64, 192 }) {
+                    for (int z : { 64, 192 }) {
+                        bool high = direction == 0 ? x > 128 : direction == 1 ? x < 128 : direction == 2 ? z > 128 : z < 128;
+                        bool right = direction == 0 ? z > 128 : direction == 1 ? z < 128 : direction == 2 ? x < 128 : x > 128;
+                        bool expected = corner == 0 ? high : corner == 1 ? high || !right : corner == 2 ? high || right : corner == 3 ? high && !right : high && right;
+                        bool covered = false;
+                        for (const auto& quad : quads) {
+                            uint32_t face = models::faceId(upside ? models::Down : models::Up);
+                            if ((quad.flags & QuadFaceMask) != face || quad.positions[0][1] != (upside ? 0 : 256)) continue;
+                            int minX = 256, maxX = 0, minZ = 256, maxZ = 0;
+                            for (const auto& point : quad.positions) {
+                                int px = point[0] - 128, pz = point[2] - 128;
+                                for (uint32_t turn = 0; turn < (variant & 3); ++turn) {
+                                    int nextX = -pz;
+                                    pz = px;
+                                    px = nextX;
+                                }
+                                minX = std::min(minX, px + 128);
+                                maxX = std::max(maxX, px + 128);
+                                minZ = std::min(minZ, pz + 128);
+                                maxZ = std::max(maxZ, pz + 128);
+                            }
+                            covered |= x > minX && x < maxX && z > minZ && z < maxZ;
+                        }
+                        require(covered == expected, "Rotated stair geometry must match its facing and left/right corner");
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main()
 {
+    checkStairs();
     for (bool upper : { false, true }) {
         Tag states = Tag::ofCompound();
         states.put("upper_block_bit", Tag::ofByte(upper));

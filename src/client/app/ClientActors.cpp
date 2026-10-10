@@ -661,7 +661,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
-        const double actorTickStart = world::projectileEntity(actor.identifier) && actor.projectileTickTime > 0.0 ? actor.projectileTickTime : tickStart;
+        const double actorTickStart = world::projectileEntity(actor.identifier) && actor.projectileTickTime > 0.0 ? actor.projectileTickTime
+            : actor.interpolation.initialized && actor.interpolation.tickTime > 0.0 ? actor.interpolation.tickTime : tickStart;
         const float actorPartialTick = float(std::clamp((now - actorTickStart) * TicksPerSecond, 0.0, 1.0));
         if (actor.scale <= 0.0f) {
             continue;
@@ -750,6 +751,20 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             input.metadataQueries["upside_down_height"] = height * 16.0;
         }
         input.onGround = actor.onGround;
+        if (!world::projectileEntity(actor.identifier) && actor.interpolation.initialized) {
+            const auto& movement = actor.interpolation;
+            std::array<double, 3> delta;
+            for (size_t axis = 0; axis < 3; ++axis) delta[axis] = movement.current[axis] - movement.previous[axis];
+            input.tickPositionDelta = delta;
+            input.frameAlpha = actorPartialTick;
+            input.x = movement.current[0];
+            input.y = movement.current[1];
+            input.z = movement.current[2];
+            input.yaw = movement.currentTurn[0];
+            input.headYaw = movement.currentTurn[1];
+            input.pitch = movement.currentTurn[2];
+            if (player) input.yaw = actor.yaw;
+        }
         if (world::projectileEntity(actor.identifier)) {
             input.tickPositionDelta = actor.projectilePositionDelta;
             input.frameAlpha = actorPartialTick;
@@ -1930,7 +1945,6 @@ std::optional<std::array<float, 2>> Client::glideRotation(const ActorView& actor
 
 void Client::interpolateActors(double now)
 {
-    constexpr double SnapDistance = 8.0;
     auto& present = actorPresent;
     present.clear();
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
@@ -1948,46 +1962,25 @@ void Client::interpolateActors(double now)
             }
             continue;
         }
-        std::array<double, 3> target { actor.x, actor.y, actor.z };
-        std::array<float, 3> turn { actor.yaw, actor.headYaw, actor.pitch };
         auto [entry, created] = motions.try_emplace(actor.runtimeId);
         ActorMotion& motion = entry->second;
-        double jump = std::sqrt((target[0] - motion.shown[0]) * (target[0] - motion.shown[0]) + (target[1] - motion.shown[1]) * (target[1] - motion.shown[1]) + (target[2] - motion.shown[2]) * (target[2] - motion.shown[2]));
-        if (created || actor.teleports != motion.teleports || jump > SnapDistance) {
-            motion.from = target;
-            motion.to = target;
-            motion.shown = target;
-            motion.turnFrom = turn;
-            motion.turnTo = turn;
-            motion.turnShown = turn;
-            motion.start = now;
-            motion.duration = 0.0;
-            motion.lastSample = now;
-            motion.moves = actor.moves;
+        bool reset = created || actor.teleports != motion.teleports;
+        motion.shown = actor.interpolation.initialized ? actor.interpolation.position(now)
+            : std::array<double, 3> { actor.x, actor.y, actor.z };
+        auto turn = actor.interpolation.initialized ? actor.interpolation.rotation(now)
+            : std::array<float, 3> { actor.yaw, actor.headYaw, actor.pitch };
+        if (reset) {
             motion.teleports = actor.teleports;
-            motion.launchTurns = actor.launchTurns;
-            motion.bodyYaw = actor.yaw;
+            motion.bodyYaw = turn[0];
             motion.lastFrame = now;
-            motion.lastShown = target;
-        } else if (actor.moves != motion.moves) {
-            motion.retarget(target, turn, now);
-            motion.moves = actor.moves;
+            motion.lastShown = motion.shown;
         }
-        if (actor.launchTurns != motion.launchTurns) {
-            motion.launchTurns = actor.launchTurns;
-            motion.turnFrom = turn;
-            motion.turnShown = turn;
-            if (now - motion.start >= motion.duration) {
-                motion.turnTo = turn;
-            }
-        }
-        motion.advance(now);
         actor.x = motion.shown[0];
         actor.y = motion.shown[1];
         actor.z = motion.shown[2];
-        actor.yaw = motion.turnShown[0];
-        actor.headYaw = motion.turnShown[1];
-        actor.pitch = motion.turnShown[2];
+        actor.yaw = turn[0];
+        actor.headYaw = turn[1];
+        actor.pitch = turn[2];
         float ticks = static_cast<float>(std::min(now - motion.lastFrame, 0.25) * 20.0);
         if (actor.identifier == "minecraft:player") {
             if (ticks > 0.0f) {

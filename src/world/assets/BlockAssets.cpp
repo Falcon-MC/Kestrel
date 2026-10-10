@@ -1143,17 +1143,13 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
                 if (!complete) {
                     break;
                 }
-                std::optional<int32_t> weirdo = stateInt(record.states, "weirdo_direction");
                 bool upside = flag("upside_down_bit");
                 modelTemplate = intern(keyOf("stair", materials, { upside }), [&] {
                     for (uint32_t shape = 0; shape < 5; ++shape) {
                         pushTemplate(models::stair(materials, upside, shape), TemplateStair);
                     }
                 });
-                // weirdo_direction runs east, west, south, north, unlike the south, west, north, east of direction.
-                static constexpr uint32_t WeirdoFacing[4] = { 3, 1, 0, 2 };
-                uint32_t facing = WeirdoFacing[static_cast<uint32_t>(weirdo.value_or(0)) & 3];
-                variant = ((facing + 2) & 3) | (upside ? 4u : 0u);
+                variant = stairVariant(record.states);
                 break;
             }
             case ModelKind::Fence: {
