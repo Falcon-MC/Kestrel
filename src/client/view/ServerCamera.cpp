@@ -65,7 +65,7 @@ std::optional<CameraPreset> ServerCamera::resolve(int32_t id) const
         INHERIT(Radius) INHERIT(Listener) INHERIT(PlayEffect) INHERIT(RotationSpeed)
         INHERIT(SnapToTarget) INHERIT(HorizontalRotationLimit) INHERIT(VerticalRotationLimit)
         INHERIT(ContinueTargeting) INHERIT(BlockListeningRadius) INHERIT(MinYawLimit) INHERIT(MaxYawLimit)
-        INHERIT(StartingRotation) INHERIT(ControlScheme)
+        INHERIT(StartingRotation) INHERIT(ControlScheme) INHERIT(AimAssistPreset)
 #undef INHERIT
         result.mApplyInheritedStartingRotation |= next->mApplyInheritedStartingRotation;
         if (standard(next->mIdentifier)) { result.mIdentifier = next->mIdentifier; return result; }

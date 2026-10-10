@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/AimAssistRay.h"
 
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/CorrectPlayerMovePredictionPacket.h"
@@ -535,6 +536,10 @@ void Session::runMotionTick(double now)
     packet.mCameraOrientation = Vector3f(-std::sin(yaw * Radians) * std::cos(pitch * Radians), -std::sin(pitch * Radians), std::cos(yaw * Radians) * std::cos(pitch * Radians));
     tickEye = { double(packet.mPosition.x), double(packet.mPosition.y), double(packet.mPosition.z) };
     tickDirection = { packet.mCameraOrientation.x, packet.mCameraOrientation.y, packet.mCameraOrientation.z };
+    if (aimAssistDirection(tickEye, aimPoint, tickDirection)) {
+        packet.mInteractRotationX = -std::atan2(tickDirection[1], std::hypot(tickDirection[0], tickDirection[2])) / Radians;
+        packet.mInteractRotationY = std::atan2(-tickDirection[0], tickDirection[2]) / Radians;
+    }
     tickSneaking = tick.sneaking;
     tickSpeed = std::sqrt(double(tick.movement.x) * tick.movement.x + double(tick.movement.y) * tick.movement.y + double(tick.movement.z) * tick.movement.z) / TickSeconds;
 

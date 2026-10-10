@@ -1,4 +1,5 @@
 #include "world/BlockAssets.h"
+#include "world/BlockTags.h"
 #include "world/assets/BlockRules.h"
 #include "client/DebugLog.h"
 #include "world/assets/TextureTools.h"
@@ -194,6 +195,7 @@ std::shared_ptr<const BlockAssets> BlockAssets::create(const std::vector<std::sh
     }
     auto assets = std::shared_ptr<BlockAssets>(new BlockAssets());
     assets->customs = customBlocks;
+    for (const auto& block : customBlocks) assets->customTags.emplace(block.name, readBlockTags(block.definition));
     if (!assets->build(packs, error)) {
         return nullptr;
     }
@@ -206,6 +208,16 @@ const std::string& BlockAssets::nameAt(size_t index) const
         return registry.records()[index].name;
     }
     return customs[customStates[index - registry.records().size()].block].name;
+}
+
+const std::vector<std::string>& BlockAssets::blockTags(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const
+{
+    static const std::vector<std::string> empty;
+    int32_t index = indexOf(networkValue, hashed, sequential);
+    if (index < 0 || size_t(index) >= registry.records().size() + customStates.size()) return empty;
+    const auto& name = nameAt(size_t(index));
+    auto custom = customTags.find(name);
+    return custom == customTags.end() ? registry.tags(name) : custom->second;
 }
 
 std::shared_ptr<const SequentialMap> BlockAssets::sequentialMap() const

@@ -340,6 +340,7 @@ int Client::run()
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
                 perspective = std::clamp(menu.option("third_person", PerspectiveFirst), PerspectiveFirst, PerspectiveFront);
+                session.setCameraPerspective(perspective);
                 if (captured && !serverCamera.controlsPerspective() && keys.pressedKey == bindings.perspective()) {
                     perspective = (perspective + 1) % 3;
                     menu.setExtraOption("third_person", perspective);
@@ -386,11 +387,14 @@ int Client::run()
                 session.setServerCameraBoom(origin, delta);
                 return serverBoomFraction;
             };
-            serverCamera.update(camera, cameraContext, session.takeCameraEvents(), deltaSeconds);
+            auto cameraEvents = session.takeCameraEvents();
+            aimAssist.apply(cameraEvents);
+            serverCamera.update(camera, cameraContext, cameraEvents, deltaSeconds);
             if (!serverCamera.orbital()) session.setServerCameraBoom({}, {});
             if (!serverCamera.playerEffects()) camera.setHurtProgress(0.0f);
             cameraDetached = serverCamera.detached();
             perspective = serverCamera.renderPerspective(playerPerspective);
+            updateAimAssist();
         }
         {
             Profiler::Section section(profiler, "hud");
@@ -437,6 +441,7 @@ int Client::run()
         {
             Profiler::Section section(profiler, "menu ui");
             menu.frame(context, window->width() / scale, window->height() / scale);
+            if (menu.capturesMouse() && !menu.hudHidden()) drawAimAssist(context, scale);
             if (menu.worldVisible() && !menu.hudHidden()) {
                 mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
@@ -1293,6 +1298,10 @@ void Client::syncSession()
     const SessionSnapshot& snapshot = *published;
     if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
         serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimAssist.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimTarget.reset();
+        session.setAimAssistTarget({});
+        aimBlockNames.clear();
         submergedSeconds = 0.0f;
         localSwimAmount = 0.0f;
         serverFov = {};
