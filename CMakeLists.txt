@@ -9,9 +9,6 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set_source_files_properties(src/world/mesh/MeshScheduler.cpp PROPERTIES
-    COMPILE_DEFINITIONS "KESTREL_DRAIN_PREPARED_MESHES=$<BOOL:${APPLE}>")
-
 include(FetchContent)
 
 FetchContent_Declare(

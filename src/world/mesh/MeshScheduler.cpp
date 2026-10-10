@@ -265,8 +265,8 @@ void MeshScheduler::work(bool foreground)
                 }
             }
             // Prepared jobs hold the memory that new urgent jobs need. Drain them
-            // first on macOS so every worker cannot end up waiting for that memory.
-            if (bestPrepared != prepared.end() && (KESTREL_DRAIN_PREPARED_MESHES || best == queued.end() || !best->second.urgent)) {
+            // first so every worker cannot end up waiting for that memory.
+            if (bestPrepared != prepared.end()) {
                 job = std::move(bestPrepared->second.job);
                 credit = std::move(bestPrepared->second.credit);
                 started = bestPrepared->second.started;
