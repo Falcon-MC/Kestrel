@@ -413,6 +413,7 @@ int Client::run()
                     entry.online = ping.state == PingState::Online;
                     entry.motd = ping.motd;
                     entry.players = ping.players;
+                    entry.maxPlayers = ping.maxPlayers;
                     entry.latencyMs = ping.latencyMs;
                 }
                 menu.setServerStatus(std::move(status));
@@ -985,13 +986,20 @@ void Client::syncAccount()
     info.profile = profileInfo;
     info.realmsLoading = snapshot.realmsLoading;
     info.realmsError = std::move(snapshot.realmsError);
+    info.realmsRateLimited = snapshot.realmsRateLimited;
     for (const Realm& realm : snapshot.realms) {
         menu::RealmEntry entry;
         entry.id = realm.id;
         entry.name = realm.name.empty() ? "Realm" : realm.name;
-        entry.detail = realm.owner.empty() ? "Realm" : "by " + realm.owner;
+        entry.owner = realm.owner;
+        entry.ownerXuid = realm.ownerXuid;
+        entry.description = realm.description;
+        entry.owned = !snapshot.xuid.empty() && realm.ownerXuid == snapshot.xuid;
         entry.open = realm.open;
         entry.expired = realm.expired;
+        entry.onlinePlayers = realm.onlinePlayers;
+        entry.maxPlayers = realm.maxPlayers;
+        entry.full = realm.maxPlayers > 0 && realm.onlinePlayers >= realm.maxPlayers;
         info.realms.push_back(std::move(entry));
     }
     std::string socialKey = snapshot.state == AccountState::SignedIn ? (snapshot.xuid.empty() ? std::string("signed-in") : snapshot.xuid) : std::string();

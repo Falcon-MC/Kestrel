@@ -50,6 +50,15 @@ struct SocialPerson {
     bool unreachable = false;
 };
 
+/**
+ * Whether the friend's world can be joined from here: the drawer, the
+ * friends list order and the Worlds tab all agree on it.
+ */
+inline bool joinable(const SocialPerson& person)
+{
+    return !person.sessionHandle.empty() && !person.versionMismatch && !person.unreachable;
+}
+
 struct PeopleList {
     bool loading = false;
     bool loaded = false;

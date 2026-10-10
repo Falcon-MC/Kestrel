@@ -104,11 +104,6 @@ SocialPerson toPerson(const XboxPerson& person)
     return result;
 }
 
-bool joinable(const SocialPerson& person)
-{
-    return !person.sessionHandle.empty() && !person.versionMismatch && !person.unreachable;
-}
-
 void sortPeople(std::vector<SocialPerson>& people)
 {
     std::stable_sort(people.begin(), people.end(), [](const SocialPerson& a, const SocialPerson& b) {

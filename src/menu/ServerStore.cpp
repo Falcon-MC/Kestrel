@@ -43,6 +43,27 @@ std::string normalizeAddress(std::string address)
     return address;
 }
 
+std::string clampPort(const std::string& port)
+{
+    if (port.empty() || port.find_first_not_of("0123456789") != std::string::npos) {
+        return "19132";
+    }
+    size_t digits = port.find_first_not_of('0');
+    if (digits != std::string::npos && (port.size() - digits > 5 || std::stol(port.substr(digits)) > 65535)) {
+        return "65535";
+    }
+    return port;
+}
+
+std::pair<std::string, std::string> splitAddress(const std::string& address, std::string_view defaultPort)
+{
+    size_t colon = address.rfind(':');
+    if (colon == std::string::npos || address.find(':') != colon) {
+        return { address, std::string(defaultPort) };
+    }
+    return { address.substr(0, colon), address.substr(colon + 1) };
+}
+
 ServerStore::ServerStore(std::filesystem::path file)
     : file(std::move(file))
 {
@@ -133,6 +154,17 @@ void ServerStore::markJoined(size_t index)
     }
     entries[index].lastJoined = now();
     save();
+}
+
+bool ServerStore::hasAddress(const std::string& address, std::optional<size_t> except) const
+{
+    std::string normalized = normalizeAddress(address);
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i != except && entries[i].address == normalized) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }

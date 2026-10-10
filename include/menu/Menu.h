@@ -117,6 +117,7 @@ enum class Screen {
 };
 
 enum class PlayTab {
+    Worlds,
     Realms,
     Servers,
 };
@@ -204,6 +205,11 @@ enum class Dialog {
     JoinRealm,
     ConfirmRemoveFriend,
     Emotes,
+    RealmAddMenu,
+    RevealServerAddress,
+    ServerFormError,
+    OnlinePlayWarning,
+    DiscardServerChanges,
 };
 
 enum class Field {
@@ -237,6 +243,7 @@ struct ServerStatus {
     bool online = false;
     std::string motd;
     int players = 0;
+    int maxPlayers = 0;
     int latencyMs = -1;
 };
 
@@ -278,12 +285,22 @@ enum class AccountStatus {
     Failed,
 };
 
+/**
+ * A Realm the way the Realms tab lists it. Full is worked out from the online
+ * players the Realms service listed against the Realm's player limit.
+ */
 struct RealmEntry {
     int64_t id = 0;
     std::string name;
-    std::string detail;
+    std::string owner;
+    std::string ownerXuid;
+    std::string description;
+    bool owned = false;
     bool open = false;
     bool expired = false;
+    bool full = false;
+    int onlinePlayers = 0;
+    int maxPlayers = 0;
 };
 
 /**
@@ -423,6 +440,7 @@ struct AccountInfo {
     std::vector<RealmEntry> realms;
     bool realmsLoading = false;
     std::string realmsError;
+    bool realmsRateLimited = false;
 };
 
 enum class AccountRequest {
@@ -1151,10 +1169,40 @@ private:
     // Screens drawn the way the HTML menus draw them.
     float header(ui::Context& ui, float width, std::string_view heading, bool social);
     void play(ui::Context& ui, float width, float height);
+    void worldsTab(ui::Context& ui, const ui::Rect& area);
+    void worldCard(ui::Context& ui, const SocialPerson& person, const ui::Rect& card);
+    void worldListRow(ui::Context& ui, const SocialPerson& person, const ui::Rect& row);
+    std::vector<const SocialPerson*> friendWorlds() const;
     void realmsTab(ui::Context& ui, const ui::Rect& area);
+    void realmAddDialog(ui::Context& ui, float width, float height, bool& closed);
+    void realmsSideMenu(ui::Context& ui, const ui::Rect& area, const std::vector<const RealmEntry*>& owned, const std::vector<const RealmEntry*>& joined);
+    void realmDetails(ui::Context& ui, const ui::Rect& area, const RealmEntry& realm);
+    void realmsPurchasePage(ui::Context& ui, const ui::Rect& area, float top, bool disabled);
+    void realmsInvitationsButton(ui::Context& ui, const ui::Rect& rect, bool enabled);
     void serversTab(ui::Context& ui, const ui::Rect& area);
+    void revealAddressDialog(ui::Context& ui, float width, float height, bool& closed);
     void featuredDetail(ui::Context& ui, const ui::Rect& area, const FeaturedEntry& entry);
     void serverForm(ui::Context& ui, float width, float height);
+    void serverFormErrorDialog(ui::Context& ui, float width, float height, bool& closed);
+    void onlinePlayWarningDialog(ui::Context& ui, float width, float height, bool& closed);
+    void discardServerChangesDialog(ui::Context& ui, float width, float height, bool& closed);
+    void serverFormModal(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view secondary, std::string_view primary, std::string_view primaryComponent, bool& secondaryPressed, bool& primaryPressed, bool& closed);
+    bool serverFormChanged() const;
+
+    /**
+     * Why the game's external server list refused the server form, in the
+     * order of its ExternalServerWorldError values.
+     */
+    enum class ServerFormProblem {
+        NameIsEmpty,
+        AddressIsEmpty,
+        InvalidPortNumber,
+        DuplicateAddressAndPort,
+    };
+
+    // The game's doNotShowMultiplayerIpSafetyWarning and doNotShowMultiplayerOnlineSafetyWarning options.
+    static constexpr std::string_view IpSafetyWarningOption = "do_not_show_multiplayer_ip_safety_warning";
+    static constexpr std::string_view OnlineSafetyWarningOption = "do_not_show_multiplayer_online_safety_warning";
     void settings(ui::Context& ui, float width, float height);
     void settingsPage(ui::Context& ui, const ui::Rect& area);
     void profile(ui::Context& ui, float width, float height);
@@ -1244,7 +1292,8 @@ private:
     ServerStore& store;
     Screen screen = Screen::Title;
     Screen returnScreen = Screen::Title;
-    PlayTab playTab = PlayTab::Servers;
+    PlayTab playTab = PlayTab::Worlds;
+    bool worldsListLayout = false;
     bool profileStatsTab = false;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
@@ -1257,6 +1306,8 @@ private:
     std::string editName;
     std::string editAddress;
     std::string editPort;
+    ServerFormProblem serverFormProblem = ServerFormProblem::NameIsEmpty;
+    std::optional<ServerRow> warnedRow;
     std::string socialSearch;
     SocialSnapshot social;
     std::vector<SocialRequest> socialRequests;
@@ -1271,14 +1322,14 @@ private:
     float invitesScroll = 0.0f;
     float invitesContent = 0.0f;
     bool realmsRefreshRequested = false;
+    int64_t realmSelected = 0;
+    float realmDetailScroll = 0.0f;
     std::map<std::string, std::pair<bool, std::string>> answeredInvites;
     std::map<std::string, SocialAction> personActions;
     std::map<std::string, ServerStatus> serverStatus;
     std::vector<FeaturedEntry> featured;
     bool featuredLoading = true;
-    size_t showcaseIndex = 0;
     bool serverAddressShown = false;
-    std::chrono::steady_clock::time_point showcaseShown = std::chrono::steady_clock::now();
     Field selectedField = Field::None;
     bool selectAllPending = false;
     std::string lastFieldClick;
