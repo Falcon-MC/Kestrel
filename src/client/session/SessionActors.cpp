@@ -368,7 +368,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;
     actor->second.pitch = pitch;
-    if (!world::projectileEntity(actor->second.identifier)) {
+    if (actor->second.identifier != "minecraft:player" && !world::projectileEntity(actor->second.identifier)) {
         auto position = std::array<double, 3> { actor->second.x, actor->second.y, actor->second.z };
         auto turn = std::array<float, 3> { yaw, headYaw, pitch };
         if (teleport || !actor->second.interpolation.initialized) {
@@ -383,7 +383,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
 void Session::tickActors(double tickTime)
 {
     for (auto& [id, actor] : actors) {
-        if (world::projectileEntity(actor.identifier)) continue;
+        if (actor.identifier == "minecraft:player" || world::projectileEntity(actor.identifier)) continue;
         if (auto queue = actorMoveQueues.find(id); queue != actorMoveQueues.end()) {
             ActorMoveTarget sample;
             if (queue->second.pop(sample)) actor.interpolation.retarget(sample.position, sample.turn, false);

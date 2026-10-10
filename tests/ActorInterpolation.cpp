@@ -1,4 +1,5 @@
 #include "client/ActorInterpolation.h"
+#include "client/ActorMotion.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -39,6 +40,19 @@ void constantMovement(int framesPerTick)
 
 int main()
 {
+    kestrel::ActorMotion player;
+    player.lastSample = 1.0;
+    player.retarget({ 1.0, 0.0, 0.0 }, { 170.0f, 0.0f, 0.0f }, 1.05);
+    player.advance(1.075);
+    require(near(player.shown[0], 0.5), "Players must retain time-based interpolation between packets");
+    player.retarget({ 2.0, 0.0, 0.0 }, { -170.0f, 0.0f, 0.0f }, 1.1);
+    require(near(player.shown[0], 1.0), "Player retargeting must advance the old target without a packet-frame pause");
+    player.advance(1.125);
+    require(near(player.shown[0], 1.5), "Players must not switch to three-tick actor interpolation");
+    require(std::abs(player.turnShown[0] + 180.0f) < 1e-4f, "Player turns must follow the shortest angular path");
+    player.advance(2.0);
+    require(player.shown == player.to, "Player interpolation must settle at its target");
+
     using kestrel::ActorInterpolation;
     constantMovement(1);
     constantMovement(3);
