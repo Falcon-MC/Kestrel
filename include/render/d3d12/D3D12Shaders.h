@@ -507,11 +507,11 @@ float4 applyGlint(float4 texel, WorldOut input, float illumination)
     if (layer >= 8192u) return texel;
     float2 centered = input.glintUv - 0.5;
     float3 foil = float3(0, 0, 0);
-    for (uint pass = 0u; pass < 2u; ++pass) {
-        float angle = (pass == 0u ? -20.0 : 80.0) * 0.017453292519943295;
+    for (uint glintPass = 0u; glintPass < 2u; ++glintPass) {
+        float angle = (glintPass == 0u ? -20.0 : 80.0) * 0.017453292519943295;
         float c = cos(angle), sn = sin(angle);
         float2 rotated = float2(c * centered.x + sn * centered.y, -sn * centered.x + c * centered.y);
-        float2 uv = (rotated + 0.5) * input.glintTexture.xy + float2(input.glint[pass], 0);
+        float2 uv = (rotated + 0.5) * input.glintTexture.xy + float2(input.glint[glintPass], 0);
         foil += sampleGlint(layer, uv, input.glintTexture.zw);
     }
     foil *= float3(0.38, 0.19, 0.608) * illumination;
