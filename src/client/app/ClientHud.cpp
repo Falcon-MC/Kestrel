@@ -94,7 +94,7 @@ void Client::handleHotbarInput()
     }
     const InputState& input = window->input();
     if (input.mousePressed) {
-        session.requestInteraction(false);
+        for (uint32_t count = std::max(input.mousePressCount, 1u); count > 0; --count) session.requestInteraction(false);
     }
     if (input.rightMousePressed) {
         session.requestInteraction(true);

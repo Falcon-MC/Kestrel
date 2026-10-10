@@ -355,6 +355,8 @@ public:
     virtual void updateEntityTexture(uint32_t layer, const uint8_t* pixels) = 0;
 
     virtual void beginFrame(float r, float g, float b) = 0;
+    virtual double frameFenceWaitMilliseconds() const { return 0.0; }
+    virtual double frameSubmissionTimeSeconds() const { return 0.0; }
     virtual void drawWorld(const WorldView& view) = 0;
     virtual void drawUi(const ui::DrawList& list) = 0;
     virtual void endFrame() = 0;

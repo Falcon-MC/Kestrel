@@ -116,6 +116,7 @@ Client::Client(LaunchOptions options)
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
     timer.mark("fonts");
+    session.enableFrameMotion();
     launch = std::move(options);
     if (launch.connect) {
         pendingConnect = menu::ConnectRequest { *launch.connect, *launch.connect };
@@ -171,6 +172,7 @@ int Client::run()
     DiscordPresence discord;
     float bakedScale = 0.0f;
     bool firstFrameLogged = false;
+    MotionInput routedMotion;
     constexpr ui::Color canvas = ui::theme::Black;
     auto lastFrame = std::chrono::steady_clock::now();
 
@@ -193,13 +195,18 @@ int Client::run()
                 break;
             }
         }
-        discord.update();
         driveGamepad();
+        double inputReceived = InputLatency::now();
         if (agentServer) {
             Profiler::Section section(profiler, "agent");
             serveAgent();
         }
         mods->handleInput(window->input(), menu.capturesMouse(), guiScale());
+        const InputState& receivedInput = window->input();
+        double nativeReceipt = receivedInput.receiptTime;
+        if (receivedInput.gamepad.receiptTime > 0.0) nativeReceipt = nativeReceipt > 0.0
+            ? std::min(nativeReceipt, receivedInput.gamepad.receiptTime) : receivedInput.gamepad.receiptTime;
+        uint64_t inputTrace = session.inputLatency.begin(inputReceived, nativeReceipt);
         if (window->consumeFocusLost() && !agentServer) {
             menu.pauseIfPlaying();
         }
@@ -209,45 +216,26 @@ int Client::run()
         }
 
         auto now = std::chrono::steady_clock::now();
-        updateGlobalResources();
         float environmentDeltaSeconds = std::clamp(std::chrono::duration<float>(now - lastFrame).count(), 0.0f, 1.0f);
         float deltaSeconds = std::min(environmentDeltaSeconds, 0.1f);
+        double beginFrameMilliseconds = 0.0;
         lastFrame = now;
         countFrame(now);
 
-        {
-            Profiler::Section section(profiler, "account");
-            syncAccount();
-            syncSocial();
-            syncDressingRoom();
-        }
         {
             Profiler::Section section(profiler, "session sync");
             session.setRenderDistance(menu.renderDistance());
             syncSession();
             syncChat();
             syncForms();
-            for (menu::ModAction& action : menu.takeModActions()) {
-                mods->request(std::move(action));
-            }
-            mods->update(deltaSeconds);
-            mods->captureUiInput(window->input(), guiScale());
-            visuals = mods->visuals();
-            if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
-                session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
-            }
-            menu.setModKeyBinds(mods->listedKeyBinds());
-            menu.setMods(mods->listedMods());
-        }
-        {
-            Profiler::Section section(profiler, "mesh upload");
-            applyMeshUpdates();
+
         }
 
         {
             Profiler::Section section(profiler, "camera");
             menu.setInventory(hudState.container, hudState.gameType == 1);
-            menu.prepareInventoryInput(window->input());
+            mods->captureUiInput(window->input(), guiScale());
+            menu.prepareInput(window->input());
             bool captured = menu.capturesMouse() && !mods->wantsCursor();
             window->setMouseCaptured(captured);
             float baseFov = serverFovDegrees(static_cast<float>(menu.fov()), deltaSeconds);
@@ -259,23 +247,6 @@ int Client::run()
                 camera.look(keys, captured);
                 MotionInput input;
                 bool sneakHeld = keys.isHeld(bindings.down());
-                if (captured && sneakHeld && !sneakWasHeld) {
-                    sneakFromPad = padKeys[static_cast<size_t>(PadButton::B)] != Key::None;
-                    if (menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0) {
-                        sneakToggled = !sneakToggled;
-                    } else {
-                        sneakToggled = false;
-                    }
-                }
-                sneakWasHeld = sneakHeld;
-                if (captured) {
-                    bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
-                    sneakActive = toggleMode ? sneakToggled : sneakHeld;
-                } else if (!sneakFromPad) {
-                    sneakToggled = false;
-                    sneakActive = false;
-                }
-                input.sneak = sneakActive;
                 if (captured) {
                     input.forward = float(keys.isHeld(bindings.forward())) - float(keys.isHeld(bindings.back()));
                     input.sideways = float(keys.isHeld(bindings.left())) - float(keys.isHeld(bindings.right()));
@@ -292,10 +263,45 @@ int Client::run()
                 }
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
+                InputState::KeyTransition transition;
+                MotionInput intermediate = input;
+                intermediate.jump = routedMotion.jump;
+                intermediate.sprint = routedMotion.sprint;
+                intermediate.sneak = routedMotion.sneak;
+                while (window->input().popKeyTransition(transition)) {
+                    if (!captured) continue;
+                    bool relevant = true;
+                    if (transition.key == bindings.up()) intermediate.jump = transition.down;
+                    else if (transition.key == Key::Control) intermediate.sprint = transition.down;
+                    else if (transition.key == bindings.down()) {
+                        if (transition.down) {
+                            sneakFromPad = keys.gamepad.wasPressed(PadButton::B);
+                            bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                            sneakToggled = toggleMode ? !sneakToggled : false;
+                        }
+                        bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                        intermediate.sneak = toggleMode ? sneakToggled : transition.down;
+                    } else relevant = false;
+                    if (relevant) {
+                        MotionInput adjusted = intermediate;
+                        mods->adjustMovement(adjusted);
+                        session.setMotionInput(adjusted, inputTrace);
+                    }
+                }
+                if (captured) {
+                    bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                    sneakActive = toggleMode ? sneakToggled : sneakHeld;
+                } else if (!sneakFromPad) {
+                    sneakToggled = false;
+                    sneakActive = false;
+                }
+                input.sneak = captured && sneakActive;
+                routedMotion = input;
                 mods->adjustMovement(input);
                 localLookYaw = input.yaw;
                 localLookPitch = input.pitch;
-                session.setMotionInput(input);
+                session.setMotionInput(input, inputTrace);
+                playerView = session.advanceFrameMotion(input, inputTrace, captured);
                 constexpr int32_t SpeedEffect = 1;
                 constexpr int32_t SlownessEffect = 2;
                 int32_t speedLevels = 0;
@@ -332,8 +338,6 @@ int Client::run()
                 }
                 fovTarget = std::clamp(fovTarget, 0.05f, 2.0f);
                 camera.easeFov(fovTarget, deltaSeconds);
-                // The session thread runs a tick a few ms late now and then, so keep gliding a little past it
-                // instead of stopping dead until the tick lands.
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.2);
                 double eye = playerView.eyeHeight();
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
@@ -352,6 +356,8 @@ int Client::run()
                 camera.setFacingSubject(perspective == PerspectiveFront);
                 camera.setPosition(eyePosition[0] + boom[0] * boomFraction, eyePosition[1] + boom[1] * boomFraction, eyePosition[2] + boom[2] * boomFraction);
             } else {
+                window->input().clearKeyTransitions();
+                routedMotion = {};
                 perspective = PerspectiveFirst;
                 camera.setFacingSubject(false);
                 camera.easeFov(1.0f, deltaSeconds);
@@ -370,7 +376,6 @@ int Client::run()
         std::optional<ActorView> renderSelf;
         interpolateActors(secondsNow());
         if (worldShown) {
-            if (playerView.active) renderSelf = localActorView(deltaSeconds);
             ServerCameraContext cameraContext;
             cameraContext.player = { eyePosition, playerCameraYaw, playerCameraPitch };
             cameraContext.player.center = { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.9, eyePosition[2] };
@@ -396,9 +401,38 @@ int Client::run()
             perspective = serverCamera.renderPerspective(playerPerspective);
             updateAimAssist();
         }
+        session.inputLatency.mark(inputTrace, InputLatency::Camera);
+        handleHotbarInput();
+        session.submitFrameMotion();
+        discord.update();
+        updateGlobalResources();
+        {
+            Profiler::Section section(profiler, "account");
+            syncAccount();
+            syncSocial();
+            syncDressingRoom();
+        }
+        {
+            Profiler::Section section(profiler, "session resources");
+            prepareSessionRender();
+            for (menu::ModAction& action : menu.takeModActions()) {
+                mods->request(std::move(action));
+            }
+            mods->update(deltaSeconds);
+            visuals = mods->visuals();
+            if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
+                session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
+            }
+            menu.setModKeyBinds(mods->listedKeyBinds());
+            menu.setMods(mods->listedMods());
+        }
+        {
+            Profiler::Section section(profiler, "mesh upload");
+            applyMeshUpdates();
+        }
+
         {
             Profiler::Section section(profiler, "hud");
-            handleHotbarInput();
             updateEmotes(secondsNow());
             updateGameTips();
             menu.setHud(buildHudView());
@@ -419,6 +453,8 @@ int Client::run()
                 syncFeatured();
             }
         }
+
+        if (worldShown && playerView.active) renderSelf = localActorView(deltaSeconds);
 
         float scale = guiScale();
         bool rebaked = scale != bakedScale;
@@ -615,7 +651,9 @@ int Client::run()
 
             {
                 Profiler::Section section(profiler, "begin frame");
+                double beginning = InputLatency::now();
                 renderer->beginFrame(sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
+                beginFrameMilliseconds = (InputLatency::now() - beginning) * 1000.0;
             }
             WorldView view;
             float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
@@ -738,6 +776,12 @@ int Client::run()
         {
             Profiler::Section section(profiler, "present gpu");
             renderer->endFrame();
+            double frameEnd = InputLatency::now();
+            double submission = renderer->frameSubmissionTimeSeconds();
+            session.inputLatency.markAt(inputTrace, InputLatency::Submission, submission);
+            session.inputLatency.markAt(inputTrace, InputLatency::FrameEnd, frameEnd);
+            session.inputLatency.waitedForGpu(renderer->frameFenceWaitMilliseconds(), beginFrameMilliseconds,
+                submission > 0.0 ? std::max(0.0, frameEnd - submission) * 1000.0 : 0.0);
         }
         camera.setPosition(playerCameraPosition[0], playerCameraPosition[1], playerCameraPosition[2]);
         camera.setRotation(playerCameraYaw, playerCameraPitch);
@@ -1297,37 +1341,44 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
     return terrainReleased;
 }
 
-void Client::syncSession()
+void Client::prepareSessionRender()
 {
-    auto published = session.sharedSnapshot();
-    const SessionSnapshot& snapshot = *published;
-    if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
-        serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
-        aimAssist.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
-        aimTarget.reset();
-        session.setAimAssistTarget({});
-        aimBlockNames.clear();
-        submergedSeconds = 0.0f;
-        localSwimAmount = 0.0f;
-        serverFov = {};
-        serverFovSerial = 0;
-        serverBoomFraction = 0.0;
-        cameraSessionJoin = snapshot.joinCount;
-        cameraDimension = snapshot.dimension;
+    const SessionSnapshot& snapshot = *seenSessionSnapshot;
+    bool changed = renderedSessionSnapshot != seenSessionSnapshot;
+    renderedSessionSnapshot = seenSessionSnapshot;
+    if (resetChunkMeshes) {
+        resetChunkMeshes = false;
+        renderer->clearChunkMeshes();
+        opaqueChunks.clear();
+        litChunks.clear();
     }
-    cameraLocalUnique = snapshot.localUniqueActorId;
-    bool changed = published != seenSessionSnapshot;
-    seenSessionSnapshot = std::move(published);
-    if (agentSession) {
-        agentSession->observe(snapshot);
+    if (snapshot.state != SessionState::Joined) {
+        swimAmounts.clear();
+        blockParticles.clear();
+        clearParticles();
     }
-    mods->observe(snapshot);
-    playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
-    if (menu.debugVisible()) {
-        menu.setDebugView(buildDebugView(snapshot));
+    if (changed) {
+        sidebarView = snapshot.sidebar;
+        crackViews = snapshot.cracks;
+        chestLidViews = snapshot.chestLids;
+        frameItemViews = snapshot.frameItems;
+        shelfItemViews = snapshot.shelfItems;
+        enchantingBookViews = snapshot.enchantingBooks;
+        beaconBeamViews = snapshot.beaconBeams;
+        conduitViews = snapshot.conduits;
+        bannerViews = snapshot.banners;
+        signTextViews = snapshot.signTexts;
+        spawnerViews = snapshot.spawners;
+        vaultItemViews = snapshot.vaultItems;
+        potViews = snapshot.pots;
+        pistonViews = snapshot.pistons;
+        movingBlockViews = snapshot.movingBlocks;
     }
     updateAudio(snapshot);
-    static const std::vector<std::shared_ptr<const world::PackFiles>> noPacks;
+    for (const ParticleBurst& burst : session.takeParticleBursts()) {
+        blockParticles.spawn(burst);
+    }
+    takeSessionParticles(snapshot);
     applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : globalResources.packs());
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
@@ -1337,26 +1388,6 @@ void Client::syncSession()
         } else {
             skin.clearDynamic("dynamic/title");
         }
-    }
-    if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
-        seenJoin = snapshot.joinCount;
-        firstPersonMotion = {};
-        handMotionTickSerial = snapshot.playerTickSerial;
-        handMotionTeleports = snapshot.player.teleports;
-        seenTeleport = snapshot.teleportCount;
-        menu.clearChat();
-        popupMessage = {};
-        tipMessage = {};
-        actionbarMessage = {};
-        titleView = {};
-        titleUiUpdates.clear();
-        gameTip = {};
-        renderer->clearChunkMeshes();
-        opaqueChunks.clear();
-        litChunks.clear();
-        terrainReleased = false;
-        readinessFrame.reset();
-        camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
     if (snapshot.state == SessionState::Joined && snapshot.assets && snapshot.assets != blockAssets) {
         renderer->clearChunkMeshes();
@@ -1415,21 +1446,93 @@ void Client::syncSession()
             session.acknowledgeResourceReload(snapshot.resourceReloadSerial, snapshot.assets.get());
         }
     }
+    bool skinsChanged = false;
+    for (SkinUpload& skin : session.takeSkinUploads()) {
+        releaseSkinLayers(skin.slot);
+        SkinView view;
+        view.base = placeSkinTexture(skin.slot, skin.image, world::MaxSkinSide / world::EntityTextureSize);
+        view.cape = placeSkinTexture(skin.slot, skin.cape, 1);
+        for (SkinAnimationUpload& animation : skin.animations) {
+            SkinAnimationView placed;
+            placed.texture = placeSkinTexture(skin.slot, animation.image, world::MaxEntityTiles);
+            placed.rig = std::move(animation.rig);
+            placed.kind = animation.kind;
+            placed.frames = std::max<uint32_t>(animation.frames, 1);
+            placed.blinking = animation.blinking;
+            if (placed.texture.present && placed.rig) {
+                view.animations.push_back(std::move(placed));
+            }
+        }
+        skinViews[skin.slot] = std::move(view);
+        if (skin.slot == localSkinSlot && !skin.image.empty()) {
+            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ skin.image.width, skin.image.height, skin.image.pixels }, 64));
+        }
+        if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
+        skinRigs[skin.slot] = std::move(skin.rig);
+        skinsChanged = true;
+    }
+    if (skinsChanged) {
+        actorPoses.clear();
+        partMatches.clear();
+        armorBoneMatches.clear();
+    }
+}
+
+void Client::syncSession()
+{
+    auto published = session.sharedSnapshot();
+    const SessionSnapshot& snapshot = *published;
+    if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
+        serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimAssist.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimTarget.reset();
+        session.setAimAssistTarget({});
+        aimBlockNames.clear();
+        submergedSeconds = 0.0f;
+        localSwimAmount = 0.0f;
+        serverFov = {};
+        serverFovSerial = 0;
+        serverBoomFraction = 0.0;
+        cameraSessionJoin = snapshot.joinCount;
+        cameraDimension = snapshot.dimension;
+    }
+    cameraLocalUnique = snapshot.localUniqueActorId;
+    bool changed = published != seenSessionSnapshot;
+    seenSessionSnapshot = std::move(published);
+    if (agentSession) {
+        agentSession->observe(snapshot);
+    }
+    mods->observe(snapshot);
+    playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
+    if (menu.debugVisible()) {
+        menu.setDebugView(buildDebugView(snapshot));
+    }
+    if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
+        seenJoin = snapshot.joinCount;
+        firstPersonMotion = {};
+        handMotionTickSerial = snapshot.playerTickSerial;
+        handMotionTeleports = snapshot.player.teleports;
+        seenTeleport = snapshot.teleportCount;
+        menu.clearChat();
+        popupMessage = {};
+        tipMessage = {};
+        actionbarMessage = {};
+        titleView = {};
+        titleUiUpdates.clear();
+        gameTip = {};
+        resetChunkMeshes = true;
+        terrainReleased = false;
+        readinessFrame.reset();
+        camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
+    }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {
         seenTeleport = snapshot.teleportCount;
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
-    if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) {
-        renderer->clearChunkMeshes();
-        opaqueChunks.clear();
-        litChunks.clear();
-    }
+    if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) resetChunkMeshes = true;
     if (snapshot.state != SessionState::Joined) {
         submergedSeconds = 0.0f;
         localSwimAmount = 0.0f;
-        swimAmounts.clear();
-        blockParticles.clear();
-        clearParticles();
         menu.inventoryPanel().reset();
         menu.formPanel().reset();
         terrainReleased = false;
@@ -1489,59 +1592,10 @@ void Client::syncSession()
     }
     if (changed) {
         hudState = snapshot.hud;
-        sidebarView = snapshot.sidebar;
         selectionView = snapshot.selection;
-        crackViews = snapshot.cracks;
-        chestLidViews = snapshot.chestLids;
-        frameItemViews = snapshot.frameItems;
-        shelfItemViews = snapshot.shelfItems;
-        enchantingBookViews = snapshot.enchantingBooks;
-        beaconBeamViews = snapshot.beaconBeams;
-        conduitViews = snapshot.conduits;
-        bannerViews = snapshot.banners;
-        signTextViews = snapshot.signTexts;
-        spawnerViews = snapshot.spawners;
-        vaultItemViews = snapshot.vaultItems;
-        potViews = snapshot.pots;
-        pistonViews = snapshot.pistons;
-        movingBlockViews = snapshot.movingBlocks;
     }
     ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
     targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();
-    for (const ParticleBurst& burst : session.takeParticleBursts()) {
-        blockParticles.spawn(burst);
-    }
-    takeSessionParticles(snapshot);
-    bool skinsChanged = false;
-    for (SkinUpload& skin : session.takeSkinUploads()) {
-        releaseSkinLayers(skin.slot);
-        SkinView view;
-        view.base = placeSkinTexture(skin.slot, skin.image, world::MaxSkinSide / world::EntityTextureSize);
-        view.cape = placeSkinTexture(skin.slot, skin.cape, 1);
-        for (SkinAnimationUpload& animation : skin.animations) {
-            SkinAnimationView placed;
-            placed.texture = placeSkinTexture(skin.slot, animation.image, world::MaxEntityTiles);
-            placed.rig = std::move(animation.rig);
-            placed.kind = animation.kind;
-            placed.frames = std::max<uint32_t>(animation.frames, 1);
-            placed.blinking = animation.blinking;
-            if (placed.texture.present && placed.rig) {
-                view.animations.push_back(std::move(placed));
-            }
-        }
-        skinViews[skin.slot] = std::move(view);
-        if (skin.slot == localSkinSlot && !skin.image.empty()) {
-            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ skin.image.width, skin.image.height, skin.image.pixels }, 64));
-        }
-        if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
-        skinRigs[skin.slot] = std::move(skin.rig);
-        skinsChanged = true;
-    }
-    if (skinsChanged) {
-        actorPoses.clear();
-        partMatches.clear();
-        armorBoneMatches.clear();
-    }
     timeState.daylightCycle = snapshot.daylightCycle;
     timeState.chunkRadius = snapshot.chunkRadius;
     // a mod's time and weather only change what this client shows

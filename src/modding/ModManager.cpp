@@ -683,6 +683,7 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         event.inGame = inGame;
         dispatch(event);
         if (event.isCancelled()) {
+            input.removeKeyTransitions(input.pressedKey);
             switch (input.pressedKey) {
             case Key::Escape:
                 input.escape = false;

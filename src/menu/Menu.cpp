@@ -277,7 +277,7 @@ bool Menu::worldVisible() const
 
 bool Menu::capturesMouse() const
 {
-    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !forms.active();
+    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !inputBlocked && !forms.active();
 }
 
 void Menu::openForm(uint32_t id, const std::string& json)
@@ -316,6 +316,37 @@ void Menu::prepareInventoryInput(const InputState& input)
         emoteUi.reset();
         dialog = Dialog::Emotes;
     }
+}
+
+void Menu::prepareInput(const InputState& input)
+{
+    inputPrepared = true;
+    inputBlocked = false;
+    inventoryInputHandled = false;
+    bool wasCaptured = capturesMouse();
+    if (input.mousePressed) {
+        field = Field::None;
+        rebinding.reset();
+        rebindingMod.reset();
+    }
+    if (inGame() && session.dead) {
+        if (dialog == Dialog::None && screen == Screen::Title) dialog = Dialog::Death;
+    } else if (dialog == Dialog::Death) {
+        dialog = Dialog::None;
+    }
+    if (!inGame() && forms.active()) forms.closeAll();
+    prepareInventoryInput(input);
+    if (dialog == Dialog::Chat && !chatSettingsOpen) field = Field::Chat;
+    if (!forms.active()) {
+        std::vector<std::string> pressed = std::exchange(pausePressed, {});
+        for (const std::string& id : pressed) {
+            if (dialog != Dialog::Pause) break;
+            pauseButton(id);
+        }
+        if (pressed.empty()) handleKeys(input);
+    }
+    // Closing a screen must not send its click or held movement to the world in this frame.
+    inputBlocked = !wasCaptured;
 }
 
 void Menu::pauseIfPlaying()
@@ -434,11 +465,13 @@ void Menu::screenContent(Context& ui, float width, float height, Screen which)
 
 void Menu::frame(Context& ui, float width, float height)
 {
+    if (!inputPrepared) prepareInput(ui.input());
     Rect safe = safeRect(width, height);
     screenBounds = { -safe.x, -safe.y, width, height };
     ui.setOrigin(safe.x, safe.y);
     safeFrame(ui, safe.w, safe.h);
     ui.setOrigin(0.0f, 0.0f);
+    inputPrepared = false;
 }
 
 void Menu::safeFrame(Context& ui, float width, float height)
@@ -459,19 +492,6 @@ void Menu::safeFrame(Context& ui, float width, float height)
         applySkinChoice(ui);
     }
     mark("skin choice");
-    if (ui.input().mousePressed) {
-        field = Field::None;
-        rebinding.reset();
-        rebindingMod.reset();
-    }
-    if (inGame() && session.dead) {
-        if (dialog == Dialog::None && screen == Screen::Title) {
-            dialog = Dialog::Death;
-        }
-    } else if (dialog == Dialog::Death) {
-        dialog = Dialog::None;
-    }
-
     auto now = std::chrono::steady_clock::now();
     if (inventory.active != inventoryShown) {
         inventoryShown = inventory.active;
@@ -616,8 +636,7 @@ void Menu::safeFrame(Context& ui, float width, float height)
     }
     toast(ui, width, height);
     toasts.draw(ui, width, height);
-    handleKeys(ui);
-    mark("toasts and keys");
+    mark("toasts");
 }
 
 void Menu::dialogContent(Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled)
@@ -1703,10 +1722,8 @@ void Menu::toast(Context& ui, float width, float height)
     ui.textCentered(toastMessage, TextStyle::Pixel, frame, White);
 }
 
-void Menu::handleKeys(Context& ui)
+void Menu::handleKeys(const InputState& input)
 {
-    const InputState& input = ui.input();
-
     if (rebinding || rebindingMod) {
         if (input.pressedKey == Key::Escape) {
             rebinding.reset();
@@ -1813,7 +1830,7 @@ void Menu::handleKeys(Context& ui)
         socialSelected.clear();
         requestSocial(SocialAction::Search, socialSearch);
     }
-    if (std::exchange(chatClosedByScreen, false) || !input.escape) {
+    if (!input.escape) {
         return;
     }
     if (dialog == Dialog::JoinRealm) {

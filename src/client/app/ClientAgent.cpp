@@ -518,6 +518,25 @@ bool Client::handleAgentRequest(Request& request)
 
     if (method == "state") {
         agentServer->respond(request, agentState());
+    } else if (method == "debug.inputLatency") {
+        if (agent::boolParam(request, "reset", false)) session.inputLatency.reset();
+        auto stats = session.inputLatency.snapshot();
+        writer.beginObject().field("clock", "steady_clock").field("units", "milliseconds")
+            .field("corrections", stats.corrections);
+        auto metric = [&](const char* name, const InputLatency::Distribution& value) {
+            writer.key(name).beginObject().field("count", value.count).field("median", value.median)
+                .field("p95", value.p95).field("p99", value.p99).field("maximum", value.maximum).endObject();
+        };
+        const char* names[] = { "inputToCamera", "inputToPhysics", "inputToNetwork", "inputToSubmission", "inputToFrameEnd" };
+        for (size_t stage = 0; stage < InputLatency::StageCount; ++stage) metric(names[stage], stats.stages[stage]);
+        const char* nativeNames[] = { "nativeReceiptToCamera", "nativeReceiptToPhysics", "nativeReceiptToNetwork", "nativeReceiptToSubmission", "nativeReceiptToFrameEnd" };
+        for (size_t stage = 0; stage < InputLatency::StageCount; ++stage) metric(nativeNames[stage], stats.nativeStages[stage]);
+        metric("tickDelay", stats.tickDelay);
+        metric("gpuBeginFrame", stats.beginFrame);
+        metric("gpuFrameFenceWait", stats.gpuWait);
+        metric("presentationAndCapture", stats.presentation);
+        writer.endObject();
+        agentServer->respond(request, writer.take());
     } else if (method == "screenshot") {
         if (!renderer->requestCapture()) {
             agentServer->fail(request, std::string("Screenshots are not supported on the ") + std::string(renderer->backendName()) + " renderer yet");
@@ -615,6 +634,18 @@ bool Client::handleAgentRequest(Request& request)
             return true;
         }
         queueAgentInput(std::move(steps), request);
+    } else if (method == "input.mouseDelta") {
+        float dx = static_cast<float>(agent::numberParam(request, "dx", 0.0));
+        float dy = static_cast<float>(agent::numberParam(request, "dy", 0.0));
+        if (!std::isfinite(dx) || !std::isfinite(dy) || std::abs(dx) > 10000.0f || std::abs(dy) > 10000.0f) {
+            agentServer->fail(request, "Mouse delta must be finite and within 10000 pixels");
+            return true;
+        }
+        queueAgentInput({ [dx, dy](InputState& input) {
+            input.recordReceipt();
+            input.mouseDeltaX += dx;
+            input.mouseDeltaY += dy;
+        } }, request);
     } else if (method == "input.scroll") {
         auto amount = static_cast<float>(agent::numberParam(request, "amount", -1.0));
         std::optional<float> x;

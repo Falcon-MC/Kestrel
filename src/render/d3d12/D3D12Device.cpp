@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -592,7 +593,11 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
+        const auto waitStarted = std::chrono::steady_clock::now();
         waitFor(fenceValues[frameIndex]);
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         collectTransfers(4);
         if (slotSubmissions[frameIndex] > completed) {
             completed = slotSubmissions[frameIndex];
@@ -634,6 +639,16 @@ public:
         boundTextures = UINT32_MAX;
         active = true;
         return submissions + 1;
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
     }
 
     bool recording() const override
@@ -738,6 +753,7 @@ public:
         commandList->Close();
         ID3D12CommandList* lists[] = { commandList.Get() };
         queue->ExecuteCommandLists(1, lists);
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         fenceValues[frameIndex] = ++fenceCounter;
         queue->Signal(fence.Get(), fenceCounter);
         slotSubmissions[frameIndex] = ++submissions;
@@ -859,6 +875,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     struct RetiredBuffer {
         std::unique_ptr<Buffer> buffer;
         uint64_t fenceValue = 0;

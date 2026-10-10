@@ -500,6 +500,20 @@ if(KESTREL_BUILD_TESTS)
         src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
+    add_executable(KestrelInputTransitionsTest tests/InputTransitions.cpp)
+    target_include_directories(KestrelInputTransitionsTest PRIVATE include)
+    add_test(NAME input-transitions COMMAND KestrelInputTransitionsTest)
+    add_executable(KestrelFrameMotionTest
+        tests/FrameMotion.cpp
+        src/client/motion/FrameMotion.cpp
+        src/client/motion/PlayerMotion.cpp
+        src/client/motion/MotionMath.cpp
+        src/client/motion/MotionWorld.cpp
+        src/client/motion/MotionCollision.cpp
+        src/client/motion/MotionLiquid.cpp
+        src/world/blocks/BlockCollisions.cpp)
+    target_include_directories(KestrelFrameMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    add_test(NAME frame-motion COMMAND KestrelFrameMotionTest)
     add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelModCollisionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME mod-collision COMMAND KestrelModCollisionTest)

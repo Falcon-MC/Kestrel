@@ -219,16 +219,20 @@ private:
             }
             break;
         case SDL_EVENT_MOUSE_MOTION:
+            state.recordReceipt();
             mouse(event.motion);
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP:
+            state.recordReceipt();
             mouseButton(event.button.button, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             break;
         case SDL_EVENT_MOUSE_WHEEL:
+            state.recordReceipt();
             state.wheel += event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
             break;
         case SDL_EVENT_TEXT_INPUT:
+            state.recordReceipt();
             text(event.text.text);
             break;
         case SDL_EVENT_KEY_DOWN:
@@ -260,7 +264,7 @@ private:
     {
         if (button == SDL_BUTTON_RIGHT) {
             state.rightMouseDown = down;
-            state.rightMousePressed |= down;
+            if (down) state.recordMousePress(true);
             state.rightMouseReleased |= !down;
             return;
         }
@@ -274,7 +278,7 @@ private:
         }
         if (down) {
             state.mouseDown = true;
-            state.mousePressed = true;
+            state.recordMousePress(false);
         } else {
             state.mouseDown = false;
             state.mouseReleased = true;

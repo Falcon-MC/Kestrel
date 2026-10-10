@@ -73,7 +73,11 @@ constexpr std::array<std::array<int32_t, 3>, 6> FaceOffsets { { { 0, -1, 0 }, { 
 
 void Session::requestInteraction(bool use)
 {
-    (use ? useRequested : attackRequested) = true;
+    if (use) useRequested = true;
+    else {
+        uint32_t count = attackRequested.load();
+        while (count < 64 && !attackRequested.compare_exchange_weak(count, count + 1)) {}
+    }
 }
 
 /**
