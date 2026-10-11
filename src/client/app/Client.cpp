@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "client/BlindnessFog.h"
 #include "menu/GuiScale.h"
 #include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
@@ -612,6 +613,16 @@ int Client::run()
             world::BiomeColors biomeColors = blockAssets ? blockAssets->biomeTints().colors(environmentSample.second) : world::BiomeColors {};
             float fogScale = biomeColors.waterFogRelative ? renderDistance : 1.0f;
             bool fireResistance = false;
+            bool blindness = false;
+            if (serverCamera.playerEffects()) {
+                const double now = secondsNow();
+                for (const HudEffect& effect : hudState.effects) {
+                    if (effect.id == 15 && (effect.expires < 0.0 || effect.expires > now)) {
+                        blindness = true;
+                        break;
+                    }
+                }
+            }
             if (timeState.cameraMedium == 2 && serverCamera.playerEffects()) {
                 constexpr int32_t FireResistanceEffect = 12;
                 double now = secondsNow();
@@ -655,7 +666,8 @@ int Client::run()
                         if (timeState.cameraMedium != 0 || timeState.dimension == 1) sky.zenith = sky.horizon = sky.fogColor;
                     }
                 }
-                if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
+                if (blindness) sky = blindedBy(sky);
+                if (!blindness && blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
             }
