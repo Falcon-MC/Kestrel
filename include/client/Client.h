@@ -16,6 +16,7 @@
 #include "client/DressingRoom.h"
 #include "client/FeaturedServers.h"
 #include "client/FirstPersonMotion.h"
+#include "client/FireOverlay.h"
 #include "client/ModelQuadOutput.h"
 #include "client/LaunchOptions.h"
 #include "client/ParticleRenderer.h"
@@ -275,6 +276,7 @@ private:
     std::unique_ptr<Renderer> renderer;
     ui::GameAssets assets;
     ui::Skin skin { assets };
+    FireOverlay fireOverlay;
     ui::Font font;
     ui::DrawList drawList;
     ui::WidgetState widgets;

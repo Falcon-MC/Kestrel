@@ -3,6 +3,7 @@
 #include "client/FirstPersonAnimation.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
+#include "client/FireOverlay.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/EntityMaterialBlend.h"
@@ -31,6 +32,15 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    static_assert(kestrel::fireOverlayVisible(1, true, true, false));
+    static_assert(!kestrel::fireOverlayVisible(0, true, true, false));
+    static_assert(!kestrel::fireOverlayVisible(1, false, true, false));
+    static_assert(!kestrel::fireOverlayVisible(1, true, false, false));
+    static_assert(!kestrel::fireOverlayVisible(1, true, true, true));
+    require(kestrel::fireOverlayFrame(0.1, 32, 1) == 2, "Fire animation advances at the material tick rate");
+    require(kestrel::fireOverlayFrame(0.1, 32, 2) == 1, "Fire animation respects pack timing");
+    require(kestrel::fireOverlayFrame(1.625, 32, 1) == 0, "Fire animation wraps its frame sequence");
+    require(kestrel::fireOverlayFrame(std::numeric_limits<double>::infinity(), 32, 1) == 0, "Non-finite fire animation time is rejected");
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);
