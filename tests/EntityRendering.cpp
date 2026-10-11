@@ -2,6 +2,7 @@
 #include "client/CrossbowItem.h"
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
+#include "client/FirstPersonOverlay.h"
 #include "client/FishingLine.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
@@ -34,6 +35,12 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    static_assert(kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", false, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, false, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, true));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:diamond_helmet", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("", true, true, false));
     int64_t fishingOwner = -1;
     EntityDataEntry fishingMetadata;
     fishingMetadata.mId = 5;
