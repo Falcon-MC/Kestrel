@@ -121,6 +121,8 @@ On first launch, iOS downloads the full resource pack from Mojang's
 Later launches work without downloading it again. The app uses licensed free Monocraft/Noto Sans
 fonts and procedural menu artwork. No Minecraft fonts or HTML menu assets are bundled,
 and building does not require an installed game.
+Setup uses the same procedural first-launch screen and versioned resource cache as desktop,
+with download/install progress, touch-friendly retry and cancellation, and automatic opening of the menu.
 `KESTREL_IOS_CA_BUNDLE` selects the TLS certificate authority
 bundle and defaults to `/etc/ssl/cert.pem` on the build Mac. OpenSSL is fetched
 and built by CMake with the other dependencies.
@@ -139,7 +141,9 @@ through your chosen installation tool.
 With the Android SDK, NDK, CMake 3.31.6 and Gradle installed, run
 `./build-android.sh` on Linux or macOS to build an arm64 APK for Android 8.0 or
 later with Vulkan 1.1. Like on iOS, the app downloads Mojang's
-`bedrock-samples` pack on first launch. No Minecraft assets are bundled. Text uses
+`bedrock-samples` pack on first launch. No Minecraft assets are bundled. Setup uses
+the same first-launch screen, installation progress and retry/cancel controls as iOS and desktop.
+Menu text uses
 Monocraft and Noto Sans (OFL-1.1), which the script downloads and checks against
 `data/fallback_fonts.txt`. It fetches SDL,
 which provides the window, input and file picker, and packages

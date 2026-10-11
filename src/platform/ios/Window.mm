@@ -201,6 +201,7 @@ public:
         [NSNotificationCenter.defaultCenter removeObserver:mouseObserver];
         [NSNotificationCenter.defaultCenter removeObserver:keyboardObserver];
         view.pending = nullptr;
+        [view removeFromSuperview];
         mouse.mouseInput.mouseMovedHandler = nil;
         mouse.mouseInput.leftButton.pressedChangedHandler = nil;
         mouse.mouseInput.rightButton.pressedChangedHandler = nil;

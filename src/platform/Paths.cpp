@@ -6,6 +6,12 @@ namespace kestrel::platform {
 
 std::filesystem::path startupFont()
 {
+#if defined(KESTREL_MOBILE)
+    if (const char* directory = std::getenv("KESTREL_FONTS")) {
+        auto path = std::filesystem::path(directory) / "Monocraft.ttf";
+        if (std::filesystem::is_regular_file(path)) return path;
+    }
+#endif
     // The first-run screen must be readable before any game or fallback fonts exist.
 #if defined(_WIN32)
     if (const char* root = std::getenv("WINDIR")) {
