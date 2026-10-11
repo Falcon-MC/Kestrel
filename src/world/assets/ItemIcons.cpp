@@ -341,10 +341,7 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
         height = found->second.height;
         return found->second.rgba.empty() ? nullptr : &found->second.rgba;
     };
-    std::vector<std::string> atlases = pack.readTextLayers("textures/item_texture.json");
-    for (std::string& archived : pack.readArchivedLayers("textures", "item_texture.json")) {
-        atlases.push_back(std::move(archived));
-    }
+    std::vector<std::string> atlases = pack.readArchivedLayers("textures", "item_texture.json");
     for (const std::string& name : pack.archiveEntries("textures/items")) {
         size_t dot = name.rfind('.');
         std::string stem = name.substr(0, dot);
