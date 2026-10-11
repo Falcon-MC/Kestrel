@@ -1,6 +1,7 @@
 #include "client/ActorEquipment.h"
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
+#include "client/FirstPersonOverlay.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
 #include "render/Renderer.h"
@@ -31,6 +32,12 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    static_assert(kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", false, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, false, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, true));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:diamond_helmet", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("", true, true, false));
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);

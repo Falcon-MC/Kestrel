@@ -1,4 +1,6 @@
 #include "client/Client.h"
+#include "client/FirstPersonOverlay.h"
+#include "client/SpectatorRendering.h"
 #include "menu/GuiScale.h"
 #include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
@@ -486,6 +488,11 @@ int Client::run()
         context.recordWidgets(agentServer != nullptr && !mods->uiOpen());
         {
             Profiler::Section section(profiler, "menu ui");
+            if (worldShown && playerView.active && menu.worldVisible() && !menu.hudHidden()
+                && pumpkinMaskVisible(hudState.armor[0].identifier, perspective == PerspectiveFirst,
+                    !cameraDetached && serverCamera.playerEffects(), localSpectatorRendering(true, hudState.gameType))) {
+                context.sprite({ 0.0f, 0.0f, window->width() / scale, window->height() / scale }, "textures/misc/pumpkinblur");
+            }
             menu.frame(context, window->width() / scale, window->height() / scale);
             if (menu.capturesMouse() && !menu.hudHidden()) drawAimAssist(context, scale);
             if (menu.worldVisible() && !menu.hudHidden()) {
