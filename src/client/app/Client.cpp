@@ -502,6 +502,7 @@ int Client::run()
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
             }
+            if (auto answer = menu.signPanel().takeAnswer()) session.answerSign(std::move(*answer));
             context.recordWidgets(agentServer != nullptr);
             mods->drawUi(context, window->width() / scale, window->height() / scale);
             if (padCursorShown && (!menu.capturesMouse() || mods->uiOpen())) {
@@ -852,6 +853,7 @@ void Client::collectFeaturedImages()
 
 void Client::syncForms()
 {
+    if (auto request = session.takeSignEditor()) menu.signPanel().open(std::move(*request));
     for (FormRequest& request : session.takeForms()) {
         if (agentServer) {
             agent::JsonWriter writer;

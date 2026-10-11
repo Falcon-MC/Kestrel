@@ -277,7 +277,7 @@ bool Menu::worldVisible() const
 
 bool Menu::capturesMouse() const
 {
-    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !inputBlocked && !forms.active();
+    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !inputBlocked && !forms.active() && !signs.active();
 }
 
 void Menu::openForm(uint32_t id, const std::string& json)
@@ -335,9 +335,10 @@ void Menu::prepareInput(const InputState& input)
         dialog = Dialog::None;
     }
     if (!inGame() && forms.active()) forms.closeAll();
-    prepareInventoryInput(input);
+    if (!inGame() || session.dead) signs.reset();
+    if (!signs.active()) prepareInventoryInput(input);
     if (dialog == Dialog::Chat && !chatSettingsOpen) field = Field::Chat;
-    if (!forms.active()) {
+    if (!forms.active() && !signs.active()) {
         std::vector<std::string> pressed = std::exchange(pausePressed, {});
         for (const std::string& id : pressed) {
             if (dialog != Dialog::Pause) break;
@@ -505,7 +506,16 @@ void Menu::safeFrame(Context& ui, float width, float height)
         inventoryShown = inventory.active;
         inventoryChanged = now;
     }
-    coverHud(inventory.active || forms.active() || dialog != Dialog::None || screen != Screen::Title, now);
+    coverHud(inventory.active || forms.active() || signs.active() || dialog != Dialog::None || screen != Screen::Title, now);
+
+    if (!inGame()) signs.reset();
+    if (signs.active()) {
+        ui.setBlocked(false);
+        fadingHud(ui, width, height, now);
+        signs.draw(ui, width, height);
+        toasts.draw(ui, width, height);
+        return;
+    }
 
     if (inventory.active) {
         ui.setBlocked(false);
@@ -1681,6 +1691,7 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
     pauseUi.reset();
     globalPackScreens.clear();
     forms.setDefinitions(jsonUi);
+    signs.setDefinitions(jsonUi);
     inventory.setDefinitions(jsonUi);
 }
 

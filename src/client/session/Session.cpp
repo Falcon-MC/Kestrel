@@ -449,6 +449,9 @@ void Session::resetSnapshot(std::string name, std::string target)
     outgoingChat.clear();
     pendingForms.clear();
     outgoingForms.clear();
+    pendingSignEditor.reset();
+    activeSignEditor.reset();
+    outgoingSign.reset();
     publishSnapshotLocked();
 }
 
@@ -1090,6 +1093,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::RemoveObjective:
     case MinecraftPacketIds::ModalFormRequest:
     case MinecraftPacketIds::ClientboundCloseForm:
+    case MinecraftPacketIds::OpenSign:
     case MinecraftPacketIds::PacketViolationWarning:
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
@@ -1136,6 +1140,7 @@ void Session::handleWorldPacket(std::string& payload)
     handleChatPacket(packet);
     handleScorePacket(packet);
     handleFormPacket(packet);
+    handleSignPacket(packet);
 
     if (auto violation = std::dynamic_pointer_cast<PacketViolationWarningPacket>(packet)) {
         handleViolation(*violation);
@@ -2585,6 +2590,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         flushInventory();
         flushChat();
         flushForms();
+        flushSign();
         tickMotion();
         publishMotionFeed();
         collectMeshes();

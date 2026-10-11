@@ -276,6 +276,7 @@ std::string Client::agentState()
     writer.field("socialDrawer", menu.socialDrawerOpen());
     writer.field("inventoryOpen", menu.inventoryOpen());
     writer.field("formsOpen", menu.formPanel().openForms().size());
+    writer.field("signEditorOpen", menu.signPanel().active());
     writer.field("inGame", worldShown);
     writer.field("playing", menu.capturesMouse());
     writer.field("bodyYaw", localBodyYaw).field("lookYaw", localLookYaw);
