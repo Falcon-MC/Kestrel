@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <chrono>
 #include <string>
 
 namespace kestrel {
@@ -50,6 +51,7 @@ inline constexpr size_t PadAxisCount = static_cast<size_t>(PadAxis::Count);
  */
 struct GamepadState {
     bool connected = false;
+    double receiptTime = 0.0;
     std::string name;
     std::array<float, PadAxisCount> axes {};
     std::array<bool, PadButtonCount> held {};
@@ -82,6 +84,10 @@ struct GamepadState {
      */
     void update(const std::array<bool, PadButtonCount>& now, const std::array<float, PadAxisCount>& values)
     {
+        receiptTime = 0.0;
+        if (now != held || values != axes) {
+            receiptTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
         for (size_t i = 0; i < PadButtonCount; ++i) {
             pressed[i] = now[i] && !held[i];
             released[i] = !now[i] && held[i];

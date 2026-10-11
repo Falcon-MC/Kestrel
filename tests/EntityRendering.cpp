@@ -1,12 +1,28 @@
 #include "client/ActorEquipment.h"
+#include "client/CrossbowItem.h"
+#include "client/ActorProperties.h"
+#include "client/FirstPersonAnimation.h"
+#include "client/FirstPersonOverlay.h"
+#include "client/FishingLine.h"
+#include "client/ModelQuadOutput.h"
+#include "client/SpectatorRendering.h"
+#include "client/FireOverlay.h"
+#include "client/SignEditor.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
+#include "world/EntityMaterialBlend.h"
 #include "world/Geometry.h"
+#include "world/ItemGlint.h"
+#include "world/ClockDial.h"
+#include "world/ItemInfo.h"
 #include "Core/Json/Json.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 void require(bool condition, const char* message)
 {
@@ -23,14 +39,492 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    require(kestrel::world::clockFrame(6000.0) == 0, "clock noon frame");
+    require(kestrel::world::clockFrame(18000.0) == 32, "clock midnight frame");
+    require(kestrel::world::clockFrame(30000.0) == 0, "clock day wrap");
+    require(kestrel::world::clockFrame(-6000.0) == 32, "clock negative time wrap");
+    require(kestrel::world::clockFrame(std::numeric_limits<double>::infinity()) == 0, "clock finite time");
+    std::vector<uint8_t> clockPixels(16 * 16 * 4, 0);
+    size_t sunPixel = (4 * 16 + 7) * 4;
+    clockPixels[sunPixel] = clockPixels[sunPixel + 1] = clockPixels[sunPixel + 3] = 255;
+    clockPixels[0] = 178;
+    clockPixels[1] = 100;
+    clockPixels[2] = 17;
+    clockPixels[3] = 255;
+    auto nightClock = kestrel::world::clockDial(clockPixels, 16, 32);
+    require(kestrel::world::clockDial(clockPixels, 16, 0) == clockPixels, "clock keeps native noon texture");
+    require(nightClock[sunPixel] == nightClock[sunPixel + 2] && nightClock[sunPixel] > 200, "clock moon replaces sun at midnight");
+    require(std::equal(clockPixels.begin(), clockPixels.begin() + 4, nightClock.begin()), "clock preserves rim");
+    require(nightClock[7] == 0, "clock preserves transparency");
+    static_assert(kestrel::fireOverlayVisible(1, true, true, false));
+    static_assert(!kestrel::fireOverlayVisible(0, true, true, false));
+    static_assert(!kestrel::fireOverlayVisible(1, false, true, false));
+    static_assert(!kestrel::fireOverlayVisible(1, true, false, false));
+    static_assert(!kestrel::fireOverlayVisible(1, true, true, true));
+    require(kestrel::fireOverlayFrame(0.1, 32, 1) == 2, "Fire animation advances at the material tick rate");
+    require(kestrel::fireOverlayFrame(0.1, 32, 2) == 1, "Fire animation respects pack timing");
+    require(kestrel::fireOverlayFrame(1.625, 32, 1) == 0, "Fire animation wraps its frame sequence");
+    require(kestrel::fireOverlayFrame(std::numeric_limits<double>::infinity(), 32, 1) == 0, "Non-finite fire animation time is rejected");
+    Tag sign = Tag::ofCompound();
+    sign.putString("id", "Sign");
+    sign.putLong("LockedForEditingBy", 42);
+    Tag face = Tag::ofCompound();
+    face.putString("Text", "front");
+    face.putInt("SignTextColor", -1);
+    face.putBool("IgnoreLighting", true);
+    sign.put("FrontText", face);
+    face.putString("Text", "back");
+    sign.put("BackText", face);
+    auto edited = kestrel::editedSignData(sign, true, "one\ntwo\nthree\nfour");
+    require(edited && edited->get("FrontText")->getString("Text") == "one\ntwo\nthree\nfour", "Sign text updates the requested face");
+    require(edited->get("BackText")->getString("Text") == "back" && edited->get("FrontText")->getBool("IgnoreLighting") && edited->get("FrontText")->getInt("SignTextColor") == -1, "Sign editing preserves the opposite face, glow and dye");
+    require(edited->getLong("LockedForEditingBy") == -1, "Sign editing releases the lock");
+    require(!kestrel::editedSignData(sign, false, std::string(4097, 'a')), "Sign editing bounds outgoing text");
+    sign.putBool("IsWaxed", true);
+    require(!kestrel::editedSignData(sign, true, "invalid"), "Waxed signs cannot be edited");
+    require(kestrel::signEditorTexture("minecraft:dark_oak_wall_sign", false) == "textures/ui/sign_darkoak", "Dark oak uses the installed sign texture");
+    require(kestrel::signEditorTexture("minecraft:bamboo_hanging_sign", true) == "textures/ui/hanging_sign_bamboo", "Hanging signs use the installed texture");
+    static_assert(kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", false, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, false, false));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, true));
+    static_assert(!kestrel::pumpkinMaskVisible("minecraft:diamond_helmet", true, true, false));
+    static_assert(!kestrel::pumpkinMaskVisible("", true, true, false));
+    int64_t fishingOwner = -1;
+    EntityDataEntry fishingMetadata;
+    fishingMetadata.mId = 5;
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -123456;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Fishing owners use signed unique IDs, not runtime IDs");
+    fishingMetadata.mFormat = EntityDataFormat::Int;
+    fishingMetadata.mLongValue = 42;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Ignore incorrectly typed owner metadata");
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -1;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -1, "Owner removal clears the fishing line");
+    const auto line = kestrel::fishingLine({ 0, 2, 0 }, { 4, 0, 0 });
+    require(line.size() == 24 && line.front().first.x == 0 && line.front().first.y == 2
+            && line.back().second.x == 4 && line.back().second.y == 0, "Fishing line reaches both endpoints");
+    require(line[11].second.y < 1.0, "Fishing line sags between its endpoints");
+    for (size_t i = 1; i < line.size(); ++i) {
+        require(line[i - 1].second.x == line[i].first.x && line[i - 1].second.y == line[i].first.y,
+            "Fishing line segments stay connected");
+    }
+    require(kestrel::fishingLine({ 0, 0, 0 }, { 0, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { 65, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { std::numeric_limits<double>::quiet_NaN(), 0, 0 }).empty(),
+        "Invalid or excessive fishing lines produce no geometry");
+    Tag crossbowData = Tag::ofCompound(), chargedItem = Tag::ofCompound();
+    chargedItem.putByte("Count", 1);
+    chargedItem.putString("Name", "minecraft:arrow");
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 4, "A loaded arrow must select the crossbow arrow frame");
+    chargedItem.putString("Name", "minecraft:fireworks");
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 5, "A loaded firework must select the rocket frame");
+    chargedItem.putByte("Count", 0);
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 0
+            && kestrel::chargedCrossbowFrame(Tag::ofCompound()) == 0
+            && kestrel::chargedCrossbowFrame(Tag::ofInt(1)) == 0,
+        "Empty or malformed charged-item data must not show a loaded projectile");
+    require(kestrel::world::itemMaxUseTicks("minecraft:crossbow") == 72000,
+        "Crossbows must enter the same held-use lifecycle as other charged weapons");
+    require(kestrel::world::itemMaxUseTicks("minecraft:bow") == 72000
+            && kestrel::world::itemMaxUseTicks("minecraft:trident") == 72000
+            && kestrel::world::itemMaxUseTicks("minecraft:spyglass") == 1200
+            && kestrel::world::itemMaxUseTicks("minecraft:stone") == 0,
+        "Adding crossbow charge must preserve other item use durations");
+    kestrel::world::EntityAnimator crossbowAnimator;
+    kestrel::world::AnimationInput crossbowInput;
+    crossbowInput.mainHandItem = "minecraft:crossbow";
+    crossbowInput.metadataQueries["get_animation_frame"] = 4;
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 4,
+        "The render-controller frame query must expose a loaded crossbow");
+    crossbowInput.metadataQueries["get_animation_frame"] = std::numeric_limits<double>::quiet_NaN();
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 0, "Invalid item frames must stay bounded");
+    crossbowInput.metadataQueries.clear();
+    crossbowInput.mainHandItem = "minecraft:bow";
+    crossbowInput.itemUseTicks = 18;
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 3,
+        "Per-stack crossbow frames must not change bow pulling frames");
+    static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
+    static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
+    static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);
+    std::vector<kestrel::world::HandQuadGpu> precise;
+    std::vector<kestrel::world::ModelQuadGpu> packed;
+    kestrel::ModelQuadOutput handOutput(precise), worldOutput(packed);
+    kestrel::world::ModelQuadGpu material;
+    material.words[10] = 123;
+    material.words[14] = 0xa0123456;
+    material.glint = { 1.0f, 2.0f, 0.75f, 0.4f };
+    kestrel::ModelQuadOutput::Positions fractional { { { 0.125f, -0.75f, 300.5f },
+        { 0.25f, -0.5f, 300.25f }, { 0.5f, -0.25f, 300.125f }, { 0.75f, -0.125f, 300.0f } } };
+    kestrel::packEntityPositions(fractional, material.words);
+    handOutput.push_back(material, fractional);
+    worldOutput.push_back(material, fractional);
+    require(packed[0].words == material.words && precise[0].model.words == material.words
+            && precise[0].model.glint == material.glint, "Hand precision must preserve material, UV, tint, light and glint data");
+    for (size_t corner = 0; corner < 4; ++corner) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            require(precise[0].positions[corner * 3 + axis] == fractional[corner][axis] / 256.0f,
+                "Hand positions must reach the GPU without integer rounding");
+        }
+    }
+    fractional[0][0] += 0.001f;
+    handOutput.push_back(material, fractional);
+    require(precise[1].positions[0] != precise[0].positions[0], "Sub-grid animation movement must not snap to a terrain step");
+    handOutput[1].words[12] = 0x87654321;
+    handOutput.back().glint[2] = 0.5f;
+    require(precise[1].model.words[12] == 0x87654321 && precise[1].model.glint[2] == 0.5f,
+        "Post-emission lighting and glint must update the precise hand stream");
+    for (int frame = 0; frame < 100; ++frame) {
+        float bob = std::sin(frame * 0.17f) * 0.011f;
+        std::array<float, 3> start { 143.125f, -132.25f + bob * 256.0f, -184.375f };
+        std::array<float, 3> end { 126.5f + bob, -32.75f, -159.25f };
+        for (int step = 0; step <= 64; ++step) {
+            float t = step / 64.0f;
+            kestrel::ModelQuadOutput::Positions edge {};
+            for (size_t axis = 0; axis < 3; ++axis) edge[0][axis] = start[axis] + (end[axis] - start[axis]) * t;
+            handOutput.push_back(material, edge);
+            for (size_t axis = 0; axis < 3; ++axis) {
+                float expected = (start[axis] + (end[axis] - start[axis]) * t) / 256.0f;
+                require(handOutput.size() == precise.size() && precise.back().positions[axis] == expected,
+                    "Animated boundary strips must retain the same edge as the front face");
+            }
+        }
+    }
+    fractional[0][0] = std::numeric_limits<float>::quiet_NaN();
+    fractional[0][1] = std::numeric_limits<float>::infinity();
+    handOutput.push_back(material, fractional);
+    require(precise.back().positions[0] == 0.0f && precise.back().positions[1] == 0.0f,
+        "Non-finite hand geometry must not reach the vertex shader");
     using namespace kestrel;
     using namespace kestrel::world;
-    static_assert(sizeof(ActorDraw::constants) == 240);
+    for (int32_t mode : { 0, 1, 2, 6 }) {
+        require(localSpectatorRendering(true, mode) == (mode == motion::GameSpectator),
+            "Only the local spectator may use head-only rendering");
+        require(!localSpectatorRendering(false, mode), "Remote players must retain their rendering");
+    }
+    std::vector<EntityBone> spectatorBones(10);
+    spectatorBones[0].name = "body";
+    spectatorBones[1].name = "HEAD";
+    spectatorBones[1].parent = 0;
+    spectatorBones[2].name = "hat";
+    spectatorBones[3].name = "face";
+    spectatorBones[3].parent = 1;
+    spectatorBones[4].name = "hair";
+    spectatorBones[4].parent = 3;
+    spectatorBones[5].name = "rightArm";
+    spectatorBones[5].parent = 0;
+    spectatorBones[6].name = "orphan";
+    spectatorBones[6].parent = 100;
+    spectatorBones[7].parent = 8;
+    spectatorBones[8].parent = 7;
+    spectatorBones[9].parent = 4;
+    require(spectatorHeadBones(spectatorBones) == std::vector<uint8_t> { 0, 1, 1, 1, 1, 0, 0, 0, 0, 1 },
+        "Spectators must keep head descendants and hat, not body, limbs or malformed hierarchies");
+    require(spectatorHeadBones({}).empty(), "Empty spectator geometry must be safe");
+    require((SpectatorHeadQuadFlag >> 5) == 1024u, "Spectator alpha must use the same GPU flag on each backend");
+    auto handDescription = json::parse(R"({"animations":{"pose":"animation.test.hand"},"scripts":{"animate":["pose"]}})");
+    auto handScripts = readEntityScripts(*handDescription);
+    auto handDocument = json::parse(R"({"animations":{"animation.test.hand":{"loop":true,"bones":{"body":{"rotation":["q.target_x_rotation","q.target_y_rotation",0]}}}}})");
+    AnimationLibrary handLibrary;
+    handLibrary.parse(*handDocument);
+    std::vector<EntityBone> cameraBones(1);
+    cameraBones[0].name = "body";
+    cameraBones[0].pivot = { 0.0f, 24.0f, 0.0f };
+    for (float pitch : { -89.0f, 0.0f, 89.0f }) {
+        for (float yaw : { 0.0f, 90.0f, 180.0f, 270.0f }) {
+            AnimationInput cameraInput;
+            cameraInput.identifier = "minecraft:player";
+            cameraInput.pitch = pitch;
+            cameraInput.yaw = yaw;
+            cameraInput.headYaw = yaw + 45.0f;
+            cameraInput.engineVariables = { { "player_x_rotation", pitch } };
+            cameraLocalHandPose(cameraInput);
+            EntityAnimator cameraAnimator;
+            cameraAnimator.update(handScripts.get(), &handLibrary, cameraBones, cameraInput);
+            require(cameraAnimator.matrices()[0] == BoneMatrix { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 },
+                "First-person view rotations must not rotate the animated body a second time");
+            require(expression(cameraAnimator, "v.player_x_rotation") == pitch,
+                "Camera-local hand poses must preserve the pitch driver used by map animations");
+        }
+    }
+    std::vector<EntityBone> handBones(1);
+    handBones[0].name = "leftItem";
+    handBones[0].pivot = { -6.0f, 15.0f, 1.0f };
+    EntityAnimator owner;
+    AnimationInput ownerInput;
+    ownerInput.engineVariables = { { "player_arm_height", 0.75 }, { "attack_time", 0.25 } };
+    owner.update(nullptr, nullptr, handBones, ownerInput);
+    require(expression(owner, "q.get_default_bone_pivot('leftitem', 0)") == 6.0
+            && expression(owner, "q.get_default_bone_pivot('LEFTITEM', 1)") == 15.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 2)") == 1.0,
+        "Hand placement queries must read authored pivots in the original geometry basis");
+    require(expression(owner, "q.get_default_bone_pivot('missing', 1)") == 0.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 3)") == 0.0
+            && expression(owner, "q.get_default_bone_pivot('leftitem', 0.5)") == 0.0,
+        "Missing bones and invalid pivot axes must remain bounded");
+    EntityAnimator mainAttachable, offAttachable;
+    AnimationInput attachableInput;
+    for (const auto& [name, value] : owner.variableValues()) {
+        attachableInput.engineVariables.emplace_back(name, value);
+    }
+    attachableInput.contextVariables = { { "is_first_person", 1.0 },
+        { "item_slot", molang::internString("main_hand") }, { "player_offhand_arm_height", 0.2 } };
+    mainAttachable.update(nullptr, nullptr, handBones, attachableInput);
+    attachableInput.contextVariables[1].second = molang::internString("off_hand");
+    offAttachable.update(nullptr, nullptr, handBones, attachableInput);
+    require(expression(offAttachable, "v.player_arm_height") == 0.75
+            && expression(offAttachable, "c.player_offhand_arm_height") == 0.2,
+        "First-person attachables must inherit owner variables and independent offhand height");
+    require(expression(mainAttachable, "c.item_slot == 'main_hand'") == 1
+            && expression(offAttachable, "c.item_slot == 'off_hand'") == 1,
+        "Main and offhand attachables must retain separate animation contexts");
+    expression(offAttachable, "v.player_arm_height = 0.1;");
+    require(expression(mainAttachable, "v.player_arm_height") == 0.75
+            && expression(owner, "v.player_arm_height") == 0.75,
+        "Offhand animation variables must not mutate the owner or main-hand animator");
+    for (const char* identifier : { "minecraft:xp_orb", "minecraft:fireball", "minecraft:small_fireball", "minecraft:dragon_fireball" }) {
+        require(entityModelYaw(identifier, 75.0f) == 0.0f, "South-facing sprites must keep their visible face toward the camera");
+    }
+    require(entityModelYaw("minecraft:snowball", 75.0f) == 180.0f, "North-facing sprites must retain their authored basis");
+    require(entityModelYaw("minecraft:arrow", 75.0f) == 0.0f, "Projectile animations must retain absolute yaw");
+    require(entityModelYaw("minecraft:cow", 435.0f) == 75.0f, "Regular actors must turn with their body yaw");
+    EntityMaterialBlendLibrary materials;
+    auto materialDocument = json::parse(R"({"materials":{"base":{"+states":["Blending"],"blendSrc":"One","blendDst":"One"},"middle:base":{},"overlay:middle":{},"alpha:base":{"blendDst":"OneMinusSrcAlpha"},"opaque:overlay":{"-states":["Blending"]},"reset:base":{"states":[]},"cycle_a:cycle_b":{},"cycle_b:cycle_a":{}}})");
+    materials.parse(*materialDocument);
+    require(materials.find("overlay") == EntityBlend::Additive, "Entity overlays must inherit additive blending through material parents");
+    require(materials.find("alpha") == EntityBlend::Blend, "A child material must override inherited blend factors");
+    require(materials.find("opaque") == EntityBlend::Opaque && materials.find("reset") == EntityBlend::Opaque,
+        "Removing or replacing states must disable inherited blending");
+    require(!materials.find("missing") && !materials.find("cycle_a"), "Missing and cyclic material parents must not recurse indefinitely");
+    auto emissiveDocument = json::parse(R"({"materials":{"glow":{"+defines":["USE_EMISSIVE"]},"mob:glow":{},"masked:mob":{"-defines":["USE_EMISSIVE"]}}})");
+    materials.parse(*emissiveDocument);
+    require(materials.emissive("mob") == true, "Entity materials must inherit the shader that preserves low-alpha emissive pixels");
+    require(materials.emissive("masked") == false && !materials.emissive("cycle_a"), "Removed defines and cycles must not enable emissive shading");
+    auto multiDocument = json::parse(R"({"materials":{"multi":{"+defines":["USE_MULTITEXTURE"]},"decor:multi":{},"plain:decor":{"-defines":["USE_MULTITEXTURE"]},"replace:decor":{"defines":[]}}})");
+    materials.parse(*multiDocument);
+    require(materials.multitexture("decor") == true, "Material aliases must inherit layered textures for entity decorations");
+    require(materials.multitexture("plain") == false && materials.multitexture("replace") == false,
+        "Removed or replaced defines must disable inherited texture layers");
+    EntityRenderController materialController;
+    materialController.materialChoices = { { EntityMaterial::Dragon, EntityBlend::Opaque, false }, { EntityMaterial::AlphaTest, EntityBlend::Additive, true } };
+    require(materialController.selectedMaterial(0).material == EntityMaterial::Dragon && materialController.selectedMaterial(1).blend == EntityBlend::Additive,
+        "Material selectors must change shader and blending together");
+    require(materialController.selectedMaterial(-1).material == EntityMaterial::Dragon
+            && materialController.selectedMaterial(std::numeric_limits<double>::quiet_NaN()).material == EntityMaterial::Dragon
+            && materialController.selectedMaterial(1e300).oneSided,
+        "Malformed material indices must select a bounded fallback without integer overflow");
+    Tag propertyData = Tag::ofCompound();
+    propertyData.putString("type", "test:mob");
+    Tag propertyList = Tag::ofList(Tag::Type::Compound);
+    for (const auto& [name, type] : { std::pair { "test:state", 3 }, { "test:amount", 1 }, { "test:visible", 2 } }) {
+        Tag entry = Tag::ofCompound();
+        entry.putString("name", name);
+        entry.putInt("type", type);
+        if (type == 3) entry.put("enum", Tag::ofList(Tag::Type::String, { Tag::ofString("idle"), Tag::ofString("moving") }));
+        propertyList.addToList(std::move(entry));
+    }
+    propertyData.put("properties", propertyList);
+    auto propertySchema = ActorPropertySchema::read(propertyData);
+    require(propertySchema.has_value(), "Valid server property schemas must retain their wire order");
+    EntityProperties properties;
+    properties.mIntProperties = { { 0, 1 }, { 2, 0 } };
+    properties.mFloatProperties = { { 1, 0.75f } };
+    AnimationInput propertyInput;
+    propertySchema->apply(properties, propertyInput.properties);
+    std::vector<EntityBone> propertyBones(1);
+    EntityAnimator propertyAnimator;
+    propertyAnimator.update(nullptr, nullptr, propertyBones, propertyInput);
+    require(expression(propertyAnimator, "query.property('test:state') == 'moving'") == 1, "Enum properties must compare as Molang strings");
+    require(expression(propertyAnimator, "query.property('test:amount')") == 0.75, "Float properties must use their schema index");
+    require(expression(propertyAnimator, "query.has_property('test:visible')") == 1, "A false property is still present");
+    require(expression(propertyAnimator, "query.has_property('test:unknown')") == 0, "Unknown properties must remain absent");
+    auto tempDocument = json::parse(R"({"scripts":{"initialize":["t.state = 'moving';"],"pre_animation":["v.leaked = t.state == 'moving';","t.state = q.property('test:state');","v.selected = t.state == 'moving';"]}})");
+    auto tempScripts = readEntityScripts(*tempDocument);
+    EntityAnimator tempAnimator;
+    tempAnimator.update(tempScripts.get(), nullptr, propertyBones, propertyInput);
+    require(expression(tempAnimator, "v.selected") == 1, "Temporary values must survive between lines in one animation script block");
+    require(expression(tempAnimator, "v.leaked") == 0, "Temporary values must not leak between initialization and pre-animation blocks");
+    tempAnimator.update(tempScripts.get(), nullptr, propertyBones, propertyInput);
+    require(expression(tempAnimator, "v.leaked") == 0, "Temporary values must be reset before the next pre-animation block");
+    properties.mIntProperties = { { 0, 0 } };
+    properties.mFloatProperties.clear();
+    propertySchema->apply(properties, propertyInput.properties);
+    require(propertyInput.properties.at("test:amount") == 0.75, "Partial property updates must preserve unchanged values");
+    require(propertyInput.properties.at("test:state") == molang::internString("idle"), "An enum update must replace its previous value");
+    properties.mIntProperties = { { -1, 1 }, { 0, 99 }, { 1, 9 }, { 2, 2 }, { 999, 0 } };
+    properties.mFloatProperties = { { 1, std::numeric_limits<float>::infinity() }, { 0, 1.0f } };
+    propertySchema->apply(properties, propertyInput.properties);
+    require(propertyInput.properties.at("test:state") == molang::internString("idle") && propertyInput.properties.at("test:amount") == 0.75 && propertyInput.properties.at("test:visible") == 0,
+        "Invalid indices, types and values must not corrupt actor properties");
+    require(!ActorPropertySchema::read(Tag::ofInt(0)), "Non-compound property schemas must be rejected");
+    Tag invalidData = propertyData;
+    invalidData.get("properties")->addToList(propertyList.getList().front());
+    require(!ActorPropertySchema::read(invalidData), "Duplicate property names must not shift wire indices");
+    std::vector<EntityBone> combinedBones(3);
+    combinedBones[0].name = "arm";
+    combinedBones[0].pivot = { 0, 6, 0 };
+    combinedBones[0].parent = 1;
+    combinedBones[1].name = "body";
+    combinedBones[2].name = "overlay";
+    combinedBones[2].parent = 1;
+    std::vector<EntityBone> adultBones(2);
+    adultBones[0].name = "Body";
+    adultBones[0].pivot = { 0, 20, 0 };
+    adultBones[1].name = "Arm";
+    adultBones[1].parent = 0;
+    adultBones[1].pivot = { 0, 22, 0 };
+    auto adultPose = poseBonesForGeometry(combinedBones, adultBones);
+    require(adultPose[0].pivot[1] == 22 && adultPose[0].parent == 1 && adultPose[1].parent == -1,
+        "Selected adult geometry must replace baby pivots and remap parent indices");
+    require(adultPose[2].name == "overlay" && adultPose[2].parent == 1,
+        "Selecting a geometry must preserve additional controller bones");
+    auto babyBones = adultBones;
+    babyBones[1].pivot[1] = 6;
+    auto babyPose = poseBonesForGeometry(combinedBones, babyBones);
+    require(babyPose[0].pivot[1] == 6, "Switching variants must restore the selected geometry's pivot");
+    auto absoluteDescription = json::parse(R"({"animations":{"move":"animation.guardian.spikes"},"scripts":{"animate":["move"]}})");
+    auto absoluteScripts = readEntityScripts(*absoluteDescription);
+    auto absoluteDocument = json::parse(R"({"animations":{"animation.guardian.spikes":{"loop":true,"bones":{"spike":{"position":["-this","16-this","-this"]}}}}})");
+    AnimationLibrary absoluteLibrary;
+    absoluteLibrary.parse(*absoluteDocument);
+    std::vector<EntityBone> absoluteBones(1);
+    absoluteBones[0].name = "spike";
+    absoluteBones[0].pivot = { 0, 24, 0 };
+    AnimationInput absoluteInput;
+    absoluteInput.identifier = "minecraft:guardian";
+    EntityAnimator absoluteAnimator;
+    absoluteAnimator.update(absoluteScripts.get(), &absoluteLibrary, absoluteBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == -8, "Absolute guardian positions must subtract their geometry pivot");
+    absoluteInput.identifier = "minecraft:elder_guardian";
+    absoluteAnimator.update(absoluteScripts.get(), &absoluteLibrary, absoluteBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == -8, "Elder guardians must use the same absolute spike coordinates");
+    auto polarDescription = json::parse(R"({"animations":{"move":"animation.polarbear.move"},"scripts":{"animate":["move"]}})");
+    auto polarScripts = readEntityScripts(*polarDescription);
+    auto polarDocument = json::parse(R"({"animations":{"animation.polarbear.move":{"loop":true,"bones":{"body":{"position":[0,"-9-this",0]},"leg":{"position":[0,0,0]}}}}})");
+    AnimationLibrary polarLibrary;
+    polarLibrary.parse(*polarDocument);
+    std::vector<EntityBone> polarBones(2);
+    polarBones[0].name = "body";
+    polarBones[0].pivot = { 0, 15, 0 };
+    polarBones[1].name = "leg";
+    polarBones[1].pivot = { 0, 10, 0 };
+    polarBones[1].parent = 0;
+    absoluteInput.identifier = "minecraft:polar_bear";
+    absoluteAnimator.update(polarScripts.get(), &polarLibrary, polarBones, absoluteInput);
+    require(absoluteAnimator.matrices()[0][7] == 0 && absoluteAnimator.matrices()[1][7] == 0,
+        "Legacy polar bear body coordinates must not translate its legs through the floor");
+    auto endermanDescription = json::parse(R"({"animations":{"pose":"animation.enderman.base_pose"},"scripts":{"animate":["pose"]}})");
+    auto endermanScripts = readEntityScripts(*endermanDescription);
+    auto endermanDocument = json::parse(R"({"animations":{"animation.enderman.base_pose":{"loop":true,"bones":{"body":{"position":[0,"11-this",0]},"head":{"position":[0,"-this",0]},"hat":{"position":[0,"-this",0]},"leg":{"position":[0,"-5-this",0]}}}}})");
+    AnimationLibrary endermanLibrary;
+    endermanLibrary.parse(*endermanDocument);
+    std::vector<EntityBone> endermanBones(4);
+    for (size_t index = 0; index < endermanBones.size(); ++index) {
+        endermanBones[index].name = std::array { "body", "head", "hat", "leg" }[index];
+        endermanBones[index].pivot[1] = std::array { 38.0f, 24.0f, 38.0f, 26.0f }[index];
+        endermanBones[index].parent = std::array { -1, 0, 1, 0 }[index];
+    }
+    absoluteInput.identifier = "minecraft:enderman";
+    absoluteAnimator.update(endermanScripts.get(), &endermanLibrary, endermanBones, absoluteInput);
+    const auto& endermanMatrices = absoluteAnimator.matrices();
+    require(endermanMatrices[0][7] == -3 && endermanMatrices[1][7] == 11 && endermanMatrices[2][7] == -3 && endermanMatrices[3][7] == 4,
+        "Legacy Enderman positions must use each parent origin rather than stacking absolute offsets");
+    static_assert(sizeof(ActorDraw::constants) == 272);
+    ModelQuadGpu glintQuad;
+    glintQuad.words[10] = 8191;
+    glintQuad.words[14] = 0xa0123456u;
+    applyItemGlint(glintQuad, 8191, 1.0, 100.0f, 100.0f);
+    require((glintQuad.words[10] & 0x1fffu) == 8191, "Glint metadata must preserve the base texture layer");
+    require(glintQuad.glint[3] == 8191.0f, "Glint must address all entity texture pages");
+    require(glintQuad.words[14] == 0xa0123456u, "Glint must preserve leather dye and cutout mode");
+    auto phase = itemGlintParameters(1.0, 1.0f, 100.0f);
+    require(std::abs(phase[0] + 4.0f / 7.0f) < 1e-6f && std::abs(phase[1] - 1.0f / 3.0f) < 1e-6f,
+        "Foil layers must use independent 1750 ms and 3000 ms clocks");
+    require(phase[2] == 0.01f, "Low foil strength must not disappear through five-bit quantization");
+    auto advanced = itemGlintParameters(1.01, 100.0f, 100.0f);
+    require(advanced[0] != phase[0] && advanced[1] != phase[1], "Foil must advance within the old 125 ms frame");
+    require(itemGlintParameters(2.0, 1.0f, 50.0f) == phase, "Half speed must preserve the two relative layer periods");
+    require(itemGlintParameters(22.0, 1.0f, 100.0f) == phase, "The combined foil animation repeats after 21 seconds");
+    auto stopped = itemGlintParameters(1234.0, 100.0f, 0.0f);
+    require(stopped[0] == 0.0f && stopped[1] == 0.0f, "Zero speed must stop both layers");
+    auto uv = itemGlintUv(0.5f, 0.5f, stopped);
+    require(uv == std::array<float, 4> { 0.25f, 0.25f, 0.25f, 0.25f }, "Foil rotation must be centered before the half UV scale");
+    auto right = itemGlintUv(1.0f, 0.5f, stopped);
+    require(std::abs(right[0] - 0.48492315f) < 1e-6f && std::abs(right[1] - 0.33550504f) < 1e-6f
+        && std::abs(right[2] - 0.29341204f) < 1e-6f && std::abs(right[3] - 0.00379806f) < 1e-6f,
+        "Foil must use real minus-20 and plus-80 degree rotations instead of shears");
+    ModelQuadGpu animated;
+    animated.words[10] = 0xdedbe123u;
+    animated.words[14] = 0x12345678u;
+    animated.words[15] = 0x3c003c00u;
+    auto baseWords = animated.words;
+    applyItemGlint(animated, 42, 1.0, 50.0f, 100.0f, { 0.5f, 0.5f, 300.0f, 200.0f });
+    require(animated.words == baseWords && animated.glint[3] == 42 && animated.glintTexture[2] == 300,
+        "Foil must preserve animated base materials and dye, including HD texture dimensions");
+    ModelQuadGpu unchanged;
+    applyItemGlint(unchanged, NoEntityChoice, 1.0, 100.0f, 100.0f);
+    require(unchanged.words[10] == 0, "Missing glint textures must leave the base material intact");
+    applyItemGlint(unchanged, 1, 1.0, 0.0f, 100.0f);
+    require(unchanged.words[10] == 0, "Disabling glint must preserve the base material");
+    auto foilMaterials = json::parse(R"({"materials":{"foil":{"+defines":["GLINT"]},"inherit:foil":{},"remove:inherit":{"-defines":["GLINT"]},"replace:inherit":{"defines":[]}}})");
+    materials.parse(*foilMaterials);
+    require(materials.glint("inherit") == true && materials.glint("remove") == false && materials.glint("replace") == false,
+        "Foil material inheritance must honor added, removed and replaced defines");
     static_assert(actorEquipmentIsOffhand("minecraft:armor_stand", 0, 1));
     static_assert(!actorEquipmentIsOffhand("minecraft:armor_stand", 0, 0));
     static_assert(!actorEquipmentIsOffhand("minecraft:player", 0, 1));
     static_assert(actorEquipmentIsOffhand("minecraft:player", 119, 0));
     static_assert(!actorEquipmentIsOffhand("minecraft:armor_stand", 120, 1));
+    auto weightedDescription = json::parse(R"json({"animations":{"base":"animation.test.base","weighted":"animation.test.weighted"},"scripts":{"animate":["base",{"weighted":"q.property('test:weight')"}]}})json");
+    auto weightedScripts = readEntityScripts(*weightedDescription);
+    auto weightedDocument = json::parse(R"({"animations":{"animation.test.base":{"loop":true,"bones":{"leg":{"position":[2,0,0]}}},"animation.test.weighted":{"loop":true,"blend_weight":"0.5","bones":{"leg":{"rotation":[60,0,0]}}}}})");
+    AnimationLibrary weightedLibrary;
+    weightedLibrary.parse(*weightedDocument);
+    std::vector<EntityBone> weightedBones(1);
+    weightedBones[0].name = "leg";
+    EntityAnimator weightedAnimator;
+    AnimationInput weightedInput;
+    for (double weight : { 0.0, 0.25, 0.5, 1.0 }) {
+        weightedInput.properties["test:weight"] = weight;
+        weightedAnimator.update(weightedScripts.get(), &weightedLibrary, weightedBones, weightedInput);
+        const auto& matrix = weightedAnimator.matrices()[0];
+        require(std::abs(matrix[5] - std::cos(weight * 30.0 * 3.14159265359 / 180.0)) < 1e-6,
+            "Top-level animation expressions must multiply clip blend weights, not act as booleans");
+        require(matrix[3] == -2.0f, "Weighted animations must preserve unconditional base clips");
+    }
+    auto walkDescription = json::parse(R"({"animations":{"walk":"animation.test.weighted"},"scripts":{"animate":[{"walk":"q.modified_move_speed"}]}})");
+    auto walkScripts = readEntityScripts(*walkDescription);
+    EntityAnimator walkAnimator;
+    AnimationInput walkInput;
+    walkInput.now = 5.0;
+    walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    for (int tick = 1; tick <= 10; ++tick) {
+        walkInput.now = 5.0 + tick * 0.051;
+        walkInput.x += 0.05;
+        walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    }
+    require(std::abs(walkAnimator.matrices()[0][6]) > 0.01f, "Movement must still animate the legs");
+    for (int tick = 11; tick <= 40; ++tick) {
+        walkInput.now = 5.0 + tick * 0.051;
+        walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    }
+    require(expression(walkAnimator, "q.modified_move_speed") < 1e-6
+            && std::abs(walkAnimator.matrices()[0][6]) < 1e-6f,
+        "Stopping must fade the walking pose back to neutral even while speed remains nonzero");
+    walkInput.now += 0.051;
+    walkInput.x += 0.05;
+    walkAnimator.update(walkScripts.get(), &weightedLibrary, weightedBones, walkInput);
+    require(std::abs(walkAnimator.matrices()[0][6]) > 0.01f, "Walking must resume after leaving the idle pose");
     auto legacyDescription = json::parse(R"({"animations":{"walk":"animation.test.walk","move":"animation.test.move"},"animation_controllers":[{"move":"controller.animation.test.move"}]})");
     auto legacyScripts = readEntityScripts(*legacyDescription);
     auto legacyDocument = json::parse(R"({"animations":{"animation.test.walk":{"loop":true,"bones":{"leg":{"rotation":[30,0,0]}}},"animation.test.move":{"loop":true,"bones":{"leg":{"rotation":[10,0,0]}}}},"animation_controllers":{"controller.animation.test.move":{"initial_state":"default","states":{"default":{"animations":["walk","move"]}}}}})");
@@ -43,6 +537,13 @@ int main()
     require(std::abs(legacyAnimator.matrices()[0][5] - std::cos(40.0 * 3.14159265359 / 180.0)) < 1e-6,
         "A legacy controller must play both clips once when its alias matches a clip alias");
     GeometryLibrary geometries;
+    geometries.parse(R"({"geometry.armor.child:geometry.armor.middle":{"bones":[{"name":"body","inflate":1}]},"geometry.armor.middle:geometry.armor.base":{"bones":[{"name":"head","reset":true}]},"geometry.armor.base":{"texturewidth":64,"textureheight":32,"bones":[{"name":"body","cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},{"name":"head","cubes":[{"origin":[0,2,0],"size":[2,2,2],"uv":[0,0]}]}]}})");
+    geometries.resolveInheritance();
+    const auto* inheritedArmor = geometries.find("geometry.armor.child");
+    require(inheritedArmor && inheritedArmor->bones.size() == 2
+            && inheritedArmor->bones[0].cubes.size() == 1 && inheritedArmor->bones[0].inflate == 1
+            && inheritedArmor->bones[1].cubes.empty() && inheritedArmor->textureHeight == 32,
+        "Legacy armor inheritance must retain parent cubes, apply resets and inherit texture dimensions");
     geometries.parse(R"({"geometry.test":{"bones":[{"name":"body","bind_pose_rotation":[90,0,0]}]}})");
     geometries.parse(R"({"geometry.test":{"bones":[{"name":"body"}]}})", true);
     require(geometries.find("geometry.test")->bones[0].bindRotation[0] == 90.0f, "Version layers must retain an omitted native bind pose");
@@ -106,11 +607,58 @@ int main()
     animator.update(nullptr, nullptr, bones, input);
     require(expression(animator, "query.is_alive") == 0, "A dying actor must not animate as alive");
     require(std::abs(animator.matrices()[0][0]) < 1e-6 && std::abs(animator.matrices()[0][4] - 1.0f) < 1e-6, "Generic death tilt must reach a quarter turn");
+    input = AnimationInput {};
+    input.identifier = "minecraft:horse";
     input.armorItems[1] = "minecraft:leather_horse_armor";
     input.armorColors[1] = 0x123456;
     animator.update(nullptr, nullptr, bones, input);
     require(expression(animator, "query.armor_texture_slot(1)") == 1, "Horse armor must select its authored leather texture");
     require(std::abs(expression(animator, "query.armor_color_slot(1, 0)") - 18.0 / 255) < 1e-6, "Authored armor colors must read the equipped stack dye");
+    input.armorItems[4] = "minecraft:diamond_horse_armor";
+    input.armorColors[4] = 0x123456;
+    input.armorDamage[4] = 20;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.armor_texture_slot(4)") == 4, "Body armor must select the native horse armor layer");
+    require(expression(animator, "query.is_item_name_any('slot.armor.body', 'minecraft:diamond_horse_armor')") == 1, "Body attachables must see their equipped item");
+    require(std::abs(expression(animator, "query.armor_color_slot(4, 2)") - 86.0 / 255) < 1e-6, "Body armor must preserve its dye channels");
+    require(expression(animator, "query.armor_damage_slot(4)") == 20, "Wolf armor cracks must read the body item's damage");
+    input.armorItems[4].clear();
+    input.armorDamage[4] = 0;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.is_item_name_any('slot.armor.body', 'minecraft:diamond_horse_armor')") == 0, "Removing body armor must hide the attachable");
+    require(expression(animator, "query.armor_texture_slot(5)") == 0, "Out-of-range armor slots must remain invalid");
+
+    input.identifier = "minecraft:llama";
+    for (const auto& [item, index] : { std::pair { "minecraft:white_carpet", 1 }, { "minecraft:light_gray_carpet", 9 },
+             { "minecraft:red_carpet", 15 }, { "minecraft:black_carpet", 16 }, { "minecraft:diamond_horse_armor", 0 }, { "", 0 } }) {
+        input.armorItems[4] = item;
+        animator.update(nullptr, nullptr, bones, input);
+        require(expression(animator, "v.DecorTextureIndex") == index, "Llama decorations must follow equipped carpet colors and clear on removal");
+    }
+
+    input.identifier = "minecraft:wolf";
+    input.armorItems[4] = "minecraft:wolf_armor";
+    input.armorColors[4] = 0x123456u;
+    input.armorDamage[4] = 20;
+    animator.update(nullptr, nullptr, bones, input);
+    require(expression(animator, "query.armor_damage_slot(1)") == 20, "Legacy wolf armor queries must address the body equipment");
+    require(std::abs(expression(animator, "query.armor_color_slot(1, 0)") - 18.0 / 255.0) < 1e-6, "Wolf armor dye must come from body equipment");
+
+    auto wolfDescription = json::parse(R"({"animations":{"audit_setup":"animation.wolf.setup"},"scripts":{"animate":["audit_setup"]}})");
+    auto wolfScripts = readEntityScripts(*wolfDescription);
+    auto wolfDocument = json::parse(R"({"animations":{"animation.wolf.setup":{"loop":true,"bones":{"root":{"position":["3-this","-12-this","7-this"],"rotation":["45-this",0,0]}}}}})");
+    AnimationLibrary wolfLibrary;
+    wolfLibrary.parse(*wolfDocument);
+    std::vector<EntityBone> wolfBones(1);
+    wolfBones[0].name = "root";
+    wolfBones[0].pivot = { -3, 12, 7 };
+    wolfBones[0].rotation = { -45, 0, 0 };
+    EntityAnimator absoluteWolf;
+    absoluteWolf.update(wolfScripts.get(), &wolfLibrary, wolfBones, input);
+    const BoneMatrix& wolfMatrix = absoluteWolf.matrices()[0];
+    require(std::abs(wolfMatrix[3]) < 1e-6, "Absolute wolf setup must preserve the horizontal bone origin");
+    require(std::abs(wolfMatrix[5] - std::cos(45.0 * 3.14159265359 / 180.0)) < 1e-6, "Wolf setup must not apply its bind rotation twice");
+    require(std::abs(wolfMatrix[7] + wolfMatrix[4] * -3 + wolfMatrix[5] * 12 + wolfMatrix[6] * 7 - 12) < 1e-5, "Wolf setup must leave its body above the feet");
 
     EntityAnimator walking;
     input = AnimationInput {};
@@ -127,6 +675,16 @@ int main()
     walking.update(nullptr, nullptr, bones, input);
     walking.setRenderContext(input, input.now, 1.0f);
     require(expression(walking, "query.modified_move_speed") == 0, "Riding must stop the walk cycle");
+
+    input.walkDistance = 0.75;
+    input.now = 1.153;
+    walking.update(nullptr, nullptr, bones, input);
+    require(expression(walking, "query.walk_distance") == 0.75, "First-person animations must use the supplied native walking phase");
+    require(expression(walking, "query.distance_moved") == 0.75, "Walking phase aliases must agree");
+    input.walkDistance = 0.0;
+    input.now = 1.204;
+    walking.update(nullptr, nullptr, bones, input);
+    require(expression(walking, "query.walk_distance") == 0.0, "A reset walking phase must override the accumulated animation distance");
 
     EntityAnimator fish;
     input = AnimationInput {};

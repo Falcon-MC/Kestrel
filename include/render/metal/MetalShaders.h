@@ -14,6 +14,8 @@ struct VertexIn {
     float2 halfSize [[attribute(4)]];
     float2 shape [[attribute(5)]];
     float depth [[attribute(6)]];
+    float4 glintUv [[attribute(7)]], glintRegion [[attribute(8)]];
+    float glintStrength [[attribute(9)]];
 };
 
 struct VertexOut {
@@ -23,6 +25,9 @@ struct VertexOut {
     float2 local;
     float2 halfSize;
     float2 shape;
+    float4 glintUv;
+    float4 glintRegion [[flat]];
+    float glintStrength [[flat]];
 };
 
 vertex VertexOut ui_vertex(VertexIn in [[stage_in]], constant float2& viewport [[buffer(1)]])
@@ -34,7 +39,24 @@ vertex VertexOut ui_vertex(VertexIn in [[stage_in]], constant float2& viewport [
     out.local = in.local;
     out.halfSize = in.halfSize;
     out.shape = in.shape;
+    out.glintUv = in.glintUv; out.glintRegion = in.glintRegion; out.glintStrength = in.glintStrength;
     return out;
+}
+
+float3 uiGlintTexel(texture2d<float> atlas, float2 cell, float4 region)
+{
+    float2 dimensions = float2(atlas.get_width(), atlas.get_height());
+    float2 size = round((region.zw - region.xy) * dimensions);
+    float2 at = round(region.xy * dimensions) + floor(fract(cell / size) * size);
+    return atlas.read(uint2(at)).rgb;
+}
+
+float3 uiGlintSample(texture2d<float> atlas, float2 uv, float4 region)
+{
+    float2 pixel = fract(uv) * round((region.zw - region.xy) * float2(atlas.get_width(), atlas.get_height())) - 0.5;
+    float2 cell = floor(pixel), weight = fract(pixel);
+    return mix(mix(uiGlintTexel(atlas, cell, region), uiGlintTexel(atlas, cell + float2(1, 0), region), weight.x),
+        mix(uiGlintTexel(atlas, cell + float2(0, 1), region), uiGlintTexel(atlas, cell + float2(1, 1), region), weight.x), weight.y);
 }
 
 fragment float4 ui_fragment(VertexOut in [[stage_in]], texture2d<float> atlas [[texture(0)]], sampler atlasSampler [[sampler(0)]])
@@ -47,7 +69,12 @@ fragment float4 ui_fragment(VertexOut in [[stage_in]], texture2d<float> atlas [[
         float distance = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
         coverage *= saturate(0.5 - distance / max(in.shape.y, 1.0));
     }
-    return float4(in.color.rgb * texel.rgb, in.color.a * coverage);
+    float3 rgb = in.color.rgb * texel.rgb;
+    if (in.glintStrength > 0.0 && texel.a > 0.00390625) {
+        float3 foil = (uiGlintSample(atlas, in.glintUv.xy, in.glintRegion) + uiGlintSample(atlas, in.glintUv.zw, in.glintRegion)) * float3(0.38, 0.19, 0.608) * in.color.rgb;
+        rgb += foil * foil * in.glintStrength;
+    }
+    return float4(rgb, in.color.a * coverage);
 }
 )";
 
@@ -82,19 +109,16 @@ struct WorldOut {
     uint4 actorTextures [[flat]];
     float4 actorGrid0 [[flat]], actorGrid1 [[flat]], actorGrid2 [[flat]];
     float actorDissolve [[flat]];
+    float4 glint [[flat]], glintTexture [[flat]];
+    float2 glintUv;
 };
 
-constant float lightCurve[16] = {
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0 };
 
 float3 cornerLight(uint light, uint ao, uint corner)
 {
     uint levels = (light >> (corner * 8)) & 0xff;
-    float occlusion = 1.0 - float((ao >> (corner * 2)) & 3) * 0.12;
-    return float3(lightCurve[levels & 0xf], lightCurve[levels >> 4], occlusion);
+    float occlusion = 1.0 - float((ao >> (corner * 4)) & 7) * 0.2;
+    return float3(float(levels & 0xf), float(levels >> 4), occlusion);
 }
 
 float4 applyTint(float4 texel, uint tint)
@@ -103,6 +127,10 @@ float4 applyTint(float4 texel, uint tint)
         return texel;
     }
     float3 color = float3(float((tint >> 16) & 0xff), float((tint >> 8) & 0xff), float(tint & 0xff)) / 255.0;
+    if ((tint & 0x20000000u) != 0u) {
+        // Leather alpha is both a dye mask and cutout coverage.
+        return float4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+    }
     if ((tint & 0x40000000u) != 0) {
         // Overlay alpha selects the tinted region, not surface coverage.
         return float4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
@@ -168,11 +196,12 @@ vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]
     out.position = draw.viewProjection * float4(position, 1.0);
     out.uv = greedyUv(face, corner, width, height, (in.quad.y >> 12) & 1);
     out.material = in.quad.y;
-    out.shade = faceShade[face];
+    out.shade = (in.ao & 0x10000u) != 0u ? (face < 2u ? 0.9 : face == 2u ? 0.875 : face == 3u ? 1.0 : 0.95) : faceShade[face];
     out.relative = position;
     out.tint = in.quad.z;
     out.light = cornerLight(in.quad.w, in.ao, corner);
     out.entity = 0;
+
     return out;
 }
 
@@ -181,6 +210,8 @@ struct ModelIn {
     uint4 b [[attribute(1)]];
     uint4 c [[attribute(2)]];
     uint4 d [[attribute(3)]];
+    float4 glint [[attribute(4)]], glintTexture [[attribute(5)]];
+    float4 glintUvTransform [[attribute(6)]];
 };
 
 WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float positionScale)
@@ -210,17 +241,38 @@ WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float po
     if ((words[11] & 0x10u) != 0) {
         out.uv.y -= fract(draw.origin.w / 32.0);
     }
+    out.glintUv = in.glintUvTransform.xy + out.uv * in.glintUvTransform.zw;
+    out.glint = in.glint;
+    out.glintTexture = in.glintTexture;
     out.material = words[10];
     const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
-    out.shade = faceShade[min(words[11] & 0xfu, 6u)];
+    uint shadeFace = min(words[11] & 0xfu, 6u);
+    out.shade = (in.d.y & 0x80010000u) == 0x10000u && (words[11] & 0x10u) == 0u ? (shadeFace == 0u ? 0.9 : shadeFace < 3u ? 0.9 : shadeFace == 3u ? 0.875 : shadeFace == 4u ? 1.0 : 0.95) : faceShade[shadeFace];
     out.relative = position;
     uint rgb = words[11] >> 8;
     out.tint = rgb != 0 ? (0x80000000u | rgb) : 0u;
     out.light = cornerLight(in.d.x, (in.d.y & 0x80000000u) != 0u ? 0u : in.d.y, corner);
-    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 815u : 0u;
+    out.entity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 1839u : 0u;
+    if ((words[11] & 0x20000u) != 0u) {
+        float3 points[3];
+        const uint normalCorners[3] = { 0u, 1u, 3u };
+        for (uint point = 0u; point < 3u; ++point) {
+            for (uint axis = 0u; axis < 3u; ++axis) {
+                uint component = normalCorners[point] * 3u + axis;
+                uint packed = words[component / 2u];
+                points[point][axis] = float((component & 1u) != 0u ? (int(packed) >> 16) : (int(packed << 16) >> 16));
+            }
+        }
+        float3 normal = cross(points[2] - points[0], points[1] - points[0]);
+        float lengthSquared = dot(normal, normal);
+        if (lengthSquared > 0.0) {
+            normal *= rsqrt(lengthSquared);
+            out.shade = (1.0 + normal.y) * 0.275 - normal.x * normal.x * 0.1 + normal.z * normal.z * 0.1 + 0.45;
+        }
+    }
     if ((out.entity & 256u) != 0u) out.light.z = float((in.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (out.entity != 0u) {
-        out.tint = in.d.w == 0u && (in.d.z & 0x80000000u) != 0u ? (in.d.z & 0xc0ffffffu) : 0u;
+        out.tint = in.d.w == 0u && ((in.d.z | out.material) & 0x80000000u) != 0u ? in.d.z : 0u;
     }
     if (out.entity != 0u && in.d.w != 0u) {
         float2 uvOffset = float2(as_type<half2>(in.d.z));
@@ -243,6 +295,7 @@ struct ActorData {
     float4 grid1;
     float4 grid2;
     float4 options;
+    float4 glint, glintTexture;
 };
 
 float3 actorPose(float3 point, constant ActorData& actor)
@@ -274,6 +327,8 @@ vertex WorldOut actor_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
     WorldOut out = {};
     out.position=draw.viewProjection*float4(position,1);
     out.uv=actor.uv.xy+float2(float(uvWord&65535u),float(uvWord>>16))/4096.0*actor.uv.zw;
+    out.glintUv=float2(float(uvWord&65535u),float(uvWord>>16))/4096.0;
+    out.glint=actor.glint; out.glintTexture=actor.glintTexture;
     out.material=as_type<uint>(actor.params.y);
     out.shade=shade;
     out.relative=position;
@@ -296,6 +351,36 @@ vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
 vertex WorldOut overlay_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
 {
     return placeModel(in, vertexId, draw, 1024.0);
+}
+
+struct HandIn {
+    uint4 a [[attribute(0)]], b [[attribute(1)]], c [[attribute(2)]], d [[attribute(3)]];
+    float4 glint [[attribute(4)]], glintTexture [[attribute(5)]], glintUvTransform [[attribute(6)]];
+    float4 positions0 [[attribute(7)]], positions1 [[attribute(8)]], positions2 [[attribute(9)]];
+};
+
+vertex WorldOut hand_vertex(HandIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    ModelIn model = { in.a, in.b, in.c, in.d, in.glint, in.glintTexture, in.glintUvTransform };
+    WorldOut out = placeModel(model, vertexId, draw, 256.0);
+    const uint corners[6] = { 0, 1, 2, 0, 2, 3 };
+    float positions[12] = { in.positions0.x, in.positions0.y, in.positions0.z, in.positions0.w,
+        in.positions1.x, in.positions1.y, in.positions1.z, in.positions1.w,
+        in.positions2.x, in.positions2.y, in.positions2.z, in.positions2.w };
+    uint component = corners[vertexId] * 3;
+    float3 position = draw.origin.xyz + float3(positions[component], positions[component + 1], positions[component + 2]);
+    out.position = draw.viewProjection * float4(position, 1.0);
+    out.relative = position;
+    if ((in.c.w & 0x20000u) != 0u) {
+        float3 normal = cross(float3(positions[9], positions[10], positions[11]) - float3(positions[0], positions[1], positions[2]),
+            float3(positions[3], positions[4], positions[5]) - float3(positions[0], positions[1], positions[2]));
+        float lengthSquared = dot(normal, normal);
+        if (lengthSquared > 0.0) {
+            normal *= rsqrt(lengthSquared);
+            out.shade = (1.0 + normal.y) * 0.275 - normal.x * normal.x * 0.1 + normal.z * normal.z * 0.1 + 0.45;
+        }
+    }
+    return out;
 }
 
 float4 sampleLayer(texture2d_array<float> blocks, texture2d_array<float> blocksHigh, sampler blockSampler, float2 uv, uint layer)
@@ -339,13 +424,20 @@ float3 fogWorld(constant DrawData& draw, float3 color, float3 relative, bool add
     return mix(color, fogColor, amount);
 }
 
-float3 shadeWorld(constant DrawData& draw, float3 rgb, float shade, float3 relative, float3 cornerLevels)
+float3 worldLight(texture2d_array<float> lightmap, float3 cornerLevels, bool actor = false)
 {
-    float daylight = max(saturate(draw.params.y), 0.2);
-    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
-    channel = mix(channel, 1.0, saturate(draw.params.z));
-    float light = mix(0.04, 1.0, channel) * saturate(cornerLevels.z);
-    return fogWorld(draw, rgb * shade * pow(light, 1.0 / 2.2), relative, false);
+    float2 coordinate = clamp(cornerLevels.xy * (actor ? 1.0 : 16.0 / 15.0) - 0.5, 0.0, 15.0);
+    uint2 low = uint2(floor(coordinate));
+    uint2 high = min(low + uint2(1), uint2(15));
+    float2 fraction = coordinate - float2(low);
+    float3 lower = mix(lightmap.read(low, 0).rgb, lightmap.read(uint2(high.x, low.y), 0).rgb, fraction.x);
+    float3 upper = mix(lightmap.read(uint2(low.x, high.y), 0).rgb, lightmap.read(high, 0).rgb, fraction.x);
+    return mix(lower, upper, fraction.y) * saturate(cornerLevels.z);
+}
+
+float3 shadeWorld(texture2d_array<float> lightmap, constant DrawData& draw, float3 rgb, float shade, float3 relative, float3 cornerLevels)
+{
+    return fogWorld(draw, rgb * shade * worldLight(lightmap, cornerLevels), relative, false);
 }
 
 float4 sampleEntity(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, float2 uv, uint material)
@@ -417,7 +509,43 @@ float4 actorTexture(texture2d_array<float> entities, texture2d_array<float> enti
     return sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
 }
 
-float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, constant DrawData& draw, WorldOut input, float2 uv)
+float3 glintTexel(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, uint layer, float2 pixel, float2 size)
+{
+    pixel = fract(pixel / size) * size;
+    float2 tile = floor(pixel / 128.0);
+    uint at = layer + uint(tile.y) * uint(ceil(size.x / 128.0)) + uint(tile.x);
+    float2 cell = pixel - tile * 128.0;
+    return sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (cell + float2(0.5)) / 128.0, at).rgb;
+}
+
+float3 sampleGlint(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, uint layer, float2 uv, float2 size)
+{
+    float2 pixel = fract(uv) * size - 0.5;
+    float2 cell = floor(pixel), weight = fract(pixel);
+    return mix(mix(glintTexel(entities, entitiesHigh, entities2, entities3, blockSampler, layer, cell, size), glintTexel(entities, entitiesHigh, entities2, entities3, blockSampler, layer, cell + float2(1, 0), size), weight.x),
+        mix(glintTexel(entities, entitiesHigh, entities2, entities3, blockSampler, layer, cell + float2(0, 1), size), glintTexel(entities, entitiesHigh, entities2, entities3, blockSampler, layer, cell + float2(1, 1), size), weight.x), weight.y);
+}
+
+float4 applyGlint(texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, float4 texel, WorldOut input, float3 illumination)
+{
+    if (input.glint.z <= 0.0 || texel.a <= 0.0) return texel;
+    uint layer = uint(input.glint.w);
+    if (layer >= 8192u) return texel;
+    float2 centered = input.glintUv - 0.5;
+    float3 foil = float3(0, 0, 0);
+    for (uint pass = 0u; pass < 2u; ++pass) {
+        float angle = (pass == 0u ? -20.0 : 80.0) * 0.017453292519943295;
+        float c = cos(angle), sn = sin(angle);
+        float2 rotated = float2(c * centered.x + sn * centered.y, -sn * centered.x + c * centered.y);
+        float2 uv = (rotated + 0.5) * input.glintTexture.xy + float2(input.glint[pass], 0);
+        foil += sampleGlint(entities, entitiesHigh, entities2, entities3, blockSampler, layer, uv, input.glintTexture.zw);
+    }
+    foil *= float3(0.38, 0.19, 0.608) * illumination;
+    texel.rgb += foil * foil * input.glint.z;
+    return texel;
+}
+
+float4 actorSurface(texture2d_array<float> lightmap, texture2d_array<float> entities, texture2d_array<float> entitiesHigh, texture2d_array<float> entities2, texture2d_array<float> entities3, sampler blockSampler, constant DrawData& draw, WorldOut input, float2 uv)
 {
     float4 texel = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.x, input.actorGrid0, uv);
     uint mode = input.actorTextures.w;
@@ -425,8 +553,27 @@ float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> enti
     if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard_fragment();
     if (mode == 1u && all(texel == float4(0,0,0,0))) discard_fragment();
     if (mode == 0u && texel.a < 0.1 && (input.entity & 128u) == 0u) discard_fragment();
+    if ((mode == 7u && texel.a == 0.0) || (mode == 8u && texel.a < 0.1)) discard_fragment();
+    if (mode == 7u) {
+        texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 cracks = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = mix(texel.rgb, cracks.rgb, cracks.a);
+        }
+    }
+    if (mode == 8u) {
+        if (input.actorTextures.y != 0xffffffffu) {
+            float4 markings = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
+            texel.rgb = mix(texel.rgb, markings.rgb, markings.a);
+        }
+        if (input.actorTextures.z != 0xffffffffu) {
+            float4 armor = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.z, input.actorGrid2, uv);
+            float3 dyed = mix(armor.rgb, armor.rgb * input.actorColor.rgb, armor.a);
+            texel.rgb = mix(texel.rgb, dyed, armor.a > 0.0 ? 1.0 : 0.0);
+        }
+    }
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * input.actorColor.rgb, texel.a);
-    else if (mode != 5u) texel.rgb *= input.actorColor.rgb;
+    else if (mode != 5u && mode != 7u && mode != 8u) texel.rgb *= input.actorColor.rgb;
     texel.a *= input.actorColor.a;
     if (mode == 5u && input.actorTextures.y != 0xffffffffu && input.actorTextures.z != 0xffffffffu) {
         float4 second = actorTexture(entities, entitiesHigh, entities2, entities3, blockSampler, input.actorTextures.y, input.actorGrid1, uv);
@@ -434,39 +581,54 @@ float4 actorSurface(texture2d_array<float> entities, texture2d_array<float> enti
         texel.rgb = mix(mix(texel.rgb, second.rgb, second.a), third.rgb, third.a);
     }
     if (mode != 3u) texel.rgb = mix(texel.rgb, input.actorOverlay.rgb, input.actorOverlay.a);
-    float3 unlit = fogWorld(draw, texel.rgb, input.relative, (input.entity & 2u) != 0u);
-    float3 lit = (input.entity & 8u) != 0u ? shadeWorld(draw, texel.rgb, input.shade, input.relative, input.light) : unlit;
-    texel.rgb = mode == 1u ? mix(unlit, lit, texel.a) : lit;
+    float3 illumination = (input.entity & 8u) != 0u ? worldLight(lightmap, input.light, true) : float3(1.0);
+    float3 lit = texel.rgb * input.shade * illumination;
+    texel.rgb = (input.entity & 8u) == 0u ? texel.rgb : mode == 1u ? mix(texel.rgb, lit, texel.a) : lit;
+    texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, input, illumination);
+    texel.rgb = fogWorld(draw, texel.rgb, input.relative, (input.entity & 2u) != 0u);
     if (mode != 0u) texel.a = 1.0;
     return texel;
 }
 
-fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 blend_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], texture2d_array<float> lightmap [[texture(6)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
     }
     if ((in.entity & 64u) != 0u) {
-        float4 actor = actorSurface(entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
+        float4 actor = actorSurface(lightmap, entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
         if (actor.a < 0.004) discard_fragment();
         return float4(actor.rgb * actor.a, (in.entity & 2u) != 0u ? 0.0 : actor.a);
     }
+    if (in.entity == 0 && in.glint.z > 0.0) {
+        float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+        float3 illumination = worldLight(lightmap, in.light);
+        texel.rgb *= in.shade * illumination;
+        texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in, illumination);
+        texel.rgb = fogWorld(draw, texel.rgb, in.relative, false);
+        if (texel.a < 0.004) discard_fragment();
+        return float4(texel.rgb * texel.a, texel.a);
+    }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 1024u) != 0u) texel.a *= 0.3;
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
-    if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
-    else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
+
     if ((in.entity & 4u) != 0u) {
         float4 flash = hitFlash(draw);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
     }
+    float3 illumination = (in.entity & 8u) != 0u ? worldLight(lightmap, in.light, true) : float3(1.0);
+    if ((in.entity & 8u) != 0u) texel.rgb *= in.shade * illumination;
+    if (in.entity != 0) texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in, illumination);
+    if ((in.entity & (8u | 32u)) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if (texel.a < 0.004) {
         discard_fragment();
     }
     if (in.entity != 0) {
         return float4(texel.rgb * texel.a, (in.entity & 2) != 0 ? 0.0 : texel.a);
     }
-    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light) * texel.a, texel.a);
+    return float4(shadeWorld(lightmap, draw, texel.rgb, in.shade, in.relative, in.light) * texel.a, texel.a);
 }
 
 struct SkyIn {
@@ -527,24 +689,36 @@ fragment float4 overlay_fragment(WorldOut in [[stage_in]], texture2d_array<float
     return float4(crack.rgb, 1.0);
 }
 
-fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> entities [[texture(2)]], texture2d_array<float> entitiesHigh [[texture(3)]], texture2d_array<float> entities2 [[texture(4)]], texture2d_array<float> entities3 [[texture(5)]], texture2d_array<float> lightmap [[texture(6)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
 {
     if (isEndPortal(in)) {
         return float4(endPortalColor(draw, in.relative), 1.0);
     }
     if ((in.entity & 64u) != 0u) {
-        float4 actor = actorSurface(entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
+        float4 actor = actorSurface(lightmap, entities, entitiesHigh, entities2, entities3, blockSampler, draw, in, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv);
         return actor;
+    }
+    if (in.entity == 0 && in.glint.z > 0.0) {
+        float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+        if (texel.a < 0.5) discard_fragment();
+        float3 illumination = worldLight(lightmap, in.light);
+        texel.rgb *= in.shade * illumination;
+        texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in, illumination);
+        return float4(fogWorld(draw, texel.rgb, in.relative, false), 1.0);
     }
     float4 texel = in.entity != 0 ? applyTint(sampleEntity(entities, entitiesHigh, entities2, entities3, blockSampler, (in.entity & 16u) != 0u ? fract(in.uv) : in.uv, in.material), in.tint) : applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
     if ((in.entity & 512u) != 0u && texel.a < 0.5) discard_fragment();
+    if ((in.entity & 1024u) != 0u) texel.a *= 0.3;
     if ((in.entity & 256u) != 0u) texel.rgb *= in.light.z;
-    if ((in.entity & 8u) != 0u) texel.rgb = shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light);
-    else if ((in.entity & 32u) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
+
     if ((in.entity & 4u) != 0u) {
         float4 flash = hitFlash(draw);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
     }
+    float3 illumination = (in.entity & 8u) != 0u ? worldLight(lightmap, in.light, true) : float3(1.0);
+    if ((in.entity & 8u) != 0u) texel.rgb *= in.shade * illumination;
+    if (in.entity != 0) texel = applyGlint(entities, entitiesHigh, entities2, entities3, blockSampler, texel, in, illumination);
+    if ((in.entity & (8u | 32u)) != 0u) texel.rgb = fogWorld(draw, texel.rgb, in.relative, (in.entity & 2u) != 0u);
     if (in.entity != 0) {
         if (texel.a < 0.1) {
             discard_fragment();
@@ -554,7 +728,13 @@ fragment float4 world_fragment(WorldOut in [[stage_in]], texture2d_array<float> 
     if (texel.a < 0.5) {
         discard_fragment();
     }
-    return float4(shadeWorld(draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
+    return float4(shadeWorld(lightmap, draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
+}
+
+fragment float4 solid_fragment(WorldOut in [[stage_in]], texture2d_array<float> blocks [[texture(0)]], texture2d_array<float> blocksHigh [[texture(1)]], texture2d_array<float> lightmap [[texture(6)]], sampler blockSampler [[sampler(0)]], constant DrawData& draw [[buffer(1)]])
+{
+    float4 texel = applyTint(sampleMaterial(blocks, blocksHigh, blockSampler, draw, in.material, in.uv), in.tint);
+    return float4(shadeWorld(lightmap, draw, texel.rgb, in.shade, in.relative, in.light), 1.0);
 }
 )";
 

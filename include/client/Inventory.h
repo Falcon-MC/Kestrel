@@ -33,6 +33,11 @@ struct HudItem {
      */
     int64_t mapId = 0;
     int32_t useTicks = 0;
+    // Preserve stack data for the vanilla in-hand item comparison.
+    Tag userData;
+    std::vector<std::string> canPlace;
+    std::vector<std::string> canBreak;
+    int32_t blockRuntimeId = -1;
     bool empty() const { return identifier.empty() || count <= 0; }
     bool operator==(const HudItem&) const = default;
 };
@@ -212,6 +217,8 @@ public:
     ItemStack stationPreview(std::vector<std::pair<int, int>>* consumption = nullptr, int* cost = nullptr) const;
     ItemStack anvilPreview(std::vector<std::pair<int, int>>* consumption, int* cost) const;
     bool canCraft(const InventoryRecipe& recipe) const;
+    bool furnaceRecipe(const InventoryRecipe& recipe) const;
+    std::vector<InventoryCatalogItem> furnaceCatalog() const;
 
     /**
      * The grid cell, counted on a 3 wide row for the workbench and a 2 wide
@@ -236,8 +243,7 @@ private:
     void takeStationOutput(ItemStackRequest& request, bool toInventory);
     /**
      * Crafts the recipe in the grid once into the cursor, or as many times as
-     * the grid and the inventory allow when toInventory, in a single craft
-     * action the way the game sends it.
+     * one output stack, the grid and the inventory allow when toInventory.
      */
     bool craft(ItemStackRequest& request, const InventoryRecipe& recipe, const std::vector<std::pair<int, int>>& consumption, bool toInventory);
     int inventoryRoom(const ItemStack& item) const;

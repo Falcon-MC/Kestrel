@@ -578,7 +578,7 @@ void ModManager::restoreInput(InputState& input)
 
 void ModManager::captureUiInput(InputState& input, float scale)
 {
-    host->ui.capture(input, scale);
+    if (host->ui.open()) host->ui.capture(input, scale);
 }
 
 bool ModManager::uiOpen() const
@@ -670,16 +670,20 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
     if (slots.empty()) {
         return;
     }
-    if (host->ui.open()) {
-        host->ui.capture(input, host->uiScale);
-        return;
-    }
+    auto modal = host->ui.top();
+    if (modal) inGame = host->inGame = false;
+    auto dispatch = [&](mod::Event& event) {
+        if (modal) {
+            if (host->ui.top() == modal) host->events.dispatchTo(modal->owner, event);
+        } else host->events.dispatch(event);
+    };
     if (input.pressedKey != Key::None) {
         mod::KeyPressEvent event;
         event.key = input.pressedKey;
         event.inGame = inGame;
-        host->events.dispatch(event);
+        dispatch(event);
         if (event.isCancelled()) {
+            input.removeKeyTransitions(input.pressedKey);
             switch (input.pressedKey) {
             case Key::Escape:
                 input.escape = false;
@@ -703,9 +707,10 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         mod::KeyReleaseEvent event;
         event.key = input.releasedKey;
         event.inGame = inGame;
-        host->events.dispatch(event);
+        dispatch(event);
     }
-    dispatchText(input);
+    if (!modal || host->ui.top() == modal) dispatchText(input);
+    else input.text.clear();
     auto click = [&](bool& pressed, mod::MouseButton button) {
         if (!pressed) {
             return;
@@ -715,7 +720,7 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         event.x = input.mouseX / host->uiScale;
         event.y = input.mouseY / host->uiScale;
         event.inGame = inGame;
-        host->events.dispatch(event);
+        dispatch(event);
         if (event.isCancelled()) {
             pressed = false;
         }
@@ -731,7 +736,7 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         event.inGame = inGame;
         lastMouseX = mouseX;
         lastMouseY = mouseY;
-        host->events.dispatch(event);
+        dispatch(event);
     }
     click(input.mousePressed, mod::MouseButton::Left);
     click(input.rightMousePressed, mod::MouseButton::Right);
@@ -745,7 +750,7 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         event.x = mouseX;
         event.y = mouseY;
         event.inGame = inGame;
-        host->events.dispatch(event);
+        dispatch(event);
     };
     release(input.mouseReleased, mod::MouseButton::Left);
     release(input.rightMouseReleased, mod::MouseButton::Right);
@@ -756,14 +761,16 @@ void ModManager::handleInput(InputState& input, bool inGame, float uiScale)
         event.x = input.mouseX / host->uiScale;
         event.y = input.mouseY / host->uiScale;
         event.inGame = inGame;
-        host->events.dispatch(event);
+        dispatch(event);
         if (event.isCancelled()) {
             input.wheel = 0.0f;
         }
     }
-    if (host->ui.open()) {
+    if (modal || host->ui.open()) {
         host->ui.capture(input, host->uiScale);
-        if (auto screen = host->ui.top()) screen->controls.begin({}, host->uiScale);
+        if (!modal) {
+            if (auto screen = host->ui.top()) screen->controls.begin({}, host->uiScale);
+        }
     }
 
 }
@@ -1095,12 +1102,15 @@ void ModManager::dispatchText(InputState& input)
         return;
     }
     std::u32string kept;
+    auto screen = host->ui.top();
     for (char32_t codepoint : input.text) {
+        if (screen && host->ui.top() != screen) break;
         mod::TextInputEvent event;
         event.codepoint = codepoint;
         event.text = utf8(codepoint);
         event.inGame = host->inGame;
-        host->events.dispatch(event);
+        if (screen) host->events.dispatchTo(screen->owner, event);
+        else host->events.dispatch(event);
         if (!event.isCancelled()) {
             kept += codepoint;
         }
@@ -1396,7 +1406,7 @@ void ModManager::drawNotices(mod::Canvas& canvas, float width)
     }
 }
 
-void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(mod::WorldPainter&)>& client)
+void ModManager::drawWorld(const std::array<float, 16>& viewProjection, const mod::Vec3& camera, const std::function<void(WorldCanvas&)>& client)
 {
     host->worldViewProjection = viewProjection;
     host->worldCamera = camera;

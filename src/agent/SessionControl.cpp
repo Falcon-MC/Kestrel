@@ -421,6 +421,10 @@ void SessionControl::writeSnapshot(JsonWriter& writer, const SessionSnapshot& sn
             writeVector(writer, "position", actor.x, actor.y, actor.z);
             writer.field("yaw", actor.yaw).field("headYaw", actor.headYaw).field("pitch", actor.pitch);
             writer.field("onGround", actor.onGround).field("scale", actor.scale);
+            writer.field("hitboxCount", actor.hitboxes ? actor.hitboxes->size() : 0);
+            writer.key("aimAssistIndices").beginArray();
+            for (int32_t index : actor.aimAssistIndices) writer.value(index);
+            writer.endArray();
             if (!actor.item.empty()) {
                 writer.key("item");
                 writeItem(writer, actor.item);

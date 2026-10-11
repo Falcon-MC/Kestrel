@@ -151,6 +151,18 @@ void WorldStream::applyChunkRadius(int32_t radius)
     retain();
 }
 
+std::vector<SubChunkKey> WorldStream::pendingKeys() const
+{
+    std::vector<SubChunkKey> keys;
+    for (const auto& [column, entries] : pending) {
+        for (const auto& [y, entry] : entries) keys.push_back({ column.dimension, column.x, y, column.z });
+    }
+    for (const auto& [key, count] : decodingReplies) keys.push_back(key);
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return keys;
+}
+
 bool WorldStream::subChunkPending(const SubChunkKey& key) const
 {
     auto column = pending.find(key.chunk());

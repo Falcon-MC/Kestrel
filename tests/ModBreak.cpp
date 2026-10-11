@@ -97,7 +97,7 @@ void modTargetBreaksLikeTheCrosshair()
     require(sameActions(byHand, byMod), "A mod's target must send the same actions as the crosshair");
     require(byMod.actions.size() >= 2, "Breaking must start and destroy");
     require(byMod.actions.front().kind == BreakAction::Kind::Start, "The first hit must start breaking");
-    require(byMod.actions[1].kind == BreakAction::Kind::Destroy && byMod.actions[1].cell == Cell, "Full progress must destroy the block");
+    require(byMod.actions.back().kind == BreakAction::Kind::Destroy && byMod.actions.back().cell == Cell, "Full progress must destroy the block");
     require(byMod.progress.back().finished, "The last progress of a broken block must say it finished");
 }
 
@@ -136,6 +136,29 @@ void aimsAtTheFaceCentre()
     require(std::abs(down[1] - 90.0f) < 1e-4f, "Looking straight down must be pitch 90");
 }
 
+void completionContinuesBeforeDestroying()
+{
+    BlockBreaker breaker;
+    BreakHit hit = crosshairHit(Cell);
+    BreakStep start = breaker.step(true, hit, 0.25f, false, false);
+    require(start.actions.size() == 1 && start.actions.front().kind == BreakAction::Kind::Start, "Breaking must start once");
+    for (int tick = 1; tick < 4; ++tick) {
+        hit.face = tick;
+        BreakStep step = breaker.step(true, hit, 0.25f, false, false);
+        require(step.actions.empty(), "Unfinished ticks must not restart breaking");
+        require(step.progress.front().progress == tick * 0.25f, "Continuation must not restart accumulated progress");
+    }
+    BreakStep finish = breaker.step(true, hit, 0.25f, false, false);
+    require(finish.actions.size() == 2 && finish.actions.front().kind == BreakAction::Kind::Continue && finish.actions.back().kind == BreakAction::Kind::Destroy, "Completion must continue before predicting destruction");
+    require(finish.actions.front().cell == Cell && finish.actions.front().face == hit.face, "Completion must report the current block and face");
+    require(breaker.step(false, std::nullopt, 0.25f, false, false).actions.empty(), "Releasing after completion must not send a continuation");
+    BlockBreaker client;
+    client.step(true, hit, 0.5f, false, false, false);
+    client.step(true, hit, 0.5f, false, false, false);
+    BreakStep clientFinish = client.step(true, hit, 0.5f, false, false, false);
+    require(clientFinish.actions.size() == 1 && clientFinish.actions.front().kind == BreakAction::Kind::Destroy, "Client-authoritative completion must not send a server continuation");
+}
+
 }
 
 int main()
@@ -144,4 +167,5 @@ int main()
     stoppingAbortsLikeLettingGo();
     switchingContinuesLikeTheCrosshair();
     aimsAtTheFaceCentre();
+    completionContinuesBeforeDestroying();
 }

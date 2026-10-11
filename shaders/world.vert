@@ -25,18 +25,16 @@ layout(location = 10) flat out vec4 outActorGrid0;
 layout(location = 11) flat out vec4 outActorGrid1;
 layout(location = 12) flat out vec4 outActorGrid2;
 layout(location = 13) flat out float outActorDissolve;
+layout(location = 14) flat out vec4 outGlint;
+layout(location = 15) flat out vec4 outGlintTexture;
+layout(location = 16) out vec2 outGlintUv;
 
-const float lightCurve[16] = float[16](
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0);
 
 vec3 cornerLight(uint light, uint ao, uint corner)
 {
     uint levels = (light >> (corner * 8u)) & 0xffu;
-    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
-    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+    float occlusion = 1.0 - float((ao >> (corner * 4u)) & 7u) * 0.2;
+    return vec3(float(levels & 0xfu), float(levels >> 4u), occlusion);
 }
 
 vec3 quadCorner(uint face, uint corner, vec3 o, float w, float h)
@@ -103,9 +101,12 @@ void main()
     gl_Position.y = -gl_Position.y;
     outUv = greedyUv(face, corner, width, height, (inQuad.y >> 12) & 1u);
     outMaterial = inQuad.y;
-    outShade = faceShade[face];
+    outShade = (inAo & 0x10000u) != 0u ? (face < 2u ? 0.9 : face == 2u ? 0.875 : face == 3u ? 1.0 : 0.95) : faceShade[face];
     outRelative = position;
     outTint = inQuad.z;
     outLight = cornerLight(inQuad.w, inAo, corner);
     outEntity = 0u;
+    outGlint = vec4(0);
+    outGlintTexture = vec4(0);
+    outGlintUv = outUv;
 }

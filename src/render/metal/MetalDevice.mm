@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -31,10 +32,12 @@ NSString* functionName(std::string_view entry)
         { "ps_main", "ui_fragment" },
         { "vs_world", "world_vertex" },
         { "vs_model", "model_vertex" },
+        { "vs_hand", "hand_vertex" },
         { "vs_actor", "actor_vertex" },
         { "vs_overlay", "overlay_vertex" },
         { "vs_sky", "sky_vertex" },
         { "ps_world", "world_fragment" },
+        { "ps_solid", "solid_fragment" },
         { "ps_blend", "blend_fragment" },
         { "ps_overlay", "overlay_fragment" },
         { "ps_sky", "sky_fragment" },
@@ -55,6 +58,8 @@ MTLVertexFormat vertexFormat(VertexFormat format)
         return MTLVertexFormatFloat;
     case VertexFormat::Float2:
         return MTLVertexFormatFloat2;
+    case VertexFormat::Float4:
+        return MTLVertexFormatFloat4;
     case VertexFormat::Float3:
         return MTLVertexFormatFloat3;
     case VertexFormat::UByte4Norm:
@@ -136,6 +141,7 @@ public:
     id<MTLDepthStencilState> depth;
     bool constantsVertexOnly = false;
     bool actorConstants = false;
+    bool cullBackFaces = false;
 };
 
 class MetalTextureSet final : public TextureSet {
@@ -380,6 +386,7 @@ public:
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
         pipeline->actorConstants = desc.bindings.actorConstants;
+        pipeline->cullBackFaces = desc.cullBackFaces;
         return pipeline;
     }
 
@@ -398,6 +405,8 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
         encoder = nil;
         drawable = nil;
         id<MTLTexture> color = nil;
@@ -414,7 +423,9 @@ public:
         if (!color) {
             return submissions + 1;
         }
+        const auto waitStarted = std::chrono::steady_clock::now();
         dispatch_semaphore_wait(completion->slots, DISPATCH_TIME_FOREVER);
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         actorCursor = 0;
 
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -442,6 +453,16 @@ public:
         return submissions + 1;
     }
 
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
+    }
+
     bool recording() const override
     {
         return encoder != nil;
@@ -458,6 +479,8 @@ public:
         }
         [encoder setRenderPipelineState:chosen->state];
         [encoder setDepthStencilState:chosen->depth];
+        [encoder setCullMode:chosen->cullBackFaces ? MTLCullModeBack : MTLCullModeNone];
+        [encoder setFrontFacingWinding:chosen->cullBackFaces ? MTLWindingCounterClockwise : MTLWindingClockwise];
         bound = chosen;
     }
 
@@ -475,9 +498,9 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!encoder || !bound || !bound->actorConstants || !values || count != 60) return;
+        if (!encoder || !bound || !bound->actorConstants || !values || count != 68) return;
         constexpr size_t pageBytes = 1024 * 1024;
-        constexpr size_t stride = 256;
+        constexpr size_t stride = 512;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
         auto& pages = actorPages[frame];
@@ -534,10 +557,10 @@ public:
         }
     }
 
-    void drawIndexed(uint32_t indexCount) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance) override
     {
         if (encoder && indexBuffer) {
-            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:0];
+            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:0 instanceCount:instanceCount baseVertex:0 baseInstance:firstInstance];
         }
     }
 
@@ -560,6 +583,7 @@ public:
             dispatch_semaphore_signal(state->slots);
         }];
         [commandBuffer commit];
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         if (capturing) {
             [commandBuffer waitUntilCompleted];
             finishCapture();
@@ -590,6 +614,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     void ensureOffscreenColor()
     {
         if (offscreenColor && offscreenColor.width == surfaceWidth && offscreenColor.height == surfaceHeight) {

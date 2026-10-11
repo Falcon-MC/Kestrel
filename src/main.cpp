@@ -1,6 +1,7 @@
 #include "client/Client.h"
 #include "client/HeadlessClient.h"
 #include "client/LaunchOptions.h"
+#include "client/PrepareAssets.h"
 
 #include <cstdio>
 #include <exception>
@@ -31,6 +32,7 @@ int runKestrel(const std::vector<std::string>& arguments)
 {
     try {
         kestrel::LaunchOptions options = kestrel::LaunchOptions::parse(arguments);
+        if (!kestrel::prepareAssets(options)) return 0;
         if (options.headless) {
             kestrel::HeadlessClient client(std::move(options));
             return client.run();

@@ -661,25 +661,10 @@ void JsonUiRuntime::emit(UiEvent::Kind kind, const Node& node, std::string name)
             }
         }
     }
-    bool namedCollection = false;
-    for (const Node* at = &node; at; at = at->parent) {
-        if (at->index >= 0 && !at->collection.empty()) {
-            namedCollection = true;
-            break;
-        }
-    }
-    for (const Node* at = &node; at; at = at->parent) {
-        if (at->index < 0 || (namedCollection && at->collection.empty())) {
-            continue;
-        }
-        if (event.index < 0) {
-            event.index = at->index;
-            event.collection = at->collection;
-        } else {
-            event.outerIndex = at->index;
-            break;
-        }
-    }
+    UiEvent target = jsonui::collectionTarget(node);
+    event.index = target.index;
+    event.outerIndex = target.outerIndex;
+    event.collection = std::move(target.collection);
     events.push_back(std::move(event));
 }
 
@@ -1902,13 +1887,10 @@ UiEvent JsonUiScreen::pointerTarget() const
             }
         }
     }
-    for (const Node* node = found->second; node; node = node->parent) {
-        if (node->index >= 0 && !node->collection.empty()) {
-            event.index = node->index;
-            event.collection = node->collection;
-            break;
-        }
-    }
+    UiEvent address = jsonui::collectionTarget(target);
+    event.index = address.index;
+    event.outerIndex = address.outerIndex;
+    event.collection = std::move(address.collection);
     return event;
 }
 

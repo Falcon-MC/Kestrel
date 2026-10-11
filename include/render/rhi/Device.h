@@ -22,6 +22,7 @@ enum class VertexFormat {
     Float,
     Float2,
     Float3,
+    Float4,
     UByte4Norm,
     UInt,
     UInt4,
@@ -115,6 +116,7 @@ struct PipelineDesc {
     BlendMode blend = BlendMode::None;
     bool depthWrite = true;
     bool colorWrite = true;
+    bool cullBackFaces = false;
     DepthCompare depthCompare = DepthCompare::Less;
 };
 
@@ -236,6 +238,10 @@ public:
      */
     virtual uint64_t beginFrame(float r, float g, float b) = 0;
 
+    // CPU time waiting for a reusable GPU frame slot in the last beginFrame.
+    virtual double frameFenceWaitMilliseconds() const { return 0.0; }
+    virtual double frameSubmissionTimeSeconds() const { return 0.0; }
+
     /**
      * Whether the current frame records commands; resources written each
      * frame must be left alone otherwise, since the GPU may still read them.
@@ -254,7 +260,7 @@ public:
      */
     virtual void setDepthRange(float maxDepth) = 0;
     virtual void draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) = 0;
-    virtual void drawIndexed(uint32_t indexCount) = 0;
+    virtual void drawIndexed(uint32_t indexCount, uint32_t instanceCount = 1, uint32_t firstInstance = 0) = 0;
     virtual void endFrame() = 0;
 
     virtual bool supportsSceneCopy() const

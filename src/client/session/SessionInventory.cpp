@@ -3,6 +3,7 @@
 #include "client/InventoryTransaction.h"
 #include "client/DebugLog.h"
 #include "Core/Json/Json.h"
+#include "ItemTagsJson.h"
 #include "Network/BedrockConnection.h"
 #include "Protocol/Packets/ContainerOpenPacket.h"
 #include "Protocol/Packets/ContainerClosePacket.h"
@@ -177,6 +178,9 @@ void Session::publishInventory()
         view.selectedStationRecipe = selected == view.loomPatterns.end() ? -1 : int(selected - view.loomPatterns.begin());
     }
     view.stationOptions.clear();
+    if (inventoryModel.type == ContainerType::Furnace || inventoryModel.type == ContainerType::BlastFurnace || inventoryModel.type == ContainerType::Smoker) {
+        view.stationOptions = inventoryModel.furnaceCatalog();
+    }
     if (inventoryModel.type == ContainerType::Stonecutter) {
         for (const auto& recipe : inventoryModel.recipes) {
             if ((recipe.recipe.mBlockName == "stonecutter" || recipe.recipe.mBlockName == "minecraft:stonecutter")
@@ -311,6 +315,7 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
             inventoryBefore.reset();
             inventoryChangedSlots.clear();
             pendingInventoryRequest = 0;
+            pendingInventoryRequests.clear();
             inventoryCommands.clear();
             inventoryClosing = false;
         }
@@ -434,6 +439,7 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         if (inventoryBefore) for (int slot : inventoryChangedSlots) inventoryModel.slots[slot] = (*inventoryBefore)[slot];
         inventoryBefore.reset();
         pendingInventoryRequest = 0;
+        pendingInventoryRequests.clear();
         inventoryClosing = false;
         inventoryCommands.clear();
         inventoryModel.type = ContainerType::Inventory;
@@ -446,9 +452,8 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
     } else if (auto response = std::dynamic_pointer_cast<ItemStackResponsePacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
         for (const auto& entry : response->mEntries) {
-            if (entry.mRequestId != pendingInventoryRequest || !inventoryBefore) continue;
+            if (!inventoryBefore || !pendingInventoryRequests.erase(entry.mRequestId)) continue;
             if (entry.mResult != 0) {
-                for (int slot : inventoryChangedSlots) inventoryModel.slots[slot] = (*inventoryBefore)[slot];
                 inventoryCommands.clear();
                 inventoryClosing = false;
                 debugLog("inventory request rejected " + std::to_string(entry.mRequestId) + ", result " + std::to_string(entry.mResult));
@@ -456,9 +461,8 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
                 for (const auto& container : entry.mContainers) for (const auto& update : container.mItems) {
                     int slot = inventoryModel.responseSlot(container.mContainerName.mContainer, update.mSlot);
                     if (slot < 0 || slot >= SlotCount) continue;
-                    ItemStack& item = inventoryModel.slots[slot];
-                    // A server that cancels the drop still answers ok, just with the stack left in place.
-                    if (update.mCount > 0 && item.isAir()) item = (*inventoryBefore)[slot];
+                    ItemStack& item = (*inventoryBefore)[slot];
+                    if (update.mCount > 0 && !inventoryModel.slots[slot].isAir()) item = inventoryModel.slots[slot];
                     if (update.mCount <= 0) item = ItemStack::air();
                     else if (!item.isAir()) {
                         item.mCount = update.mCount;
@@ -482,6 +486,8 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
                     }
                 }
             }
+            if (!pendingInventoryRequests.empty()) continue;
+            for (int slot : inventoryChangedSlots) inventoryModel.slots[slot] = (*inventoryBefore)[slot];
             inventoryBefore.reset();
             inventoryChangedSlots.clear();
             pendingInventoryRequest = 0;
@@ -508,6 +514,19 @@ void Session::handleInventoryPacket(const std::shared_ptr<Packet>& packet)
         ++current.hud.container.revision;
     } else if (auto recipes = std::dynamic_pointer_cast<CraftingDataPacket>(packet)) {
         std::lock_guard<std::mutex> guard(mutex);
+        if (inventoryModel.itemTags.empty()) {
+            std::string text(reinterpret_cast<const char*>(KestrelItemTagData::kItemTagsJson), KestrelItemTagData::kItemTagsJsonSize);
+            auto tags = json::parse(text);
+            if (tags && tags->isObject()) {
+                for (const auto& [name, values] : tags->mObject) {
+                    if (!values->isArray()) continue;
+                    auto& items = inventoryModel.itemTags[name];
+                    for (const auto& item : values->mArray) {
+                        if (item->isString()) items.push_back(item->mString);
+                    }
+                }
+            }
+        }
         if (recipes->mCleanRecipes) inventoryModel.recipes.clear();
         if (recipes->mCleanRecipes) {
             inventoryModel.repairRecipe = -1;
@@ -602,6 +621,7 @@ void Session::flushInventory()
         inventoryBefore.reset();
         inventoryChangedSlots.clear();
         pendingInventoryRequest = 0;
+        pendingInventoryRequests.clear();
         inventoryCommands.clear();
         inventoryClosing = false;
         debugLog("inventory response timed out; discarded queued predictions");
@@ -757,9 +777,7 @@ void Session::flushInventory()
     }
     if (command.action == InventoryAction::Close) inventoryClosing = true;
     inventoryBefore = inventoryModel.slots;
-    if (inventoryRequestId < std::numeric_limits<int32_t>::min() + 2) inventoryRequestId = -1;
-    ItemStackRequest request = inventoryModel.plan(command, inventoryRequestId);
-    inventoryRequestId -= 2;
+    auto requests = planInventoryRequests(inventoryModel, command, inventoryRequestId);
     auto& ghost = current.hud.container;
     if (command.action == InventoryAction::SelectRecipe) {
         std::array<HudItem, 9> cells {};
@@ -772,7 +790,7 @@ void Session::flushInventory()
         ghost.recipeGhost = {};
         ghost.recipeGhostOutput = {};
     }
-    if (request.mActions.empty()) {
+    if (requests.empty()) {
         inventoryBefore.reset();
         publishInventory();
         return;
@@ -783,10 +801,12 @@ void Session::flushInventory()
         const auto& after = inventoryModel.slots[i];
         if (before.mNetId != after.mNetId || before.mCount != after.mCount || before.mDefinition != after.mDefinition) inventoryChangedSlots.insert(i);
     }
-    pendingInventoryRequest = request.mRequestId;
+    pendingInventoryRequests.clear();
+    for (const auto& request : requests) pendingInventoryRequests.insert(request.mRequestId);
+    pendingInventoryRequest = requests.back().mRequestId;
     inventoryRequestTime = secondsNow();
     ItemStackRequestPacket packet;
-    packet.mRequests.push_back(std::move(request));
+    packet.mRequests = std::move(requests);
     transmit(packet);
     publishInventory();
 }

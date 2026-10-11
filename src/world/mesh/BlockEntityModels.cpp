@@ -60,6 +60,34 @@ std::vector<EntityBox> chestBodyBoxes(bool twoBlocks, float offsetX)
     return { box({ offsetX + 1.0f, 0.0f, 1.0f }, { offsetX + 1.0f + width, 10.0f, 15.0f }, body) };
 }
 
+std::array<EntityBox, 7> enchantingBookBoxes()
+{
+    // Separate the two cover faces by one subpixel so their atlas regions do not fight after quantization.
+    constexpr float Thin = 1.0f / 16.0f;
+    return {
+        box({ -6, -5, -Thin }, { 0, 5, 0 }, boxUv(0, 0, 6, 10, 0)),
+        box({ 0, -5, -Thin }, { 6, 5, 0 }, boxUv(16, 0, 6, 10, 0)),
+        box({ -1, -5, 0 }, { 1, 5, Thin }, boxUv(12, 0, 2, 10, 0)),
+        box({ 0, -4, -0.99f }, { 5, 4, 0.01f }, boxUv(0, 10, 5, 8, 1)),
+        box({ 0, -4, -0.01f }, { 5, 4, 0.99f }, boxUv(12, 10, 5, 8, 1)),
+        box({ 0, -4, 0 }, { 5, 4, Thin }, boxUv(24, 10, 5, 8, 0)),
+        box({ 0, -4, 0 }, { 5, 4, Thin }, boxUv(24, 10, 5, 8, 0)),
+    };
+}
+
+std::array<EntityBox, 5> activeConduitBoxes()
+{
+    EntityBox eye = box({ -2, -2, 0 }, { 2, 2, 0 }, {});
+    for (auto& face : eye.faces) face.present = false;
+    eye.faces[South] = { 0, 0, 8, 8 };
+    return {
+        box({ -4, -4, -4 }, { 4, 4, 4 }, boxUv(0, 0, 8, 8, 8)),
+        box({ -8, -8, -8 }, { 8, 8, 8 }, boxUv(0, 0, 16, 16, 16)),
+        box({ -8, -8, -8 }, { 8, 8, 8 }, boxUv(0, 0, 16, 16, 16)),
+        eye, eye,
+    };
+}
+
 std::vector<EntityBox> chestLidBoxes(bool twoBlocks, float offsetX)
 {
     float width = twoBlocks ? 30.0f : 14.0f;

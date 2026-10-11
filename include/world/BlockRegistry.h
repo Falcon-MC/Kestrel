@@ -27,6 +27,7 @@ public:
     }
 
     int32_t resolve(uint32_t networkValue, bool hashed) const;
+    const std::vector<std::string>& tags(const std::string& name) const;
 
     bool isDataDriven(const std::string& name) const
     {
@@ -40,6 +41,7 @@ private:
         std::vector<BlockRecord> entries;
         std::unordered_map<uint32_t, uint32_t> byHash;
         std::unordered_set<std::string> dataDriven;
+        std::unordered_map<std::string, std::vector<std::string>> blockTags;
     };
 
     static bool parse(Data& out, std::string& error);

@@ -1,5 +1,7 @@
 #include "render/rhi/Device.h"
 #include "render/Renderer.h"
+#include "render/OpaqueTerrain.h"
+#include "world/ChunkVisibility.h"
 
 #include "client/DebugLog.h"
 #include "ui/DrawList.h"
@@ -18,7 +20,8 @@ namespace kestrel::rhi {
 namespace {
 
 constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
-constexpr uint32_t WorldTextureCount = BlockTexturePages + EntityTexturePages;
+constexpr uint32_t LightmapTextureSlot = BlockTexturePages + EntityTexturePages;
+constexpr uint32_t WorldTextureCount = LightmapTextureSlot + 1;
 constexpr uint32_t EntityMipLevels = 5;
 // Blocks the camera may drift before translucent terrain is sorted again.
 constexpr double TransparentResortDistance = 1.0;
@@ -74,6 +77,9 @@ VertexLayout uiLayout()
             { "TEXCOORD", 2, VertexFormat::Float2, 28 },
             { "TEXCOORD", 3, VertexFormat::Float2, 36 },
             { "TEXCOORD", 4, VertexFormat::Float, 44 },
+            { "TEXCOORD", 5, VertexFormat::Float4, 48 },
+            { "TEXCOORD", 6, VertexFormat::Float4, 64 },
+            { "TEXCOORD", 7, VertexFormat::Float, 80 },
         },
         sizeof(ui::UiVertex),
         false,
@@ -100,10 +106,23 @@ VertexLayout modelLayout()
             { "MODEL", 1, VertexFormat::UInt4, 16 },
             { "MODEL", 2, VertexFormat::UInt4, 32 },
             { "MODEL", 3, VertexFormat::UInt4, 48 },
+            { "MODEL", 4, VertexFormat::Float4, 64 },
+            { "MODEL", 5, VertexFormat::Float4, 80 },
+            { "MODEL", 6, VertexFormat::Float4, 96 },
         },
         ModelQuadBytes,
         true,
     };
+}
+
+VertexLayout handLayout()
+{
+    VertexLayout layout = modelLayout();
+    layout.attributes.push_back({ "MODEL", 7, VertexFormat::Float4, 112 });
+    layout.attributes.push_back({ "MODEL", 8, VertexFormat::Float4, 128 });
+    layout.attributes.push_back({ "MODEL", 9, VertexFormat::Float4, 144 });
+    layout.stride = HandQuadBytes;
+    return layout;
 }
 
 VertexLayout skyLayout()
@@ -186,7 +205,12 @@ public:
         uiPipeline = device->createPipeline(ui);
 
         cubePipeline = device->createPipeline(worldPipeline("vs_world", "ps_world", cubeLayout(), BlendMode::None, true, DepthCompare::Less));
+        auto solidDesc = worldPipeline("vs_world", "ps_solid", cubeLayout(), BlendMode::None, true, DepthCompare::Less);
+        solidDesc.cullBackFaces = true;
+        solidCubePipeline = device->createPipeline(solidDesc);
         modelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less));
+        handPipeline = device->createPipeline(worldPipeline("vs_hand", "ps_world", handLayout(), BlendMode::None, true, DepthCompare::Less));
+        solidModelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_solid", modelLayout(), BlendMode::None, true, DepthCompare::Less));
         auto actorDesc = worldPipeline("vs_actor", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less);
         actorDesc.bindings.actorConstants = true;
         actorPipeline = device->createPipeline(actorDesc);
@@ -210,6 +234,12 @@ public:
 
         uiTextures = device->createTextureSet(1, false, SamplerMode::PixelClamp);
         worldTextures = device->createTextureSet(WorldTextureCount, true, SamplerMode::TerrainWrap);
+        lightmapTexture = device->createTexture({ 16, 16, 1, 1, true });
+        worldTextures->bind(LightmapTextureSlot, lightmapTexture.get());
+        // Index 5 selects corner 3 in the existing shaders while shared indices reuse the other corners.
+        static constexpr uint32_t QuadIndices[6] = { 0, 1, 2, 0, 2, 5 };
+        quadIndices = device->createPersistentBuffer(sizeof(QuadIndices));
+        device->uploadBuffer(*quadIndices, QuadIndices, sizeof(QuadIndices));
 
         PipelineDesc primitive;
         primitive.library = ShaderLibrary::Primitive;
@@ -240,6 +270,16 @@ public:
     const std::string& deviceName() const override
     {
         return device->deviceName();
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return device->frameFenceWaitMilliseconds();
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return device->frameSubmissionTimeSeconds();
     }
 
     uint64_t submittedFrames() const override
@@ -294,6 +334,9 @@ public:
             return;
         }
         device->waitIdle();
+        opaqueLayers = opaqueTextureLayers(textures);
+        ++textureRevision;
+        visibilityGraph.clear();
         for (uint32_t page = 0; page < BlockTexturePages; ++page) {
             uint32_t first = page * BlockTexturePageLayers;
             uint32_t count = textures.layers > first ? std::min(textures.layers - first, BlockTexturePageLayers) : 0;
@@ -377,6 +420,13 @@ public:
         ChunkBuffer chunk;
         const void* sources[4] = { mesh.cubes, mesh.models, mesh.translucentCubes, mesh.translucentModels };
         uint32_t counts[4] = { mesh.cubeCount, mesh.modelCount, mesh.translucentCubeCount, mesh.translucentModelCount };
+        OpaqueCubeRuns cubeRuns = partitionCubeQuads(mesh.cubes, mesh.cubeCount, opaqueLayers);
+        sources[0] = cubeRuns.words.data();
+        OpaqueModelRuns modelRuns = partitionModelQuads(mesh.models, mesh.modelCount, opaqueLayers);
+        sources[1] = modelRuns.words.data();
+        chunk.solidModels = modelRuns.solidCount;
+        chunk.cubeOffsets = cubeRuns.offsets;
+        chunk.textureRevision = textureRevision;
         for (size_t stream = 0; stream < 4; ++stream) {
             size_t bytes = static_cast<size_t>(counts[stream]) * StreamStride[stream];
             if (bytes != 0) {
@@ -415,7 +465,13 @@ public:
             retire(chunk);
         }
         chunks.clear();
+        visibilityGraph.clear();
         ++meshRevision;
+    }
+
+    void setChunkVisibility(int32_t x, int32_t y, int32_t z, std::shared_ptr<const world::ChunkVisibility> visibility) override
+    {
+        visibilityGraph.set({ x, y, z }, std::move(visibility));
     }
 
     void beginFrame(float r, float g, float b) override
@@ -436,8 +492,15 @@ public:
         if (!blockTextures[0] || !device->recording()) {
             return;
         }
+        LightmapPixels pixels = buildLightmap(view.lightmap);
+        if (!lightmapReady || pixels != lightmapPixels) {
+            device->uploadTextureAsync(*lightmapTexture, { { 0, 0, pixels.data() } });
+            lightmapPixels = pixels;
+            lightmapReady = true;
+        }
         FrameBuffers& buffers = frames[device->frameSlot()];
         WorldConstants constants(view);
+        device->setIndexBuffer(*quadIndices, 6 * sizeof(uint32_t));
         auto bind = [&](const Pipeline& pipeline, float x, float y, float z) {
             device->setPipeline(pipeline);
             device->setTextures(*worldTextures);
@@ -451,7 +514,7 @@ public:
             }
             bind(pipeline, static_cast<float>(chunk.origin[0] - view.cameraX), static_cast<float>(chunk.origin[1] - view.cameraY), static_cast<float>(chunk.origin[2] - view.cameraZ));
             device->setVertexBuffer(*chunk.buffers[stream], StreamStride[stream], static_cast<size_t>(count) * StreamStride[stream]);
-            device->draw(6, count, 0, 0);
+            device->drawIndexed(6, count, 0);
         };
 
         if (view.backgroundCount) {
@@ -464,18 +527,48 @@ public:
         }
 
         ChunkFrustum frustum(view);
+        visibilityGraph.update({ view.cameraX, view.cameraY, view.cameraZ });
         visible.clear();
         visible.reserve(chunks.size());
         for (const auto& [id, chunk] : chunks) {
-            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])) {
+            if (frustum.contains(view, chunk.origin[0], chunk.origin[1], chunk.origin[2])
+                && visibilityGraph.contains({ chunk.origin[0] / 16, chunk.origin[1] / 16, chunk.origin[2] / 16 })) {
                 visible.push_back(&chunk);
             }
         }
         for (const ChunkBuffer* chunk : visible) {
-            drawStream(*cubePipeline, *chunk, 0);
+            if (chunk->textureRevision != textureRevision) {
+                drawStream(*cubePipeline, *chunk, 0);
+                continue;
+            }
+            if (!chunk->counts[0]) continue;
+            device->setVertexBuffer(*chunk->buffers[0], CubeQuadBytes, size_t(chunk->counts[0]) * CubeQuadBytes);
+            if (chunk->cubeOffsets[6]) {
+                bind(*solidCubePipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                uint8_t facing = facingCubeDirections(chunk->origin, { view.cameraX, view.cameraY, view.cameraZ });
+                drawSolidCubeRuns(chunk->cubeOffsets, facing, [&](uint32_t first, uint32_t count) { device->drawIndexed(6, count, first); });
+            }
+            uint32_t first = chunk->cubeOffsets[6];
+            if (first < chunk->counts[0]) {
+                bind(*cubePipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->counts[0] - first, first);
+            }
         }
         for (const ChunkBuffer* chunk : visible) {
-            drawStream(*modelPipeline, *chunk, 1);
+            if (chunk->textureRevision != textureRevision) {
+                drawStream(*modelPipeline, *chunk, 1);
+                continue;
+            }
+            if (!chunk->counts[1]) continue;
+            device->setVertexBuffer(*chunk->buffers[1], ModelQuadBytes, size_t(chunk->counts[1]) * ModelQuadBytes);
+            if (chunk->solidModels) {
+                bind(*solidModelPipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->solidModels);
+            }
+            if (chunk->solidModels < chunk->counts[1]) {
+                bind(*modelPipeline, float(chunk->origin[0] - view.cameraX), float(chunk->origin[1] - view.cameraY), float(chunk->origin[2] - view.cameraZ));
+                device->drawIndexed(6, chunk->counts[1] - chunk->solidModels, chunk->solidModels);
+            }
         }
         recording.opaqueChunks = static_cast<uint32_t>(std::count_if(visible.begin(), visible.end(), [](const ChunkBuffer* chunk) {
             return chunk->counts[0] || chunk->counts[1];
@@ -494,7 +587,7 @@ public:
             device->setDepthRange(maxDepth);
             bind(pipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
             device->setVertexBuffer(*buffers.entities, ModelQuadBytes, entityBytes);
-            device->draw(6, count, 0, first);
+            device->drawIndexed(6, count, first);
             device->setDepthRange(1.0f);
         };
         drawEntities(*modelPipeline, 0, view.entityQuadCount, 1.0f);
@@ -512,7 +605,7 @@ public:
             auto constants = draw.constants;
             device->setActorConstants(constants.data(), static_cast<uint32_t>(constants.size()));
             device->setVertexBuffer(*mesh.buffer, ModelQuadBytes, size_t(draw.total) * ModelQuadBytes);
-            device->draw(6, draw.count, 0, draw.first);
+            device->drawIndexed(6, draw.count, draw.first);
         };
         for (uint32_t index = 0; index < view.actorDrawCount; ++index) {
             if (!view.actorDraws[index].blended) drawActor(index);
@@ -635,10 +728,20 @@ public:
             }
             size_t stream = first.stream - 2;
             device->setVertexBuffer(*buffers.translucent[stream], StreamStride[first.stream], sortedCounts[stream] * StreamStride[first.stream]);
-            device->draw(6, count, 0, first.quad);
+            device->drawIndexed(6, count, first.quad);
             index += count;
         }
         drawEntities(*overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0f);
+        if (view.preciseHandQuadCount && view.preciseHandQuads && entityLayers > 0 && entityTextures[0]) {
+            size_t handBytes = size_t(view.preciseHandQuadCount) * HandQuadBytes;
+            ensure(buffers.hands, handBytes);
+            std::memcpy(buffers.hands->mapped(), view.preciseHandQuads, handBytes);
+            device->setDepthRange(HandDepthRange);
+            bind(*handPipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            device->setVertexBuffer(*buffers.hands, HandQuadBytes, handBytes);
+            device->drawIndexed(6, view.preciseHandQuadCount, 0);
+            device->setDepthRange(1.0f);
+        }
         drawEntities(*modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
@@ -798,6 +901,9 @@ private:
         std::array<std::unique_ptr<Buffer>, 4> buffers;
         std::array<uint32_t, 4> counts {};
         std::array<int32_t, 3> origin {};
+        std::array<uint32_t, 8> cubeOffsets {};
+        uint64_t textureRevision = 0;
+        uint32_t solidModels = 0;
         std::array<std::vector<std::array<float, 3>>, 2> centers;
         std::array<std::vector<uint8_t>, 2> translucent;
     };
@@ -807,6 +913,7 @@ private:
         std::unique_ptr<Buffer> indices;
         std::unique_ptr<Buffer> sky;
         std::unique_ptr<Buffer> entities;
+        std::unique_ptr<Buffer> hands;
         std::array<std::unique_ptr<Buffer>, 2> translucent;
         uint64_t terrainGeneration = 0;
         std::array<std::unique_ptr<Buffer>, CustomLayerCount> custom;
@@ -855,7 +962,7 @@ private:
     static std::array<float, 3> quadCenter(const void* data, bool cube)
     {
         const auto* bytes = static_cast<const uint8_t*>(data);
-        uint32_t words[16] {};
+        uint32_t words[ModelQuadBytes / sizeof(uint32_t)] {};
         std::memcpy(words, bytes, cube ? CubeQuadBytes : ModelQuadBytes);
         std::array<float, 3> center {};
         if (cube) {
@@ -949,6 +1056,7 @@ private:
     std::unique_ptr<Pipeline> uiPipeline;
     std::unique_ptr<Pipeline> cubePipeline;
     std::unique_ptr<Pipeline> modelPipeline;
+    std::unique_ptr<Pipeline> handPipeline;
     std::unique_ptr<Pipeline> actorPipeline;
     std::unique_ptr<Pipeline> actorBlendPipeline;
     std::unique_ptr<Pipeline> actorDepthPipeline;
@@ -959,14 +1067,23 @@ private:
     std::unique_ptr<Pipeline> skyPipeline;
     std::unique_ptr<TextureSet> uiTextures;
     std::unique_ptr<TextureSet> worldTextures;
+    std::unique_ptr<Texture> lightmapTexture;
+    LightmapPixels lightmapPixels {};
+    bool lightmapReady = false;
+    std::unique_ptr<Buffer> quadIndices;
     std::unique_ptr<Texture> atlas;
     uint32_t atlasWidth = 0;
     uint32_t atlasHeight = 0;
     std::array<std::unique_ptr<Texture>, BlockTexturePages> blockTextures;
+    std::unique_ptr<Pipeline> solidCubePipeline;
+    std::unique_ptr<Pipeline> solidModelPipeline;
+    std::vector<uint8_t> opaqueLayers;
+    uint64_t textureRevision = 0;
     std::array<std::unique_ptr<Texture>, EntityTexturePages> entityTextures;
     uint32_t entitySize = 0;
     uint32_t entityLayers = 0;
     std::unordered_map<uint64_t, ChunkBuffer> chunks;
+    world::ChunkVisibilityGraph visibilityGraph;
     std::vector<PooledBuffer> pool;
     std::vector<const ChunkBuffer*> visible;
     std::vector<TransparentQuad> transparent;

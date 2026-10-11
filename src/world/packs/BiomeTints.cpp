@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -307,6 +308,7 @@ void BiomeTints::load(PackSource& resources, PackSource& behaviors)
     };
     auto build = [&](const Appearance& appearance, const Climate& climate) {
         BiomeColors colors;
+        colors.precipitation = std::isfinite(climate.downfall) && climate.downfall >= std::numeric_limits<float>::epsilon();
         colors.grass = resolve(appearance.grass, TintMap::Grass, climate);
         colors.foliage = resolve(appearance.foliage, TintMap::Foliage, climate);
         colors.birch = resolve(std::nullopt, TintMap::Birch, climate);

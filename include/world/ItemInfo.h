@@ -32,8 +32,8 @@ std::string itemDisplayName(const std::string& identifier);
 
 /**
  * How many ticks a vanilla item can be held in use before it finishes on its
- * own, or 0 for items that are not used over time: the bow, the trident and
- * the spyglass.
+ * own, or 0 for items that are not used over time: the bow, crossbow, trident
+ * and spyglass.
  */
 int32_t itemMaxUseTicks(const std::string& identifier);
 

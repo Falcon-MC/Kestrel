@@ -51,6 +51,14 @@ PlayerMotion PlayerMotion::detached() const
     return copy;
 }
 
+void PlayerMotion::copyState(const PlayerMotion& other)
+{
+    auto keptScratch = scratch;
+    *this = other;
+    lookup = nullptr;
+    scratch = std::move(keptScratch);
+}
+
 void PlayerMotion::teleport(const MotionVector& position)
 {
     if (!ready) {
@@ -782,9 +790,6 @@ void PlayerMotion::runGroundAndAir()
 
     postCollisionMotion(oldVelocity, oldOnGround, under);
 
-    if (!oldOnGround && onGround) {
-        jumpDelay = 0;
-    }
     if (stuckInBlock) {
         velocity = {};
     }

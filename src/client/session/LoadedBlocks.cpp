@@ -2,6 +2,7 @@
 
 #include "world/BlockBreaking.h"
 #include "world/BlockCollisions.h"
+#include "world/DoorState.h"
 
 #include <algorithm>
 #include <iterator>
@@ -158,6 +159,14 @@ std::optional<world::CollisionBox> LoadedBlocks::outline(int32_t x, int32_t y, i
     }
     uint32_t found = value(x, y, z);
     std::vector<world::CollisionBox> boxes;
+    const world::BlockVisual& visual = assets->visual(found, ids.hashed, ids.sequential.get());
+    if (assets->templateFlags(visual) & world::TemplateDoor) {
+        uint32_t other = value(x, y + ((visual.doorState & world::DoorUpper) ? -1 : 1), z);
+        if (auto box = assets->doorBox(found, other, ids.hashed, ids.sequential.get())) {
+            return world::CollisionBox { box->minX + float(x), box->minY + float(y), box->minZ + float(z),
+                box->maxX + float(x), box->maxY + float(y), box->maxZ + float(z) };
+        }
+    }
     if (const world::CollisionState* state = collisionState(*this, found, false)) {
         world::BlockCollisions::Lookup lookup = [this](int32_t nx, int32_t ny, int32_t nz) {
             return collisionState(*this, value(nx, ny, nz), true);
@@ -237,19 +246,24 @@ MotionCell LoadedBlocks::motionCell(int32_t x, int32_t y, int32_t z) const
 void Session::publishLoaded()
 {
     uint64_t storeRevision = world.store().revision();
+    auto pending = world.pendingKeys();
+    bool settled = world.settled();
     std::shared_ptr<const LoadedBlocks> previous;
     {
         std::lock_guard<std::mutex> guard(mutex);
         previous = current.loaded;
     }
     if (previous && storeRevision == loadedStoreRevision && previous->dimension == motionDimension && previous->assets == assets
-        && previous->ids.hashed == ids.hashed && previous->ids.sequential == ids.sequential && previous->ids.hidden == ids.hidden) {
+        && previous->ids.hashed == ids.hashed && previous->ids.sequential == ids.sequential && previous->ids.hidden == ids.hidden
+        && previous->pending == pending && previous->settled == settled) {
         return;
     }
     auto area = std::make_shared<LoadedBlocks>();
     area->dimension = motionDimension;
     area->assets = assets;
     area->ids = ids;
+    area->pending = std::move(pending);
+    area->settled = settled;
     for (auto& [key, subChunk] : world.store().allSubChunks()) {
         if (key.dimension == motionDimension) {
             area->subChunks.emplace(key, std::move(subChunk));

@@ -1,4 +1,5 @@
 #include "ui/DrawList.h"
+#include "world/Glint.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,20 @@ void DrawList::reset(float scale, float u, float v)
     pixelScale = scale;
     whiteU = u;
     whiteV = v;
+}
+
+void DrawList::applyGlint(size_t first, const std::array<float, 4>& base, const std::array<float, 4>& region,
+    const std::array<float, 4>& parameters, float scaleU, float scaleV)
+{
+    if (base[2] <= base[0] || base[3] <= base[1]) return;
+    for (size_t index = first; index < vertexData.size(); ++index) {
+        auto& vertex = vertexData[index];
+        float u = (vertex.u - base[0]) / (base[2] - base[0]);
+        float v = (vertex.v - base[1]) / (base[3] - base[1]);
+        vertex.glintUv = world::itemGlintUv(u, v, parameters, scaleU, scaleV);
+        vertex.glintRegion = region;
+        vertex.glintStrength = parameters[2];
+    }
 }
 
 void DrawList::fill(const Rect& logical, Color color)

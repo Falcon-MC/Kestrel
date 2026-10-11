@@ -99,6 +99,14 @@ int main()
     check(ui.top()->owner == 1 && !input.escape, "Escape pops only top and is consumed");
     ui.release(1);
     check(!ui.open(), "unload closes screens");
+    ui.restoreInput(input);
+    input = {};
+    input.mousePressed = true;
+    input.setKey(Key::W, true);
+    ui.capture(input, 2);
+    check(!input.mousePressed && !input.isHeld(Key::W), "input remains modal when a callback closes its screen before capture");
+    ui.restoreInput(input);
+    check(input.isHeld(Key::W) && !input.mousePressed, "closing a screen preserves held state without replaying its click");
 
     api.owner = 3;
     for (int i = 0; i < 8; ++i) check(api.open(std::to_string(i)), "owner screen limit accepts eight");

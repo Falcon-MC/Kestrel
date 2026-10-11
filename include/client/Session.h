@@ -4,15 +4,26 @@
 #include "Protocol/Types/DebugShapeData.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/InputLatency.h"
+#include "client/FrameMotion.h"
+#include "client/MotionInputBuffer.h"
 #include "client/ActorRiders.h"
+#include "client/ActorHitboxes.h"
+#include "client/ActorProperties.h"
+#include "client/ActorInterpolation.h"
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
+#include "client/BlockEntityText.h"
+#include "client/SignEditor.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
 #include "client/WorldClock.h"
 #include "menu/ChatCommands.h"
 #include "world/BlockAssets.h"
+#include "world/BeaconBeam.h"
+#include "world/SpawnerDisplay.h"
+#include "world/PistonDisplay.h"
 #include "world/BlockBreaking.h"
 #include "world/BlockCollisions.h"
 #include "world/MeshScheduler.h"
@@ -147,6 +158,76 @@ struct FrameItemView {
     float rotation = 0.0f;
 };
 
+struct ShelfItemView {
+    std::array<int32_t, 3> cell {};
+    uint32_t rotation = 0;
+    std::array<HudItem, 3> items;
+};
+
+struct EnchantingBookView {
+    std::array<int32_t, 3> cell {};
+    float rotation = 0.0f;
+    bool lectern = false;
+};
+
+struct SignTextView {
+    std::array<int32_t, 3> cell {};
+    std::string name;
+    int32_t rotation = 0;
+    int32_t facing = 2;
+    bool hanging = false;
+    std::array<SignText, 2> sides;
+};
+
+struct BeaconBeamView {
+    std::array<int32_t, 3> cell {};
+    std::vector<world::BeaconBeamSection> sections;
+};
+
+struct ConduitView {
+    std::array<int32_t, 3> cell {};
+    bool open = false;
+};
+
+struct BannerView {
+    std::array<int32_t, 3> cell {};
+    bool wall = false;
+    float rotation = 0;
+    world::BannerDisplay display;
+};
+
+struct SpawnerView {
+    std::array<int32_t, 3> cell {};
+    world::SpawnerDisplay display;
+};
+
+struct VaultItemView {
+    std::array<int32_t, 3> cell {};
+    HudItem item;
+};
+
+struct PistonView {
+    std::array<int32_t, 3> cell {};
+    uint32_t head = world::NoModelTemplate;
+    int facing = 1;
+    world::PistonAnimation animation;
+};
+
+struct MovingBlockView {
+    std::array<int32_t, 3> cell {};
+    std::array<int32_t, 3> piston {};
+    uint32_t value = 0;
+    bool expanding = true;
+};
+
+struct PotView {
+    std::array<int32_t, 3> cell {};
+    std::array<uint8_t, 4> patterns {};
+    float rotation = 0;
+    int animation = 0;
+    double animationStart = 0;
+};
+
 /**
  * Particles a block throws off: the burst of a broken block or the chip
  * knocked off the face being mined. Material is a block texture word and
@@ -191,7 +272,10 @@ struct DebugShapeView {
 };
 
 struct ActorView {
+    ActorHitboxList hitboxes;
+    std::array<int32_t, 3> aimAssistIndices {-1, -1, -1};
     int64_t uniqueId = 0;
+    int64_t fishingOwner = -1;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     double diedAt = 0.0;
@@ -200,9 +284,12 @@ struct ActorView {
     float maxHealth = 20.0f;
     uint64_t horseFlags = 0;
     std::unordered_map<std::string, double> animationQueries;
+    std::unordered_map<std::string, double> animationProperties;
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
+    std::string paintingMotive;
+    int32_t paintingDirection = 0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
@@ -229,11 +316,13 @@ struct ActorView {
     // Helmet, chestplate, leggings and boots item identifiers, empty when bare.
     std::array<std::string, 4> armor {};
     std::array<HudItem, 4> armorItems {};
+    HudItem bodyArmor;
     HudItem held;
     HudItem offhand;
     uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    ActorInterpolation interpolation;
     // Blocks per tick as the server last set it, and a count of launch turns to show at once.
     std::array<float, 3> velocity {};
     uint64_t launchTurns = 0;
@@ -600,6 +689,8 @@ struct LoadedBlocks {
     std::map<world::SubChunkKey, std::shared_ptr<const world::SubChunk>> subChunks;
     // The loaded columns of the dimension as x and z, sorted.
     std::vector<std::array<int32_t, 2>> columns;
+    std::vector<world::SubChunkKey> pending;
+    bool settled = false;
     std::shared_ptr<const world::BlockAssets> assets;
     world::IdMapping ids;
 
@@ -649,6 +740,8 @@ struct MeshUpdate {
     std::shared_ptr<void> credit;
     bool urgent = false;
     bool refresh = false;
+    std::shared_ptr<const world::ChunkVisibility> visibility;
+    bool visibilityOnly = false;
 };
 
 enum class MeshUpdateKind { All, Terrain, Removal };
@@ -666,6 +759,19 @@ struct CameraFovRequest {
     bool clear = false;
 };
 
+struct MotionFeed {
+    PlayerMotion seed;
+    MotionInput equipment;
+    std::optional<std::array<double, 3>> breakTarget;
+    uint64_t tick = 0;
+    uint64_t revision = 0;
+    uint32_t locks = 0;
+    uint64_t hardRevision = 0;
+    uint64_t glideStart = 0, glideEnd = 0;
+    uint64_t dolphinStart = 0, dolphinEnd = 0;
+    std::vector<std::pair<uint64_t, MotionVector>> impulses;
+};
+
 struct SessionSnapshot {
     uint64_t globalResourcesRevision = 0;
     uint64_t resourceReloadSerial = 0;
@@ -677,6 +783,7 @@ struct SessionSnapshot {
     int64_t localUniqueActorId = 0;
     uint64_t localRuntimeId = 0;
     std::array<uint64_t, 3> localActorFlags {};
+    std::array<int32_t, 3> localAimAssistIndices {-1, -1, -1};
     std::string name;
     std::string target;
     // The host and port the target resolved to, once known. Realms and
@@ -729,6 +836,17 @@ struct SessionSnapshot {
     std::vector<BlockCrack> cracks;
     std::vector<ChestLidView> chestLids;
     std::vector<FrameItemView> frameItems;
+    std::vector<ShelfItemView> shelfItems;
+    std::vector<EnchantingBookView> enchantingBooks;
+    std::vector<BeaconBeamView> beaconBeams;
+    std::vector<ConduitView> conduits;
+    std::vector<BannerView> banners;
+    std::vector<SignTextView> signTexts;
+    std::vector<SpawnerView> spawners;
+    std::vector<VaultItemView> vaultItems;
+    std::vector<PotView> pots;
+    std::vector<PistonView> pistons;
+    std::vector<MovingBlockView> movingBlocks;
     std::shared_ptr<const world::BlockAssets> assets;
     std::vector<std::shared_ptr<const world::PackFiles>> packs;
     std::shared_ptr<const std::vector<uint8_t>> titleImage;
@@ -787,6 +905,7 @@ struct SessionSnapshot {
     world::MiningConditions mining;
     std::shared_ptr<const PlayerMotion> motion;
     MotionInput motionInput;
+    std::shared_ptr<const MotionFeed> motionFeed;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
     SidebarView sidebar;
@@ -822,6 +941,8 @@ public:
     std::vector<TitleRequest> takeTitles();
     std::vector<ToastRequest> takeToasts();
     std::vector<FormRequest> takeForms();
+    std::optional<SignEditorRequest> takeSignEditor();
+    void answerSign(SignEditorAnswer answer);
 
     /**
      * Queues a line typed into chat: commands (starting with a slash) go out
@@ -829,6 +950,8 @@ public:
      */
     void sendChat(std::string text);
     void setLookRay(const std::array<double, 3>& origin, const std::array<float, 3>& direction);
+    void setAimAssistTarget(const std::optional<std::array<double, 3>>& point);
+    void setCameraPerspective(int value) { requestedCameraPerspective.store(value); }
     void setRenderedCamera(const std::array<double, 3>& origin);
     std::pair<uint8_t, uint32_t> cameraEnvironment(const SessionSnapshot& snapshot, const std::array<double, 3>& position, bool renderedSurface = true);
     void setCameraBoom(const std::array<double, 3>& origin, const std::array<double, 3>& delta);
@@ -839,7 +962,10 @@ public:
     void acknowledgeResourceReload(uint64_t serial, const world::BlockAssets* expectedAssets);
     void selectHotbarSlot(int slot);
     void requestRespawn();
-    void setMotionInput(const MotionInput& input);
+    void setMotionInput(const MotionInput& input, uint64_t trace = 0);
+    void enableFrameMotion() { frameDriven = true; }
+    PlayerView advanceFrameMotion(const MotionInput& input, uint64_t trace, bool captured);
+    InputLatency inputLatency;
 
     /**
      * Queues a click for the network thread: a right click uses the held
@@ -982,6 +1108,9 @@ private:
     void flushChat();
     void handleFormPacket(const std::shared_ptr<Packet>& packet);
     void flushForms();
+    void flushSign();
+    void handleSignPacket(const std::shared_ptr<Packet>& packet);
+    std::optional<Tag> editableSignAt(const std::array<int32_t, 3>& cell);
     void queueSound(SoundRequest request);
     void queueParticle(world::ParticleSpawn spawn);
     void publishNearby();
@@ -996,6 +1125,7 @@ private:
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
     void runMotionTick(double now);
+    void publishMotionFeed();
     void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
     void replayFrom(size_t index);
     void applyMotionBoosts(MotionInput& input, uint64_t tick) const;
@@ -1030,6 +1160,7 @@ private:
     void updateActorLink(int64_t vehicle, int64_t rider, bool remove);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
     void tickProjectiles(double tickTime);
+    void tickActors(double tickTime);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);
@@ -1091,6 +1222,12 @@ private:
     void tickChestLids();
     void tickFrameItems();
     uint32_t frameScanTicks = 0;
+    std::set<std::array<int32_t, 4>> activeConduitCells;
+    std::set<std::array<int32_t, 4>> activeBannerCells;
+    std::set<std::array<int32_t, 4>> activePotCells;
+    std::map<std::array<int32_t, 3>, std::pair<int, double>> potAnimations;
+    std::map<std::array<int32_t, 3>, world::PistonAnimation> pistonAnimations;
+    std::set<std::array<int32_t, 4>> activePistonCells;
     void markChestLid(const std::array<int32_t, 3>& cell, bool moving);
     void publishBreaking();
     double boomFraction();
@@ -1132,6 +1269,7 @@ private:
     std::unique_ptr<world::MeshScheduler> mesher;
     std::map<world::SubChunkKey, uint64_t> meshGenerations;
     std::map<world::SubChunkKey, uint64_t> meshedGenerations;
+    std::set<world::SubChunkKey> invalidatedVisibility;
     uint64_t nextMeshGeneration = 0;
     std::map<world::SubChunkKey, double> frontierMeshes;
     size_t frontierColumns = 0;
@@ -1140,12 +1278,17 @@ private:
     size_t meshQuads = 0;
     std::deque<MeshUpdate> pendingUpdates;
     std::vector<std::shared_ptr<const Packet>> pendingCameraEvents;
+    std::shared_ptr<const Packet> cameraNetworkPresets;
+    bool cameraNetworkActive = false;
+    int acknowledgedCameraPerspective = -1;
+    std::atomic<int> requestedCameraPerspective {0};
     uint64_t joins = 0;
     uint64_t localRuntimeId = 0;
     int64_t localUniqueId = 0;
     std::string localUuid;
     std::mutex viewInputMutex;
     std::array<double, 3> requestedLookOrigin {};
+    std::optional<std::array<double, 3>> requestedAimPoint, aimPoint;
     std::array<double, 3> requestedRenderedCamera {};
     std::array<double, 3> renderedCamera {};
     std::array<float, 3> requestedLookDirection { 0.0f, 0.0f, -1.0f };
@@ -1162,6 +1305,8 @@ private:
     int sentRadius = 0;
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
+    std::map<uint64_t, ActorMoveQueue> actorMoveQueues;
+    std::unordered_map<std::string, ActorPropertySchema> actorPropertySchemas;
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, DebugShapeView> debugShapes;
     ActorRiders actorRiders;
@@ -1201,6 +1346,7 @@ private:
     std::set<int> inventoryChangedSlots;
     int32_t inventoryRequestId = -1;
     int32_t pendingInventoryRequest = 0;
+    std::set<int32_t> pendingInventoryRequests;
     double inventoryRequestTime = 0.0;
     bool inventoryClosing = false;
     std::atomic<int> requestedSlot { -1 };
@@ -1209,7 +1355,7 @@ private:
     bool dimensionAckReceived = false;
     bool dimensionSpawnReceived = false;
     std::atomic<bool> useRequested { false };
-    std::atomic<bool> attackRequested { false };
+    std::atomic<uint32_t> attackRequested { 0 };
     std::atomic<bool> attackHeld { false };
     std::atomic<bool> useHeld { false };
     std::atomic<bool> modAttackHeld { false };
@@ -1333,8 +1479,20 @@ private:
     MotionBoost dolphinBoost;
     bool enderChestOpen = false;
     std::mutex motionInputMutex;
+    MotionInputBuffer bufferedMotionInput;
+    MotionInputBuffer bufferedFrameInput;
+    FrameMotion frameMotion;
+    uint64_t frameJoin = 0;
+    uint64_t frameRevision = 0;
+    uint64_t frameHardRevision = 0;
+    uint64_t frameSeedTick = 0;
+    double nextMotionFeed = 0.0;
+    std::atomic<bool> frameDriven { false };
+    uint64_t movementRevision = 1;
+    uint64_t hardMovementRevision = 1;
     MotionInput motionInput;
     MotionInput lastMotionInput;
+    uint64_t motionInputTrace = 0;
     uint32_t movementInputLocks = 0;
     bool motionStarted = false;
     bool teleportHandled = false;
@@ -1342,7 +1500,6 @@ private:
     std::atomic<int32_t> pendingRiptide { 0 };
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
-    double lastMotionFrame = 0.0;
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;
@@ -1359,6 +1516,10 @@ private:
 
     std::vector<FormRequest> pendingForms;
     std::vector<FormAnswer> outgoingForms;
+    std::optional<SignEditorRequest> pendingSignEditor;
+    std::optional<SignEditorRequest> activeSignEditor;
+    std::optional<SignEditorAnswer> outgoingSign;
+    uint64_t signEditorSerial = 0;
     std::string localXuid;
     float walkedDistance = 0.0f;
     float nextStepDistance = 1.0f;

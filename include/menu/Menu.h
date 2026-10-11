@@ -2,8 +2,10 @@
 #include "world/GlobalResources.h"
 
 #include "client/SocialModel.h"
+#include "client/Updates.h"
 #include "menu/ChatCommands.h"
 #include "menu/FormScreen.h"
+#include "menu/SignScreen.h"
 #include "menu/Hud.h"
 #include "menu/InventoryScreen.h"
 #include "menu/ServerStore.h"
@@ -205,6 +207,7 @@ enum class Dialog {
     JoinRealm,
     ConfirmRemoveFriend,
     Emotes,
+    Update,
     RealmAddMenu,
     RevealServerAddress,
     ServerFormError,
@@ -550,6 +553,7 @@ public:
 
     InventoryScreen& inventoryPanel() { return inventory; }
     FormScreen& formPanel() { return forms; }
+    SignScreen& signPanel() { return signs; }
 
     /**
      * Shows a server form, or answers that the player is busy when another
@@ -557,6 +561,7 @@ public:
      */
     void openForm(uint32_t id, const std::string& json);
     void prepareInventoryInput(const InputState& input);
+    void prepareInput(const InputState& input);
     void setInventory(const InventoryState& state, bool creative);
 
     void frame(ui::Context& ui, float width, float height);
@@ -1098,8 +1103,11 @@ public:
 private:
     InventoryScreen inventory;
     FormScreen forms;
+    SignScreen signs;
     ToastQueue toasts;
     bool inventoryInputHandled = false;
+    bool inputPrepared = false;
+    bool inputBlocked = false;
     enum class ServerGroup {
         Featured,
         Creator,
@@ -1157,6 +1165,7 @@ private:
     void progressDialog(ui::Context& ui, float width, float height);
     void connectionError(ui::Context& ui, float width, float height);
     void messageDialog(ui::Context& ui, float width, float height, std::string_view heading, std::string_view body, std::string_view confirm, std::string_view cancel, bool& confirmed, bool& cancelled);
+    void updateDialog(ui::Context& ui, float width, float height);
     void logo(ui::Context& ui, float centerX, float y, float maxWidth);
     void playerModel(ui::Context& ui, float centerX, float top, float pixel, bool inventoryPreview = false, float rotation = 0.0f);
     void screenContent(ui::Context& ui, float width, float height, Screen which);
@@ -1269,7 +1278,7 @@ private:
     std::vector<ServerRow> savedRows() const;
     std::optional<ServerRow> selectedRow() const;
 
-    void handleKeys(ui::Context& ui);
+    void handleKeys(const InputState& input);
     bool handleChatKeys(const InputState& input);
     void openChat(std::string draft);
     void closeChat();
@@ -1297,6 +1306,8 @@ private:
     bool profileStatsTab = false;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;
+    Updates updates;
+    bool updateOffered = false;
     Field field = Field::None;
     bool socialOpen = false;
     bool socialArmed = false;
@@ -1380,6 +1391,7 @@ private:
     HudView hud;
     std::shared_ptr<const ui::JsonUi> jsonUi;
     std::unique_ptr<ui::JsonUiScreen> hudScreen;
+    std::unique_ptr<ui::JsonUiScreen> crosshairScreen;
     std::unique_ptr<ui::JsonUiScreen> safeZoneScreen;
     // The whole window in the coordinates of the safe area.
     ui::Rect screenBounds;
@@ -1462,9 +1474,6 @@ private:
     bool chatSettingsOpen = false;
     // The settings closed this frame, so the key that closed them is used up.
     bool chatSettingsClosed = false;
-    // The chat screen closes itself on Escape before the key handling runs,
-    // which must then not take the same press to open the pause menu.
-    bool chatClosedByScreen = false;
     ChatSettings chatOptions;
     uint64_t chatStyleRevision = 0;
     std::shared_ptr<const std::vector<ChatCommand>> commands;

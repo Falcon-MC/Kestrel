@@ -1,5 +1,6 @@
 #include "world/BlockAssets.h"
 #include "world/BlockModels.h"
+#include "world/ClockDial.h"
 
 #include "world/assets/BlockRules.h"
 #include "world/assets/TextureTools.h"
@@ -329,7 +330,10 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
             if (!pack.readTexture(path, encoded) || !ui::decodeImage(encoded, image.width, image.height, image.rgba) || image.width == 0 || image.height == 0) {
                 image = Decoded {};
             } else if (path.rfind("textures/items/leather_", 0) == 0) {
+                dyeItemFiles.emplace(path.substr(std::string("textures/items/").size()), resizeNearest(image.rgba, image.width, image.height, ItemIconSize));
                 ui::applyDyeMask(image.rgba, ui::LeatherColor);
+            } else if (path == "textures/items/wolf_armor_dyed") {
+                dyeItemFiles.emplace("wolf_armor", resizeNearest(image.rgba, image.width, image.height, ItemIconSize));
             }
             found = decoded.emplace(path, std::move(image)).first;
         }
@@ -337,10 +341,7 @@ void BlockAssets::buildInterfaceAssets(PackSource& pack, const std::vector<std::
         height = found->second.height;
         return found->second.rgba.empty() ? nullptr : &found->second.rgba;
     };
-    std::vector<std::string> atlases = pack.readTextLayers("textures/item_texture.json");
-    for (std::string& archived : pack.readArchivedLayers("textures", "item_texture.json")) {
-        atlases.push_back(std::move(archived));
-    }
+    std::vector<std::string> atlases = pack.readArchivedLayers("textures", "item_texture.json");
     for (const std::string& name : pack.archiveEntries("textures/items")) {
         size_t dot = name.rfind('.');
         std::string stem = name.substr(0, dot);
@@ -438,7 +439,7 @@ static int32_t potionVariant(const std::string& shortName, int32_t aux)
  * block items an isometric cube of the block's default state. Empty when the
  * item has neither.
  */
-std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const
+std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor, uint32_t animationFrame) const
 {
     static const std::pair<const char*, const char*> Renames[] = {
         { "totem_of_undying", "totem" },
@@ -612,14 +613,27 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         }
     }
     for (const std::string& name : names) {
+        std::string shortName = name.starts_with("minecraft:") ? name.substr(10) : name;
+        if (customColor) {
+            if (auto dye = dyeItemFiles.find(shortName); dye != dyeItemFiles.end()) {
+                std::vector<uint8_t> pixels = dye->second;
+                uint32_t rgb = *customColor;
+                ui::applyDyeMask(pixels, { uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb) });
+                return pixels;
+            }
+        }
         auto found = itemTextures.find(name.find(':') == std::string::npos ? "minecraft:" + name : name);
         if (found == itemTextures.end() || found->second.empty()) {
             continue;
         }
         int32_t frame = potionVariant(shortName, aux);
         size_t variant = frame >= 0 && size_t(frame) < found->second.size() ? size_t(frame) : 0;
+        if (identifier == "minecraft:clock" && found->second.size() > 1) {
+            variant = size_t(animationFrame % ClockFrames) * found->second.size() / ClockFrames;
+        }
         if (!found->second[variant].empty()) {
-            return found->second[variant];
+            return identifier == "minecraft:clock" && found->second.size() == 1
+                ? clockDial(found->second[variant], ItemIconSize, animationFrame) : found->second[variant];
         }
         if (!found->second.front().empty()) {
             return found->second.front();

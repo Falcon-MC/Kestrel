@@ -175,12 +175,11 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
     for (bool exact : { true, false }) {
         for (size_t i = 0; i < count; ++i) {
             size_t layer = candidates ? (*candidates)[i] : i;
-            if (exact) {
-                for (const char* extension : { ".png", ".tga" }) {
-                    std::string relative = texturePath + extension;
-                    if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
-                        return true;
-                    }
+            // Downloaded ZIP packs expose canonical lowercase paths, including names like FriendsIcon.
+            for (const char* extension : { ".png", ".tga" }) {
+                std::string relative = (exact ? texturePath : util::lowercase(texturePath)) + extension;
+                if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
+                    return true;
                 }
             }
             const Archive* source = archive(layer, folder);
@@ -220,6 +219,14 @@ std::vector<std::string> PackSource::archiveEntries(const std::string& archiveNa
         }
     }
     for (size_t layer = 0; layer < stack.size(); ++layer) {
+        for (const std::string& path : looseFiles(layer).files) {
+            if (path.starts_with(prefix) && path.find('/', prefix.size()) == std::string::npos) {
+                std::string entry = path.substr(prefix.size());
+                if (std::find(names.begin(), names.end(), entry) == names.end()) {
+                    names.push_back(std::move(entry));
+                }
+            }
+        }
         const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
@@ -247,6 +254,9 @@ bool PackSource::readArchived(const std::string& archiveName, const std::string&
 bool PackSource::readBaseArchived(const std::string& archiveName, const std::string& name, std::string& out)
 {
     for (size_t layer = 0; layer < stack.size(); ++layer) {
+        if (readLoose(layer, archiveName + "/" + name, out)) {
+            return true;
+        }
         const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
@@ -282,6 +292,11 @@ std::vector<std::string> PackSource::readArchivedLayers(const std::string& archi
         }
     }
     for (size_t layer = 0; layer < stack.size(); ++layer) {
+        std::string text;
+        if (readLoose(layer, archiveName + "/" + name, text)) {
+            result.push_back(std::move(text));
+            continue;
+        }
         const Archive* source = archive(layer, archiveName);
         if (!source) {
             continue;
@@ -350,6 +365,16 @@ const PackSource::LooseFiles& PackSource::looseFiles(size_t layer)
     index.emplace();
     listLoose(stack[layer], index->files, index->folders);
     return *index;
+}
+
+bool PackSource::readLoose(size_t layer, const std::string& relative, std::string& out)
+{
+    const auto& files = looseFiles(layer).files;
+    if (files.contains(relative) && readFile(stack[layer] / relative, out)) {
+        return true;
+    }
+    std::string folded = util::lowercase(relative);
+    return folded != relative && files.contains(folded) && readFile(stack[layer] / folded, out);
 }
 
 /**

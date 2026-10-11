@@ -1,4 +1,5 @@
 #include "client/Client.h"
+#include "world/ItemGlint.h"
 
 #include <algorithm>
 #include <cmath>
@@ -67,6 +68,7 @@ const Client::DroppedItemMesh* Client::droppedItemMesh(const HudItem& item)
         return nullptr;
     }
     std::string key = item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    if (item.customColor) key += "#color" + std::to_string(*item.customColor);
     if (auto found = droppedMeshes.find(key); found != droppedMeshes.end()) {
         return &found->second;
     }
@@ -92,6 +94,11 @@ void Client::appendFallingBlock(const ActorView& actor, const std::array<int32_t
     if (!seenSessionSnapshot) return;
     const auto sequential = blockAssets->sequentialMap();
     const auto& visual = blockAssets->visual(static_cast<uint32_t>(actor.variant), seenSessionSnapshot->hashedIds, sequential.get());
+    appendActorBlock(actor, visual, origin, out, blended);
+}
+
+void Client::appendActorBlock(const ActorView& actor, const world::BlockVisual& visual, const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
+{
     const auto& materials = blockAssets->materials();
     auto& target = (visual.flags & world::FlagTranslucent) ? blended : out;
     Vec3 base {
@@ -217,6 +224,9 @@ void Client::appendDroppedItem(const ActorView& actor, const std::array<int32_t,
                 };
             }
             out.push_back(packQuad(corners, face.uvs, face.material, face.shade));
+            if (actor.item.enchanted) world::applyItemGlint(out.back(), blockAssets->itemGlintLayer(), now,
+                visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()),
+                blockAssets->glintTextureParameters(blockAssets->itemGlintLayer()));
         }
     }
 }

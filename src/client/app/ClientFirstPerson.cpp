@@ -1,9 +1,15 @@
 #include "client/Client.h"
+#include "client/FirstPersonAnimation.h"
+#include "client/FirstPersonPlacement.h"
+#include "client/SpectatorRendering.h"
+#include "client/session/SessionData.h"
 
 
 #include "render/Renderer.h"
 #include "world/BlockAssets.h"
 #include "world/ItemInfo.h"
+#include "world/ItemGlint.h"
+#include "world/ClockDial.h"
 
 #include <algorithm>
 #include <cctype>
@@ -77,37 +83,6 @@ float wrapDegrees(float degrees)
     return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
 }
 
-std::array<float, 9> inverseBasis(const world::BoneMatrix& m)
-{
-    float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], i = m[10];
-    float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if (std::abs(det) < 1.0e-8f) return { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-    float s = 1.0f / det;
-    return { (e*i-f*h)*s, (c*h-b*i)*s, (b*f-c*e)*s,
-        (f*g-d*i)*s, (a*i-c*g)*s, (c*d-a*f)*s,
-        (d*h-e*g)*s, (b*g-a*h)*s, (a*e-b*d)*s };
-}
-
-world::BoneMatrix relativeFrame(const world::BoneMatrix& body, const world::BoneMatrix& item)
-{
-    auto inverse = inverseBasis(body);
-    world::BoneMatrix frame {};
-    for (size_t row = 0; row < 3; ++row) {
-        for (size_t column = 0; column < 4; ++column) {
-            for (size_t k = 0; k < 3; ++k) {
-                frame[row * 4 + column] += inverse[row * 3 + k] * (item[k * 4 + column] - (column == 3 ? body[k * 4 + 3] : 0.0f));
-            }
-        }
-    }
-    return frame;
-}
-
-Vec3 transformPoint(const world::BoneMatrix& m, const Vec3& p)
-{
-    return { m[0]*p[0]+m[1]*p[1]+m[2]*p[2]+m[3],
-        m[4]*p[0]+m[5]*p[1]+m[6]*p[2]+m[7], m[8]*p[0]+m[9]*p[1]+m[10]*p[2]+m[11] };
-}
-
 /**
  * The camera's right, up and backward axes in world space for a Minecraft yaw
  * and pitch in degrees.
@@ -141,74 +116,15 @@ Vec3 rotate(const Vec3& point, const Vec3& degrees)
     return p;
 }
 
-using Mat4 = std::array<float, 16>;
-
-Mat4 identity()
-{
-    return { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-}
-
-/**
- * Row-major product a * b, so b applies to a point first.
- */
-Mat4 operator*(const Mat4& a, const Mat4& b)
-{
-    Mat4 out {};
-    for (size_t row = 0; row < 4; ++row) {
-        for (size_t column = 0; column < 4; ++column) {
-            for (size_t k = 0; k < 4; ++k) {
-                out[row * 4 + column] += a[row * 4 + k] * b[k * 4 + column];
-            }
-        }
-    }
-    return out;
-}
-
-Mat4 translation(float x, float y, float z)
-{
-    Mat4 m = identity();
-    m[3] = x;
-    m[7] = y;
-    m[11] = z;
-    return m;
-}
-
-Mat4 uniformScale(float s)
-{
-    Mat4 m = identity();
-    m[0] = s;
-    m[5] = s;
-    m[10] = s;
-    return m;
-}
-
-Mat4 rotationX(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { 1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0, 0, 0, 1 };
-}
-
-Mat4 rotationY(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1 };
-}
-
-Mat4 rotationZ(float degrees)
-{
-    float c = std::cos(degrees * Pi / 180.0f);
-    float s = std::sin(degrees * Pi / 180.0f);
-    return { c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-}
-
-Vec3 transformed(const Mat4& m, const Vec3& p)
-{
-    return { m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
-        m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
-        m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] };
-}
+using first_person::Mat4;
+using first_person::identity;
+using first_person::operator*;
+using first_person::translation;
+using first_person::uniformScale;
+using first_person::rotationX;
+using first_person::rotationY;
+using first_person::rotationZ;
+using first_person::transformed;
 
 /**
  * The default transforms the game applies to a flat sprite in hand: the 1.5
@@ -248,7 +164,7 @@ bool consumed(const std::string& identifier)
  * then the default item transforms for a sprite. consumeTicks and
  * consumeDuration describe an eat or drink under way, duration 0 for none.
  */
-Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float consumeTicks, float consumeDuration)
+Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float consumeTicks, float consumeDuration, float idleBob)
 {
     float sine = std::sin(swing * Pi);
     float rootSine = std::sin(std::sqrt(swing) * Pi);
@@ -266,6 +182,7 @@ Mat4 firstPersonItem(bool block, bool mirrored, float swing, float equip, float 
     Mat4 held = lead * translation(0.56f, -0.52f, -0.72f) * translation(0.0f, (1.0f - equip) * -0.6f, 0.0f) * rotationY(45.0f)
         * rotationY(std::sin(swing * swing * Pi) * -20.0f) * rotationZ(rootSine * -20.0f) * rotationX(rootSine * -80.0f)
         * uniformScale(0.4f);
+    held = held * translation(0.0f, idleBob, 0.0f) * rotationX(idleBob * 27.000002f);
     if (block) {
         return held;
     }
@@ -334,15 +251,13 @@ const world::EntityModel* Client::localPlayerModel(const world::EntityRig*& rig,
 }
 
 /**
- * The local player's arm and held item as the game draws them in first
- * person: the player model runs its own first person animations (arm pose,
- * swing, walking bob, equip dip, breathing), shows its right arm only while
- * the hand is empty, and the held item hangs from the right item bone,
- * blocks as a cube and other items as their texture extruded one pixel deep.
+ * Both hands share the player's animated camera-space rig. Ordinary items
+ * use independent camera placements; attachables bind to their own item bone.
  */
-void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOutput out)
 {
-    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached) {
+    if (!blockAssets || !playerView.active || !worldShown || perspective != PerspectiveFirst || cameraDetached
+        || localSpectatorRendering(true, hudState.gameType)) {
         return;
     }
     const world::EntityRig* chosenRig = nullptr;
@@ -353,20 +268,26 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     }
     const world::EntityRig& rig = *chosenRig;
     double now = secondsNow();
+    bool bobbing = menu.option("view_bobbing", 1) != 0;
+    double movementTickTime = seenSessionSnapshot ? seenSessionSnapshot->player.tickTime : playerView.tickTime;
+    float partialTick = static_cast<float>(std::clamp((now - movementTickTime) / 0.05, 0.0, 1.0));
+    Mat4 viewMotion = identity();
+    if (bobbing) {
+        firstPersonMotion.look(now, camera.minecraftPitch(), camera.minecraftYaw());
+        float amount = firstPersonMotion.oldBob + (firstPersonMotion.bob - firstPersonMotion.oldBob) * partialTick;
+        float phase = -(firstPersonMotion.distance + (firstPersonMotion.distance - firstPersonMotion.oldDistance) * partialTick) * Pi;
+        float sine = std::sin(phase);
+        float tilt = firstPersonMotion.oldTilt + (firstPersonMotion.tilt - firstPersonMotion.oldTilt) * partialTick;
+        viewMotion = translation(sine * amount * 0.65f, -std::abs(std::cos(phase) * amount), 0.0f)
+            * rotationZ(sine * amount * 3.0f) * rotationX(std::abs(std::cos(phase - 0.2f) * amount) * 5.0f)
+            * rotationX(tilt) * rotationX(firstPersonMotion.rotation[0]) * rotationY(firstPersonMotion.rotation[1]);
+    }
+    float idleBob = bobbing ? static_cast<float>(std::sin(now * 2.0)) * 0.011f : 0.0f;
     float attackTime = swingProgress();
 
-    int32_t slot = std::clamp(hudState.selectedSlot, 0, 8);
-    const HudItem& selected = hudState.inventory[static_cast<size_t>(slot)];
-    std::string heldIdentity = selected.identifier + "#" + std::to_string(selected.aux) + "#" + selected.icon;
-    float elapsed = handUpdatedAt > 0.0 ? static_cast<float>(std::clamp(now - handUpdatedAt, 0.0, 0.1)) : 0.0f;
-    handUpdatedAt = now;
-    bool changing = heldIdentity != lastHeldIdentity;
-    handEquip = std::clamp(handEquip + (changing ? -8.0f : 8.0f) * elapsed, 0.0f, 1.0f);
-    if (!changing || handEquip <= 0.1f) {
-        handItem = selected;
-        lastHeldIdentity = heldIdentity;
-    }
-    const HudItem& held = handItem;
+    const HudItem& held = handTransition.item;
+    const HudItem& offhand = offhandTransition.item;
+    std::string heldIdentity = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon;
     std::string heldName = held.empty() ? std::string() : held.identifier;
 
     float yaw = camera.minecraftYaw();
@@ -376,10 +297,13 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.x = camera.x();
     input.y = camera.y() - eye;
     input.z = camera.z();
-    input.yaw = yaw;
-    input.headYaw = yaw;
-    input.pitch = pitch;
+    cameraLocalHandPose(input);
     input.now = now;
+    input.walkDistance = firstPersonMotion.distance + (firstPersonMotion.distance - firstPersonMotion.oldDistance) * partialTick;
+    if (seenSessionSnapshot && seenSessionSnapshot->playerTicks && !seenSessionSnapshot->playerTicks->empty()) {
+        const auto& movement = seenSessionSnapshot->playerTicks->back().velocity;
+        input.tickPositionDelta = std::array<double, 3> { movement[0], movement[1], movement[2] };
+    }
     input.worldTime = currentWorldTime(timeState);
     input.identifier = "minecraft:player";
     if (seenSessionSnapshot) input.flags = seenSessionSnapshot->localActorFlags;
@@ -388,7 +312,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     input.maxHealth = hudState.maxHealth;
     input.hurtTime = hudState.lastHurt > 0.0 ? static_cast<float>(std::clamp(10.0 - (now - hudState.lastHurt) * 20.0, 0.0, 10.0)) : 0.0f;
     input.mainHandItem = heldName;
-    input.offHandItem = hudState.offhand.empty() ? std::string() : hudState.offhand.identifier;
+    input.offHandItem = offhand.empty() ? std::string() : offhand.identifier;
     input.itemUseTicks = localItemUseTicks();
     input.engineVariables = {
         { "is_first_person", 1.0 },
@@ -396,10 +320,12 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         { "left_arm_swim_amount", localSwimAmount },
         { "right_arm_swim_amount", localSwimAmount },
         { "attack_time", attackTime },
+        // Samples uses this driver instead of the legacy player script's rotation factor.
+        { "first_person_item_rotation_factor", std::sin((1.0f - attackTime) * Pi) },
         { "player_arm_height", handEquip },
         { "is_holding_right", heldName.empty() ? 0.0 : 1.0 },
-        { "is_holding_left", 0.0 },
-        { "bob_animation", 1.0 },
+        { "is_holding_left", offhand.empty() ? 0.0 : 1.0 },
+        { "bob_animation", bobbing ? 1.0 : 0.0 },
         { "is_using_vr", 0.0 },
         { "is_paperdoll", 0.0 },
         { "map_face_icon", 0.0 },
@@ -410,6 +336,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         { "is_vertical_splitscreen", 0.0 },
     };
     input.swimAmount = localSwimAmount;
+    input.contextVariables = { { "player_offhand_arm_height", offhandEquip } };
     if (seenSessionSnapshot) input.inWater = session.cameraEnvironment(*seenSessionSnapshot,
         { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.1, eyePosition[2] }, false).first == 1;
     input.flags[0] |= playerView.sprinting && input.inWater.value_or(false) ? uint64_t(1) << 57 : 0;
@@ -420,7 +347,6 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     }
 
     int32_t itemBone = -1;
-    int32_t bodyBone = -1;
     std::vector<uint8_t> shown(rig.bones.size(), 0);
     HeldItemMesh* mapMesh = held.identifier == "minecraft:filled_map" ? heldMesh(held) : nullptr;
     bool holdingMap = mapMesh && mapMesh->map;
@@ -429,55 +355,26 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         if (name == "rightitem") {
             itemBone = static_cast<int32_t>(bone);
         }
-        if (name == "body") {
-            bodyBone = static_cast<int32_t>(bone);
-        }
         if ((heldName.empty() || holdingMap) && (name == "rightarm" || name == "rightsleeve")) {
             shown[bone] = 1;
         }
-        if (holdingMap && hudState.offhand.empty() && (name == "leftarm" || name == "leftsleeve")) {
+        if (((holdingMap && offhand.empty()) || offhand.identifier == "minecraft:filled_map")
+            && (name == "leftarm" || name == "leftsleeve")) {
             shown[bone] = 1;
         }
     }
-    if (bodyBone < 0) {
-        return;
-    }
-    const world::BoneMatrix& body = matrices[static_cast<size_t>(bodyBone)];
-    std::array<float, 9> inverse {};
-    {
-        const float a = body[0], b = body[1], c = body[2];
-        const float d = body[4], e = body[5], f = body[6];
-        const float g = body[8], h = body[9], i = body[10];
-        float determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-        if (std::abs(determinant) < 1.0e-8f) {
-            return;
-        }
-        float s = 1.0f / determinant;
-        inverse = {
-            (e * i - f * h) * s, (c * h - b * i) * s, (b * f - c * e) * s,
-            (f * g - d * i) * s, (a * i - c * g) * s, (c * d - a * f) * s,
-            (d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s,
-        };
-    }
-    const Vec3& neck = rig.bones[static_cast<size_t>(bodyBone)].pivot;
     std::array<Vec3, 3> axes = cameraAxes(yaw, pitch);
     Vec3 eyePoint {
         static_cast<float>((camera.x() - origin[0]) * 256.0),
         static_cast<float>((camera.y() - origin[1]) * 256.0),
         static_cast<float>((camera.z() - origin[2]) * 256.0),
     };
-    float unit = handAnimator.scale() * 16.0f;
     float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
     float handZoom = camera.halfVerticalTangent(aspect) / std::tan(HandFovDegrees * 0.5f * Pi / 180.0f);
     auto posedToWorld = [&](const Vec3& model) {
-        Vec3 posed { model[0] - body[3], model[1] - body[7], model[2] - body[11] };
-        Vec3 local {
-            inverse[0] * posed[0] + inverse[1] * posed[1] + inverse[2] * posed[2] - neck[0],
-            inverse[3] * posed[0] + inverse[4] * posed[1] + inverse[5] * posed[2] - neck[1],
-            inverse[6] * posed[0] + inverse[7] * posed[1] + inverse[8] * posed[2] - neck[2],
-        };
-        Vec3 offset = add(add(scaled(axes[0], -local[0] * handZoom), scaled(axes[1], local[1] * handZoom)), scaled(axes[2], -local[2]));
-        return add(eyePoint, scaled(offset, unit));
+        Vec3 view = transformed(viewMotion, first_person::rigPoint(model, handAnimator.scale(), static_cast<float>(session::PlayerEyeHeight)));
+        Vec3 offset = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
+        return add(eyePoint, scaled(offset, 256.0f));
     };
     auto modelToWorld = [&](const world::BoneMatrix& m, const Vec3& pixels) {
         float x = pixels[0] / 16.0f;
@@ -512,7 +409,21 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
         armor[piece] = hudState.armor[piece].empty() ? std::string() : hudState.armor[piece].identifier;
     }
     appendArmor(armor, rig, matrices, posedToWorld, input.hurtTime > 0.0f ? 1u << 7 : 0u, out, &shown, &hudState.armor);
-    if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, out)) {
+    if (!offhand.empty() && !appendAttachable(offhand, 0.0, rig, matrices, true,
+            handOffhandAttachable, posedToWorld, out, true)) {
+        Mat4 blockPlacement = viewMotion * first_person::offhandPlacement(true, false);
+        Mat4 spritePlacement = viewMotion * first_person::offhandPlacement(false, offhand.handEquipped);
+        auto placeOffhand = [&](const Vec3& local, bool block) {
+            Vec3 shaped = block ? scaled(local, 1.0f / HeldCubeSize)
+                : Vec3 { -(local[0] / HeldItemSize + 0.5f), local[1] / HeldItemSize + 0.5f,
+                    local[2] / HeldItemSize - 1.0f / 32.0f };
+            Vec3 view = transformed(block ? blockPlacement : spritePlacement, shaped);
+            Vec3 offset = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
+            return add(eyePoint, scaled(offset, 256.0f));
+        };
+        appendHeldItem(offhand, placeOffhand, out, true);
+    }
+    if (holdingMap && appendFirstPersonMap(held, attackTime, axes, eyePoint, handZoom, viewMotion, out)) {
         return;
     }
     if (heldName.empty() || itemBone < 0) {
@@ -521,33 +432,6 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     if (appendAttachable(held, input.itemUseTicks, rig, matrices, true, handAttachable, posedToWorld, out)) {
         return;
     }
-
-    const world::EntityBone& anchor = rig.bones[static_cast<size_t>(itemBone)];
-    world::AnimationInput rest = input;
-    rest.x = rest.y = rest.z = rest.now = rest.worldTime = 0.0;
-    rest.yaw = rest.headYaw = rest.pitch = 0.0f;
-    rest.onGround = true;
-    rest.hurtTime = 0.0f;
-    for (auto& [name, value] : rest.engineVariables) {
-        if (name == "attack_time" || name == "bob_animation" || name == "player_x_rotation") value = 0.0;
-        if (name == "player_arm_height") value = 1.0;
-    }
-    handRestAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, rest);
-    world::AnimationInput still = input;
-    for (auto& [name, value] : still.engineVariables) {
-        if (name == "attack_time") value = 0.0;
-        if (name == "player_arm_height") value = 1.0;
-    }
-    handMotionAnimator.update(model->scripts.get(), &blockAssets->animationLibrary(), rig.bones, still);
-    const auto& restMatrices = handRestAnimator.matrices();
-    const auto& motionMatrices = handMotionAnimator.matrices();
-    if (restMatrices.size() != matrices.size() || motionMatrices.size() != matrices.size()) {
-        return;
-    }
-    auto motionFrame = relativeFrame(motionMatrices[static_cast<size_t>(bodyBone)], motionMatrices[static_cast<size_t>(itemBone)]);
-    auto restFrame = relativeFrame(restMatrices[static_cast<size_t>(bodyBone)], restMatrices[static_cast<size_t>(itemBone)]);
-    Vec3 motion = add(transformPoint(motionFrame, anchor.pivot), scaled(transformPoint(restFrame, anchor.pivot), -1.0f));
-    float modelScale = handAnimator.scale() / 16.0f;
 
     double ticksUsed = 0.0;
     int32_t consumeDuration = 0;
@@ -578,23 +462,29 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, std::vector
     mod::Vec3 heldOffset = visuals.heldOffset.value_or(mod::Vec3 {});
     Mat4 moved = translation(static_cast<float>(heldOffset.x), static_cast<float>(heldOffset.y), static_cast<float>(heldOffset.z));
     Mat4 grown = uniformScale(visuals.heldScale.value_or(1.0f));
-    Mat4 blockPlacement = moved * firstPersonItem(true, false, attackTime, handEquip, consumeTicks, consumeLength) * grown;
-    Mat4 spritePlacement = moved * firstPersonItem(false, mirroredArt(held.identifier), attackTime, handEquip, consumeTicks, consumeLength) * grown;
+    Mat4 blockPlacement = viewMotion * moved * firstPersonItem(true, false, attackTime, handEquip, consumeTicks, consumeLength, idleBob) * grown;
+    Mat4 spritePlacement = viewMotion * moved * firstPersonItem(false, mirroredArt(held.identifier), attackTime, handEquip, consumeTicks, consumeLength, idleBob) * grown;
     auto place = [&](const Vec3& local, bool cube) {
         Vec3 shaped = cube
             ? scaled(local, 1.0f / HeldCubeSize)
             : Vec3 { -(local[0] / HeldItemSize + 0.5f), local[1] / HeldItemSize + 0.5f, local[2] / HeldItemSize - 1.0f / 32.0f };
         Vec3 view = transformed(cube ? blockPlacement : spritePlacement, shaped);
-        Vec3 turned { view[0] - motion[0] * modelScale, view[1] + motion[1] * modelScale, view[2] - motion[2] * modelScale };
-        Vec3 world = add(add(scaled(axes[0], turned[0] * handZoom), scaled(axes[1], turned[1] * handZoom)), scaled(axes[2], turned[2]));
+        Vec3 world = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
         return add(eyePoint, scaled(world, 256.0f));
     };
-    appendHeldItem(held, place, out, true);
+    Vec3 rodTip { std::nanf(""), 0.0f, 0.0f };
+    appendHeldItem(held, place, out, true, &rodTip);
+    if (held.identifier == "minecraft:fishing_rod" && seenSessionSnapshot && std::isfinite(rodTip[0])) {
+        fishingRodTips[seenSessionSnapshot->localUniqueActorId] = {
+            origin[0] + rodTip[0] / 256.0, origin[1] + rodTip[1] / 256.0, origin[2] + rodTip[2] / 256.0,
+        };
+    }
 }
 
 bool Client::paperDollVisible()
 {
-    if (!blockAssets || !worldShown || !playerView.active || menu.paperDollHidden() || menu.inventoryPanel().active) {
+    if (!blockAssets || !worldShown || !playerView.active || menu.paperDollHidden() || menu.inventoryPanel().active
+        || localSpectatorRendering(true, hudState.gameType)) {
         return false;
     }
     double now = secondsNow();
@@ -740,7 +630,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
+void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand, Vec3* rodTip)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
@@ -770,7 +660,7 @@ void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, Hel
             m[8] * pixels[0] + m[9] * pixels[1] + m[10] * pixels[2] + m[11],
         });
     };
-    appendHeldItem(held, place, out);
+    appendHeldItem(held, place, out, false, rodTip);
 }
 
 /**
@@ -815,6 +705,8 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
     }
     std::string mapKey = mapMeshKey(held);
     std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon + mapKey;
+    if (held.identifier == "minecraft:clock") meshKey += "#frame" + std::to_string(world::clockFrame(currentWorldTime(timeState)));
+    if (held.customColor) meshKey += "#color" + std::to_string(*held.customColor);
     auto found = heldMeshes.find(meshKey);
     if (found == heldMeshes.end()) {
         uint32_t slot = static_cast<uint32_t>(heldMeshes.size());
@@ -830,6 +722,20 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
         }
         HeldItemMesh cached;
         cached.slot = slot;
+        if (held.identifier == "minecraft:fishing_rod") {
+            const auto icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor);
+            if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
+                for (uint32_t y = 0; y < ItemGrid && !cached.rodTip; ++y) {
+                    for (uint32_t x = ItemGrid; x-- > 0;) {
+                        if (icon[(size_t(y) * ItemGrid + x) * 4 + 3] >= 26) {
+                            cached.rodTip = Vec3 { ((x + 0.5f) / ItemGrid - 0.5f) * HeldItemSize,
+                                (0.5f - (y + 0.5f) / ItemGrid) * HeldItemSize, 0.0f };
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         if (!mapKey.empty() && buildMapMesh(held, heldItemLayer() + slot, cached.faces)) {
             cached.map = true;
         } else {
@@ -847,13 +753,16 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
  * the item, in blocks around its center, to 1/256 block around the draw
  * origin; it is told whether the item is a cube so it can pose it.
  */
-void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, std::vector<world::ModelQuadGpu>& out, bool mirroredSprite)
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite, Vec3* rodTip)
 {
     HeldItemMesh* cached = heldMesh(held);
     if (!cached) {
         return;
     }
     HeldItemMesh& mesh = *cached;
+    if (rodTip && mesh.rodTip) {
+        *rodTip = place(*mesh.rodTip, false);
+    }
     for (const HeldItemFace& face : mesh.faces) {
         std::array<Vec3, 4> corners;
         for (size_t i = 0; i < 4; ++i) {
@@ -871,7 +780,10 @@ void Client::appendHeldItem(const HudItem& held, const std::function<std::array<
         uint32_t posedFace = world::posedShadeFace(face.shade & world::QuadFaceMask, center, 1.0f / 16.0f, [&](const Vec3& point) {
             return place(point, mesh.block);
         });
-        out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace));
+        out.push_back(packQuad(corners, uvs, face.material, (face.shade & ~uint32_t(world::QuadFaceMask)) | posedFace), corners);
+        if (held.enchanted) {
+            world::applyItemGlint(out.back(), blockAssets->itemGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->itemGlintLayer()));
+        }
     }
 }
 
@@ -936,7 +848,8 @@ std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uin
             return mesh;
         }
 
-        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon);
+        uint32_t animationFrame = held.identifier == "minecraft:clock" ? world::clockFrame(currentWorldTime(timeState)) : 0;
+        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor, animationFrame);
         std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
         if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
             for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {
@@ -1067,13 +980,68 @@ void Client::appendFrameItems(const std::array<int32_t, 3>& origin, std::vector<
     }
 }
 
+void Client::appendShelfItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    for (const ShelfItemView& shelf : shelfItemViews) {
+        const float yaw = float(shelf.rotation) * Pi * 0.5f;
+        const float cosine = std::cos(yaw);
+        const float sine = std::sin(yaw);
+        for (size_t slot = 0; slot < shelf.items.size(); ++slot) {
+            const HudItem& item = shelf.items[slot];
+            if (item.empty()) {
+                continue;
+            }
+            HeldItemMesh* mesh = heldMesh(item);
+            if (!mesh || mesh->faces.empty()) {
+                continue;
+            }
+            const float scale = 0.25f / (mesh->block ? HeldCubeSize : HeldItemSize);
+            const float offset = (float(slot) - 1.0f) * 0.3125f;
+            auto place = [&](const Vec3& point, bool) {
+                const float x = offset + point[0] * scale;
+                const float z = -0.25f + point[2] * scale;
+                return Vec3 {
+                    (float(shelf.cell[0] - origin[0]) + 0.5f + x * cosine - z * sine) * 256.0f,
+                    (float(shelf.cell[1] - origin[1]) + 0.5f + point[1] * scale) * 256.0f,
+                    (float(shelf.cell[2] - origin[2]) + 0.5f + x * sine + z * cosine) * 256.0f,
+                };
+            };
+            const size_t first = out.size();
+            appendHeldItem(item, place, out);
+            lightQuads(out, first, lightCorners(shelf.cell[0] + 0.5 - sine * 0.5, shelf.cell[1] + 0.5, shelf.cell[2] + 0.5 + cosine * 0.5));
+        }
+    }
+}
+
+void Client::appendVaultItems(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out)
+{
+    const float yaw = float(std::fmod((secondsNow() - startSeconds) * 3.4906585, 2.0 * Pi));
+    const float cosine = std::cos(yaw);
+    const float sine = std::sin(yaw);
+    for (const VaultItemView& vault : vaultItemViews) {
+        HeldItemMesh* mesh = heldMesh(vault.item);
+        if (!mesh || mesh->faces.empty()) continue;
+        const float scale = mesh->block ? 0.5f : 0.5f / HeldItemSize;
+        auto place = [&](const Vec3& point, bool) {
+            return Vec3 {
+                (float(vault.cell[0] - origin[0]) + 0.5f + (point[0] * cosine - point[2] * sine) * scale) * 256,
+                (float(vault.cell[1] - origin[1]) + 0.4f + point[1] * scale) * 256,
+                (float(vault.cell[2] - origin[2]) + 0.5f + (point[0] * sine + point[2] * cosine) * scale) * 256,
+            };
+        };
+        const size_t first = out.size();
+        appendHeldItem(vault.item, place, out);
+        lightQuads(out, first, lightCorners(vault.cell[0] + 0.5, vault.cell[1] + 0.4, vault.cell[2] + 0.5));
+    }
+}
+
 /**
  * A filled map held in first person the way the game shows it: in front of
  * the view, raised toward the eye as the player looks down and lowered while
  * the hand comes up, following the swing. The arms are posed by the pack's
  * map animations. False while the map content has not arrived.
  */
-bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, std::vector<world::ModelQuadGpu>& out)
+bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const std::array<std::array<float, 3>, 3>& axes, const std::array<float, 3>& eyePoint, float handZoom, const std::array<float, 16>& viewMotion, ModelQuadOutput out)
 {
     HeldItemMesh* mesh = heldMesh(held);
     if (!mesh || !mesh->map) {
@@ -1085,7 +1053,7 @@ bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const s
     float push = -0.4f * std::sin(root * Pi);
     float tilt = std::clamp(1.0f - pitch / 45.0f + 0.1f, 0.0f, 1.0f);
     tilt = -std::cos(tilt * Pi) * 0.5f + 0.5f;
-    Mat4 placement = translation(0.0f, -lift / 2.0f, push) * translation(0.0f, 0.04f + (1.0f - handEquip) * -1.2f + tilt * -0.5f, -0.72f)
+    Mat4 placement = viewMotion * translation(0.0f, -lift / 2.0f, push) * translation(0.0f, 0.04f + (1.0f - handEquip) * -1.2f + tilt * -0.5f, -0.72f)
         * rotationX(tilt * -85.0f) * rotationX(std::sin(root * Pi) * 20.0f) * uniformScale(2.0f * 0.38f);
     uint32_t contentLayer = heldItemLayer() + mesh->slot;
     uint32_t shade = EntityQuadFlag | (1u << 8) | 6;
@@ -1097,7 +1065,7 @@ bool Client::appendFirstPersonMap(const HudItem& held, float attackTime, const s
     auto quad = [&](float low, float high, float z, uint32_t layer) {
         std::array<Vec3, 4> corners { corner(low, low, z), corner(high, low, z), corner(high, high, z), corner(low, high, z) };
         std::array<std::array<uint16_t, 2>, 4> uvs { { { 0, 0 }, { 4096, 0 }, { 4096, 4096 }, { 0, 4096 } } };
-        out.push_back(packQuad(corners, uvs, layer, shade));
+        out.push_back(packQuad(corners, uvs, layer, shade), corners);
     };
     quad(-7.0f, 135.0f, 0.0f, mapBackgroundLayer());
     quad(0.0f, 128.0f, 0.004f, contentLayer);
