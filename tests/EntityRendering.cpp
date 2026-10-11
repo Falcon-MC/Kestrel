@@ -1,6 +1,7 @@
 #include "client/ActorEquipment.h"
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
+#include "client/FishingLine.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
 #include "render/Renderer.h"
@@ -31,6 +32,33 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    int64_t fishingOwner = -1;
+    EntityDataEntry fishingMetadata;
+    fishingMetadata.mId = 5;
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -123456;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Fishing owners use signed unique IDs, not runtime IDs");
+    fishingMetadata.mFormat = EntityDataFormat::Int;
+    fishingMetadata.mLongValue = 42;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Ignore incorrectly typed owner metadata");
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -1;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -1, "Owner removal clears the fishing line");
+    const auto line = kestrel::fishingLine({ 0, 2, 0 }, { 4, 0, 0 });
+    require(line.size() == 24 && line.front().first.x == 0 && line.front().first.y == 2
+            && line.back().second.x == 4 && line.back().second.y == 0, "Fishing line reaches both endpoints");
+    require(line[11].second.y < 1.0, "Fishing line sags between its endpoints");
+    for (size_t i = 1; i < line.size(); ++i) {
+        require(line[i - 1].second.x == line[i].first.x && line[i - 1].second.y == line[i].first.y,
+            "Fishing line segments stay connected");
+    }
+    require(kestrel::fishingLine({ 0, 0, 0 }, { 0, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { 65, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { std::numeric_limits<double>::quiet_NaN(), 0, 0 }).empty(),
+        "Invalid or excessive fishing lines produce no geometry");
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);

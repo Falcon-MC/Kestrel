@@ -757,10 +757,11 @@ int Client::run()
             renderer->drawWorld(view);
             std::shared_ptr<const SessionSnapshot> shapesSnapshot = seenSessionSnapshot;
             std::function<void(modding::WorldCanvas&)> serverShapes;
-            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty()) {
+            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty() || !fishingRodTips.empty()) {
                 serverShapes = [this, shapesSnapshot](modding::WorldCanvas& painter) {
                     if (shapesSnapshot) drawDebugShapes(painter, *shapesSnapshot, secondsNow());
                     drawSignTexts(painter);
+                    drawFishingLines(painter);
                 };
             }
             mods->drawWorld(view.viewProjection, environment.camera, serverShapes);
