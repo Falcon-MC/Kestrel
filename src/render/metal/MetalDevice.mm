@@ -30,8 +30,12 @@ NSString* functionName(std::string_view entry)
     static const std::map<std::string_view, const char*> names {
         { "vs_main", "ui_vertex" },
         { "ps_main", "ui_fragment" },
+        { "vs_ui_solid", "ui_solid_vertex" },
+        { "ps_ui_solid", "ui_solid_fragment" },
         { "vs_world", "world_vertex" },
+        { "vs_world_blend", "world_blend_vertex" },
         { "vs_model", "model_vertex" },
+        { "vs_model_blend", "model_blend_vertex" },
         { "vs_hand", "hand_vertex" },
         { "vs_actor", "actor_vertex" },
         { "vs_overlay", "overlay_vertex" },
@@ -140,6 +144,7 @@ public:
     id<MTLRenderPipelineState> state;
     id<MTLDepthStencilState> depth;
     bool constantsVertexOnly = false;
+    bool worldConstants = false;
     bool actorConstants = false;
     bool cullBackFaces = false;
 };
@@ -151,12 +156,17 @@ public:
         if (slot >= textures.size()) {
             return;
         }
-        textures[slot] = texture ? static_cast<const MetalTexture*>(texture)->texture : blank;
+        auto chosen = texture ? static_cast<const MetalTexture*>(texture)->texture : blank;
+        if (textures[slot] != chosen) {
+            textures[slot] = chosen;
+            ++revision;
+        }
     }
 
     std::vector<id<MTLTexture>> textures;
     id<MTLTexture> blank;
     id<MTLSamplerState> sampler;
+    uint64_t revision = 0;
 };
 
 /**
@@ -385,6 +395,7 @@ public:
         depth.depthWriteEnabled = desc.depthWrite ? YES : NO;
         pipeline->depth = [device newDepthStencilStateWithDescriptor:depth];
         pipeline->constantsVertexOnly = desc.bindings.constantsVertexOnly;
+        pipeline->worldConstants = !desc.source && desc.library == ShaderLibrary::World;
         pipeline->actorConstants = desc.bindings.actorConstants;
         pipeline->cullBackFaces = desc.cullBackFaces;
         return pipeline;
@@ -450,6 +461,8 @@ public:
         [encoder setViewport:viewport];
         bound = nullptr;
         boundTextures = nullptr;
+        boundVertexBuffer = nil;
+        fragmentConstants.clear();
         return submissions + 1;
     }
 
@@ -492,7 +505,21 @@ public:
         NSUInteger bytes = count * sizeof(uint32_t);
         [encoder setVertexBytes:values length:bytes atIndex:1];
         if (!bound->constantsVertexOnly) {
-            [encoder setFragmentBytes:values length:bytes atIndex:1];
+            // The built-in world fragment shaders use animation time (origin.w),
+            // but receive position from the vertex shader. Chunk translation
+            // therefore only changes vertex constants, not fragment state.
+            std::array<uint32_t, 32> worldValues;
+            const void* fragmentValues = values;
+            if (bound->worldConstants && count == worldValues.size()) {
+                std::memcpy(worldValues.data(), values, bytes);
+                std::fill(worldValues.begin() + 16, worldValues.begin() + 19, 0u);
+                fragmentValues = worldValues.data();
+            }
+            if (fragmentConstants.size() != bytes || std::memcmp(fragmentConstants.data(), fragmentValues, bytes) != 0) {
+                [encoder setFragmentBytes:fragmentValues length:bytes atIndex:1];
+                fragmentConstants.resize(bytes);
+                std::memcpy(fragmentConstants.data(), fragmentValues, bytes);
+            }
         }
     }
 
@@ -517,17 +544,23 @@ public:
             return;
         }
         const auto* set = static_cast<const MetalTextureSet*>(&textures);
+        if (set == boundTextures && set->revision == boundTextureRevision) {
+            return;
+        }
         for (NSUInteger slot = 0; slot < set->textures.size(); ++slot) {
             [encoder setFragmentTexture:set->textures[slot] atIndex:slot];
         }
         [encoder setFragmentSamplerState:set->sampler atIndex:0];
         boundTextures = set;
+        boundTextureRevision = set->revision;
     }
 
     void setVertexBuffer(const Buffer& buffer, uint32_t, size_t) override
     {
-        if (encoder) {
-            [encoder setVertexBuffer:static_cast<const MetalBuffer&>(buffer).buffer offset:0 atIndex:0];
+        auto chosen = static_cast<const MetalBuffer&>(buffer).buffer;
+        if (encoder && chosen != boundVertexBuffer) {
+            [encoder setVertexBuffer:chosen offset:0 atIndex:0];
+            boundVertexBuffer = chosen;
         }
     }
 
@@ -557,10 +590,10 @@ public:
         }
     }
 
-    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance, uint32_t firstIndex) override
     {
         if (encoder && indexBuffer) {
-            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:0 instanceCount:instanceCount baseVertex:0 baseInstance:firstInstance];
+            [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:indexCount indexType:MTLIndexTypeUInt32 indexBuffer:indexBuffer indexBufferOffset:size_t(firstIndex) * sizeof(uint32_t) instanceCount:instanceCount baseVertex:0 baseInstance:firstInstance];
         }
     }
 
@@ -715,6 +748,9 @@ private:
     std::shared_ptr<CompletionState> completion;
     const MetalPipeline* bound = nullptr;
     const MetalTextureSet* boundTextures = nullptr;
+    uint64_t boundTextureRevision = 0;
+    id<MTLBuffer> boundVertexBuffer = nil;
+    std::vector<uint8_t> fragmentConstants;
     uint64_t submissions = 0;
     uint32_t frame = 0;
     std::array<std::vector<std::unique_ptr<Buffer>>, FramesInFlight> actorPages;

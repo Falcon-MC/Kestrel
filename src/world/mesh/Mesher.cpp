@@ -365,14 +365,21 @@ public:
         loadBlocks(assets, ids, input);
         if (input.isCancelled()) return {};
         std::vector<uint8_t> seeds(volume, 0);
-        std::vector<uint8_t> blocked;
+        std::vector<uint8_t> entrances;
         // Height of the first cell in each column that filters sky light, below the field when none does.
         std::vector<int32_t> floors(size_t(Extent) * Extent, -Offset - 1);
         if (input.skyLight) {
-            blocked = blockedColumns(assets, ids, input);
+            entrances = skyEntrances(assets, ids, input);
             for (int32_t x = -Offset; x < Extent - Offset; ++x) {
                 for (int32_t z = -Offset; z < Extent - Offset; ++z) {
-                    if (blocked[size_t(x + Offset) * Extent + size_t(z + Offset)]) continue;
+                    const uint8_t entering = entrances[size_t(x + Offset) * Extent + size_t(z + Offset)];
+                    if (!entering) continue;
+                    if (entering < 15) {
+                        const int32_t top = Extent - Offset - 1;
+                        seeds[index(x, top, z)] = uint8_t(std::max(0, int(entering) - std::max(1, int(filter[index(x, top, z)]))));
+                        floors[size_t(x + Offset) * Extent + size_t(z + Offset)] = top;
+                        continue;
+                    }
                     for (int32_t y = Extent - Offset - 1; y >= -Offset; --y) {
                         size_t cell = index(x, y, z);
                         seeds[cell] = static_cast<uint8_t>(15 - std::min<uint8_t>(filter[cell], 15));
@@ -396,7 +403,7 @@ public:
             spread(block, emission);
             if (input.isCancelled()) return {};
             sky = seeds;
-            std::vector<uint32_t> sources = input.skyLight ? skySources(blocked, floors) : std::vector<uint32_t> {};
+            std::vector<uint32_t> sources = input.skyLight ? skySources(entrances, floors) : std::vector<uint32_t> {};
             propagate(sky, sources);
         }
         if (input.isCancelled()) return {};
@@ -683,19 +690,23 @@ private:
      * column that is the stretch from its own floor up to the highest neighbouring floor.
      * Flooding from every open cell instead lands on the same levels, just several times slower.
      */
-    std::vector<uint32_t> skySources(const std::vector<uint8_t>& blocked, const std::vector<int32_t>& floors) const
+    std::vector<uint32_t> skySources(const std::vector<uint8_t>& entrances, const std::vector<int32_t>& floors) const
     {
         const int32_t top = Extent - Offset - 1;
         auto reachOf = [&](int32_t x, int32_t z) {
             if (x < -Offset || z < -Offset || x > top || z > top) return -Offset - 1;
             size_t column = size_t(x + Offset) * Extent + size_t(z + Offset);
-            return blocked[column] ? top : floors[column];
+            return entrances[column] < 15 ? top : floors[column];
         };
         std::vector<uint32_t> sources;
         for (int32_t x = -Offset; x <= top; ++x) {
             for (int32_t z = -Offset; z <= top; ++z) {
                 size_t column = size_t(x + Offset) * Extent + size_t(z + Offset);
-                if (blocked[column]) continue;
+                if (!entrances[column]) continue;
+                if (entrances[column] < 15) {
+                    sources.push_back(static_cast<uint32_t>(index(x, top, z)));
+                    continue;
+                }
                 int32_t floor = floors[column];
                 int32_t reach = std::min(top, std::max({ reachOf(x - 1, z), reachOf(x + 1, z), reachOf(x, z - 1), reachOf(x, z + 1) }));
                 for (int32_t y = std::max(floor, -Offset); y <= reach; ++y) {
@@ -721,57 +732,78 @@ private:
         propagate(block, queue);
     }
 
-    static std::vector<uint8_t> blockedColumns(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
+    static std::vector<uint8_t> skyEntrances(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input)
     {
-        std::vector<uint8_t> blocked(size_t(Extent) * Extent, 0);
+        std::vector<uint8_t> entrances(size_t(Extent) * Extent, 15);
         for (int32_t dx = -1; dx <= 1; ++dx) {
             for (int32_t dz = -1; dz <= 1; ++dz) {
-                if (input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)]) {
-                    for (int32_t x = 0; x < int32_t(Side); ++x)
-                        for (int32_t z = 0; z < int32_t(Side); ++z)
-                            blocked[size_t(dx * int32_t(Side) + x + Offset) * Extent + size_t(dz * int32_t(Side) + z + Offset)] = 1;
+                const size_t slot = size_t((dx + 1) * 3 + dz + 1);
+                auto column = [&](uint32_t x, uint32_t z) -> uint8_t& {
+                    return entrances[size_t(dx * int32_t(Side) + int32_t(x) + Offset) * Extent
+                        + size_t(dz * int32_t(Side) + int32_t(z) + Offset)];
+                };
+                if (input.unknownAbove[slot]) {
+                    for (uint32_t x = 0; x < Side; ++x)
+                        for (uint32_t z = 0; z < Side; ++z) column(x, z) = 0;
+                    continue;
                 }
-                for (const std::shared_ptr<const SubChunk>& subChunk : input.above[size_t((dx + 1) * 3 + (dz + 1))]) {
-                    if (!subChunk) {
-                        continue;
-                    }
-                    for (const PalettedStorage& storage : subChunk->storages()) {
-                        std::vector<uint8_t> filters;
-                        bool anyFilter = false;
-                        for (uint32_t value : storage.palette()) {
-                            bool filtering = value != ImplicitAir && !hiddenValue(ids, value) && assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter > 0;
-                            filters.push_back(filtering ? 1 : 0);
-                            anyFilter |= filtering;
-                        }
-                        if (!anyFilter) {
-                            continue;
-                        }
-                        for (uint32_t x = 0; x < Side; ++x) {
-                            for (uint32_t z = 0; z < Side; ++z) {
-                                uint8_t& column = blocked[size_t(dx * int32_t(Side) + int32_t(x) + Offset) * Extent + size_t(dz * int32_t(Side) + int32_t(z) + Offset)];
-                                if (column) {
-                                    continue;
-                                }
-                                for (uint32_t y = 0; y < Side && !column; ++y) {
-                                    column = filters[storage.isUniform() ? 0 : storage.paletteIndex(linearIndex(x, y, z))];
-                                }
+                // Trace the sky down from the world ceiling. Leaves and water
+                // filter it; only an opaque block extinguishes it immediately.
+                const auto& above = input.above[slot];
+                for (auto chunk = above.rbegin(); chunk != above.rend(); ++chunk) {
+                    std::vector<std::vector<uint8_t>> palettes;
+                    bool anyFilter = false;
+                    if (*chunk) {
+                        for (const PalettedStorage& storage : (*chunk)->storages()) {
+                            auto& filters = palettes.emplace_back();
+                            for (uint32_t value : storage.palette()) {
+                                uint8_t filter = value == ImplicitAir || hiddenValue(ids, value) ? 0
+                                    : assets.visual(value, ids.hashed, ids.sequential.get()).lightFilter;
+                                filters.push_back(filter);
+                                anyFilter |= filter != 0;
                             }
                         }
                     }
+                    bool anyLight = false;
+                    for (uint32_t x = 0; x < Side; ++x) {
+                        for (uint32_t z = 0; z < Side; ++z) {
+                            uint8_t& level = column(x, z);
+                            if (!anyFilter) {
+                                if (level < 15) level = 0; // Sixteen air steps exhaust filtered light.
+                            } else {
+                                for (int32_t y = Side - 1; y >= 0 && level; --y) {
+                                    uint8_t filter = 0;
+                                    for (size_t layer = 0; layer < palettes.size(); ++layer) {
+                                        const PalettedStorage& storage = (*chunk)->storages()[layer];
+                                        filter = std::max(filter, palettes[layer][storage.isUniform() ? 0 : storage.paletteIndex(linearIndex(x, uint32_t(y), z))]);
+                                    }
+                                    if (level == 15 && !filter) continue;
+                                    level = uint8_t(std::max(0, int(level) - std::max(1, int(filter))));
+                                }
+                            }
+                            anyLight |= level != 0;
+                        }
+                    }
+                    if (!anyLight) break;
                 }
             }
         }
-        return blocked;
+        return entrances;
     }
 
     void solveSky(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input) const
     {
         std::vector<uint32_t> queue;
-        std::vector<uint8_t> blocked = blockedColumns(assets, ids, input);
+        std::vector<uint8_t> entrances = skyEntrances(assets, ids, input);
         int32_t top = Extent - Offset - 1;
         for (int32_t x = -Offset; x < Extent - Offset; ++x) {
             for (int32_t z = -Offset; z < Extent - Offset; ++z) {
-                if (blocked[size_t(x + Offset) * Extent + size_t(z + Offset)]) {
+                const uint8_t entering = entrances[size_t(x + Offset) * Extent + size_t(z + Offset)];
+                if (!entering) continue;
+                if (entering < 15) {
+                    const size_t cell = index(x, top, z);
+                    sky[cell] = uint8_t(std::max(0, int(entering) - std::max(1, int(filter[cell]))));
+                    if (sky[cell]) queue.push_back(static_cast<uint32_t>(cell));
                     continue;
                 }
                 for (int32_t y = top; y >= -Offset; --y) {

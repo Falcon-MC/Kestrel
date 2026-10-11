@@ -1642,10 +1642,6 @@ void debugColumn(Context& ui, const std::vector<std::string>& lines, float width
 void Menu::gameView(Context& ui, float width, float height)
 {
     if (hudToggledOff) {
-        if (debugShown) {
-            debugColumn(ui, debugView.left, width, false);
-            debugColumn(ui, debugView.right, width, true);
-        }
         return;
     }
     {
@@ -1657,10 +1653,6 @@ void Menu::gameView(Context& ui, float width, float height)
         return;
     }
 
-    if (debugShown) {
-        debugColumn(ui, debugView.left, width, false);
-        debugColumn(ui, debugView.right, width, true);
-    }
     drawHudScreen(ui, width, height);
 
     if (!hud.crosshair || !jsonUi) {
@@ -1678,6 +1670,14 @@ void Menu::gameView(Context& ui, float width, float height)
     crosshairScreen->draw(ui, { 0.0f, 0.0f, screenBounds.w, screenBounds.h }, hudData(hud));
     ui.setBlocked(blocked);
     crosshairScreen->takeEvents();
+}
+
+void Menu::drawDebugOverlay(Context& ui, float width, float height)
+{
+    if (!debugShown || !worldVisible()) return;
+    WholeScreen whole(ui, { 0.0f, 0.0f, width, height });
+    debugColumn(ui, debugView.left, width, false);
+    debugColumn(ui, debugView.right, width, true);
 }
 
 void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)

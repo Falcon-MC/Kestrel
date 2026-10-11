@@ -49,7 +49,7 @@ inline constexpr float MaxSafeArea = 1.0f;
 inline constexpr size_t VolumeChannelCount = 10;
 inline constexpr int MinBrightness = 0;
 inline constexpr int MaxBrightness = 100;
-inline constexpr int DefaultBrightness = 0;
+inline constexpr int DefaultBrightness = 50;
 inline constexpr float MaxBrightnessLift = 0.5f;
 inline constexpr int MinChatFontSize = 6;
 inline constexpr int MaxChatFontSize = 12;
@@ -795,6 +795,8 @@ public:
     {
         debugView = std::move(view);
     }
+
+    void drawDebugOverlay(ui::Context& ui, float width, float height);
 
     void setServerStatus(std::map<std::string, ServerStatus> status)
     {

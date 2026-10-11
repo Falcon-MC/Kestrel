@@ -31,6 +31,10 @@ vec3 uiGlintSample(vec2 uv, vec4 region)
 
 void main()
 {
+    if (inShape.x < -1.5) {
+        outColor = inColor;
+        return;
+    }
     vec4 texel = texture(atlas, inUv);
     float coverage = texel.a;
     if (inShape.x >= 0.0) {

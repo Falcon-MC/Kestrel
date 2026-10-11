@@ -269,18 +269,14 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOu
     const world::EntityRig& rig = *chosenRig;
     double now = secondsNow();
     bool bobbing = menu.option("view_bobbing", 1) != 0;
-    double movementTickTime = seenSessionSnapshot ? seenSessionSnapshot->player.tickTime : playerView.tickTime;
-    float partialTick = static_cast<float>(std::clamp((now - movementTickTime) / 0.05, 0.0, 1.0));
     Mat4 viewMotion = identity();
     if (bobbing) {
-        firstPersonMotion.look(now, camera.minecraftPitch(), camera.minecraftYaw());
-        float amount = firstPersonMotion.oldBob + (firstPersonMotion.bob - firstPersonMotion.oldBob) * partialTick;
-        float phase = -(firstPersonMotion.distance + (firstPersonMotion.distance - firstPersonMotion.oldDistance) * partialTick) * Pi;
+        float amount = firstPersonMotion.bob;
+        float phase = static_cast<float>(std::remainder(-double(firstPersonMotion.distance) * Pi, double(2.0f * Pi)));
         float sine = std::sin(phase);
-        float tilt = firstPersonMotion.oldTilt + (firstPersonMotion.tilt - firstPersonMotion.oldTilt) * partialTick;
         viewMotion = translation(sine * amount * 0.65f, -std::abs(std::cos(phase) * amount), 0.0f)
             * rotationZ(sine * amount * 3.0f) * rotationX(std::abs(std::cos(phase - 0.2f) * amount) * 5.0f)
-            * rotationX(tilt) * rotationX(firstPersonMotion.rotation[0]) * rotationY(firstPersonMotion.rotation[1]);
+            * rotationX(firstPersonMotion.rotation[0]) * rotationY(firstPersonMotion.rotation[1]);
     }
     float idleBob = bobbing ? static_cast<float>(std::sin(now * 2.0)) * 0.011f : 0.0f;
     float attackTime = swingProgress();
@@ -299,7 +295,7 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOu
     input.z = camera.z();
     cameraLocalHandPose(input);
     input.now = now;
-    input.walkDistance = firstPersonMotion.distance + (firstPersonMotion.distance - firstPersonMotion.oldDistance) * partialTick;
+    input.walkDistance = firstPersonMotion.distance;
     if (seenSessionSnapshot && seenSessionSnapshot->playerTicks && !seenSessionSnapshot->playerTicks->empty()) {
         const auto& movement = seenSessionSnapshot->playerTicks->back().velocity;
         input.tickPositionDelta = std::array<double, 3> { movement[0], movement[1], movement[2] };

@@ -15,6 +15,8 @@
 #include "world/ItemGlint.h"
 #include "world/ClockDial.h"
 #include "world/ItemInfo.h"
+#include "world/PackSource.h"
+#include "util/JsonText.h"
 #include "Core/Json/Json.h"
 
 #include <algorithm>
@@ -37,8 +39,42 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
     return animator.evaluate(kestrel::world::molang::Script::compile(source));
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 3) {
+        auto loadGeometry = [](const char* path) {
+            kestrel::world::PackSource pack(path);
+            kestrel::world::GeometryLibrary library;
+            for (const char* archive : { "models", "models/entity" }) {
+                for (const auto& name : pack.archiveEntries(archive)) {
+                    auto layers = pack.readArchivedLayers(archive, name);
+                    for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer)
+                        library.parse(kestrel::util::stripJsonComments(*layer), true);
+                }
+            }
+            library.resolveInheritance();
+            return library;
+        };
+        const auto reference = loadGeometry(argv[1]), samples = loadGeometry(argv[2]);
+        unsigned compared = 0;
+        for (const char* name : { "geometry.cat", "geometry.fox", "geometry.llama.v1.8", "geometry.ocelot.v1.8",
+                "geometry.parrot", "geometry.polarbear", "geometry.rabbit.v1.8", "geometry.snowgolem.v1.8", "geometry.villager_v2" }) {
+            const auto* expected = reference.find(name);
+            const auto* actual = samples.find(name);
+            require(expected && actual, "Both runtime packs must contain the affected mob geometry");
+            for (const auto& bone : expected->bones) {
+                auto match = std::find_if(actual->bones.begin(), actual->bones.end(), [&](const auto& other) { return other.name == bone.name; });
+                if (match == actual->bones.end()) continue;
+                if (bone.bindRotation != match->bindRotation) {
+                    std::fprintf(stderr, "Bind pose differs from installed pack: %s / %s\n", name, bone.name.c_str());
+                    return 1;
+                }
+                ++compared;
+            }
+        }
+        require(compared > 0, "Runtime pack comparison must inspect mob bones");
+        std::printf("Compared %u mob bind poses against the installed pack\n", compared);
+    }
     require(kestrel::world::clockFrame(6000.0) == 0, "clock noon frame");
     require(kestrel::world::clockFrame(18000.0) == 32, "clock midnight frame");
     require(kestrel::world::clockFrame(30000.0) == 0, "clock day wrap");
@@ -537,6 +573,19 @@ int main()
     require(std::abs(legacyAnimator.matrices()[0][5] - std::cos(40.0 * 3.14159265359 / 180.0)) < 1e-6,
         "A legacy controller must play both clips once when its alias matches a clip alias");
     GeometryLibrary geometries;
+    const std::string sampleCat = R"({"minecraft:geometry":[{"description":{"identifier":"geometry.cat"},"bones":[{"name":"body"},{"name":"tail1"},{"name":"head"}]}]})";
+    geometries.parse(sampleCat, true);
+    const auto* nativeCat = geometries.find("geometry.cat");
+    require(nativeCat && nativeCat->bones[0].bindRotationSet && nativeCat->bones[0].bindRotation[0] == 90
+            && nativeCat->bones[1].bindRotation[0] == 90 && !nativeCat->bones[2].bindRotationSet,
+        "Vanilla sample cats must restore missing body and tail bind rotations without rotating their head");
+    geometries.parse(sampleCat);
+    require(!geometries.find("geometry.cat")->bones[0].bindRotationSet,
+        "Custom cat geometry must keep its authored pose even when it uses a vanilla identifier");
+    geometries.parse(R"({"geometry.fox":{"bones":[{"name":"body","bind_pose_rotation":[0,0,0]},{"name":"tail"}]}})", true);
+    require(geometries.find("geometry.fox")->bones[0].bindRotation[0] == 0
+            && geometries.find("geometry.fox")->bones[1].bindRotation[0] == 80,
+        "Native bind defaults must fill omissions and preserve explicitly authored rotations");
     geometries.parse(R"({"geometry.armor.child:geometry.armor.middle":{"bones":[{"name":"body","inflate":1}]},"geometry.armor.middle:geometry.armor.base":{"bones":[{"name":"head","reset":true}]},"geometry.armor.base":{"texturewidth":64,"textureheight":32,"bones":[{"name":"body","cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},{"name":"head","cubes":[{"origin":[0,2,0],"size":[2,2,2],"uv":[0,0]}]}]}})");
     geometries.resolveInheritance();
     const auto* inheritedArmor = geometries.find("geometry.armor.child");

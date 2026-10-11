@@ -90,8 +90,63 @@ void checkLighting()
     check(meshSubChunk(assets, {}, region).light[linearIndex(8, 8, 8)] == 0, "dimensions without a sky must not invent sky light");
 }
 
-int main()
+void checkFilteredSky()
 {
+    std::string error;
+    auto assets = BlockAssets::shared(error);
+    check(bool(assets), error.c_str());
+    BlockRegistry registry;
+    check(registry.load(error), error.c_str());
+    uint32_t leaves = ImplicitAir, stone = ImplicitAir;
+    for (const auto& record : registry.records()) {
+        if (record.name == "minecraft:oak_leaves") leaves = record.networkHash;
+        if (record.name == "minecraft:stone") stone = record.networkHash;
+    }
+    check(leaves != ImplicitAir && stone != ImplicitAir, "lighting fixture blocks missing");
+    check(assets->visual(leaves, true).lightFilter == 1, "leaves must transmit filtered sky light");
+    IdMapping ids;
+    ids.hashed = true;
+    auto roof = [](uint32_t value) {
+        auto chunk = std::make_shared<SubChunk>();
+        for (uint8_t x = 0; x < 16; ++x)
+            for (uint8_t z = 0; z < 16; ++z) chunk->apply({ { x, 0, z, 0, value } });
+        return chunk;
+    };
+    MeshInput region;
+    auto center = std::make_shared<SubChunk>();
+    center->apply({ { 0, 0, 0, 0, stone } });
+    region.center = center;
+    region.unknownAround.fill(true);
+    region.unknownAround[13] = region.unknownAround[16] = false;
+    region.around[16] = std::make_shared<SubChunk>();
+    region.unknownAbove.fill(true);
+    region.unknownAbove[4] = false;
+    region.above[4] = { roof(leaves) };
+    auto cell = [](int x, int y, int z) { return (size_t(x + 16) * 48 + size_t(y + 16)) * 48 + size_t(z + 16); };
+    auto filtered = updateChunkLighting(*assets, ids, region);
+    check(bool(filtered), "filtered sky fixture must produce a light field");
+    check(filtered->sky[cell(8, 31, 8)] == 13, "leaves above the light halo must filter sky rather than extinguish it");
+    region.above[4] = { roof(stone) };
+    auto opaque = updateChunkLighting(*assets, ids, region, filtered);
+    check(opaque->sky[cell(8, 31, 8)] == 0, "an opaque roof must still block the sky");
+    region.above[4] = { roof(leaves) };
+    auto repaired = updateChunkLighting(*assets, ids, region, opaque);
+    check(repaired->sky == filtered->sky, "incremental roof updates must match a fresh solve");
+    region.above[4] = { nullptr, roof(leaves) };
+    check(updateChunkLighting(*assets, ids, region)->sky[cell(8, 31, 8)] == 0,
+        "known empty sub-chunks must retain attenuation distance beneath filtered sky");
+    region = {};
+    auto overhead = std::make_shared<SubChunk>();
+    for (uint8_t x = 7; x <= 9; ++x)
+        for (uint8_t z = 7; z <= 9; ++z) overhead->apply({ { x, 14, z, 0, stone } });
+    region.center = overhead;
+    check(updateChunkLighting(*assets, ids, region)->sky[cell(8, 4, 8)] >= 13,
+        "an open-sided canopy ten blocks above must admit bright lateral sky light");
+}
+
+int main(int argc, char** argv)
+{
+    if (argc == 2 && std::string(argv[1]) == "--lighting-pack") checkFilteredSky();
     checkLighting();
     auto assets = std::make_shared<const BlockAssets>();
     for (unsigned count : { 1u, 2u, 4u }) {

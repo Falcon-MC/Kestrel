@@ -38,7 +38,10 @@ void DrawList::fill(const Rect& logical, Color color)
     if (x1 <= x0 || y1 <= y0) {
         return;
     }
+    size_t first = vertexData.size();
     quad(x0, y0, x1, y1, whiteU, whiteV, whiteU, whiteV, color.packed());
+    // Solid fills do not need an atlas lookup for every covered pixel.
+    for (size_t index = first; index < vertexData.size(); ++index) vertexData[index].radius = -2.0f;
 }
 
 uint32_t DrawList::layered(uint32_t color) const

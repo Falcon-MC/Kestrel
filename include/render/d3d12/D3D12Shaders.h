@@ -38,6 +38,29 @@ struct VertexOut
 Texture2D atlas : register(t0);
 SamplerState atlasSampler : register(s0);
 
+struct SolidIn
+{
+    float2 position : POSITION;
+    float4 color : COLOR;
+    float depth : TEXCOORD4;
+};
+struct SolidOut
+{
+    float4 position : SV_Position;
+    nointerpolation float4 color : COLOR;
+};
+SolidOut vs_ui_solid(SolidIn input)
+{
+    SolidOut output;
+    output.position = float4(input.position.x / viewport.x * 2.0 - 1.0, 1.0 - input.position.y / viewport.y * 2.0, input.depth, 1.0);
+    output.color = input.color;
+    return output;
+}
+float4 ps_ui_solid(SolidOut input) : SV_Target
+{
+    return input.color;
+}
+
 VertexOut vs_main(VertexIn input)
 {
     VertexOut output;
@@ -71,6 +94,7 @@ float3 uiGlintSample(float2 uv, float4 region)
 
 float4 ps_main(VertexOut input) : SV_Target
 {
+    if (input.shape.x < -1.5) return input.color;
     float4 texel = atlas.Sample(atlasSampler, input.uv);
     float coverage = texel.a;
     if (input.shape.x >= 0.0)
@@ -224,6 +248,37 @@ struct ModelIn
     uint vertexId : SV_VertexID;
 };
 
+struct WorldBlendIn
+{
+    uint4 quad : QUAD0;
+    uint ao : QUAD1;
+    float3 translation : ORIGIN0;
+    uint vertexId : SV_VertexID;
+};
+
+WorldOut vs_world_blend(WorldBlendIn input)
+{
+    WorldIn quad = (WorldIn)0;
+    quad.quad = input.quad; quad.ao = input.ao; quad.vertexId = input.vertexId;
+    WorldOut output = vs_world(quad);
+    output.relative += input.translation;
+    output.position = mul(viewProjection, float4(output.relative, 1.0));
+    return output;
+}
+
+struct ModelBlendIn
+{
+    uint4 a : MODEL0;
+    uint4 b : MODEL1;
+    uint4 c : MODEL2;
+    uint4 d : MODEL3;
+    float4 glint : MODEL4;
+    float4 glintTexture : MODEL5;
+    float4 glintUvTransform : MODEL6;
+    float3 translation : ORIGIN0;
+    uint vertexId : SV_VertexID;
+};
+
 WorldOut placeModel(ModelIn input, float positionScale)
 {
     static const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
@@ -359,6 +414,18 @@ WorldOut vs_actor(ModelIn input)
 WorldOut vs_model(ModelIn input)
 {
     return placeModel(input, 256.0);
+}
+
+WorldOut vs_model_blend(ModelBlendIn input)
+{
+    ModelIn quad = (ModelIn)0;
+    quad.a = input.a; quad.b = input.b; quad.c = input.c; quad.d = input.d;
+    quad.glint = input.glint; quad.glintTexture = input.glintTexture;
+    quad.glintUvTransform = input.glintUvTransform; quad.vertexId = input.vertexId;
+    WorldOut output = placeModel(quad, 256.0);
+    output.relative += input.translation;
+    output.position = mul(viewProjection, float4(output.relative, 1.0));
+    return output;
 }
 
 WorldOut vs_overlay(ModelIn input)

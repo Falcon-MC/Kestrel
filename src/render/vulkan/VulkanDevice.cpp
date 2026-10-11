@@ -47,6 +47,8 @@ SpirV spirv(const uint32_t (&code)[Size])
 SpirV shaderCode(ShaderLibrary library, std::string_view entry)
 {
     if (library == ShaderLibrary::Ui) {
+        if (entry == "vs_ui_solid") return spirv(shaders::UiSolidVertex);
+        if (entry == "ps_ui_solid") return spirv(shaders::UiSolidFragment);
         if (entry == "vs_main") {
             return spirv(shaders::UiVertex);
         }
@@ -64,11 +66,17 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "vs_world") {
             return spirv(shaders::WorldVertex);
         }
+        if (entry == "vs_world_blend") {
+            return spirv(shaders::WorldBlendVertex);
+        }
         if (entry == "vs_actor") {
             return spirv(shaders::ActorVertex);
         }
         if (entry == "vs_model") {
             return spirv(shaders::ModelVertex);
+        }
+        if (entry == "vs_model_blend") {
+            return spirv(shaders::ModelBlendVertex);
         }
         if (entry == "vs_hand") {
             return spirv(shaders::HandVertex);
@@ -826,10 +834,10 @@ public:
         }
     }
 
-    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance, uint32_t firstIndex) override
     {
         if (active) {
-            vkCmdDrawIndexed(command, indexCount, instanceCount, 0, 0, firstInstance);
+            vkCmdDrawIndexed(command, indexCount, instanceCount, firstIndex, 0, firstInstance);
         }
     }
 

@@ -468,7 +468,6 @@ private:
     bool featuredDirty = false;
     world::EntityAnimator handAnimator;
     FirstPersonMotion firstPersonMotion;
-    uint64_t handMotionTickSerial = 0;
     uint64_t handMotionTeleports = 0;
     world::EntityAnimator paperDollAnimator;
     HeldAttachable handAttachable;

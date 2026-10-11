@@ -47,19 +47,23 @@ int main()
     }
 
     FirstPersonMotion walking;
-    walking.tick({0.2f, 0.0f, 0.0f}, true, true, false);
-    check(near(walking.bob, 0.008f), "walking amplitude must use the capped speed and tick smoothing");
-    check(near(walking.distance, 0.12f), "walk phase must advance with horizontal speed");
-    walking.tick({}, true, true, false);
-    check(near(walking.bob, 0.00736f) && near(walking.oldBob, 0.008f), "stopping must ease the previous amplitude");
-    check(near(walking.oldDistance, walking.distance), "standing still must stop the walk phase");
-    walking.tick({0.2f, -0.5f, 0.0f}, false, true, false);
-    check(near(walking.tilt, std::atan(0.1f) * 6.0f), "falling tilt must use vertical velocity");
-    check(near(walking.distance, 0.12f), "airborne movement must not advance walking phase");
-    walking.tick({0.2f, 0.0f, 0.0f}, true, true, true);
-    check(walking.bob < walking.oldBob, "swimming must suppress walking amplitude");
-    walking.tick({0.2f, -0.5f, 0.0f}, false, false, false);
-    check(walking.tilt < walking.oldTilt, "dead players must ease out the falling tilt");
+    walking.advance({}, true, true, 0.05f);
+    walking.advance({0.2, 0.0, 0.0}, true, true, 0.05f);
+    check(near(walking.bob, 0.04f), "walking amplitude must reach forty percent of the capped target after one tick");
+    check(near(walking.distance, 0.12f), "walk phase must follow rendered horizontal displacement");
+    walking.advance({0.2, 0.0, 0.0}, true, true, 0.05f);
+    check(near(walking.bob, 0.024f), "stopping must retain sixty percent of the amplitude per tick");
+    walking.advance({0.4, -0.5, 0.0}, false, true, 0.05f);
+    check(near(walking.distance, 0.24f) && near(walking.bob, 0.0144f), "airborne movement advances phase while amplitude decays");
+    float distance = walking.distance;
+    walking.advance({100.0, 0.0, 0.0}, true, true, 0.05f);
+    check(walking.bob == 0.0f && walking.distance == distance, "teleports must not inject a walk-cycle spike");
+    FirstPersonMotion coarse, fine;
+    coarse.advance({}, true, true, 0.05f);
+    fine.advance({}, true, true, 0.01f);
+    for (int tick = 1; tick <= 20; ++tick) coarse.advance({tick * 0.2, 0.0, 0.0}, true, true, 0.05f);
+    for (int frame = 1; frame <= 100; ++frame) fine.advance({frame * 0.04, 0.0, 0.0}, true, true, 0.01f);
+    check(near(coarse.bob, fine.bob) && near(coarse.distance, fine.distance, 1e-5f), "walk amplitude and phase must be independent of render rate");
 
     FirstPersonMotion wrap, ordinary;
     wrap.look(1.0, 0.0f, 359.0f);

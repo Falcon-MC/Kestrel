@@ -8,11 +8,7 @@ namespace kestrel {
 
 struct FirstPersonMotion {
     float distance = 0.0f;
-    float oldDistance = 0.0f;
     float bob = 0.0f;
-    float oldBob = 0.0f;
-    float tilt = 0.0f;
-    float oldTilt = 0.0f;
     std::array<float, 2> lastLook {};
     std::array<float, 2> angleVelocity {};
     std::array<float, 2> rotation {};
@@ -20,21 +16,29 @@ struct FirstPersonMotion {
     double lastTime = 0.0;
     bool initialized = false;
 
-    void tick(const std::array<float, 3>& movement, bool onGround, bool alive, bool swimming)
+    std::array<double, 3> lastPosition {};
+    bool positionInitialized = false;
+
+    void advance(const std::array<double, 3>& position, bool onGround, bool alive, float deltaSeconds)
     {
-        oldDistance = distance;
-        oldBob = bob;
-        oldTilt = tilt;
-        float speed = std::hypot(movement[0], movement[2]);
-        if (onGround) distance += speed * 0.6f;
-        float targetBob = onGround && alive && !swimming ? std::min(speed, 0.1f) : 0.0f;
-        float targetTilt = !onGround && alive ? std::atan(movement[1] * -0.2f) * 15.0f : 0.0f;
-        bob += (targetBob - bob) * 0.08f;
-        tilt += (targetTilt - tilt) * 0.4f;
+        if (!std::all_of(position.begin(), position.end(), [](double value) { return std::isfinite(value); })) return;
+        double moved = positionInitialized ? std::hypot(position[0] - lastPosition[0], position[2] - lastPosition[2]) : 0.0;
+        lastPosition = position;
+        positionInitialized = true;
+        if (moved > 8.0) {
+            bob = 0.0f;
+            return;
+        }
+        distance += static_cast<float>(moved * 0.6);
+        if (!std::isfinite(deltaSeconds) || deltaSeconds <= 0.0f) return;
+        float ticks = deltaSeconds * 20.0f;
+        float target = onGround && alive ? std::min(static_cast<float>(moved) / ticks, 0.1f) : 0.0f;
+        bob += (target - bob) * (1.0f - std::pow(0.6f, std::min(ticks, 1000.0f)));
     }
 
     void look(double now, float pitch, float yaw)
     {
+        if (!std::isfinite(pitch) || !std::isfinite(yaw) || !std::isfinite(now)) return;
         std::array<float, 2> current { pitch, yaw };
         if (!initialized) {
             initialized = true;
@@ -55,16 +59,16 @@ struct FirstPersonMotion {
             }
             angleVelocity[axis] = std::clamp(angleVelocity[axis] * 0.8f + delta / elapsed * 0.2f, -50.0f, 50.0f);
         }
-        // The spring is integrated in bounded steps even when a render frame stalls.
-        while (elapsed > 0.0f) {
-            float step = std::min(elapsed, 0.008333334f);
-            elapsed -= step;
+        // Equal bounded steps keep the turn spring stable through a stalled frame.
+        int steps = std::max(1, static_cast<int>(std::ceil(elapsed * 120.0f)));
+        float step = elapsed / steps;
+        for (int index = 0; index < steps; ++index) {
             for (size_t axis = 0; axis < 2; ++axis) {
                 velocity[axis] += (angleVelocity[axis] * 90.0f - rotation[axis] * 900.0f - velocity[axis] * 42.0f) * step;
                 rotation[axis] += velocity[axis] * step;
+                if (std::abs(velocity[axis]) >= 1000.0f) velocity[axis] = 0.0f;
             }
         }
-        if (std::abs(velocity[0]) >= 1000.0f || std::abs(velocity[1]) >= 1000.0f) velocity = {};
         lastLook = current;
     }
 };

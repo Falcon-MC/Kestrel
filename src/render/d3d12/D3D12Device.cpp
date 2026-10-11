@@ -737,9 +737,9 @@ public:
         commandList->DrawInstanced(vertexCount, instanceCount, firstVertex, firstInstance);
     }
 
-    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance, uint32_t firstIndex) override
     {
-        commandList->DrawIndexedInstanced(indexCount, instanceCount, 0, 0, firstInstance);
+        commandList->DrawIndexedInstanced(indexCount, instanceCount, firstIndex, 0, firstInstance);
     }
 
     void endFrame() override

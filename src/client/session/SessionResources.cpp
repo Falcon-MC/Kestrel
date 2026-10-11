@@ -164,7 +164,7 @@ void Session::pollGlobalPacks()
                     }
                     for (int32_t sy = key.y + 2; sy < range.baseSubChunkY + range.subChunkCount; ++sy) {
                         input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)] |= !loaded || pendingLight->contains({ dimension, key.x + dx, sy, key.z + dz });
-                        if (auto above = sub({ dimension, key.x + dx, sy, key.z + dz })) input.above[size_t((dx + 1) * 3 + dz + 1)].push_back(std::move(above));
+                        input.above[size_t((dx + 1) * 3 + dz + 1)].push_back(sub({ dimension, key.x + dx, sy, key.z + dz }));
                     }
                 }
                 auto mesh = world::meshSubChunk(*result.assets, mapping, input);

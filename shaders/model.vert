@@ -22,6 +22,9 @@ layout(location = 3) in uvec4 inD;
 layout(location = 4) in vec4 inGlint;
 layout(location = 5) in vec4 inGlintTexture;
 layout(location = 6) in vec4 inGlintUvTransform;
+#ifdef TRANSLUCENT
+layout(location = 7) in vec3 inTranslation;
+#endif
 #ifdef HAND
 layout(location = 7) in vec4 inPositions0;
 layout(location = 8) in vec4 inPositions1;
@@ -90,6 +93,9 @@ void main()
     local = vec3(positions[component], positions[component + 1u], positions[component + 2u]);
 #endif
     vec3 position = draw.origin.xyz + local;
+#ifdef TRANSLUCENT
+    position += inTranslation;
+#endif
     gl_Position = draw.viewProjection * vec4(position, 1.0);
     gl_Position.y = -gl_Position.y;
     outUv = vec2(float(uvWord & 0xffffu), float(uvWord >> 16)) / 4096.0;

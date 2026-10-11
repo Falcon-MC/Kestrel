@@ -133,6 +133,8 @@ struct MeshInput {
     std::array<std::shared_ptr<const SubChunk>, 27> around;
     std::array<bool, 27> unknownAround {};
     std::array<bool, 9> unknownAbove {};
+    // Ascending sub-chunks starting two above the center; null retains a known
+    // empty interval so filtered sky light attenuates across the correct height.
     std::array<std::vector<std::shared_ptr<const SubChunk>>, 9> above;
     std::shared_ptr<const BlockEntityMap> blockEntities;
     std::array<int32_t, 3> origin {};

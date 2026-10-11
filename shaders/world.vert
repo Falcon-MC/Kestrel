@@ -10,6 +10,9 @@ layout(push_constant) uniform Draw {
 
 layout(location = 0) in uvec4 inQuad;
 layout(location = 1) in uint inAo;
+#ifdef TRANSLUCENT
+layout(location = 2) in vec3 inTranslation;
+#endif
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
@@ -97,6 +100,9 @@ void main()
     uint corner = cornerOrder[gl_VertexIndex];
 
     vec3 position = draw.origin.xyz + quadCorner(face, corner, localOrigin, width, height);
+#ifdef TRANSLUCENT
+    position += inTranslation;
+#endif
     gl_Position = draw.viewProjection * vec4(position, 1.0);
     gl_Position.y = -gl_Position.y;
     outUv = greedyUv(face, corner, width, height, (inQuad.y >> 12) & 1u);

@@ -6,6 +6,27 @@ inline constexpr char UiShader[] = R"(
 #include <metal_stdlib>
 using namespace metal;
 
+struct SolidIn {
+    float2 position [[attribute(0)]];
+    float4 color [[attribute(2)]];
+    float depth [[attribute(6)]];
+};
+struct SolidOut {
+    float4 position [[position]];
+    half4 color [[flat]];
+};
+vertex SolidOut ui_solid_vertex(SolidIn in [[stage_in]], constant float2& viewport [[buffer(1)]])
+{
+    SolidOut out;
+    out.position = float4(in.position.x / viewport.x * 2.0 - 1.0, 1.0 - in.position.y / viewport.y * 2.0, in.depth, 1.0);
+    out.color = half4(in.color);
+    return out;
+}
+fragment half4 ui_solid_fragment(SolidOut in [[stage_in]])
+{
+    return in.color;
+}
+
 struct VertexIn {
     float2 position [[attribute(0)]];
     float2 uv [[attribute(1)]];
@@ -61,6 +82,7 @@ float3 uiGlintSample(texture2d<float> atlas, float2 uv, float4 region)
 
 fragment float4 ui_fragment(VertexOut in [[stage_in]], texture2d<float> atlas [[texture(0)]], sampler atlasSampler [[sampler(0)]])
 {
+    if (in.shape.x < -1.5) return in.color;
     float4 texel = atlas.sample(atlasSampler, in.uv);
     float coverage = texel.a;
     if (in.shape.x >= 0.0) {
@@ -180,7 +202,7 @@ float2 greedyUv(uint face, uint corner, float w, float h, uint flags)
     return uv;
 }
 
-vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+WorldOut placeWorld(WorldIn in, uint vertexId, constant DrawData& draw)
 {
     const uint cornerOrder[6] = { 0, 1, 2, 0, 2, 3 };
     const float faceShade[6] = { 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
@@ -212,6 +234,32 @@ struct ModelIn {
     uint4 d [[attribute(3)]];
     float4 glint [[attribute(4)]], glintTexture [[attribute(5)]];
     float4 glintUvTransform [[attribute(6)]];
+};
+
+vertex WorldOut world_vertex(WorldIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    return placeWorld(in, vertexId, draw);
+}
+
+struct WorldBlendIn {
+    uint4 quad [[attribute(0)]];
+    uint ao [[attribute(1)]];
+    float3 translation [[attribute(2)]];
+};
+
+vertex WorldOut world_blend_vertex(WorldBlendIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    WorldIn quad = { in.quad, in.ao };
+    WorldOut out = placeWorld(quad, vertexId, draw);
+    out.relative += in.translation;
+    out.position = draw.viewProjection * float4(out.relative, 1.0);
+    return out;
+}
+
+struct ModelBlendIn {
+    uint4 a [[attribute(0)]], b [[attribute(1)]], c [[attribute(2)]], d [[attribute(3)]];
+    float4 glint [[attribute(4)]], glintTexture [[attribute(5)]], glintUvTransform [[attribute(6)]];
+    float3 translation [[attribute(7)]];
 };
 
 WorldOut placeModel(ModelIn in, uint vertexId, constant DrawData& draw, float positionScale)
@@ -346,6 +394,15 @@ vertex WorldOut actor_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]
 vertex WorldOut model_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
 {
     return placeModel(in, vertexId, draw, 256.0);
+}
+
+vertex WorldOut model_blend_vertex(ModelBlendIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])
+{
+    ModelIn quad = { in.a, in.b, in.c, in.d, in.glint, in.glintTexture, in.glintUvTransform };
+    WorldOut out = placeModel(quad, vertexId, draw, 256.0);
+    out.relative += in.translation;
+    out.position = draw.viewProjection * float4(out.relative, 1.0);
+    return out;
 }
 
 vertex WorldOut overlay_vertex(ModelIn in [[stage_in]], uint vertexId [[vertex_id]], constant DrawData& draw [[buffer(1)]])

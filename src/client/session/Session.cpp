@@ -1894,9 +1894,8 @@ void Session::scheduleMeshes()
                 for (int32_t y = key.y + 2; y < range.baseSubChunkY + range.subChunkCount; ++y) {
                     input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)] |= !world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })
                         || world.subChunkPending({ key.dimension, key.x + dx, y, key.z + dz });
-                    if (std::shared_ptr<const world::SubChunk> above = world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz })) {
-                        input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(std::move(above));
-                    }
+                    input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(
+                        world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz }));
                 }
             }
         }

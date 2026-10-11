@@ -347,6 +347,7 @@ int Client::run()
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
+                firstPersonMotion.advance(eyePosition, playerView.onGround, hudState.health > 0, environmentDeltaSeconds);
                 perspective = std::clamp(menu.option("third_person", PerspectiveFirst), PerspectiveFirst, PerspectiveFront);
                 session.setCameraPerspective(perspective);
                 if (captured && !serverCamera.controlsPerspective() && keys.pressedKey == bindings.perspective()) {
@@ -466,7 +467,10 @@ int Client::run()
             }
         }
 
-        if (worldShown && playerView.active) renderSelf = localActorView(deltaSeconds);
+        if (worldShown && playerView.active) {
+            firstPersonMotion.look(secondsNow(), camera.minecraftPitch(), camera.minecraftYaw());
+            renderSelf = localActorView(deltaSeconds);
+        }
 
         float scale = guiScale();
         bool rebaked = scale != bakedScale;
@@ -814,6 +818,16 @@ int Client::run()
             }
             renderer->drawUi(drawList);
             mods->drawScreen(CustomLayer::AboveUi);
+            if (menu.debugVisible() && menu.worldVisible()) {
+                drawList.reset(scale, font.whiteU(), font.whiteV());
+                drawList.clearClip();
+                drawList.clearLayer();
+                ui::Context debugContext(drawList, font, skin, window->input(), widgets, scale);
+                debugContext.recordWidgets(false);
+                menu.drawDebugOverlay(debugContext, window->width() / scale, window->height() / scale);
+                debugContext.endFrame();
+                renderer->drawUi(drawList);
+            }
         }
         {
             Profiler::Section section(profiler, "present gpu");
@@ -1471,7 +1485,6 @@ void Client::prepareSessionRender()
         handEquip = 0.0f;
         offhandEquip = 0.0f;
         firstPersonMotion = {};
-        handMotionTickSerial = 0;
         handMotionTeleports = snapshot.player.teleports;
         paperDollAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
@@ -1559,7 +1572,6 @@ void Client::syncSession()
     if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
         seenJoin = snapshot.joinCount;
         firstPersonMotion = {};
-        handMotionTickSerial = snapshot.playerTickSerial;
         handMotionTeleports = snapshot.player.teleports;
         seenTeleport = snapshot.teleportCount;
         menu.clearChat();
@@ -1595,16 +1607,6 @@ void Client::syncSession()
     if (playerView.teleports != handMotionTeleports) {
         firstPersonMotion = {};
         handMotionTeleports = playerView.teleports;
-        handMotionTickSerial = snapshot.playerTickSerial;
-    }
-    if (snapshot.playerTicks) {
-        const auto& ticks = *snapshot.playerTicks;
-        uint64_t serial = snapshot.playerTickSerial;
-        size_t count = static_cast<size_t>(std::min<uint64_t>(serial >= handMotionTickSerial ? serial - handMotionTickSerial : 0, ticks.size()));
-        for (size_t index = ticks.size() - count; index < ticks.size(); ++index) {
-            firstPersonMotion.tick(ticks[index].velocity, ticks[index].onGround, snapshot.hud.health > 0, playerView.swimming);
-        }
-        handMotionTickSerial = serial;
     }
     timeState.worldTime = snapshot.worldTime;
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
