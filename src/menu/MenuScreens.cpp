@@ -277,7 +277,7 @@ void Menu::play(Context& ui, float width, float height)
         const char* icon;
     };
     TabInfo tabs[] = {
-        { PlayTab::Worlds, trf("hbui.PlayScreen.allWorlds", "Worlds (%1$s)", { std::to_string(friendWorlds().size()) }), worldsTabIcon() },
+        { PlayTab::Worlds, trf("hbui.PlayScreen.allWorlds", "Worlds (%1$s)", { std::to_string(localWorldsEnabled ? localWorlds.size() : friendWorlds().size()) }), worldsTabIcon() },
         { PlayTab::Realms, tr("hbui.PlayScreen.realms", "Realms"), "hbui/UI_Menu_RealmsTab" },
         { PlayTab::Servers, tr("hbui.PlayScreen.servers", "Servers"), "hbui/UI_Menu_ServerTab" },
     };

@@ -47,6 +47,20 @@ int worldColumns(float width)
     return 1;
 }
 
+std::string gameModeLabel(int gameType)
+{
+    switch (gameType) {
+    case 1:
+        return tr("hbui.CreateNewWorld.general.gameModeCreativeLabel", "Creative");
+    case 2:
+        return tr("hbui.CreateNewWorld.general.gameModeAdventureLabel", "Adventure");
+    case 0:
+        return tr("hbui.CreateNewWorld.general.gameModeSurvivalLabel", "Survival");
+    default:
+        return tr("hbui.CreateNewWorld.general.gameModeUnknownLabel", "Unknown");
+    }
+}
+
 std::string worldTitle(const SocialPerson& person)
 {
     return person.worldName.empty() ? person.gamertag : person.worldName;
@@ -141,13 +155,74 @@ void Menu::worldListRow(Context& ui, const SocialPerson& person, const Rect& row
 }
 
 /**
- * Kestrel keeps no worlds of its own, so the tab only ever lists the worlds
- * friends are hosting. Creating or importing a world needs the local game
- * server Kestrel does not have, so those buttons stay disabled.
+ * A world saved on this device: its picture, its name and game mode, and the
+ * edit button the game puts at the end of the card's action bar.
+ */
+void Menu::localWorldCard(Context& ui, const LocalWorld& world, const Rect& card)
+{
+    Rect picture { card.x, card.y, card.w, std::round(card.w * 9.0f / 16.0f) };
+    Interaction pictureState = ui.interact("local:image:" + world.id, picture);
+    ui.fill(picture, Neutral100);
+    ui.sprite(picture.inset(1.0f), world.icon.empty() ? "hbui/world-preview-default" : world.icon);
+
+    Rect action { card.x, picture.bottom(), card.w, ActionBarHeight };
+    float editSize = ActionBarHeight - css(4.0f) - Spacing2 * 2.0f;
+    Rect edit { action.right() - Spacing2 - editSize, action.y + Spacing2, editSize, editSize };
+    Rect play { action.x, action.y, edit.x - Spacing2 - action.x, action.h };
+    Interaction playState = ui.pressable("local:play:" + world.id, "detailedCardAction", play);
+    float textX = play.x + Spacing2 * 2.0f;
+    float textWidth = std::max(1.0f, play.right() - textX - Spacing2);
+    float lines = ui.lineHeight(TextStyle::Ui) * 2.0f;
+    float textY = std::round(play.y + (play.h - css(4.0f) - lines) * 0.5f);
+    ui.text(world.settings.name, TextStyle::Ui, textX, textY, White, textWidth);
+    ui.text(gameModeLabel(world.settings.gameType), TextStyle::Ui, textX, textY + ui.lineHeight(TextStyle::Ui), Muted0, textWidth);
+    if (ui.pressableButton("local:edit:" + world.id, "pressableElevatedSecondary", {}, edit)) {
+        openWorldForm(&world);
+        return;
+    }
+    float icon = css(24.0f);
+    ui.sprite({ std::round(edit.x + (edit.w - icon) * 0.5f), std::round(edit.y + (edit.h - css(4.0f) - icon) * 0.5f), icon, icon }, "hbui/Edit", InkDark);
+    if (pictureState.clicked || playState.clicked) {
+        worldRequests.push_back(WorldRequest { WorldRequest::Kind::Play, world.id, {} });
+    }
+}
+
+void Menu::localWorldListRow(Context& ui, const LocalWorld& world, const Rect& row)
+{
+    float editSize = row.h - css(4.0f) - Spacing2 * 2.0f;
+    Rect edit { row.right() - Spacing2 - editSize, row.y + Spacing2, editSize, editSize };
+    Rect play { row.x, row.y, edit.x - Spacing2 - row.x, row.h };
+    Interaction state = ui.pressable("local:row:" + world.id, "listItemAction", play);
+    Rect thumbnail { play.x + Spacing2, play.y + Spacing2, std::round((play.h - Spacing2 * 2.0f - css(4.0f)) * 16.0f / 9.0f), play.h - Spacing2 * 2.0f - css(4.0f) };
+    ui.fill(thumbnail, Neutral100);
+    ui.sprite(thumbnail.inset(1.0f), world.icon.empty() ? "hbui/world-preview-default" : world.icon);
+    float textX = thumbnail.right() + Spacing2 * 2.0f;
+    float textWidth = std::max(1.0f, play.right() - textX - Spacing2);
+    float lines = ui.lineHeight(TextStyle::Ui) * 2.0f;
+    float textY = std::round(play.y + (play.h - css(4.0f) - lines) * 0.5f);
+    ui.text(world.settings.name, TextStyle::Ui, textX, textY, White, textWidth);
+    ui.text(gameModeLabel(world.settings.gameType), TextStyle::Ui, textX, textY + ui.lineHeight(TextStyle::Ui), Muted0, textWidth);
+    if (ui.pressableButton("local:rowedit:" + world.id, "pressableElevatedSecondary", {}, edit)) {
+        openWorldForm(&world);
+        return;
+    }
+    float icon = css(24.0f);
+    ui.sprite({ std::round(edit.x + (edit.w - icon) * 0.5f), std::round(edit.y + (edit.h - css(4.0f) - icon) * 0.5f), icon, icon }, "hbui/Edit", InkDark);
+    if (state.clicked) {
+        worldRequests.push_back(WorldRequest { WorldRequest::Kind::Play, world.id, {} });
+    }
+}
+
+/**
+ * With the built in server the tab lists the worlds saved on this device and
+ * can create and import them. Without it, Kestrel keeps no worlds of its own
+ * and the tab only lists the worlds friends are hosting.
  */
 void Menu::worldsTab(Context& ui, const Rect& area)
 {
-    std::vector<const SocialPerson*> worlds = friendWorlds();
+    std::vector<const SocialPerson*> friends = localWorldsEnabled ? std::vector<const SocialPerson*> {} : friendWorlds();
+    size_t count = localWorldsEnabled ? localWorlds.size() : friends.size();
+    bool noWorlds = count == 0;
     int columns = worldColumns(area.w);
     bool list = columns == 1 || worldsListLayout;
     float y = area.y + Spacing2;
@@ -164,26 +239,36 @@ void Menu::worldsTab(Context& ui, const Rect& area)
     float cardHeight = std::round(cardWidth * 9.0f / 16.0f) + ActionBarHeight;
     float content = 0.0f;
     float backgroundBottom = 0.0f;
-    if (worlds.empty()) {
+    if (noWorlds) {
         ui.wrap(emptyText, TextStyle::Ui, emptyTextWidth, emptyLines);
         backgroundBottom = empty.y + Spacing4 * 2.0f + artHeight + ui.lineHeight(TextStyle::HeadingSmall) + Spacing2 + static_cast<float>(emptyLines.size()) * ui.lineHeight(TextStyle::Ui) + Spacing4;
     } else {
         if (list) {
-            content = static_cast<float>(worlds.size()) * (ActionBarHeight + 0.4f * Rem);
+            content = static_cast<float>(count) * (ActionBarHeight + 0.4f * Rem);
         } else {
-            size_t rows = (worlds.size() + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns);
+            size_t rows = (count + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns);
             content = static_cast<float>(rows) * (cardHeight + CardGap);
         }
         backgroundBottom = headerBottom + content + Spacing2;
     }
     ui.fill({ area.x, area.y, area.w, std::min(area.bottom(), backgroundBottom) - area.y }, NeutralAlpha60);
 
-    float buttonWidth = std::min(HeaderButtonWidth, (area.w - Spacing4 - (worlds.empty() ? 0.0f : LayoutButtonSize + Spacing4)) * 0.5f);
+    float buttonCount = localWorldsEnabled ? 3.0f : 2.0f;
+    float buttonWidth = std::min(HeaderButtonWidth, (area.w - Spacing4 * (buttonCount - 1.0f) - (noWorlds ? 0.0f : LayoutButtonSize + Spacing4)) / buttonCount);
     Rect create { area.right() - buttonWidth, y, buttonWidth, ButtonHeight };
     Rect fromTemplate { create.x - Spacing4 - buttonWidth, y, buttonWidth, ButtonHeight };
     ui.pressableButton("worlds:template", "pressableElevatedSecondary", tr("hbui.PlayScreen.AllWorldsTab.ButtonHeader.createFromTemplate", "Create from template"), fromTemplate, TextStyle::Ui, false);
-    ui.pressableButton("worlds:create", "pressableElevatedPrimary", tr("hbui.PlayScreen.AllWorldsTab.ButtonHeader.createNewWorld", "Create new world"), create, TextStyle::Ui, false);
-    if (!worlds.empty() && columns > 1) {
+    if (ui.pressableButton("worlds:create", "pressableElevatedPrimary", tr("hbui.PlayScreen.AllWorldsTab.ButtonHeader.createNewWorld", "Create new world"), create, TextStyle::Ui, localWorldsEnabled)) {
+        openWorldForm(nullptr);
+        return;
+    }
+    if (localWorldsEnabled) {
+        Rect importButton { fromTemplate.x - Spacing4 - buttonWidth, y, buttonWidth, ButtonHeight };
+        if (ui.pressableButton("worlds:import", "pressableElevatedSecondary", tr("hbui.PlayScreen.AllWorldsTab.ButtonHeader.importWorld", "Import world"), importButton)) {
+            worldRequests.push_back(WorldRequest { WorldRequest::Kind::Import, {}, {} });
+        }
+    }
+    if (!noWorlds && columns > 1) {
         Rect layout { area.x, y + ButtonHeight - LayoutButtonSize - css(4.0f), LayoutButtonSize + css(4.0f), LayoutButtonSize + css(4.0f) };
         Interaction state = ui.pressable("worlds:layout", "pressableElevatedNeutral", layout);
         Rect face { layout.x, layout.y, layout.w, layout.h - (state.pressed ? 0.0f : css(4.0f)) };
@@ -196,7 +281,7 @@ void Menu::worldsTab(Context& ui, const Rect& area)
     }
     y = headerBottom;
 
-    if (worlds.empty()) {
+    if (noWorlds) {
         float top = empty.y + Spacing4;
         ui.sprite({ std::round(empty.x + (empty.w - artWidth) * 0.5f), top, artWidth, artHeight }, "hbui/no-worlds-yet-art");
         top += artHeight + Spacing4;
@@ -213,19 +298,29 @@ void Menu::worldsTab(Context& ui, const Rect& area)
     Rect view { area.x, y, area.w, area.bottom() - y };
     scrollArea(ui, view, listScroll, content);
     ui.setClip(view);
-    for (size_t i = 0; i < worlds.size(); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         if (list) {
             Rect row { view.x, view.y - listScroll + static_cast<float>(i) * (ActionBarHeight + 0.4f * Rem), view.w - 4.0f, ActionBarHeight };
-            if (row.bottom() >= view.y && row.y <= view.bottom()) {
-                worldListRow(ui, *worlds[i], row);
+            if (row.bottom() < view.y || row.y > view.bottom()) {
+                continue;
+            }
+            if (localWorldsEnabled) {
+                localWorldListRow(ui, localWorlds[i], row);
+            } else {
+                worldListRow(ui, *friends[i], row);
             }
             continue;
         }
         float column = static_cast<float>(i % static_cast<size_t>(columns));
         float rowIndex = static_cast<float>(i / static_cast<size_t>(columns));
         Rect card { std::round(view.x + column * (cardWidth + CardGap)), view.y - listScroll + rowIndex * (cardHeight + CardGap), cardWidth, cardHeight };
-        if (card.bottom() >= view.y && card.y <= view.bottom()) {
-            worldCard(ui, *worlds[i], card);
+        if (card.bottom() < view.y || card.y > view.bottom()) {
+            continue;
+        }
+        if (localWorldsEnabled) {
+            localWorldCard(ui, localWorlds[i], card);
+        } else {
+            worldCard(ui, *friends[i], card);
         }
     }
     ui.clearClip();

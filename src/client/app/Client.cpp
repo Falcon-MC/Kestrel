@@ -4,6 +4,10 @@
 #include "client/HandVisibility.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
+#ifdef KESTREL_SINGLEPLAYER
+#include "client/LocalServer.h"
+#include "client/WorldStore.h"
+#endif
 
 #include "platform/Paths.h"
 #include "platform/Window.h"
@@ -126,6 +130,10 @@ Client::Client(LaunchOptions options)
     timer.mark("window");
     renderer = Renderer::create(*window);
     timer.mark("renderer");
+#ifdef KESTREL_SINGLEPLAYER
+    startLocalWorlds();
+    timer.mark("local worlds");
+#endif
     startSeconds = secondsNow();
     pendingSoundEngine = std::async(std::launch::async, [] {
         auto engine = std::make_unique<audio::SoundEngine>();
@@ -511,7 +519,7 @@ int Client::run()
         }
 
         if (std::optional<menu::ConnectRequest> request = menu.takeConnectRequest()) {
-            session.connect(request->name, request->address, account.signedInAuthentication(), offlineName());
+            session.connect(request->name, request->address, request->local ? nullptr : account.signedInAuthentication(), offlineName());
         }
         if (menu.takeRespawnRequest()) {
             session.requestRespawn();
@@ -712,7 +720,11 @@ int Client::run()
             Profiler::Section section(profiler, "begin frame");
             renderer->beginFrame(canvas.r / 255.0f, canvas.g / 255.0f, canvas.b / 255.0f);
         }
-        {
+        bool drawsUi = true;
+#ifdef KESTREL_SINGLEPLAYER
+        drawsUi = worldIconCaptureFrames == 0;
+#endif
+        if (drawsUi) {
             Profiler::Section section(profiler, "draw ui");
             mods->drawScreen(CustomLayer::BelowUi);
             ui::Color fade = serverCamera.fadeColor();
@@ -737,6 +749,11 @@ int Client::run()
         if (!agentCaptures.empty()) {
             finishAgentCaptures();
         }
+#ifdef KESTREL_SINGLEPLAYER
+        if (worldIconCaptureFrames > 0) {
+            finishWorldIconCapture();
+        }
+#endif
         profiler.endFrame();
     }
     return 0;
@@ -902,7 +919,7 @@ void Client::syncAccount()
     AccountSnapshot snapshot = account.snapshot();
     // Wait for the saved sign in to come back, or an online server sees an offline player.
     if (pendingConnect && snapshot.state != AccountState::Connecting) {
-        menu.connectTo(std::move(pendingConnect->name), std::move(pendingConnect->address));
+        menu.connectTo(std::move(*pendingConnect));
         pendingConnect.reset();
     }
     menu::AccountInfo info;
@@ -1304,6 +1321,9 @@ void Client::syncSession()
         cameraDimension = snapshot.dimension;
     }
     cameraLocalUnique = snapshot.localUniqueActorId;
+#ifdef KESTREL_SINGLEPLAYER
+    updateLocalWorlds(snapshot);
+#endif
     bool changed = published != seenSessionSnapshot;
     seenSessionSnapshot = std::move(published);
     if (agentSession) {

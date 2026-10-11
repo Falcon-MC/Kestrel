@@ -29,6 +29,8 @@ LaunchOptions LaunchOptions::parse(const std::vector<std::string>& arguments)
         const std::string& argument = arguments[i];
         if (argument == "--connect") {
             options.connect = next(i);
+        } else if (argument == "--world") {
+            options.world = next(i);
         } else if (argument == "--name") {
             options.name = next(i);
         } else if (argument == "--agent") {

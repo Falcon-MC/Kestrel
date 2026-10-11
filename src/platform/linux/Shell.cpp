@@ -62,4 +62,50 @@ std::string pickResourcePackFile()
     return chosen;
 }
 
+namespace {
+
+std::string runZenity(const std::string& command)
+{
+    FILE* dialog = popen(command.c_str(), "r");
+    if (!dialog) {
+        return {};
+    }
+    char buffer[4096] {};
+    std::string chosen = fgets(buffer, sizeof(buffer), dialog) ? std::string(buffer) : std::string();
+    pclose(dialog);
+    while (!chosen.empty() && (chosen.back() == '\n' || chosen.back() == '\r')) {
+        chosen.pop_back();
+    }
+    return chosen;
+}
+
+/**
+ * The text in single quotes for the shell, so a world name cannot run
+ * commands of its own.
+ */
+std::string shellQuoted(const std::string& text)
+{
+    std::string quoted = "'";
+    for (char c : text) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    return quoted + "'";
+}
+
+}
+
+std::string pickWorldFile()
+{
+    return runZenity("zenity --file-selection --file-filter='Minecraft worlds | *.mcworld *.zip' 2>/dev/null");
+}
+
+std::string pickWorldSaveFile(const std::string& suggestedName)
+{
+    return runZenity("zenity --file-selection --save --confirm-overwrite --filename=" + shellQuoted(suggestedName) + " 2>/dev/null");
+}
+
 }

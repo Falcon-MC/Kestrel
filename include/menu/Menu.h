@@ -111,6 +111,7 @@ enum class Screen {
     Play,
     Settings,
     ServerForm,
+    WorldForm,
     Marketplace,
     DressingRoom,
     Profile,
@@ -210,6 +211,8 @@ enum class Dialog {
     ServerFormError,
     OnlinePlayWarning,
     DiscardServerChanges,
+    ConfirmDeleteWorld,
+    WorldProgress,
 };
 
 enum class Field {
@@ -222,6 +225,8 @@ enum class Field {
     Chat,
     RealmCode,
     ModConfig,
+    WorldName,
+    WorldSeed,
 };
 
 /**
@@ -275,6 +280,51 @@ struct FeaturedEntry {
 struct ConnectRequest {
     std::string name;
     std::string address;
+    // A world on the built in server, joined without the Microsoft account so it plays offline too.
+    bool local = false;
+};
+
+/**
+ * What the create and edit world screens set, with level.dat's game mode and
+ * difficulty numbers: survival 0, creative 1, adventure 2, and peaceful 0 to
+ * hard 3.
+ */
+struct WorldSettings {
+    std::string name;
+    int gameType = 0;
+    int difficulty = 2;
+    std::string seed;
+    bool bonusChest = false;
+    bool cheats = false;
+
+    bool operator==(const WorldSettings&) const = default;
+};
+
+/**
+ * A world saved on this device, as its card shows it. The icon is a dynamic
+ * skin sprite, empty when the world has no picture yet.
+ */
+struct LocalWorld {
+    std::string id;
+    WorldSettings settings;
+    int64_t lastPlayed = 0;
+    uint64_t size = 0;
+    std::string icon;
+};
+
+struct WorldRequest {
+    enum class Kind {
+        Play,
+        Create,
+        Save,
+        Delete,
+        Duplicate,
+        Export,
+        Import,
+    };
+    Kind kind = Kind::Play;
+    std::string id;
+    WorldSettings settings;
 };
 
 enum class AccountStatus {
@@ -961,6 +1011,45 @@ public:
     std::optional<ConnectRequest> takeConnectRequest();
     void notify(std::string message);
 
+    /**
+     * Turns the Worlds tab into the list of worlds saved on this device, for
+     * builds that carry the built in server.
+     */
+    void enableLocalWorlds()
+    {
+        localWorldsEnabled = true;
+    }
+
+    void setLocalWorlds(std::vector<LocalWorld> worlds)
+    {
+        localWorlds = std::move(worlds);
+    }
+
+    std::vector<WorldRequest> takeWorldRequests()
+    {
+        return std::exchange(worldRequests, {});
+    }
+
+    /**
+     * Shows a progress screen with that heading while a world is saved,
+     * imported or exported, which the player cannot dismiss.
+     */
+    void showWorldProgress(std::string heading);
+
+    /**
+     * Takes the progress screen down and returns to the Worlds tab.
+     */
+    void hideWorldProgress();
+
+    /**
+     * Whether the pause screen is up, which freezes a world on the built in
+     * server the way the game does.
+     */
+    bool pauseShown() const
+    {
+        return pauseOpen;
+    }
+
     Screen currentScreen() const
     {
         return screen;
@@ -1015,6 +1104,11 @@ public:
     void connectTo(std::string name, std::string address)
     {
         pending = ConnectRequest { std::move(name), std::move(address) };
+    }
+
+    void connectTo(ConnectRequest request)
+    {
+        pending = std::move(request);
     }
 
     /**
@@ -1170,6 +1264,11 @@ private:
     float header(ui::Context& ui, float width, std::string_view heading, bool social);
     void play(ui::Context& ui, float width, float height);
     void worldsTab(ui::Context& ui, const ui::Rect& area);
+    void localWorldCard(ui::Context& ui, const LocalWorld& world, const ui::Rect& card);
+    void localWorldListRow(ui::Context& ui, const LocalWorld& world, const ui::Rect& row);
+    void worldForm(ui::Context& ui, float width, float height);
+    void openWorldForm(const LocalWorld* world);
+    void deleteWorldDialog(ui::Context& ui, float width, float height, bool& closed);
     void worldCard(ui::Context& ui, const SocialPerson& person, const ui::Rect& card);
     void worldListRow(ui::Context& ui, const SocialPerson& person, const ui::Rect& row);
     std::vector<const SocialPerson*> friendWorlds() const;
@@ -1294,6 +1393,14 @@ private:
     Screen returnScreen = Screen::Title;
     PlayTab playTab = PlayTab::Worlds;
     bool worldsListLayout = false;
+    bool localWorldsEnabled = false;
+    std::vector<LocalWorld> localWorlds;
+    std::vector<WorldRequest> worldRequests;
+    // The world the edit screen opened on, unset while it creates a new one.
+    std::optional<std::string> editingWorld;
+    WorldSettings worldDraft;
+    std::optional<std::string> worldProgress;
+    int worldFormTab = 0;
     bool profileStatsTab = false;
     SettingsPage settingsSection = SettingsPage::Keyboard;
     Dialog dialog = Dialog::None;

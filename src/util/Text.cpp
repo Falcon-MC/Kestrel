@@ -46,6 +46,11 @@ std::string withoutNamespace(const std::string& identifier)
     return colon == std::string::npos ? identifier : identifier.substr(colon + 1);
 }
 
+std::filesystem::path utf8Path(const std::string& text)
+{
+    return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
+
 std::vector<uint64_t> versionNumbers(const std::string& text)
 {
     std::vector<uint64_t> numbers;

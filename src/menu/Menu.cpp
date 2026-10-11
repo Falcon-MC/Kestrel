@@ -119,6 +119,7 @@ Transition transitionOf(Screen screen)
     case Screen::Play:
     case Screen::Settings:
     case Screen::ServerForm:
+    case Screen::WorldForm:
     case Screen::Profile:
         return Transition::Slide;
     case Screen::DressingRoom:
@@ -138,7 +139,9 @@ Transition transitionOf(Dialog dialog)
     case Dialog::Connecting:
     case Dialog::SignIn:
     case Dialog::ConnectionError:
+    case Dialog::WorldProgress:
         return Transition::Slide;
+    case Dialog::ConfirmDeleteWorld:
     case Dialog::Death:
     case Dialog::Emotes:
     case Dialog::ProfileOptions:
@@ -155,7 +158,7 @@ Transition transitionOf(Dialog dialog)
 // The OreUI routes that take the place of the screen instead of opening over it.
 bool replacesScreen(Dialog dialog)
 {
-    return dialog == Dialog::Connecting || dialog == Dialog::SignIn || dialog == Dialog::ConnectionError;
+    return dialog == Dialog::Connecting || dialog == Dialog::SignIn || dialog == Dialog::ConnectionError || dialog == Dialog::WorldProgress;
 }
 
 float outCubic(float t)
@@ -422,6 +425,9 @@ void Menu::screenContent(Context& ui, float width, float height, Screen which)
         break;
     case Screen::ServerForm:
         serverForm(ui, width, height);
+        break;
+    case Screen::WorldForm:
+        worldForm(ui, width, height);
         break;
     case Screen::Marketplace:
         todoScreen(ui, width, height, tr("menu.store", "Marketplace"));
@@ -696,6 +702,12 @@ void Menu::dialogContent(Context& ui, float width, float height, Dialog which, b
         break;
     case Dialog::DiscardServerChanges:
         discardServerChangesDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::ConfirmDeleteWorld:
+        deleteWorldDialog(ui, width, height, cancelled);
+        break;
+    case Dialog::WorldProgress:
+        progressDialog(ui, width, height);
         break;
     case Dialog::ConfirmRemoveFriend:
         messageDialog(ui, width, height, tr("hbui.SocialDrawer.PlayerOptionsMenu.removeFriend", "Remove friend"),
@@ -1426,7 +1438,10 @@ void Menu::progressDialog(Context& ui, float width, float height)
     float fraction = -1.0f;
     bool twoButtons = false;
 
-    if (dialog == Dialog::SignIn) {
+    if (dialog == Dialog::WorldProgress) {
+        heading = worldProgress.value_or(std::string());
+        progress = true;
+    } else if (dialog == Dialog::SignIn) {
         switch (account.status) {
         case AccountStatus::AwaitingCode:
             heading = tr("menu.account.signIn.title", "Sign in with a Microsoft account");
@@ -1493,6 +1508,10 @@ void Menu::progressDialog(Context& ui, float width, float height)
         if (fraction > 0.0f) {
             ui.nineSlice({ track.x, track.y, std::max(track.w * fraction, 8.0f), track.h }, "ui/filled_progress_bar");
         }
+    }
+
+    if (dialog == Dialog::WorldProgress) {
+        return;
     }
 
     constexpr float ButtonWidth = 64.0f;
@@ -1822,6 +1841,9 @@ void Menu::handleKeys(Context& ui)
     if (input.tab && screen == Screen::ServerForm) {
         field = field == Field::ServerName ? Field::ServerAddress : field == Field::ServerAddress ? Field::ServerPort : Field::ServerName;
     }
+    if (input.tab && screen == Screen::WorldForm) {
+        field = worldFormTab == 1 ? (editingWorld ? Field::None : Field::WorldSeed) : worldFormTab == 0 ? Field::WorldName : Field::None;
+    }
     if (input.enter && screen == Screen::ServerForm && dialog == Dialog::None) {
         saveServerForm(false);
     }
@@ -1871,6 +1893,8 @@ void Menu::handleKeys(Context& ui)
     } else if (dialog == Dialog::ConnectionError && errorDetailsShown) {
         errorDetailsShown = false;
         errorReasonScroll = 0.0f;
+    } else if (dialog == Dialog::WorldProgress) {
+        return;
     } else if (dialog != Dialog::None) {
         dialog = Dialog::None;
     } else if (field != Field::None) {
@@ -1938,6 +1962,10 @@ std::string* Menu::focusedText()
         return dialog == Dialog::JoinRealm ? &realmCodeInput : nullptr;
     case Field::ModConfig:
         return screen == Screen::Settings ? &editModValue : nullptr;
+    case Field::WorldName:
+        return screen == Screen::WorldForm ? &worldDraft.name : nullptr;
+    case Field::WorldSeed:
+        return screen == Screen::WorldForm && !editingWorld ? &worldDraft.seed : nullptr;
     case Field::None:
         break;
     }
@@ -2049,6 +2077,17 @@ void Menu::goBack()
         if (serverFormChanged()) {
             dialog = Dialog::DiscardServerChanges;
             return;
+        }
+        navigate(Screen::Play);
+    } else if (screen == Screen::WorldForm) {
+        for (const LocalWorld& world : localWorlds) {
+            if (editingWorld && world.id == *editingWorld && !(world.settings == worldDraft)) {
+                WorldSettings settings = worldDraft;
+                if (settings.name.empty()) {
+                    settings.name = world.settings.name;
+                }
+                worldRequests.push_back(WorldRequest { WorldRequest::Kind::Save, world.id, settings });
+            }
         }
         navigate(Screen::Play);
     } else if (screen == Screen::Settings || screen == Screen::DressingRoom || screen == Screen::Marketplace || screen == Screen::Profile) {

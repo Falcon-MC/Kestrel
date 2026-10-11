@@ -29,6 +29,17 @@ bool decodeSquareImage(const std::string& encoded, uint32_t size, std::vector<ui
  */
 std::string encodePng(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
 
+/**
+ * The RGBA pixels as a JPEG file, alpha dropped, or empty when encoding fails.
+ */
+std::string encodeJpeg(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, int quality);
+
+/**
+ * Shrinks an RGBA image to fit width by averaging whole blocks of pixels,
+ * which keeps text readable better than dropping pixels.
+ */
+void shrinkToWidth(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height, uint32_t maxWidth);
+
 // The undyed leather color, #A06540.
 inline constexpr std::array<uint8_t, 3> LeatherColor { 0xA0, 0x65, 0x40 };
 

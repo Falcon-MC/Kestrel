@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,11 @@ std::string trim(std::string text);
  * An identifier without its namespace: "minecraft:stone" becomes "stone".
  */
 std::string withoutNamespace(const std::string& identifier);
+
+/**
+ * A path from UTF-8 text, such as a file dialog's answer, on every platform.
+ */
+std::filesystem::path utf8Path(const std::string& text);
 
 /**
  * The numbers of a version such as 1.26.51.1, so versions compare by value:

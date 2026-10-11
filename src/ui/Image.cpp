@@ -11,6 +11,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace kestrel::ui {
@@ -114,6 +115,57 @@ std::string encodePng(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t
         encoded.clear();
     }
     return encoded;
+}
+
+std::string encodeJpeg(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, int quality)
+{
+    std::string encoded;
+    if (width == 0 || height == 0 || rgba.size() < size_t(width) * height * 4) {
+        return encoded;
+    }
+    auto append = [](void* context, void* data, int size) {
+        static_cast<std::string*>(context)->append(static_cast<const char*>(data), static_cast<size_t>(size));
+    };
+    if (!stbi_write_jpg_to_func(append, &encoded, static_cast<int>(width), static_cast<int>(height), 4, rgba.data(), quality)) {
+        encoded.clear();
+    }
+    return encoded;
+}
+
+void shrinkToWidth(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height, uint32_t maxWidth)
+{
+    if (maxWidth == 0 || width <= maxWidth) {
+        return;
+    }
+    uint32_t newWidth = maxWidth;
+    uint32_t newHeight = std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(double(height) * newWidth / width)));
+    std::vector<uint8_t> out(size_t(newWidth) * newHeight * 4);
+    for (uint32_t y = 0; y < newHeight; ++y) {
+        uint32_t y0 = uint32_t(uint64_t(y) * height / newHeight);
+        uint32_t y1 = std::max(y0 + 1, uint32_t(uint64_t(y + 1) * height / newHeight));
+        for (uint32_t x = 0; x < newWidth; ++x) {
+            uint32_t x0 = uint32_t(uint64_t(x) * width / newWidth);
+            uint32_t x1 = std::max(x0 + 1, uint32_t(uint64_t(x + 1) * width / newWidth));
+            uint32_t sum[4] {};
+            for (uint32_t sy = y0; sy < y1; ++sy) {
+                const uint8_t* row = rgba.data() + (size_t(sy) * width + x0) * 4;
+                for (uint32_t sx = x0; sx < x1; ++sx, row += 4) {
+                    sum[0] += row[0];
+                    sum[1] += row[1];
+                    sum[2] += row[2];
+                    sum[3] += row[3];
+                }
+            }
+            uint32_t count = (y1 - y0) * (x1 - x0);
+            uint8_t* pixel = out.data() + (size_t(y) * newWidth + x) * 4;
+            for (int c = 0; c < 4; ++c) {
+                pixel[c] = static_cast<uint8_t>(sum[c] / count);
+            }
+        }
+    }
+    rgba = std::move(out);
+    width = newWidth;
+    height = newHeight;
 }
 
 }
