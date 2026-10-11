@@ -5,6 +5,7 @@
 #include "menu/GuiScale.h"
 #include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
+#include "client/SpectatorRendering.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
 #include "modding/Painters.h"
@@ -486,6 +487,10 @@ int Client::run()
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
         context.setGlint(secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
         context.recordWidgets(agentServer != nullptr && !mods->uiOpen());
+        if (seenSessionSnapshot && playerView.active && worldShown && menu.worldVisible() && !menu.hudHidden() && serverCamera.playerEffects()
+            && fireOverlayVisible(seenSessionSnapshot->localActorFlags[0], perspective == PerspectiveFirst, !cameraDetached, localSpectatorRendering(true, hudState.gameType))) {
+            fireOverlay.draw(drawList, skin, blockAssets, float(window->width()), float(window->height()), secondsNow());
+        }
         {
             Profiler::Section section(profiler, "menu ui");
             if (worldShown && playerView.active && menu.worldVisible() && !menu.hudHidden()
