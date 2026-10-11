@@ -58,23 +58,6 @@ void Session::publishMotionFeed()
     current.motionFeed = std::move(feed);
 }
 
-void Session::drainFrameMotion()
-{
-    if (!frameDriven) return;
-    std::deque<PreparedMotion> outgoing;
-    {
-        std::lock_guard guard(frameOutgoingMutex);
-        outgoing.swap(frameOutgoing);
-    }
-    for (const auto& prepared : outgoing) {
-        if (prepared.revision != movementRevision || prepared.tick.number != clientTick + 1) continue;
-        tickProjectiles(prepared.tick.due);
-        tickActors(prepared.tick.due);
-        runMotionTick(prepared.tick.due, &prepared.tick, &prepared.after, prepared.trace);
-    }
-    if (!outgoing.empty()) sendMapRequests();
-}
-
 PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace, bool captured)
 {
     auto snapshot = sharedSnapshot();
@@ -83,9 +66,8 @@ PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace,
     const auto& blocks = snapshot->loaded;
     if (snapshot->state != SessionState::Joined || snapshot->dead || !feed || !blocks || !view.active) {
         frameJoin = 0;
-        frameStaged.clear();
         std::lock_guard guard(motionInputMutex);
-        bufferedMotionInput.reset();
+        bufferedFrameInput.reset();
         return view;
     }
     PlayerMotion::CellLookup lookup = [blocks](int32_t x, int32_t y, int32_t z) { return blocks->motionCell(x, y, z); };
@@ -115,14 +97,16 @@ PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace,
         frameJoin = snapshot->joinCount;
         frameRevision = feed->revision;
         frameHardRevision = feed->hardRevision;
+        frameSeedTick = feed->tick;
         frameMotion.reset(feed->seed, feed->tick, now);
-    } else if (frameRevision != feed->revision) {
+    } else if (frameRevision != feed->revision || frameSeedTick != feed->tick) {
         frameRevision = feed->revision;
+        frameSeedTick = feed->tick;
         if (frameHardRevision != feed->hardRevision) {
             frameHardRevision = feed->hardRevision;
             frameMotion.reset(feed->seed, feed->tick, now);
             std::lock_guard guard(motionInputMutex);
-            bufferedMotionInput.reset(input);
+            bufferedFrameInput.reset(input);
         } else frameMotion.rebase(feed->seed, feed->tick);
         for (const auto& [tick, impulse] : feed->impulses) frameMotion.knockback(tick, impulse, lookup);
     }
@@ -154,23 +138,14 @@ PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace,
     };
     if (!captured) {
         std::lock_guard guard(motionInputMutex);
-        bufferedMotionInput.reset(input);
+        bufferedFrameInput.reset(input);
     }
-    bool queueAvailable;
-    {
-        std::lock_guard guard(frameOutgoingMutex);
-        queueAvailable = frameOutgoing.size() <= 64 - FrameMotion::MaxFrameTicks;
-    }
-    if (queueAvailable) frameMotion.advance(now, [&](uint64_t tick) {
+    frameMotion.advance(now, [&](uint64_t) {
         std::lock_guard guard(motionInputMutex);
-        MotionInput next = bufferedMotionInput.consume();
+        MotionInput next = bufferedFrameInput.consume();
         if (!next.trace) next.trace = trace;
-        next.riptide = pendingRiptide.exchange(0);
         return next;
-    }, lookup, ready, [&](const FrameMotion::Tick& tick, const PlayerMotion& after) {
-        inputLatency.tick(now - tick.due);
-        frameStaged.push_back({tick, after, feed->revision, tick.input.trace});
-    }, [&](MotionInput value, uint64_t tick) {
+    }, lookup, ready, [](const FrameMotion::Tick&, const PlayerMotion&) {}, [&](MotionInput value, uint64_t tick) {
         inputLatency.mark(value.trace, InputLatency::Physics);
         return prepare(value, tick);
     });
@@ -191,14 +166,6 @@ PlayerView Session::advanceFrameMotion(const MotionInput& input, uint64_t trace,
     view.bbWidth = result.width;
     view.bbHeight = result.height;
     return view;
-}
-
-void Session::submitFrameMotion()
-{
-    if (frameStaged.empty()) return;
-    std::lock_guard guard(frameOutgoingMutex);
-    for (auto& prepared : frameStaged) frameOutgoing.push_back(std::move(prepared));
-    frameStaged.clear();
 }
 
 }

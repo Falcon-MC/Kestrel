@@ -1,4 +1,5 @@
 #include "client/ActorExtent.h"
+#include "client/CrossbowItem.h"
 #include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
@@ -691,6 +692,81 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         // Outside that box, reject individual posed faces rather than the actor.
         bool cullFaces = !frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth);
         uint32_t light = lightCorners(actor.x, actor.y + boxHeight * 0.66f, actor.z);
+        if (actor.identifier == "minecraft:painting") {
+            const auto* motive = world::paintingMotive(actor.paintingMotive);
+            if (invisible || !motive || actor.paintingDirection < 0 || actor.paintingDirection > 3) {
+                continue;
+            }
+            auto layer = blockAssets->paintingLayer(*motive);
+            if (!layer) {
+                continue;
+            }
+            const auto normal = world::PaintingNormals[actor.paintingDirection];
+            const std::array<float, 3> right { normal[2], 0.0f, -normal[0] };
+            const float width = motive->width / 16.0f;
+            const float height = motive->height / 16.0f;
+            auto point = [&](float u, float v, float depth) {
+                return std::array<float, 3> {
+                    float((dx + right[0] * u + normal[0] * depth) * 256.0),
+                    float((dy + v) * 256.0),
+                    float((dz + right[2] * u + normal[2] * depth) * 256.0),
+                };
+            };
+            const float u0 = motive->separate ? 0.0f : motive->x / 256.0f;
+            const float v0 = motive->separate ? 0.0f : motive->y / 256.0f;
+            const float u1 = motive->separate ? 1.0f : (motive->x + motive->width) / 256.0f;
+            const float v1 = motive->separate ? 1.0f : (motive->y + motive->height) / 256.0f;
+            size_t first = out.size();
+            appendEntityQuad({ point(-width / 2, height / 2, 1.0f / 32), point(width / 2, height / 2, 1.0f / 32),
+                                 point(width / 2, -height / 2, 1.0f / 32), point(-width / 2, -height / 2, 1.0f / 32) },
+                { std::array<float, 2> { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } },
+                *layer, world::shadeFaceTowards(normal) | EntityQuadFlag, out);
+            if (auto backing = blockAssets->paintingAtlasLayer()) {
+                constexpr float front = 1.0f / 32;
+                constexpr float back = -front;
+                constexpr float woodU = 192.0f / 256;
+                constexpr float woodV = 0.0f;
+                constexpr float woodEndU = 208.0f / 256;
+                constexpr float woodEndV = 16.0f / 256;
+                const std::array<std::array<float, 2>, 4> wood {{
+                    { woodU, woodV }, { woodEndU, woodV }, { woodEndU, woodEndV }, { woodU, woodEndV },
+                }};
+                auto face = [&](const std::array<std::array<float, 3>, 4>& corners, const std::array<float, 3>& outward, bool edge = false, bool vertical = false) {
+                    auto uvs = wood;
+                    if (edge) {
+                        if (vertical) {
+                            uvs[1][0] = uvs[2][0] = 193.0f / 256;
+                        } else {
+                            uvs[2][1] = uvs[3][1] = 1.0f / 256;
+                        }
+                    }
+                    appendEntityQuad(corners, uvs, *backing, world::shadeFaceTowards(outward) | EntityQuadFlag, out);
+                };
+                for (int row = 0; row < motive->height / 16; ++row) {
+                    for (int column = 0; column < motive->width / 16; ++column) {
+                        float left = -width / 2 + column, bottom = -height / 2 + row;
+                        face({ point(left + 1, bottom + 1, back), point(left, bottom + 1, back),
+                            point(left, bottom, back), point(left + 1, bottom, back) }, { -normal[0], 0, -normal[2] });
+                    }
+                }
+                for (int column = 0; column < motive->width / 16; ++column) {
+                    float left = -width / 2 + column;
+                    face({ point(left, height / 2, back), point(left + 1, height / 2, back),
+                        point(left + 1, height / 2, front), point(left, height / 2, front) }, { 0, 1, 0 }, true);
+                    face({ point(left, -height / 2, front), point(left + 1, -height / 2, front),
+                        point(left + 1, -height / 2, back), point(left, -height / 2, back) }, { 0, -1, 0 }, true);
+                }
+                for (int row = 0; row < motive->height / 16; ++row) {
+                    float bottom = -height / 2 + row;
+                    face({ point(-width / 2, bottom + 1, back), point(-width / 2, bottom + 1, front),
+                        point(-width / 2, bottom, front), point(-width / 2, bottom, back) }, { -right[0], 0, -right[2] }, true, true);
+                    face({ point(width / 2, bottom + 1, front), point(width / 2, bottom + 1, back),
+                        point(width / 2, bottom, back), point(width / 2, bottom, front) }, right, true, true);
+                }
+            }
+            lightQuads(out, first, light);
+            continue;
+        }
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
                 size_t first = out.size();
@@ -1688,6 +1764,11 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     }
     input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
+    if (held.identifier == "minecraft:crossbow") {
+        const int chargedFrame = chargedCrossbowFrame(held.userData);
+        input.metadataQueries["get_animation_frame"] = chargedFrame != 0 ? chargedFrame : itemUseTicks > 0.0 ? 1 : 0;
+        input.metadataQueries["item_is_charged"] = chargedFrame != 0 ? 1.0 : 0.0;
+    }
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
     if (firstPerson) {
         input.contextVariables.emplace_back("player_offhand_arm_height", offhandEquip);

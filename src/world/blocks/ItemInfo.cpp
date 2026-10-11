@@ -160,7 +160,7 @@ std::string itemDisplayName(const std::string& identifier)
 
 int32_t itemMaxUseTicks(const std::string& identifier)
 {
-    if (identifier == "minecraft:bow" || identifier == "minecraft:trident") {
+    if (identifier == "minecraft:bow" || identifier == "minecraft:trident" || identifier == "minecraft:crossbow") {
         return 72000;
     }
     return identifier == "minecraft:spyglass" ? 1200 : 0;

@@ -1200,6 +1200,15 @@ void BlockAssets::buildEntityModels(PackSource& pack, const std::vector<std::sha
         }
     }
     armorGlintTexture = textureLayer("textures/misc/enchanted_actor_glint").value_or(NoEntityChoice);
+    paintingAtlasTexture = textureLayer("textures/painting/kz");
+    paintingTextures.clear();
+    for (const auto& motive : PaintingMotives) {
+        if (motive.separate) {
+            if (auto layer = textureLayer("textures/painting/" + std::string(motive.name))) {
+                paintingTextures.emplace(motive.name, *layer);
+            }
+        }
+    }
     itemGlintTexture = textureLayer("textures/misc/enchanted_item_glint").value_or(NoEntityChoice);
     std::string beamImage;
     uint32_t beamWidth = 0, beamHeight = 0;

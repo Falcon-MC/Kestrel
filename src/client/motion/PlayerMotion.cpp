@@ -790,9 +790,6 @@ void PlayerMotion::runGroundAndAir()
 
     postCollisionMotion(oldVelocity, oldOnGround, under);
 
-    if (!oldOnGround && onGround) {
-        jumpDelay = 0;
-    }
     if (stuckInBlock) {
         velocity = {};
     }

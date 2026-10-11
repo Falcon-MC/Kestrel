@@ -80,6 +80,7 @@ void Session::setMotionInput(const MotionInput& input, uint64_t trace)
     MotionInput buffered = input;
     buffered.trace = trace;
     bufferedMotionInput.push(buffered);
+    if (frameDriven) bufferedFrameInput.push(buffered);
     motionInputTrace = trace;
 }
 
@@ -392,19 +393,14 @@ void Session::tickMotion()
  * tick resolved to and the input flags the server replays it with. While the
  * ground is missing the player is held in place and the tick says so.
  */
-void Session::runMotionTick(double now, const FrameMotion::Tick* prepared, const PlayerMotion* after, uint64_t trace)
+void Session::runMotionTick(double now)
 {
     MotionInput input;
     MotionVector before = motion.position();
     MotionTick tick;
     bool frozen = false;
-    if (prepared) {
-        input = prepared->input;
-        tick = prepared->result;
-        frozen = prepared->frozen;
-        motion.copyState(*after);
-        if (!frozen) playMotionSounds(tick, before);
-    } else {
+    uint64_t trace = 0;
+    {
         {
             std::lock_guard<std::mutex> guard(motionInputMutex);
             input = bufferedMotionInput.consume();
