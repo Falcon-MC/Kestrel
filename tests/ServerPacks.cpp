@@ -87,4 +87,16 @@ int main()
     check(!kestrel::world::loadServerPackData(fixture("models/", true, {}, "short"), Key, error), "invalid key rejected");
     check(!kestrel::world::loadServerPackData(fixture("models/", true, {}, Key, "payload"), Key, error), "nonempty directory rejected");
     check(!kestrel::world::loadServerPackData(fixture("models/"), "short", error), "invalid master key rejected");
+    auto samples = archive({
+        {"behavior_pack/manifest.json", "{\"header\":{}}"},
+        {"behavior_pack/blocks.json", "behavior"},
+        {"resource_pack/manifest.json", "{\"header\":{}}"},
+        {"resource_pack/blocks.json", "resources"}
+    });
+    pack = kestrel::world::loadServerPackData(samples, {}, error, "resource_pack/");
+    check(pack && pack->find("blocks.json") && *pack->find("blocks.json") == "resources", "explicit resource root excludes behavior pack");
+    check(!kestrel::world::loadServerPackData(samples, {}, error, "../resource_pack/"), "invalid explicit root rejected");
+    check(!kestrel::world::loadServerPackData(samples, {}, error, "resource_pack"), "explicit root requires trailing slash");
+    check(!kestrel::world::loadServerPackData(samples, {}, error, "missing/"), "missing explicit root rejected");
+
 }

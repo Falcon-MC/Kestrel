@@ -175,12 +175,11 @@ bool PackSource::readTexture(const std::string& texturePath, std::string& out)
     for (bool exact : { true, false }) {
         for (size_t i = 0; i < count; ++i) {
             size_t layer = candidates ? (*candidates)[i] : i;
-            if (exact) {
-                for (const char* extension : { ".png", ".tga" }) {
-                    std::string relative = texturePath + extension;
-                    if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
-                        return true;
-                    }
+            // Downloaded ZIP packs expose canonical lowercase paths, including names like FriendsIcon.
+            for (const char* extension : { ".png", ".tga" }) {
+                std::string relative = (exact ? texturePath : util::lowercase(texturePath)) + extension;
+                if ((!indexed || looseFiles(layer).files.contains(relative)) && readFile(stack[layer] / relative, out)) {
+                    return true;
                 }
             }
             const Archive* source = archive(layer, folder);

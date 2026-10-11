@@ -1,4 +1,9 @@
 #include "ui/Skin.h"
+#include "world/PackSource.h"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 
 #include <cstdlib>
 #include <iostream>
@@ -17,8 +22,24 @@ ui::Bitmap solid(uint8_t value)
 
 int main()
 {
+    auto temporary = std::filesystem::temp_directory_path() / ("kestrel-loose-texture-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(temporary / "vanilla/textures/ui");
+    std::ofstream(temporary / "vanilla/textures/ui/friendsicon.png") << "synthetic texture";
+    world::PackSource pack(temporary / "vanilla");
+    pack.indexInBackground();
+    std::string encoded;
+    check(pack.readTexture("textures/ui/FriendsIcon", encoded) && encoded == "synthetic texture", "downloaded lowercase texture names resolve mixed-case UI references");
+    std::filesystem::remove_all(temporary);
     ui::GameAssets assets;
     ui::Skin skin(assets);
+    check(skin.border("tabBarNeutral", "Pressed").valid, "missing stylesheet gets a procedural tab border");
+    const auto* tab = skin.bitmap("hbui/tabBar_neutral_pressed");
+    check(tab && tab->width == 5 && tab->height == 5, "missing native tab image gets a procedural bitmap");
+    const auto* back = skin.bitmap("hbui/arrowBack");
+    check(back && back->width == 8 && back->height == 16, "missing native icon gets procedural art");
+    skin.setDynamic("hbui/arrowBack", {2, 2, std::vector<uint8_t>(16, 123)});
+    check(skin.bitmap("hbui/arrowBack")->width == 2, "provided art wins over a fallback");
+    skin.clearDynamic("hbui/arrowBack");
     for (int i = 0; i < 4; ++i) skin.setDynamic("mod-image:" + std::to_string(i), solid(static_cast<uint8_t>(50 + i)));
     std::vector<uint8_t> pixels(size_t(ui::Skin::AtlasSize) * ui::Skin::AtlasSize * 4, 0);
     skin.pack(pixels);

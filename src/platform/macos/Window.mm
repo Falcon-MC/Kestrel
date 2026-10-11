@@ -2,6 +2,8 @@
 
 #include "AppIconPng.h"
 
+#include <mutex>
+
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -39,15 +41,19 @@ public:
     CocoaWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
         : shown(shown)
     {
-        [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        [NSApp finishLaunching];
-        NSData* icon = [NSData dataWithBytes:KestrelAppIconData::kAppIconPng length:KestrelAppIconData::kAppIconPngSize];
-        NSApp.applicationIconImage = [[NSImage alloc] initWithData:icon];
+        static std::once_flag application;
+        std::call_once(application, [] {
+            [NSApplication sharedApplication];
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+            [NSApp finishLaunching];
+            NSData* icon = [NSData dataWithBytes:KestrelAppIconData::kAppIconPng length:KestrelAppIconData::kAppIconPngSize];
+            NSApp.applicationIconImage = [[NSImage alloc] initWithData:icon];
+        });
 
         NSRect frame = NSMakeRect(0, 0, w, h);
         NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView;
         window = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
+        window.releasedWhenClosed = NO;
         window.title = [NSString stringWithUTF8String:title.c_str()];
         window.titlebarAppearsTransparent = YES;
         window.titleVisibility = NSWindowTitleHidden;
@@ -70,6 +76,14 @@ public:
             [window makeKeyAndOrderFront:nil];
             [NSApp activateIgnoringOtherApps:YES];
         }
+    }
+
+    ~CocoaWindow() override
+    {
+        setMouseCaptured(false);
+        window.delegate = nil;
+        [window orderOut:nil];
+        [window close];
     }
 
     bool visible() const override
@@ -299,6 +313,7 @@ public:
     void close() override
     {
         delegate.open = false;
+        [window close];
     }
 
 private:

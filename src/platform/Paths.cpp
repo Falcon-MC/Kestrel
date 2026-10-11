@@ -4,6 +4,47 @@
 
 namespace kestrel::platform {
 
+std::filesystem::path startupFont()
+{
+    // The first-run screen must be readable before any game or fallback fonts exist.
+#if defined(_WIN32)
+    if (const char* root = std::getenv("WINDIR")) {
+        for (const char* name : {"segoeui.ttf", "arial.ttf"}) {
+            auto path = std::filesystem::path(root) / "Fonts" / name;
+            if (std::filesystem::is_regular_file(path)) return path;
+        }
+    }
+#elif defined(__APPLE__)
+    for (const char* path : {"/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf"}) {
+        if (std::filesystem::is_regular_file(path)) return path;
+    }
+#else
+    for (const char* path : {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"}) {
+        if (std::filesystem::is_regular_file(path)) return path;
+    }
+#endif
+    return {};
+}
+
+void useDownloadedAssets(const std::filesystem::path& directory)
+{
+    auto vanilla = directory / "resource_packs/vanilla";
+    auto fonts = directory / "fonts";
+#if defined(_WIN32)
+    _putenv_s("KESTREL_VANILLA_PACK", vanilla.string().c_str());
+    _putenv_s("KESTREL_FONTS", fonts.string().c_str());
+#else
+    setenv("KESTREL_VANILLA_PACK", vanilla.c_str(), 1);
+    setenv("KESTREL_FONTS", fonts.c_str(), 1);
+#endif
+}
+
 std::filesystem::path dataDirectory()
 {
     std::filesystem::path root;
