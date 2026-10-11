@@ -154,6 +154,11 @@ inline constexpr Schema kSchemas[] = {
 }
 " @ONLY)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/fallback_fonts.txt" KESTREL_FALLBACK_FONTS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/fallback_fonts.txt")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/FallbackFonts.h" CONTENT
+    "#pragma once\ninline constexpr const char* KestrelFallbackFonts = R\"fonts(@KESTREL_FALLBACK_FONTS@)fonts\";\n" @ONLY)
+
 find_package(ZLIB REQUIRED)
 
 file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
@@ -214,6 +219,22 @@ else()
 endif()
 
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
+if(APPLE AND NOT KESTREL_IOS)
+    set(kestrelBundleIcon "${CMAKE_CURRENT_BINARY_DIR}/generated/Kestrel.icns")
+    add_custom_command(OUTPUT "${kestrelBundleIcon}"
+        COMMAND ${CMAKE_COMMAND} "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png"
+            "-DOUTPUT=${kestrelBundleIcon}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/MacBundleIcon.cmake"
+        DEPENDS data/icon.png tools/MacBundleIcon.cmake VERBATIM)
+    target_sources(Kestrel PRIVATE "${kestrelBundleIcon}")
+    set_source_files_properties("${kestrelBundleIcon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(Kestrel PROPERTIES MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Info.plist.in")
+    # Preserve the command-line path used by scripts and kestrel-mcp.
+    add_custom_command(TARGET Kestrel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${CMAKE_CURRENT_BINARY_DIR}/Kestrel"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink "$<TARGET_FILE:Kestrel>" "${CMAKE_CURRENT_BINARY_DIR}/Kestrel"
+        VERBATIM)
+endif()
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if(NOT WIN32 AND NOT APPLE)
@@ -241,6 +262,7 @@ if(NOT WIN32 AND NOT APPLE)
     kestrel_vulkan_shader(SolidFragment world.frag -DSOLID)
     kestrel_vulkan_shader(BlendFragment world.frag -DBLEND)
     kestrel_vulkan_shader(ModelVertex model.vert)
+    kestrel_vulkan_shader(HandVertex model.vert -DHAND)
     kestrel_vulkan_shader(ActorVertex actor.vert)
     kestrel_vulkan_shader(SkyVertex sky.vert)
     kestrel_vulkan_shader(SkyFragment sky.frag)
@@ -256,6 +278,11 @@ endif()
 target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB::ZLIB)
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
+    add_executable(KestrelUpdatesTest tests/Updates.cpp src/client/services/UpdatePackage.cpp)
+    target_include_directories(KestrelUpdatesTest PRIVATE include)
+    target_link_libraries(KestrelUpdatesTest PRIVATE ZLIB::ZLIB)
+    add_test(NAME updates COMMAND KestrelUpdatesTest)
+
     add_executable(KestrelLocalEffectsTest tests/LocalEffects.cpp src/modding/LocalEffects.cpp)
     target_include_directories(KestrelLocalEffectsTest PRIVATE include)
     add_test(NAME local-effects COMMAND KestrelLocalEffectsTest)
@@ -278,13 +305,26 @@ if(KESTREL_BUILD_TESTS)
     add_test(NAME mod-textures COMMAND KestrelModTexturesTest)
 
     add_executable(KestrelModTextureAtlasTest
-        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
+        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/FallbackArt.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
         src/world/packs/PackSource.cpp src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp src/util/Text.cpp src/client/diagnostics/DebugLog.cpp src/platform/Paths.cpp)
     target_include_directories(KestrelModTextureAtlasTest PRIVATE include ${stb_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelModTextureAtlasTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME mod-texture-atlas COMMAND KestrelModTextureAtlasTest)
     set_tests_properties(mod-texture-atlas PROPERTIES ENVIRONMENT "KESTREL_VANILLA_PACK=${CMAKE_CURRENT_BINARY_DIR}/missing-mod-textures-assets")
+    add_executable(KestrelFallbackArtTest tests/FallbackArt.cpp src/ui/FallbackArt.cpp)
+    target_include_directories(KestrelFallbackArtTest PRIVATE include)
+    target_link_libraries(KestrelFallbackArtTest PRIVATE ZLIB::ZLIB)
+    add_test(NAME fallback-art COMMAND KestrelFallbackArtTest)
+    add_executable(KestrelDownloadedAssetsTest tests/DownloadedAssets.cpp src/world/packs/DownloadedAssets.cpp
+        src/world/packs/ServerPack.cpp src/util/JsonText.cpp src/util/Text.cpp)
+    target_include_directories(KestrelDownloadedAssetsTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelDownloadedAssetsTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME downloaded-assets COMMAND KestrelDownloadedAssetsTest)
+    add_executable(KestrelServerPacksTest tests/ServerPacks.cpp src/world/packs/ServerPack.cpp src/util/JsonText.cpp src/util/Text.cpp)
+    target_include_directories(KestrelServerPacksTest PRIVATE include)
+    target_link_libraries(KestrelServerPacksTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME server-packs COMMAND KestrelServerPacksTest)
     add_executable(KestrelJsonUiBindingsTest tests/JsonUiBindings.cpp src/ui/JsonUi.cpp src/ui/JsonUiExpression.cpp src/ui/JsonUiReader.cpp)
     target_include_directories(KestrelJsonUiBindingsTest PRIVATE include)
     target_link_libraries(KestrelJsonUiBindingsTest PRIVATE FalconProtocol)
@@ -312,6 +352,13 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelHandVisibilityTest tests/HandVisibility.cpp)
     target_include_directories(KestrelHandVisibilityTest PRIVATE include)
     add_test(NAME hand-visibility COMMAND KestrelHandVisibilityTest)
+    add_executable(KestrelFirstPersonMotionTest tests/FirstPersonMotion.cpp)
+    target_include_directories(KestrelFirstPersonMotionTest PRIVATE include)
+    add_test(NAME first-person-motion COMMAND KestrelFirstPersonMotionTest)
+    add_executable(KestrelHotbarSelectionTest tests/HotbarSelection.cpp)
+    target_include_directories(KestrelHotbarSelectionTest PRIVATE include)
+    target_link_libraries(KestrelHotbarSelectionTest PRIVATE FalconNetwork)
+    add_test(NAME hotbar-selection COMMAND KestrelHotbarSelectionTest)
     add_executable(KestrelSettingsSliderTest tests/SettingsSlider.cpp)
     target_include_directories(KestrelSettingsSliderTest PRIVATE include)
     add_test(NAME settings-slider COMMAND KestrelSettingsSliderTest)
@@ -513,6 +560,20 @@ if(KESTREL_BUILD_TESTS)
         src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
+    add_executable(KestrelInputTransitionsTest tests/InputTransitions.cpp)
+    target_include_directories(KestrelInputTransitionsTest PRIVATE include)
+    add_test(NAME input-transitions COMMAND KestrelInputTransitionsTest)
+    add_executable(KestrelFrameMotionTest
+        tests/FrameMotion.cpp
+        src/client/motion/FrameMotion.cpp
+        src/client/motion/PlayerMotion.cpp
+        src/client/motion/MotionMath.cpp
+        src/client/motion/MotionWorld.cpp
+        src/client/motion/MotionCollision.cpp
+        src/client/motion/MotionLiquid.cpp
+        src/world/blocks/BlockCollisions.cpp)
+    target_include_directories(KestrelFrameMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    add_test(NAME frame-motion COMMAND KestrelFrameMotionTest)
     add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelModCollisionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME mod-collision COMMAND KestrelModCollisionTest)
@@ -570,6 +631,9 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelCrystalAnchorTest PRIVATE include)
     target_link_libraries(KestrelCrystalAnchorTest PRIVATE FalconProtocol)
     add_test(NAME crystal-anchor COMMAND KestrelCrystalAnchorTest)
+    add_executable(KestrelPaintingTest tests/Painting.cpp)
+    target_include_directories(KestrelPaintingTest PRIVATE include)
+    add_test(NAME painting COMMAND KestrelPaintingTest)
     if(WIN32)
         add_executable(KestrelD3D12ShadersTest tests/D3D12Shaders.cpp)
         target_include_directories(KestrelD3D12ShadersTest PRIVATE include)

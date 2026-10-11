@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -31,6 +32,7 @@ NSString* functionName(std::string_view entry)
         { "ps_main", "ui_fragment" },
         { "vs_world", "world_vertex" },
         { "vs_model", "model_vertex" },
+        { "vs_hand", "hand_vertex" },
         { "vs_actor", "actor_vertex" },
         { "vs_overlay", "overlay_vertex" },
         { "vs_sky", "sky_vertex" },
@@ -56,6 +58,8 @@ MTLVertexFormat vertexFormat(VertexFormat format)
         return MTLVertexFormatFloat;
     case VertexFormat::Float2:
         return MTLVertexFormatFloat2;
+    case VertexFormat::Float4:
+        return MTLVertexFormatFloat4;
     case VertexFormat::Float3:
         return MTLVertexFormatFloat3;
     case VertexFormat::UByte4Norm:
@@ -403,6 +407,8 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
         encoder = nil;
         drawable = nil;
         id<MTLTexture> color = nil;
@@ -419,7 +425,9 @@ public:
         if (!color) {
             return submissions + 1;
         }
+        const auto waitStarted = std::chrono::steady_clock::now();
         dispatch_semaphore_wait(completion->slots, DISPATCH_TIME_FOREVER);
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         actorCursor = 0;
 
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -445,6 +453,16 @@ public:
         bound = nullptr;
         boundTextures = nullptr;
         return submissions + 1;
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
     }
 
     bool recording() const override
@@ -482,9 +500,9 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!encoder || !bound || !bound->actorConstants || !values || count != 60) return;
+        if (!encoder || !bound || !bound->actorConstants || !values || count != 68) return;
         constexpr size_t pageBytes = 1024 * 1024;
-        constexpr size_t stride = 256;
+        constexpr size_t stride = 512;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
         auto& pages = actorPages[frame];
@@ -569,6 +587,7 @@ public:
             dispatch_semaphore_signal(state->slots);
         }];
         [commandBuffer commit];
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         if (capturing) {
             [commandBuffer waitUntilCompleted];
             finishCapture();
@@ -599,6 +618,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     void ensureOffscreenColor()
     {
         if (offscreenColor && offscreenColor.width == surfaceWidth && offscreenColor.height == surfaceHeight) {

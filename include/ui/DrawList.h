@@ -22,10 +22,13 @@ struct UiVertex {
     float radius;
     float softness;
     float depth = 0.0f;
+    std::array<float, 4> glintUv {};
+    std::array<float, 4> glintRegion {};
+    float glintStrength = 0.0f;
 };
 
 static_assert(offsetof(UiVertex, depth) == 44);
-static_assert(sizeof(UiVertex) == 48);
+static_assert(sizeof(UiVertex) == 84);
 
 class DrawList {
 public:
@@ -37,6 +40,8 @@ public:
     }
 
     void fill(const Rect& logical, Color color);
+    void applyGlint(size_t first, const std::array<float, 4>& baseRegion, const std::array<float, 4>& glintRegion,
+        const std::array<float, 4>& parameters, float scaleU = 0.5f, float scaleV = 0.5f);
     void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t color, float topShift = 0.0f, float bottomShift = 0.0f);
     void freeQuad(const std::array<std::array<float, 2>, 4>& points, const std::array<std::array<float, 2>, 4>& uvs, uint32_t color, float depth = 0.0f);
 

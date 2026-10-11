@@ -12,6 +12,7 @@ struct MemoryUsage {
 };
 
 MemoryUsage memoryUsage();
+int bedrockDeviceOS();
 std::string processorName();
 void waitUntil(std::chrono::steady_clock::time_point deadline);
 

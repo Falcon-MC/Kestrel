@@ -4,13 +4,18 @@
 #include "Protocol/Types/DebugShapeData.h"
 #include "Protocol/Types/ItemStack.h"
 #include "client/PlayerMotion.h"
+#include "client/InputLatency.h"
+#include "client/FrameMotion.h"
+#include "client/MotionInputBuffer.h"
 #include "client/ActorRiders.h"
 #include "client/ActorHitboxes.h"
 #include "client/ActorProperties.h"
+#include "client/ActorInterpolation.h"
 #include "client/BlockBreaker.h"
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
 #include "client/BlockEntityText.h"
+#include "client/SignEditor.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
 #include "client/WorldClock.h"
@@ -270,6 +275,7 @@ struct ActorView {
     ActorHitboxList hitboxes;
     std::array<int32_t, 3> aimAssistIndices {-1, -1, -1};
     int64_t uniqueId = 0;
+    int64_t fishingOwner = -1;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     double diedAt = 0.0;
@@ -282,6 +288,8 @@ struct ActorView {
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
+    std::string paintingMotive;
+    int32_t paintingDirection = 0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
@@ -314,6 +322,7 @@ struct ActorView {
     uint32_t effectColor = 0;
     uint64_t moves = 0;
     uint64_t teleports = 0;
+    ActorInterpolation interpolation;
     // Blocks per tick as the server last set it, and a count of launch turns to show at once.
     std::array<float, 3> velocity {};
     uint64_t launchTurns = 0;
@@ -680,6 +689,8 @@ struct LoadedBlocks {
     std::map<world::SubChunkKey, std::shared_ptr<const world::SubChunk>> subChunks;
     // The loaded columns of the dimension as x and z, sorted.
     std::vector<std::array<int32_t, 2>> columns;
+    std::vector<world::SubChunkKey> pending;
+    bool settled = false;
     std::shared_ptr<const world::BlockAssets> assets;
     world::IdMapping ids;
 
@@ -746,6 +757,19 @@ struct CameraFovRequest {
     float easeSeconds = 0.0f;
     int easeType = 0;
     bool clear = false;
+};
+
+struct MotionFeed {
+    PlayerMotion seed;
+    MotionInput equipment;
+    std::optional<std::array<double, 3>> breakTarget;
+    uint64_t tick = 0;
+    uint64_t revision = 0;
+    uint32_t locks = 0;
+    uint64_t hardRevision = 0;
+    uint64_t glideStart = 0, glideEnd = 0;
+    uint64_t dolphinStart = 0, dolphinEnd = 0;
+    std::vector<std::pair<uint64_t, MotionVector>> impulses;
 };
 
 struct SessionSnapshot {
@@ -881,6 +905,7 @@ struct SessionSnapshot {
     world::MiningConditions mining;
     std::shared_ptr<const PlayerMotion> motion;
     MotionInput motionInput;
+    std::shared_ptr<const MotionFeed> motionFeed;
     std::shared_ptr<const std::vector<menu::ChatCommand>> commands;
     std::vector<std::string> players;
     SidebarView sidebar;
@@ -916,6 +941,8 @@ public:
     std::vector<TitleRequest> takeTitles();
     std::vector<ToastRequest> takeToasts();
     std::vector<FormRequest> takeForms();
+    std::optional<SignEditorRequest> takeSignEditor();
+    void answerSign(SignEditorAnswer answer);
 
     /**
      * Queues a line typed into chat: commands (starting with a slash) go out
@@ -935,7 +962,10 @@ public:
     void acknowledgeResourceReload(uint64_t serial, const world::BlockAssets* expectedAssets);
     void selectHotbarSlot(int slot);
     void requestRespawn();
-    void setMotionInput(const MotionInput& input);
+    void setMotionInput(const MotionInput& input, uint64_t trace = 0);
+    void enableFrameMotion() { frameDriven = true; }
+    PlayerView advanceFrameMotion(const MotionInput& input, uint64_t trace, bool captured);
+    InputLatency inputLatency;
 
     /**
      * Queues a click for the network thread: a right click uses the held
@@ -1078,6 +1108,9 @@ private:
     void flushChat();
     void handleFormPacket(const std::shared_ptr<Packet>& packet);
     void flushForms();
+    void flushSign();
+    void handleSignPacket(const std::shared_ptr<Packet>& packet);
+    std::optional<Tag> editableSignAt(const std::array<int32_t, 3>& cell);
     void queueSound(SoundRequest request);
     void queueParticle(world::ParticleSpawn spawn);
     void publishNearby();
@@ -1092,6 +1125,7 @@ private:
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
     void runMotionTick(double now);
+    void publishMotionFeed();
     void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
     void replayFrom(size_t index);
     void applyMotionBoosts(MotionInput& input, uint64_t tick) const;
@@ -1126,6 +1160,7 @@ private:
     void updateActorLink(int64_t vehicle, int64_t rider, bool remove);
     void setActorMotion(uint64_t runtimeId, float x, float y, float z);
     void tickProjectiles(double tickTime);
+    void tickActors(double tickTime);
     void storeSkin(const std::string& uuid, const SerializedSkin& skin);
     void releaseSkin(const std::string& uuid);
     void assignSkin(const std::string& uuid);
@@ -1270,6 +1305,7 @@ private:
     int sentRadius = 0;
     bool spawnInitialized = false;
     std::map<uint64_t, ActorView> actors;
+    std::map<uint64_t, ActorMoveQueue> actorMoveQueues;
     std::unordered_map<std::string, ActorPropertySchema> actorPropertySchemas;
     std::map<int64_t, uint64_t> runtimeByUnique;
     std::map<uint64_t, DebugShapeView> debugShapes;
@@ -1319,7 +1355,7 @@ private:
     bool dimensionAckReceived = false;
     bool dimensionSpawnReceived = false;
     std::atomic<bool> useRequested { false };
-    std::atomic<bool> attackRequested { false };
+    std::atomic<uint32_t> attackRequested { 0 };
     std::atomic<bool> attackHeld { false };
     std::atomic<bool> useHeld { false };
     std::atomic<bool> modAttackHeld { false };
@@ -1443,8 +1479,20 @@ private:
     MotionBoost dolphinBoost;
     bool enderChestOpen = false;
     std::mutex motionInputMutex;
+    MotionInputBuffer bufferedMotionInput;
+    MotionInputBuffer bufferedFrameInput;
+    FrameMotion frameMotion;
+    uint64_t frameJoin = 0;
+    uint64_t frameRevision = 0;
+    uint64_t frameHardRevision = 0;
+    uint64_t frameSeedTick = 0;
+    double nextMotionFeed = 0.0;
+    std::atomic<bool> frameDriven { false };
+    uint64_t movementRevision = 1;
+    uint64_t hardMovementRevision = 1;
     MotionInput motionInput;
     MotionInput lastMotionInput;
+    uint64_t motionInputTrace = 0;
     uint32_t movementInputLocks = 0;
     bool motionStarted = false;
     bool teleportHandled = false;
@@ -1452,7 +1500,6 @@ private:
     std::atomic<int32_t> pendingRiptide { 0 };
     uint64_t clientTick = 0;
     double nextMotionTick = 0.0;
-    double lastMotionFrame = 0.0;
     int32_t motionDimension = 0;
     std::vector<SoundRequest> pendingSounds;
     std::vector<ChatMessage> pendingChat;
@@ -1469,6 +1516,10 @@ private:
 
     std::vector<FormRequest> pendingForms;
     std::vector<FormAnswer> outgoingForms;
+    std::optional<SignEditorRequest> pendingSignEditor;
+    std::optional<SignEditorRequest> activeSignEditor;
+    std::optional<SignEditorAnswer> outgoingSign;
+    uint64_t signEditorSerial = 0;
     std::string localXuid;
     float walkedDistance = 0.0f;
     float nextStepDistance = 1.0f;

@@ -8,7 +8,7 @@
 int main()
 {
     using namespace kestrel::d3d12;
-    for (const char* entry : { "vs_world", "vs_model", "vs_actor", "vs_overlay", "vs_sky", "ps_world", "ps_solid", "ps_blend", "ps_overlay", "ps_sky" }) {
+    for (const char* entry : { "vs_world", "vs_model", "vs_hand", "vs_actor", "vs_overlay", "vs_sky", "ps_world", "ps_solid", "ps_blend", "ps_overlay", "ps_sky" }) {
         ID3DBlob* shader = nullptr;
         ID3DBlob* errors = nullptr;
         HRESULT result = D3DCompile(WorldShader, sizeof(WorldShader) - 1, "kestrel.hlsl", nullptr, nullptr, entry,

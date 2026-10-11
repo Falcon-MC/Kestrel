@@ -2,6 +2,8 @@
 
 #include "AppIconPng.h"
 
+#include <mutex>
+
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -39,15 +41,19 @@ public:
     CocoaWindow(const std::string& title, uint32_t w, uint32_t h, bool shown)
         : shown(shown)
     {
-        [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        [NSApp finishLaunching];
-        NSData* icon = [NSData dataWithBytes:KestrelAppIconData::kAppIconPng length:KestrelAppIconData::kAppIconPngSize];
-        NSApp.applicationIconImage = [[NSImage alloc] initWithData:icon];
+        static std::once_flag application;
+        std::call_once(application, [] {
+            [NSApplication sharedApplication];
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+            [NSApp finishLaunching];
+            NSData* icon = [NSData dataWithBytes:KestrelAppIconData::kAppIconPng length:KestrelAppIconData::kAppIconPngSize];
+            NSApp.applicationIconImage = [[NSImage alloc] initWithData:icon];
+        });
 
         NSRect frame = NSMakeRect(0, 0, w, h);
         NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView;
         window = [[NSWindow alloc] initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:NO];
+        window.releasedWhenClosed = NO;
         window.title = [NSString stringWithUTF8String:title.c_str()];
         window.titlebarAppearsTransparent = YES;
         window.titleVisibility = NSWindowTitleHidden;
@@ -72,6 +78,14 @@ public:
         }
     }
 
+    ~CocoaWindow() override
+    {
+        setMouseCaptured(false);
+        window.delegate = nil;
+        [window orderOut:nil];
+        [window close];
+    }
+
     bool visible() const override
     {
         return shown;
@@ -83,6 +97,26 @@ public:
         @autoreleasepool {
             NSEvent* event;
             while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:nil inMode:NSDefaultRunLoopMode dequeue:YES])) {
+                switch (event.type) {
+                case NSEventTypeKeyDown:
+                case NSEventTypeKeyUp:
+                case NSEventTypeMouseMoved:
+                case NSEventTypeLeftMouseDragged:
+                case NSEventTypeRightMouseDragged:
+                case NSEventTypeLeftMouseDown:
+                case NSEventTypeLeftMouseUp:
+                case NSEventTypeRightMouseDown:
+                case NSEventTypeRightMouseUp:
+                case NSEventTypeOtherMouseDown:
+                case NSEventTypeOtherMouseUp:
+                case NSEventTypeScrollWheel:
+                    if (event.window == window) {
+                        state.recordReceipt();
+                    }
+                    break;
+                default:
+                    break;
+                }
                 if (event.type == NSEventTypeKeyDown && event.window == window) {
                     heldKey(event.keyCode, true);
                     key(event);
@@ -107,7 +141,7 @@ public:
                     mouse(event);
                     if (event.window == window && (event.modifierFlags & NSEventModifierFlagControl)) {
                         state.rightMouseDown = true;
-                        state.rightMousePressed = true;
+                        state.recordMousePress(true);
                         controlClickDown = true;
                         break;
                     }
@@ -117,7 +151,7 @@ public:
                         continue;
                     }
                     state.mouseDown = true;
-                    state.mousePressed = true;
+                    state.recordMousePress(false);
                     break;
                 case NSEventTypeLeftMouseUp:
                     mouse(event);
@@ -132,7 +166,7 @@ public:
                     break;
                 case NSEventTypeRightMouseDown:
                     state.rightMouseDown = true;
-                    state.rightMousePressed = true;
+                    state.recordMousePress(true);
                     break;
                 case NSEventTypeRightMouseUp:
                     state.rightMouseDown = false;
@@ -279,6 +313,7 @@ public:
     void close() override
     {
         delegate.open = false;
+        [window close];
     }
 
 private:

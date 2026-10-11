@@ -20,6 +20,8 @@ layout(std140, set = 1, binding = 0) uniform Actor {
     vec4 grid1;
     vec4 grid2;
     vec4 options;
+    vec4 glint;
+    vec4 glintTexture;
 } actor;
 
 const float lightCurve[16] = float[16](
@@ -46,6 +48,9 @@ layout(location = 0) in uvec4 inA;
 layout(location = 1) in uvec4 inB;
 layout(location = 2) in uvec4 inC;
 layout(location = 3) in uvec4 inD;
+layout(location = 4) in vec4 inGlint;
+layout(location = 5) in vec4 inGlintTexture;
+layout(location = 6) in vec4 inGlintUvTransform;
 
 layout(location = 0) out vec2 outUv;
 layout(location = 1) flat out uint outMaterial;
@@ -61,6 +66,9 @@ layout(location = 10) flat out vec4 outActorGrid0;
 layout(location = 11) flat out vec4 outActorGrid1;
 layout(location = 12) flat out vec4 outActorGrid2;
 layout(location = 13) flat out float outActorDissolve;
+layout(location = 14) flat out vec4 outGlint;
+layout(location = 15) flat out vec4 outGlintTexture;
+layout(location = 16) out vec2 outGlintUv;
 
 void main()
 {
@@ -87,6 +95,9 @@ void main()
     gl_Position.y = -gl_Position.y;
     uint uvWord = words[6u+corner];
     outUv = actor.uv.xy + vec2(float(uvWord & 65535u), float(uvWord >> 16)) / 4096.0 * actor.uv.zw;
+    outGlintUv = vec2(float(uvWord & 65535u), float(uvWord >> 16)) / 4096.0;
+    outGlint = actor.glint;
+    outGlintTexture = actor.glintTexture;
     outMaterial = floatBitsToUint(actor.params.y);
     vec3 normal = vec3(uintBitsToFloat(inD.x), uintBitsToFloat(inD.y), uintBitsToFloat(inD.z));
     vec3 direction = pose(normal) - pose(vec3(0));

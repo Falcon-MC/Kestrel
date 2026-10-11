@@ -329,6 +329,7 @@ private:
             return;
         }
         if (input.header.dwType == RIM_TYPEMOUSE && !(input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+            state.recordReceipt();
             state.mouseDeltaX += static_cast<float>(input.data.mouse.lLastX);
             state.mouseDeltaY += static_cast<float>(input.data.mouse.lLastY);
         }
@@ -351,6 +352,21 @@ private:
 
     std::optional<LRESULT> handle(UINT msg, WPARAM wParam, LPARAM lParam)
     {
+        switch (msg) {
+        case WM_MOUSEMOVE:
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+        case WM_MOUSEWHEEL:
+        case WM_CHAR:
+            state.recordReceipt();
+            break;
+        default:
+            break;
+        }
         switch (msg) {
         case WM_SETCURSOR:
             if (LOWORD(lParam) == HTCLIENT) {
@@ -402,12 +418,12 @@ private:
             state.mouseX = static_cast<float>(GET_X_LPARAM(lParam));
             state.mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
             state.mouseDown = true;
-            state.mousePressed = true;
+            state.recordMousePress(false);
             SetCapture(hwnd);
             return 0;
         case WM_RBUTTONDOWN:
             state.rightMouseDown = true;
-            state.rightMousePressed = true;
+            state.recordMousePress(true);
             return 0;
         case WM_RBUTTONUP:
             state.rightMouseDown = false;

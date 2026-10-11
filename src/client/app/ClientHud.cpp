@@ -4,6 +4,7 @@
 #include "platform/Window.h"
 #include "ui/Localization.h"
 #include "world/ItemInfo.h"
+#include "world/ClockDial.h"
 
 #include <algorithm>
 #include <chrono>
@@ -36,41 +37,15 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
     slot.filled = true;
     slot.count = item.count;
     std::string name = "item/" + item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    uint32_t animationFrame = item.identifier == "minecraft:clock" ? world::clockFrame(currentWorldTime(timeState)) : 0;
+    if (item.identifier == "minecraft:clock") name += "#frame" + std::to_string(animationFrame);
     if (item.customColor) name += "#color" + std::to_string(*item.customColor);
-    int shimmerFrame = 0;
-    if (item.enchanted) {
-        double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        shimmerFrame = int(std::fmod(std::fmod(now, 3600.0) * visuals.glintSpeed.value_or(menu.glintSpeed()) / 100.0 * 8.0, 32.0));
-        name += "#enchanted" + std::to_string(visuals.glintStrength.value_or(menu.glintStrength()));
-    }
+    if (item.enchanted) name += "#enchanted";
     auto known = itemIcons.find(name);
-    if (known == itemIcons.end() || (item.enchanted && itemIconFrames[name] != shimmerFrame)) {
-        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon, item.customColor);
+    if (known == itemIcons.end()) {
+        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon, item.customColor, animationFrame);
         bool rendered = pixels.size() == size_t(world::ItemIconSize) * world::ItemIconSize * 4;
-        if (rendered && item.enchanted) {
-            const ui::Bitmap* glint = skin.bitmap("textures/misc/enchanted_item_glint");
-            if (glint && glint->width > 0 && glint->height > 0) {
-                for (uint32_t y = 0; y < world::ItemIconSize; ++y) {
-                    for (uint32_t x = 0; x < world::ItemIconSize; ++x) {
-                        size_t target = (size_t(y) * world::ItemIconSize + x) * 4;
-                        if (pixels[target + 3] == 0) {
-                            continue;
-                        }
-                        for (int pass = 0; pass < 2; ++pass) {
-                            uint32_t u = uint32_t(x + (pass ? y : world::ItemIconSize - y) + shimmerFrame * (pass ? 3 : 5)) % glint->width;
-                            uint32_t v = uint32_t(y + shimmerFrame * (pass ? 5 : 2)) % glint->height;
-                            size_t source = (size_t(v) * glint->width + u) * 4;
-                            float opacity = glint->rgba[source + 3] / 255.0f * 0.35f * visuals.glintStrength.value_or(menu.glintStrength()) / 100.0f;
-                            for (size_t channel = 0; channel < 3; ++channel) {
-                                pixels[target + channel] = uint8_t(std::min(255.0f, pixels[target + channel] + glint->rgba[source + channel] * opacity));
-                            }
-                        }
-                    }
-                }
-            }
-        }
         if (rendered) skin.setDynamic(name, { world::ItemIconSize, world::ItemIconSize, std::move(pixels) });
-        itemIconFrames[name] = shimmerFrame;
         known = itemIcons.insert_or_assign(name, rendered).first;
     }
     if (known->second) slot.icon = name;
@@ -94,7 +69,7 @@ void Client::handleHotbarInput()
     }
     const InputState& input = window->input();
     if (input.mousePressed) {
-        session.requestInteraction(false);
+        for (uint32_t count = std::max(input.mousePressCount, 1u); count > 0; --count) session.requestInteraction(false);
     }
     if (input.rightMousePressed) {
         session.requestInteraction(true);
@@ -115,8 +90,7 @@ void Client::handleHotbarInput()
     if (input.pressedKey >= Key::Num1 && input.pressedKey <= Key::Num9) {
         selected = static_cast<int>(input.pressedKey) - static_cast<int>(Key::Num1);
     } else if (input.wheel != 0.0f) {
-        int steps = input.wheel > 0.0f ? -1 : 1;
-        selected = ((selected + steps) % 9 + 9) % 9;
+        selected = hotbarSelection.scroll(selected, input.wheel);
     }
     if (selected != hudState.selectedSlot) {
         session.selectHotbarSlot(selected);

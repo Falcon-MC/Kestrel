@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 
@@ -197,6 +198,15 @@ std::vector<unsigned char> GameAssets::readHbuiFont(std::string_view name)
 {
     fs::path file = findHashed(hbui / "fonts", name);
     return file.empty() ? std::vector<unsigned char> {} : readFile(file);
+}
+
+std::vector<unsigned char> GameAssets::readFallbackFont(std::string_view name)
+{
+    const char* directory = std::getenv("KESTREL_FONTS");
+    if (!directory || !*directory) {
+        return {};
+    }
+    return readFile(fs::path(directory) / name);
 }
 
 std::string GameAssets::readHbuiText(std::string_view name)

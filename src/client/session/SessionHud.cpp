@@ -15,6 +15,7 @@
 #include "Protocol/Packets/SetHudPacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "client/DebugLog.h"
+#include "client/ItemGlintState.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,6 +133,10 @@ HudItem hudItemOf(const ItemStack& stack)
     item.identifier = stack.mDefinition->getIdentifier();
     item.count = stack.mCount;
     item.aux = stack.mDamage;
+    item.userData = stack.mTag;
+    item.canPlace = stack.mCanPlace;
+    item.canBreak = stack.mCanBreak;
+    if (stack.mBlockDefinition) item.blockRuntimeId = stack.mBlockDefinition->getRuntimeId();
     item.icon = componentIcon(stack.mDefinition->getComponentData());
     const std::string& id = item.identifier;
     item.handEquipped = id.ends_with("_sword") || id.ends_with("_pickaxe") || id.ends_with("_axe")
@@ -143,6 +148,7 @@ HudItem hudItemOf(const ItemStack& stack)
     if (hand && hand->getType() == Tag::Type::Compound) hand = hand->get("value");
     if (hand && hand->getType() == Tag::Type::Byte) item.handEquipped = hand->asByte() != 0;
     item.useTicks = componentUseTicks(components);
+    item.enchanted = itemHasGlint(item.identifier, stack.mTag) || itemComponentHasGlint(components);
     if (stack.mTag.getType() != Tag::Type::Compound) {
         return item;
     }
@@ -166,7 +172,6 @@ HudItem hudItemOf(const ItemStack& stack)
         }
     }
     if (const Tag* enchantments = stack.mTag.get("ench"); enchantments && enchantments->isList()) {
-        item.enchanted = !enchantments->getList().empty();
         for (const Tag& enchantment : enchantments->getList()) {
             if (!enchantment.isCompound() || item.enchantments.size() >= 128) {
                 continue;

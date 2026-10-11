@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-	<img src="https://img.shields.io/badge/Bedrock-v1.26.51-56383E" alt="Bedrock">
+	<img src="https://img.shields.io/badge/Bedrock-v1.26.52-56383E" alt="Bedrock">
 	<img src="https://img.shields.io/badge/protocol-2193-blue" alt="Protocol">
 	<img src="https://img.shields.io/badge/language-C%2B%2B20-00599C" alt="C++20">
 	<img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="Platform">
@@ -72,6 +72,11 @@ A [nightly](https://github.com/Falcon-MC/Kestrel/releases/tag/nightly) is built 
 something changed. Kestrel reads its textures from an installed copy of Minecraft: Bedrock Edition, or from a
 vanilla resource pack you are entitled to use.
 
+Kestrel checks for a newer stable release at startup. Choose **Update and restart** to download the official
+package, verify its SHA-256 checksum and replace the executable after the client closes, or **Later** to keep
+playing. The installation directory must be writable. Settings, accounts, packs and mods are preserved.
+The updater keeps the previous executable as a backup. Nightly releases are not offered automatically.
+
 ## Building
 
 Requires CMake 3.24+, a C++20 compiler and zlib. Linux also needs the Vulkan SDK and `glslc`; Vulkan shaders
@@ -90,8 +95,20 @@ When `Falcon-NBT`, `Falcon-Protocol`, `Falcon-Network`, `Falcon-BedrockData` and
 next to this directory they are used directly, otherwise they are fetched from GitHub. Set `KESTREL_FALCON_ROOT` to
 point at another directory.
 
-The block textures are read from the installed game. Set `KESTREL_VANILLA_PACK` to use another copy of the vanilla
-resource pack you are entitled to use.
+Kestrel first uses `KESTREL_VANILLA_PACK` when set, then looks for Minecraft in `XboxGames` on Windows or
+mcpelauncher's extracted versions on Linux. When no installation is found, it downloads Mojang's
+`bedrock-samples` v1.26.50.4 resource pack (about 169 MB) and free Monocraft/Noto Sans fonts on first launch.
+They are cached under `assets/v1.26.50.4` in Kestrel's data directory, so later launches work offline.
+The first-run screen explains the download and installation stages, supports cancellation and retry,
+and closes automatically before the client opens. It uses a system font and procedural artwork until the
+downloaded resources are ready. Minecraft's fonts
+and HTML menu files are only available when using an installed game.
+When the HTML artwork is absent, buttons, fields and the icons used by Kestrel's menus are drawn procedurally.
+Installed images take priority. Complex icons and the profile illustration are approximations; no Minecraft
+image files are embedded in these fallbacks.
+
+On macOS, the build produces `build/Kestrel.app`. Open it in Finder or run `open build/Kestrel.app` to launch
+without Terminal. `build/Kestrel` remains a command-line symlink for scripts and MCP.
 
 ### iOS IPA
 

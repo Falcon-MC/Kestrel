@@ -246,19 +246,24 @@ MotionCell LoadedBlocks::motionCell(int32_t x, int32_t y, int32_t z) const
 void Session::publishLoaded()
 {
     uint64_t storeRevision = world.store().revision();
+    auto pending = world.pendingKeys();
+    bool settled = world.settled();
     std::shared_ptr<const LoadedBlocks> previous;
     {
         std::lock_guard<std::mutex> guard(mutex);
         previous = current.loaded;
     }
     if (previous && storeRevision == loadedStoreRevision && previous->dimension == motionDimension && previous->assets == assets
-        && previous->ids.hashed == ids.hashed && previous->ids.sequential == ids.sequential && previous->ids.hidden == ids.hidden) {
+        && previous->ids.hashed == ids.hashed && previous->ids.sequential == ids.sequential && previous->ids.hidden == ids.hidden
+        && previous->pending == pending && previous->settled == settled) {
         return;
     }
     auto area = std::make_shared<LoadedBlocks>();
     area->dimension = motionDimension;
     area->assets = assets;
     area->ids = ids;
+    area->pending = std::move(pending);
+    area->settled = settled;
     for (auto& [key, subChunk] : world.store().allSubChunks()) {
         if (key.dimension == motionDimension) {
             area->subChunks.emplace(key, std::move(subChunk));

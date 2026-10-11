@@ -42,6 +42,17 @@ Tag stack(const char* name, int8_t count)
 int main()
 {
     using namespace kestrel::world;
+    require(kestrel::itemHasGlint("minecraft:enchanted_book", Tag {}) && kestrel::itemHasGlint("minecraft:enchanted_golden_apple", Tag {}),
+        "Intrinsic enchanted items must retain their foil without an ench tag");
+    require(!kestrel::itemHasGlint("minecraft:potion", Tag {}), "Current Bedrock potions must not inherit historical automatic glint");
+    Tag enchantedTag = Tag::ofCompound();
+    enchantedTag.put("ench", Tag::ofList(Tag::Type::Compound));
+    require(kestrel::itemHasGlint("minecraft:diamond_sword", enchantedTag), "A typed ench list must enable foil even when empty");
+    Tag customComponents = Tag::ofCompound();
+    Tag customGlint = Tag::ofCompound();
+    customGlint.putByte("minecraft:glint", 1);
+    customComponents.put("components", customGlint);
+    require(kestrel::itemComponentHasGlint(customComponents), "Custom items must inherit foil from their registry components");
     Tag flowerPot = Tag::ofCompound();
     Tag plant = Tag::ofCompound();
     plant.putString("name", "minecraft:poppy");

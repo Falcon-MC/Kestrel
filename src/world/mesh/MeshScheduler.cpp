@@ -264,7 +264,9 @@ void MeshScheduler::work(bool foreground)
                     best = entry; bestPriority = priority;
                 }
             }
-            if (bestPrepared != prepared.end() && (best == queued.end() || !best->second.urgent)) {
+            // Prepared jobs hold the memory that new urgent jobs need. Drain them
+            // first so every worker cannot end up waiting for that memory.
+            if (bestPrepared != prepared.end()) {
                 job = std::move(bestPrepared->second.job);
                 credit = std::move(bestPrepared->second.credit);
                 started = bestPrepared->second.started;

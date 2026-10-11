@@ -1126,13 +1126,15 @@ void EntityAnimator::update(const EntityScripts* scripts, const AnimationLibrary
     if (scripts) {
         runScripts(scripts->preAnimation);
         for (const auto& [alias, condition] : scripts->animate) {
+            double weight = 1.0;
             if (!condition.empty()) {
                 scope.temps.clear();
-                if (condition.run(scope) == 0.0) {
-                    continue;
-                }
+                weight = condition.run(scope);
             }
-            play(alias, 1.0, 0, nullptr);
+            if (!std::isfinite(weight) || weight <= 0.0) {
+                continue;
+            }
+            play(alias, weight, 0, nullptr);
         }
         for (const std::string& alias : input.extraAnimations) {
             play(alias, 1.0, 0, nullptr);
@@ -1234,6 +1236,15 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
     auto argument = [&](size_t index) {
         return index < arguments.size() ? arguments[index] : 0.0;
     };
+    if (name == "get_default_bone_pivot") {
+        double axis = argument(1);
+        if (!activeBones || arguments.size() < 2 || !std::isfinite(axis)
+            || axis < 0.0 || axis > 2.0 || axis != std::floor(axis)) return 0.0;
+        auto found = boneIndex.find(lowercase(molang::stringOf(argument(0))));
+        if (found == boneIndex.end()) return 0.0;
+        size_t component = static_cast<size_t>(axis);
+        return (*activeBones)[size_t(found->second)].pivot[component] * (component == 0 ? -1.0 : 1.0);
+    }
     if (name == "property" || name == "has_property") {
         if (arguments.empty()) return 0.0;
         auto found = current.properties.find(molang::stringOf(argument(0)));
@@ -1265,6 +1276,11 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return current.itemUseTicks > 0.0 ? itemMaxUseTicks(current.mainHandItem) - std::floor(current.itemUseTicks) : 0.0;
     }
     if (name == "get_animation_frame") {
+        if (current.mainHandItem == "minecraft:crossbow") {
+            if (auto frame = current.metadataQueries.find(name); frame != current.metadataQueries.end()) {
+                return std::isfinite(frame->second) ? std::clamp(frame->second, 0.0, 5.0) : 0.0;
+            }
+        }
         return itemUseAnimationFrame(current.mainHandItem, current.itemUseTicks);
     }
     if (name == "modified_distance_moved") {
@@ -1280,6 +1296,7 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return velocity[1];
     }
     if (name == "walk_distance" || name == "distance_moved") {
+        if (current.walkDistance) return *current.walkDistance;
         return previousWalkDistance + (walkDistance - previousWalkDistance) * partialTick;
     }
     if (name == "distance_from_camera" || name == "rotation_to_camera") {

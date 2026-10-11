@@ -98,4 +98,27 @@ int main()
         return false;
     });
     check(nativeOrigin, "player eye-origin offset or explicit predicted position lost");
+    for (size_t axis = 0; axis < 3; ++axis) {
+        auto invalidFeet = std::array<double, 3> { 3, 10, 7 };
+        invalidFeet[axis] = std::numeric_limits<double>::quiet_NaN();
+        bool visited = false;
+        visitActorTargetBoxes(actor, invalidFeet, [&](const ActorTargetBox&) {
+            visited = true;
+            return true;
+        });
+        check(!visited, "Invalid actor coordinates must not reach selection or mod attack visitors");
+    }
+    actor.hitboxes.reset();
+    actor.x = actor.y = actor.z = std::numeric_limits<double>::quiet_NaN();
+    check(!actorTargetDistance(actor, {0, 1.62, 0}, {0, 0, 1}, 3, 0.1), "NaN fallback actor intercepted the ray");
+    actor.x = actor.y = actor.z = 0;
+    actor.width = actor.height = actor.scale = std::numeric_limits<float>::max();
+    check(!actorTargetDistance(actor, {0, 1.62, 0}, {0, 0, 1}, 3, 0.1), "Overflowed actor extents intercepted the ray");
+    actor.identifier = "minecraft:pig";
+    const ActorHitbox validBox { {0, 1, 0}, {0.5, 1, 0.5} };
+    auto invalidBox = validBox;
+    invalidBox.pivot[0] = std::numeric_limits<double>::quiet_NaN();
+    actor.hitboxes = std::make_shared<const std::vector<ActorHitbox>>(std::vector<ActorHitbox> { invalidBox, validBox });
+    auto validSibling = actorTargetDistance(actor, {0, 1, -2}, {0, 0, 1}, 3, 0.1);
+    check(validSibling && std::abs(*validSibling - 1.4) < 1e-6, "Invalid custom bounds must not hide a valid sibling");
 }

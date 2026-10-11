@@ -7,6 +7,11 @@
 
 namespace kestrel::platform {
 
+int bedrockDeviceOS()
+{
+    return 3;
+}
+
 void waitUntil(std::chrono::steady_clock::time_point deadline)
 {
     std::this_thread::sleep_until(deadline);

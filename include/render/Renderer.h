@@ -29,7 +29,7 @@ struct BlockTextureUpload {
 };
 
 /**
- * Cube quads are 12 bytes each; model quads are 48 bytes (twelve words) each.
+ * Cube quads are 20 bytes each; model quads are 112 bytes including foil parameters.
  */
 struct ChunkMeshUpload {
     const void* cubes = nullptr;
@@ -47,7 +47,8 @@ inline constexpr uint32_t BlockTexturePages = 2;
 inline constexpr uint32_t EntityTexturePageLayers = 2048;
 inline constexpr uint32_t EntityTexturePages = 4;
 inline constexpr uint32_t CubeQuadBytes = 20;
-inline constexpr uint32_t ModelQuadBytes = 64;
+inline constexpr uint32_t ModelQuadBytes = 112;
+inline constexpr uint32_t HandQuadBytes = 160;
 
 enum SkyVertexFlag : uint32_t {
     SkyTextured = 1 << 0,
@@ -80,7 +81,7 @@ struct ActorDraw {
     uint32_t total = 0;
     uint32_t first = 0;
     uint32_t count = 0;
-    std::array<float, 60> constants {};
+    std::array<float, 68> constants {};
     bool blended = false;
     bool depthOnly = false;
     bool equalDepth = false;
@@ -131,7 +132,7 @@ struct WorldView {
     /**
      * Entity quads in four runs: entityQuadCount opaque ones, then
      * entityBlendCount alpha blended ones drawn after translucent terrain,
-     * then handQuadCount first person ones drawn last in a sliver of the depth
+     * then handQuadCount HUD ones drawn last in a sliver of the depth
      * range so walls never cut into the hand, then overlayQuadCount block
      * cracks and outline edges. Overlays are placed in 1/1024 block and
      * multiply the color under them: entity quads shade it like 40% black, the rest
@@ -145,6 +146,9 @@ struct WorldView {
     uint32_t handQuadCount = 0;
     uint32_t overlayQuadCount = 0;
     std::array<float, 3> entityOrigin {};
+    const void* preciseHandQuads = nullptr;
+    // First-person geometry uses HandQuadBytes with float positions, separate from the packed world stream.
+    uint32_t preciseHandQuadCount = 0;
 
     uint32_t entityTotal() const
     {
@@ -355,6 +359,8 @@ public:
     virtual void updateEntityTexture(uint32_t layer, const uint8_t* pixels) = 0;
 
     virtual void beginFrame(float r, float g, float b) = 0;
+    virtual double frameFenceWaitMilliseconds() const { return 0.0; }
+    virtual double frameSubmissionTimeSeconds() const { return 0.0; }
     virtual void drawWorld(const WorldView& view) = 0;
     virtual void drawUi(const ui::DrawList& list) = 0;
     virtual void endFrame() = 0;

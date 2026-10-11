@@ -277,7 +277,7 @@ bool Menu::worldVisible() const
 
 bool Menu::capturesMouse() const
 {
-    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !forms.active();
+    return inGame() && dialog == Dialog::None && screen == Screen::Title && !socialOpen && !inventory.active && !inventoryInputHandled && !inputBlocked && !forms.active() && !signs.active();
 }
 
 void Menu::openForm(uint32_t id, const std::string& json)
@@ -316,6 +316,38 @@ void Menu::prepareInventoryInput(const InputState& input)
         emoteUi.reset();
         dialog = Dialog::Emotes;
     }
+}
+
+void Menu::prepareInput(const InputState& input)
+{
+    inputPrepared = true;
+    inputBlocked = false;
+    inventoryInputHandled = false;
+    bool wasCaptured = capturesMouse();
+    if (input.mousePressed) {
+        field = Field::None;
+        rebinding.reset();
+        rebindingMod.reset();
+    }
+    if (inGame() && session.dead) {
+        if (dialog == Dialog::None && screen == Screen::Title) dialog = Dialog::Death;
+    } else if (dialog == Dialog::Death) {
+        dialog = Dialog::None;
+    }
+    if (!inGame() && forms.active()) forms.closeAll();
+    if (!inGame() || session.dead) signs.reset();
+    if (!signs.active()) prepareInventoryInput(input);
+    if (dialog == Dialog::Chat && !chatSettingsOpen) field = Field::Chat;
+    if (!forms.active() && !signs.active()) {
+        std::vector<std::string> pressed = std::exchange(pausePressed, {});
+        for (const std::string& id : pressed) {
+            if (dialog != Dialog::Pause) break;
+            pauseButton(id);
+        }
+        if (pressed.empty()) handleKeys(input);
+    }
+    // Closing a screen must not send its click or held movement to the world in this frame.
+    inputBlocked = !wasCaptured;
 }
 
 void Menu::pauseIfPlaying()
@@ -434,15 +466,25 @@ void Menu::screenContent(Context& ui, float width, float height, Screen which)
 
 void Menu::frame(Context& ui, float width, float height)
 {
+    if (!inputPrepared) prepareInput(ui.input());
     Rect safe = safeRect(width, height);
     screenBounds = { -safe.x, -safe.y, width, height };
     ui.setOrigin(safe.x, safe.y);
     safeFrame(ui, safe.w, safe.h);
     ui.setOrigin(0.0f, 0.0f);
+    inputPrepared = false;
 }
 
 void Menu::safeFrame(Context& ui, float width, float height)
 {
+    updates.check();
+    UpdateView update = updates.view();
+    if (!updateOffered && update.status == UpdateStatus::Available && !inGame()
+        && screen == Screen::Title && dialog == Dialog::None && !socialOpen && !forms.active()) {
+        updateOffered = true;
+        dialog = Dialog::Update;
+    }
+    if (update.status == UpdateStatus::Ready && updates.install()) quit = true;
     static bool timed = false;
     std::optional<StartupTimer> timer;
     if (!timed) {
@@ -459,25 +501,21 @@ void Menu::safeFrame(Context& ui, float width, float height)
         applySkinChoice(ui);
     }
     mark("skin choice");
-    if (ui.input().mousePressed) {
-        field = Field::None;
-        rebinding.reset();
-        rebindingMod.reset();
-    }
-    if (inGame() && session.dead) {
-        if (dialog == Dialog::None && screen == Screen::Title) {
-            dialog = Dialog::Death;
-        }
-    } else if (dialog == Dialog::Death) {
-        dialog = Dialog::None;
-    }
-
     auto now = std::chrono::steady_clock::now();
     if (inventory.active != inventoryShown) {
         inventoryShown = inventory.active;
         inventoryChanged = now;
     }
-    coverHud(inventory.active || forms.active() || dialog != Dialog::None || screen != Screen::Title, now);
+    coverHud(inventory.active || forms.active() || signs.active() || dialog != Dialog::None || screen != Screen::Title, now);
+
+    if (!inGame()) signs.reset();
+    if (signs.active()) {
+        ui.setBlocked(false);
+        fadingHud(ui, width, height, now);
+        signs.draw(ui, width, height);
+        toasts.draw(ui, width, height);
+        return;
+    }
 
     if (inventory.active) {
         ui.setBlocked(false);
@@ -616,14 +654,16 @@ void Menu::safeFrame(Context& ui, float width, float height)
     }
     toast(ui, width, height);
     toasts.draw(ui, width, height);
-    handleKeys(ui);
-    mark("toasts and keys");
+    mark("toasts");
 }
 
 void Menu::dialogContent(Context& ui, float width, float height, Dialog which, bool& confirmed, bool& cancelled)
 {
     switch (which) {
     case Dialog::None:
+        break;
+    case Dialog::Update:
+        updateDialog(ui, width, height);
         break;
     case Dialog::Pause:
         pause(ui, width, height);
@@ -960,9 +1000,10 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
         float depth;
         float light;
         std::string_view texture;
+        bool enchanted = false;
     };
     std::vector<Face> faces;
-    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate, std::string_view texture, bool mirror) {
+    auto addBox = [&](const Part& part, const std::array<float, 2>& uv, float inflate, std::string_view texture, bool mirror, bool enchanted = false) {
         float x0 = part.min[0] - inflate;
         float y0 = part.min[1] - inflate;
         float z0 = part.min[2] - inflate;
@@ -1013,6 +1054,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
             face.depth = depth * 0.25f + inflate;
             face.light = 0.6f + 0.4f * std::clamp(facing[2] * 0.8f + facing[1] * 0.4f, 0.0f, 1.0f);
             face.texture = texture;
+            face.enchanted = enchanted;
             faces.push_back(face);
         }
     };
@@ -1057,7 +1099,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
     }
     for (const ArmorBox& box : ArmorBoxes) {
         if (!armor[box.slot].empty()) {
-            addBox(Parts[box.part], box.uv, box.inflate, armor[box.slot], box.mirror);
+            addBox(Parts[box.part], box.uv, box.inflate, armor[box.slot], box.mirror, inventory.state.slots[inventory::Armor + box.slot].enchanted);
         }
     }
     std::stable_sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) {
@@ -1065,7 +1107,7 @@ void Menu::playerModel(Context& ui, float centerX, float top, float pixel, bool 
     });
     for (const Face& face : faces) {
         uint8_t shade = static_cast<uint8_t>(std::clamp(face.light, 0.0f, 1.0f) * 255.0f);
-        ui.spriteQuad(face.points, face.texture, face.texels, { shade, shade, shade, 255 });
+        ui.spriteQuad(face.points, face.texture, face.texels, { shade, shade, shade, 255 }, face.enchanted);
     }
 }
 
@@ -1174,8 +1216,14 @@ void Menu::title(Context& ui, float width, float height)
     playerModel(ui, modelX, modelY, ModelPixel, false, titleModelRotation);
 
     backedLabel(ui, "Kestrel, not affiliated with Mojang", CornerMargin, labelY);
-    constexpr std::string_view Version = "v1.26.51";
+    constexpr std::string_view Version = "v1.26.52";
     backedLabel(ui, Version, std::floor(width - CornerMargin - ui.measure(Version, TextStyle::Pixel)), labelY);
+    UpdateView update = updates.view();
+    if (!update.version.empty() && update.status != UpdateStatus::Current
+        && ui.classicButton("title:update", tr("kestrel.update.availableButton", "Update available"),
+            { width - CornerMargin - 120.0f, labelY - 25.0f, 120.0f, 20.0f })) {
+        dialog = Dialog::Update;
+    }
 }
 
 /**
@@ -1534,6 +1582,43 @@ void Menu::messageDialog(Context& ui, float width, float height, std::string_vie
     cancelled = ui.classicButton("dialog:cancel", cancel, { well.x + 4.0f, y + 22.0f, well.w - 8.0f, 20.0f });
 }
 
+void Menu::updateDialog(Context& ui, float width, float height)
+{
+    UpdateView update = updates.view();
+    bool downloading = update.status == UpdateStatus::Downloading || update.status == UpdateStatus::Ready;
+    std::string body;
+    if (downloading) {
+        body = trf("kestrel.update.downloading", "Downloading %1$s... (%2$s MB)\nKestrel will close and restart when the update is ready.",
+            { update.version, std::to_string(update.downloaded / (1024 * 1024)) });
+    } else if (update.status == UpdateStatus::Failed) {
+        body = update.error;
+    } else {
+        body = trf("kestrel.update.available", "Kestrel %1$s is available.\nCurrent version: %2$s\nInstall the update and restart Kestrel?", { update.version, KestrelVersion });
+    }
+    bool confirmed = false, cancelled = false;
+    bool blocked = ui.isBlocked();
+    // Keep cancellation usable while the download owns the confirm button.
+    if (downloading) {
+        ui.fill(screenBounds, { 0, 0, 0, 150 });
+        float w = std::min(260.0f, width - 16.0f);
+        float bodyHeight = ui.paragraphHeight(body, TextStyle::Pixel, w - 16.0f);
+        Rect frame { std::round((width - w) * 0.5f), std::round((height - bodyHeight - 64.0f) * 0.5f), w, bodyHeight + 64.0f };
+        ui.nineSlice(frame, "ui/dialog_background_opaque");
+        ui.textCentered(tr("kestrel.update.title", "Kestrel update"), TextStyle::Pixel, { frame.x, frame.y + 5.0f, frame.w, 12.0f }, DialogInk);
+        ui.paragraph(body, TextStyle::Pixel, frame.x + 8.0f, frame.y + 22.0f, w - 16.0f, DialogInk);
+        cancelled = ui.classicButton("update:cancel", tr("gui.cancel", "Cancel"), { frame.x + 8.0f, frame.bottom() - 26.0f, w - 16.0f, 20.0f });
+    } else {
+        messageDialog(ui, width, height, tr("kestrel.update.title", "Kestrel update"), body,
+            tr("kestrel.update.install", "Update and restart"), tr("kestrel.update.later", "Later"), confirmed, cancelled);
+    }
+    if (blocked) return;
+    if (confirmed) updates.download();
+    if (cancelled) {
+        updates.cancel();
+        dialog = Dialog::None;
+    }
+}
+
 namespace {
 
 void debugColumn(Context& ui, const std::vector<std::string>& lines, float width, bool alignRight)
@@ -1578,13 +1663,21 @@ void Menu::gameView(Context& ui, float width, float height)
     }
     drawHudScreen(ui, width, height);
 
-    if (!hud.crosshair) {
+    if (!hud.crosshair || !jsonUi) {
         return;
     }
+    if (!crosshairScreen) {
+        crosshairScreen = std::make_unique<ui::JsonUiScreen>(jsonUi, "hud_crosshair.hud_crosshair_screen");
+        crosshairScreen->setRenderer([this](Context& context, const std::string& renderer, const Rect& rect, float alpha, const ui::UiLookup& lookup) {
+            drawHudRenderer(context, hud, renderer, rect, alpha, lookup);
+        });
+    }
     WholeScreen whole(ui, screenBounds);
-    float cx = std::floor(screenBounds.w * 0.5f - 7.5f);
-    float cy = std::floor(screenBounds.h * 0.5f - 7.5f);
-    ui.spriteRegion({ cx, cy, 15.0f, 15.0f }, "textures/gui/icons", { 0.0f, 0.0f, 15.0f, 15.0f }, { 255, 255, 255, 220 });
+    bool blocked = ui.isBlocked();
+    ui.setBlocked(true);
+    crosshairScreen->draw(ui, { 0.0f, 0.0f, screenBounds.w, screenBounds.h }, hudData(hud));
+    ui.setBlocked(blocked);
+    crosshairScreen->takeEvents();
 }
 
 void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
@@ -1593,12 +1686,14 @@ void Menu::setJsonUi(std::shared_ptr<const ui::JsonUi> definitions)
     touchSettingsRoot.reset();
     jsonUi = std::move(definitions);
     hudScreen.reset();
+    crosshairScreen.reset();
     safeZoneScreen.reset();
     chatUi.reset();
     chatSettingsUi.reset();
     pauseUi.reset();
     globalPackScreens.clear();
     forms.setDefinitions(jsonUi);
+    signs.setDefinitions(jsonUi);
     inventory.setDefinitions(jsonUi);
 }
 
@@ -1705,10 +1800,8 @@ void Menu::toast(Context& ui, float width, float height)
     ui.textCentered(toastMessage, TextStyle::Pixel, frame, White);
 }
 
-void Menu::handleKeys(Context& ui)
+void Menu::handleKeys(const InputState& input)
 {
-    const InputState& input = ui.input();
-
     if (rebinding || rebindingMod) {
         if (input.pressedKey == Key::Escape) {
             rebinding.reset();
@@ -1815,10 +1908,13 @@ void Menu::handleKeys(Context& ui)
         socialSelected.clear();
         requestSocial(SocialAction::Search, socialSearch);
     }
-    if (std::exchange(chatClosedByScreen, false) || !input.escape) {
+    if (!input.escape) {
         return;
     }
-    if (dialog == Dialog::JoinRealm) {
+    if (dialog == Dialog::Update) {
+        updates.cancel();
+        dialog = Dialog::None;
+    } else if (dialog == Dialog::JoinRealm) {
         requestSocial(SocialAction::CancelRealmCode);
         dialog = Dialog::None;
         field = Field::None;

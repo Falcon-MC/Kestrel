@@ -1,6 +1,7 @@
 #include "ui/Skin.h"
 
 #include "ui/Image.h"
+#include "ui/FallbackArt.h"
 #include "client/DebugLog.h"
 #include "ui/Theme.h"
 
@@ -182,6 +183,7 @@ const BorderImage& Skin::border(std::string_view component, std::string_view sta
     result.width = edges(width);
     result.outset = edges(outset);
     result.valid = !result.sprite.empty();
+    if (!result.valid) result = fallbackBorder(component, state);
     return borders.emplace(std::move(key), std::move(result)).first->second;
 }
 
@@ -218,6 +220,7 @@ Skin::Entry& Skin::load(std::string_view name)
             applyDyeMask(entry.bitmap.rgba, LeatherColor);
         }
     }
+    if (!loaded) loaded = drawFallbackArt(name, entry.bitmap);
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     if (loaded) {

@@ -76,6 +76,9 @@ VertexLayout uiLayout()
             { "TEXCOORD", 2, VertexFormat::Float2, 28 },
             { "TEXCOORD", 3, VertexFormat::Float2, 36 },
             { "TEXCOORD", 4, VertexFormat::Float, 44 },
+            { "TEXCOORD", 5, VertexFormat::Float4, 48 },
+            { "TEXCOORD", 6, VertexFormat::Float4, 64 },
+            { "TEXCOORD", 7, VertexFormat::Float, 80 },
         },
         sizeof(ui::UiVertex),
         false,
@@ -102,10 +105,23 @@ VertexLayout modelLayout()
             { "MODEL", 1, VertexFormat::UInt4, 16 },
             { "MODEL", 2, VertexFormat::UInt4, 32 },
             { "MODEL", 3, VertexFormat::UInt4, 48 },
+            { "MODEL", 4, VertexFormat::Float4, 64 },
+            { "MODEL", 5, VertexFormat::Float4, 80 },
+            { "MODEL", 6, VertexFormat::Float4, 96 },
         },
         ModelQuadBytes,
         true,
     };
+}
+
+VertexLayout handLayout()
+{
+    VertexLayout layout = modelLayout();
+    layout.attributes.push_back({ "MODEL", 7, VertexFormat::Float4, 112 });
+    layout.attributes.push_back({ "MODEL", 8, VertexFormat::Float4, 128 });
+    layout.attributes.push_back({ "MODEL", 9, VertexFormat::Float4, 144 });
+    layout.stride = HandQuadBytes;
+    return layout;
 }
 
 VertexLayout skyLayout()
@@ -192,6 +208,7 @@ public:
         solidDesc.cullBackFaces = true;
         solidCubePipeline = device->createPipeline(solidDesc);
         modelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less));
+        handPipeline = device->createPipeline(worldPipeline("vs_hand", "ps_world", handLayout(), BlendMode::None, true, DepthCompare::Less));
         solidModelPipeline = device->createPipeline(worldPipeline("vs_model", "ps_solid", modelLayout(), BlendMode::None, true, DepthCompare::Less));
         auto actorDesc = worldPipeline("vs_actor", "ps_world", modelLayout(), BlendMode::None, true, DepthCompare::Less);
         actorDesc.bindings.actorConstants = true;
@@ -250,6 +267,16 @@ public:
     const std::string& deviceName() const override
     {
         return device->deviceName();
+    }
+
+    double frameFenceWaitMilliseconds() const override
+    {
+        return device->frameFenceWaitMilliseconds();
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return device->frameSubmissionTimeSeconds();
     }
 
     uint64_t submittedFrames() const override
@@ -696,6 +723,16 @@ public:
             index += count;
         }
         drawEntities(*overlayPipeline, view.overlayStart(), view.overlayQuadCount, 1.0f);
+        if (view.preciseHandQuadCount && view.preciseHandQuads && entityLayers > 0 && entityTextures[0]) {
+            size_t handBytes = size_t(view.preciseHandQuadCount) * HandQuadBytes;
+            ensure(buffers.hands, handBytes);
+            std::memcpy(buffers.hands->mapped(), view.preciseHandQuads, handBytes);
+            device->setDepthRange(HandDepthRange);
+            bind(*handPipeline, view.entityOrigin[0], view.entityOrigin[1], view.entityOrigin[2]);
+            device->setVertexBuffer(*buffers.hands, HandQuadBytes, handBytes);
+            device->drawIndexed(6, view.preciseHandQuadCount, 0);
+            device->setDepthRange(1.0f);
+        }
         drawEntities(*modelPipeline, view.entityQuadCount + view.entityBlendCount, view.handQuadCount, HandDepthRange);
     }
 
@@ -867,6 +904,7 @@ private:
         std::unique_ptr<Buffer> indices;
         std::unique_ptr<Buffer> sky;
         std::unique_ptr<Buffer> entities;
+        std::unique_ptr<Buffer> hands;
         std::array<std::unique_ptr<Buffer>, 2> translucent;
         uint64_t terrainGeneration = 0;
         std::array<std::unique_ptr<Buffer>, CustomLayerCount> custom;
@@ -915,7 +953,7 @@ private:
     static std::array<float, 3> quadCenter(const void* data, bool cube)
     {
         const auto* bytes = static_cast<const uint8_t*>(data);
-        uint32_t words[16] {};
+        uint32_t words[ModelQuadBytes / sizeof(uint32_t)] {};
         std::memcpy(words, bytes, cube ? CubeQuadBytes : ModelQuadBytes);
         std::array<float, 3> center {};
         if (cube) {
@@ -1009,6 +1047,7 @@ private:
     std::unique_ptr<Pipeline> uiPipeline;
     std::unique_ptr<Pipeline> cubePipeline;
     std::unique_ptr<Pipeline> modelPipeline;
+    std::unique_ptr<Pipeline> handPipeline;
     std::unique_ptr<Pipeline> actorPipeline;
     std::unique_ptr<Pipeline> actorBlendPipeline;
     std::unique_ptr<Pipeline> actorDepthPipeline;

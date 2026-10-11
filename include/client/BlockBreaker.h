@@ -74,7 +74,7 @@ public:
      * the block each tick. creative waits out the destroy delay after an
      * instant break too; blocked keeps a new break from starting.
      */
-    BreakStep step(bool held, const std::optional<BreakHit>& hit, float speed, bool creative, bool blocked)
+    BreakStep step(bool held, const std::optional<BreakHit>& hit, float speed, bool creative, bool blocked, bool serverAuthoritative = true)
     {
         BreakStep result;
         bool heldBefore = attackHeldBefore;
@@ -102,6 +102,9 @@ public:
             if (progress < 1.0f) {
                 result.progress.push_back({ cell, progress, false, false });
                 return result;
+            }
+            if (serverAuthoritative) {
+                result.actions.push_back({ BreakAction::Kind::Continue, cell, face });
             }
             result.actions.push_back({ BreakAction::Kind::Destroy, cell, face });
             result.progress.push_back({ cell, 1.0f, true, false });

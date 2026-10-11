@@ -16,6 +16,13 @@ constexpr uint32_t MaxGlyphSprite = 256;
 // Read before the files _ui_defs.json lists, which it leaves out.
 constexpr const char* GlobalVariablesFile = "ui/_global_variables.json";
 constexpr const char* UiDefsFile = "ui/_ui_defs.json";
+constexpr const char* HudCoordinatesAlignment = R"({
+  "namespace": "hud",
+  "player_position": {
+    "anchor_from": "top_left",
+    "anchor_to": "top_left"
+  }
+})";
 constexpr const char* TextureExtensions[] = { ".png", ".jpg", ".jpeg", ".tga" };
 
 // Kestrel's own row over the game's Global Resources section: importing a pack, reading
@@ -284,6 +291,7 @@ void Client::loadJsonUi(const std::vector<std::shared_ptr<const world::PackFiles
     definitions->addFile(VideoSectionFile, VideoSectionChanges);
     definitions->addFile(GlobalResourcesFile, ModsSectionButton);
     definitions->addFile(GlobalResourcesFile, WithoutCreatorSection);
+    definitions->addFile("ui/hud_screen.json", HudCoordinatesAlignment);
     for (auto pack = packs.rbegin(); pack != packs.rend(); ++pack) {
         std::vector<std::string> paths = vanillaPaths;
         if (auto packDefs = (*pack)->find(UiDefsFile)) {

@@ -22,6 +22,7 @@ enum class VertexFormat {
     Float,
     Float2,
     Float3,
+    Float4,
     UByte4Norm,
     UInt,
     UInt4,
@@ -236,6 +237,10 @@ public:
      * records nothing and is not submitted.
      */
     virtual uint64_t beginFrame(float r, float g, float b) = 0;
+
+    // CPU time waiting for a reusable GPU frame slot in the last beginFrame.
+    virtual double frameFenceWaitMilliseconds() const { return 0.0; }
+    virtual double frameSubmissionTimeSeconds() const { return 0.0; }
 
     /**
      * Whether the current frame records commands; resources written each

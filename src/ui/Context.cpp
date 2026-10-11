@@ -1,4 +1,5 @@
 #include "ui/Context.h"
+#include "world/Glint.h"
 
 #include "ui/DrawList.h"
 #include "render/Renderer.h"
@@ -112,7 +113,10 @@ void Context::image(const Rect& rect, const ImageRef& source, Color tint)
 
 void Context::sprite(const Rect& rect, std::string_view name, Color tint)
 {
-    image(rect, art.sprite(name).image, tint);
+    const Sprite& source = art.sprite(name);
+    size_t first = drawList.vertices().size();
+    image(rect, source.image, tint);
+    if (name.find("#enchanted") != std::string_view::npos) applyGlint(first, source);
 }
 
 void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& texels, Color tint)
@@ -124,7 +128,9 @@ void Context::spriteRegion(const Rect& rect, std::string_view name, const Rect& 
     float du = (source.image.u1 - source.image.u0) / source.width;
     float dv = (source.image.v1 - source.image.v0) / source.height;
     ImageRef region { source.image.u0 + texels.x * du, source.image.v0 + texels.y * dv, source.image.u0 + texels.right() * du, source.image.v0 + texels.bottom() * dv, true };
+    size_t first = drawList.vertices().size();
     image(rect, region, tint);
+    if (name.find("#enchanted") != std::string_view::npos) applyGlint(first, source);
 }
 
 void Context::setOrigin(float x, float y)
@@ -144,7 +150,7 @@ void Context::clearLayer()
     drawList.clearLayer();
 }
 
-void Context::spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint)
+void Context::spriteQuad(const std::array<std::array<float, 2>, 4>& points, std::string_view name, const std::array<std::array<float, 2>, 4>& texels, Color tint, bool enchanted)
 {
     const Sprite& source = art.sprite(name);
     if (!source.valid || source.width <= 0.0f || source.height <= 0.0f) {
@@ -158,7 +164,24 @@ void Context::spriteQuad(const std::array<std::array<float, 2>, 4>& points, std:
         physical[corner] = { points[corner][0] * scale, points[corner][1] * scale };
         uvs[corner] = { source.image.u0 + texels[corner][0] * du, source.image.v0 + texels[corner][1] * dv };
     }
+    size_t first = drawList.vertices().size();
     drawList.freeQuad(physical, uvs, tint.packed());
+    if (enchanted) applyGlint(first, source, true);
+}
+
+void Context::setGlint(double now, float strength, float speed)
+{
+    glintParameters = world::itemGlintParameters(now, strength, speed);
+}
+
+void Context::applyGlint(size_t first, const Sprite& source, bool armor)
+{
+    if (glintParameters[2] <= 0.0f || first == drawList.vertices().size()) return;
+    const Sprite& glint = art.sprite(armor ? "textures/misc/enchanted_actor_glint" : "textures/misc/enchanted_item_glint");
+    if (!glint.valid) return;
+    const auto& base = source.image;
+    const auto& foil = glint.image;
+    drawList.applyGlint(first, { base.u0, base.v0, base.u1, base.v1 }, { foil.u0, foil.v0, foil.u1, foil.v1 }, glintParameters);
 }
 
 void Context::nineSlice(const Rect& rect, std::string_view name, Color tint)

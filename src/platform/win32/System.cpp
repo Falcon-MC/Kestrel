@@ -11,6 +11,11 @@
 
 namespace kestrel::platform {
 
+int bedrockDeviceOS()
+{
+    return 8;
+}
+
 void waitUntil(std::chrono::steady_clock::time_point deadline)
 {
     auto now = std::chrono::steady_clock::now();

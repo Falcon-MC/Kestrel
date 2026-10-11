@@ -56,7 +56,7 @@ int main()
     const uint8_t* mipChain[] = { pixels.data(), smaller.data() };
     check(opaqueTextureLayers({ mipChain, 2, 2, 2 }) == std::vector<uint8_t>{ 0, 0 }, "transparent mip ignored");
 
-    std::array<std::array<uint32_t, 16>, 4> models {};
+    std::array<std::array<uint32_t, ModelQuadBytes / sizeof(uint32_t)>, 4> models {};
     models[0][10] = 2;
     models[1][10] = 0;
     models[1][11] = 0x20;
@@ -66,6 +66,6 @@ int main()
     auto modelRuns = partitionModelQuads(models.data(), uint32_t(models.size()), opaque);
     check(modelRuns.solidCount == 1, "transparent, procedural or entity model accepted as solid terrain");
     check(std::memcmp(modelRuns.words.data(), models[2].data(), ModelQuadBytes) == 0, "model attributes changed during partition");
-    check(std::memcmp(modelRuns.words.data() + 16, models[0].data(), ModelQuadBytes) == 0, "model cutout order changed");
+    check(std::memcmp(modelRuns.words.data() + ModelQuadBytes / sizeof(uint32_t), models[0].data(), ModelQuadBytes) == 0, "model cutout order changed");
     check(partitionModelQuads(nullptr, 0, opaque).words.empty(), "empty model partition failed");
 }

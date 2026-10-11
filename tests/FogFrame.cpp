@@ -1,4 +1,5 @@
 #include "client/Sky.h"
+#include "client/BlindnessFog.h"
 #include "world/BiomeTints.h"
 
 #include <cmath>
@@ -24,6 +25,18 @@ int main()
     kestrel::SkyFrame base;
     base.daylight = 0.5f;
     base.sunDirection = { 0, 1, 0 };
+    base.fogColor = base.zenith = base.horizon = { 0.2f, 0.4f, 0.8f };
+    auto blind = kestrel::blindedBy(base);
+    require(near(blind.fogStart, 1.25f) && near(blind.fogEnd, 5.0f), "Blindness restricts visible terrain to nearby blocks");
+    require(blind.fogColor == std::array<float, 3> {} && blind.zenith == blind.fogColor && blind.horizon == blind.fogColor,
+        "Blindness makes the distant world and sky black");
+    require(blind.daylight == base.daylight && blind.sunDirection == base.sunDirection,
+        "Blindness preserves local lighting rather than darkening all nearby geometry");
+    auto dense = base;
+    dense.fogStart = 0.0f;
+    dense.fogEnd = 1.0f;
+    blind = kestrel::blindedBy(dense);
+    require(near(blind.fogStart, 0) && near(blind.fogEnd, 1), "Blindness cannot extend visibility through a denser medium");
     kestrel::world::BiomeFog fog { 0x204080, 2, 12, false };
     auto frame = kestrel::foggedBy(base, fog, 64, 0);
     require(near(frame.fogStart, 2) && near(frame.fogEnd, 12), "Fixed fog must not scale or transition without transition_fog");

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -142,6 +143,8 @@ DXGI_FORMAT vertexFormat(VertexFormat format)
         return DXGI_FORMAT_R32_FLOAT;
     case VertexFormat::Float2:
         return DXGI_FORMAT_R32G32_FLOAT;
+    case VertexFormat::Float4:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
     case VertexFormat::Float3:
         return DXGI_FORMAT_R32G32B32_FLOAT;
     case VertexFormat::UByte4Norm:
@@ -592,7 +595,11 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
+        const auto waitStarted = std::chrono::steady_clock::now();
         waitFor(fenceValues[frameIndex]);
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         collectTransfers(4);
         if (slotSubmissions[frameIndex] > completed) {
             completed = slotSubmissions[frameIndex];
@@ -636,6 +643,16 @@ public:
         return submissions + 1;
     }
 
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
+    }
+
     bool recording() const override
     {
         return active;
@@ -663,9 +680,9 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!active || !boundActorConstants || !values || count != 60) return;
+        if (!active || !boundActorConstants || !values || count != 68) return;
         constexpr size_t pageBytes = 1024 * 1024;
-        constexpr size_t stride = 256;
+        constexpr size_t stride = 512;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
         auto& pages = actorPages[frameIndex];
@@ -738,6 +755,7 @@ public:
         commandList->Close();
         ID3D12CommandList* lists[] = { commandList.Get() };
         queue->ExecuteCommandLists(1, lists);
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         fenceValues[frameIndex] = ++fenceCounter;
         queue->Signal(fence.Get(), fenceCounter);
         slotSubmissions[frameIndex] = ++submissions;
@@ -859,6 +877,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     struct RetiredBuffer {
         std::unique_ptr<Buffer> buffer;
         uint64_t fenceValue = 0;

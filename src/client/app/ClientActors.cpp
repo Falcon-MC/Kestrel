@@ -1,6 +1,10 @@
 #include "client/ActorExtent.h"
+#include "client/CrossbowItem.h"
+#include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
+#include "client/FishingLine.h"
+#include "client/SpectatorRendering.h"
 #include "client/motion/MotionMath.h"
 #include "world/CrystalBeam.h"
 #include "world/ItemGlint.h"
@@ -21,8 +25,6 @@ namespace kestrel {
 
 namespace {
 
-constexpr double ActorCandidateRadius = 72.0;
-constexpr double MaxPlayerDistance = 192.0;
 constexpr float PlayerWidth = 0.6f;
 constexpr float PlayerHeight = 1.8f;
 constexpr float DefaultActorWidth = 1.0f;
@@ -183,7 +185,7 @@ std::vector<QuadCorner> clipUv(const std::vector<QuadCorner>& polygon, size_t ax
  * clipped to each tile its UVs reach, and every piece is fanned into
  * triangles drawn as quads repeating their last corner.
  */
-void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, ModelQuadOutput out)
 {
     std::vector<QuadCorner> triangle { corners[0], corners[1], corners[2] };
     std::array<float, 2> low { 1.0f, 1.0f };
@@ -227,7 +229,10 @@ void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t laye
             }
             for (size_t fan = 1; fan + 1 < piece.size(); ++fan) {
                 std::array<QuadCorner, 4> part { piece[0], piece[fan], piece[fan + 1], piece[fan + 1] };
-                out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord));
+                out.push_back(packCorners(part, layer + tileY * tiles[0] + tileX, shadeWord),
+                    { part[0].position, part[1].position, part[2].position, part[3].position });
+                out.back().glintUvTransform = { float(tileX) / (tiles[0] * grid.coverX), float(tileY) / (tiles[1] * grid.coverY),
+                    1.0f / (tiles[0] * grid.coverX), 1.0f / (tiles[1] * grid.coverY) };
             }
         }
     }
@@ -239,10 +244,11 @@ void appendTiledTriangle(const std::array<QuadCorner, 4>& corners, uint32_t laye
  * layer under it with its UVs moved into that tile; a quad repeating its last
  * corner is a triangle and is clipped to the tiles instead.
  */
-void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out)
+void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world::EntityTileGrid& grid, uint32_t shadeWord, ModelQuadOutput out)
 {
     if (grid.single()) {
-        out.push_back(packCorners(corners, layer, shadeWord));
+        out.push_back(packCorners(corners, layer, shadeWord),
+            { corners[0].position, corners[1].position, corners[2].position, corners[3].position });
         return;
     }
     if (corners[2].position == corners[3].position && corners[2].uv == corners[3].uv) {
@@ -303,7 +309,10 @@ void appendTiled(std::array<QuadCorner, 4> corners, uint32_t layer, const world:
                 corner.uv[0] = std::clamp(corner.uv[0] * float(tilesX) - float(tileX), 0.0f, 1.0f);
                 corner.uv[1] = std::clamp(corner.uv[1] * float(tilesY) - float(tileY), 0.0f, 1.0f);
             }
-            out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord));
+            out.push_back(packCorners(piece, layer + tileY * tilesX + tileX, shadeWord),
+                { piece[0].position, piece[1].position, piece[2].position, piece[3].position });
+            out.back().glintUvTransform = { float(tileX) / (tilesX * grid.coverX), float(tileY) / (tilesY * grid.coverY),
+                1.0f / (tilesX * grid.coverX), 1.0f / (tilesY * grid.coverY) };
         }
     }
 }
@@ -335,11 +344,7 @@ std::string lowercase(std::string text)
     return text;
 }
 
-float wrapDegrees(float degrees)
-{
-    float wrapped = std::fmod(degrees + 180.0f, 360.0f);
-    return (wrapped < 0.0f ? wrapped + 360.0f : wrapped) - 180.0f;
-}
+using actor::wrapDegrees;
 
 /**
  * A player's body trailing its head the way the game turns it, advanced by
@@ -348,22 +353,7 @@ float wrapDegrees(float degrees)
  * turn more than 75 degrees away, and creeps after the head once it is past
  * 50. Servers only send where players look, so every client works this out.
  */
-float trailBody(float body, float head, double stepX, double stepZ, float ticks)
-{
-    if (stepX * stepX + stepZ * stepZ > 0.0025) {
-        float heading = static_cast<float>(std::atan2(-stepX, stepZ) * 180.0 / 3.14159265358979);
-        if (std::abs(wrapDegrees(head - heading)) > 95.0f) {
-            heading += 180.0f;
-        }
-        body += wrapDegrees(heading - body) * (1.0f - std::pow(0.7f, ticks));
-    }
-    float turn = std::clamp(wrapDegrees(head - body), -75.0f, 75.0f);
-    body = head - turn;
-    if (std::abs(turn) > 50.0f) {
-        body += turn * (1.0f - std::pow(0.8f, ticks));
-    }
-    return wrapDegrees(body);
-}
+using actor::trailBody;
 
 /**
  * Case insensitive match of a bone name against a lowercase pattern where '*'
@@ -537,7 +527,7 @@ world::EntityTileGrid Client::tileGridOf(uint32_t layer) const
     return blockAssets->entityTileGrid(layer);
 }
 
-void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, std::vector<world::ModelQuadGpu>& out) const
+void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners, const std::array<std::array<float, 2>, 4>& uvs, uint32_t layer, uint32_t shadeWord, ModelQuadOutput out) const
 {
     std::array<QuadCorner, 4> placed;
     for (size_t corner = 0; corner < 4; ++corner) {
@@ -610,6 +600,7 @@ void Client::appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector
  */
 void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
 {
+    fishingRodTips.clear();
     actorDraws.clear();
     ++heldItemFrame;
     if (!blockAssets) {
@@ -667,6 +658,8 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     cullView.cameraY = camera.y();
     cullView.cameraZ = camera.z();
     ChunkFrustum frustum(cullView);
+    double actorDistance = double(menu.renderDistance()) * 16.0;
+    double actorDistanceSquared = actorDistance * actorDistance;
     bool facing = camera.isFacingSubject();
     float viewYaw = wrapDegrees(camera.minecraftYaw() + (facing ? 180.0f : 0.0f));
     float viewPitch = facing ? -camera.minecraftPitch() : camera.minecraftPitch();
@@ -675,22 +668,20 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
     for (const ActorView& actor : actorViews) {
         present.insert(actor.runtimeId);
-        const double actorTickStart = world::projectileEntity(actor.identifier) && actor.projectileTickTime > 0.0 ? actor.projectileTickTime : tickStart;
+        const double actorTickStart = world::projectileEntity(actor.identifier) && actor.projectileTickTime > 0.0 ? actor.projectileTickTime
+            : actor.identifier != "minecraft:player" && actor.interpolation.initialized && actor.interpolation.tickTime > 0.0 ? actor.interpolation.tickTime : tickStart;
         const float actorPartialTick = float(std::clamp((now - actorTickStart) * TicksPerSecond, 0.0, 1.0));
         if (actor.scale <= 0.0f) {
             continue;
         }
-        bool invisible = (actor.flags[0] & InvisibleFlag) != 0;
+        bool spectator = localSpectatorRendering(actor.runtimeId == LocalActorId, hudState.gameType);
+        bool invisible = !spectator && (actor.flags[0] & InvisibleFlag) != 0;
         double dx = actor.x - origin[0];
         double dy = actor.y - origin[1];
         double dz = actor.z - origin[2];
         bool player = actor.identifier == "minecraft:player";
         std::array<double, 3> fromCamera { actor.x - camera.x(), actor.y + 1.0 - camera.y(), actor.z - camera.z() };
-        if (player) {
-            if (fromCamera[0] * fromCamera[0] + fromCamera[1] * fromCamera[1] + fromCamera[2] * fromCamera[2] > MaxPlayerDistance * MaxPlayerDistance) {
-                continue;
-            }
-        } else if (std::abs(actor.x - camera.x()) > ActorCandidateRadius || std::abs(actor.y - camera.y()) > ActorCandidateRadius || std::abs(actor.z - camera.z()) > ActorCandidateRadius) {
+        if (fromCamera[0] * fromCamera[0] + fromCamera[1] * fromCamera[1] + fromCamera[2] * fromCamera[2] > actorDistanceSquared) {
             continue;
         }
         float boxWidth = actorExtent(actor.width, player ? PlayerWidth : DefaultActorWidth, actor.scale);
@@ -701,6 +692,81 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         // Outside that box, reject individual posed faces rather than the actor.
         bool cullFaces = !frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth);
         uint32_t light = lightCorners(actor.x, actor.y + boxHeight * 0.66f, actor.z);
+        if (actor.identifier == "minecraft:painting") {
+            const auto* motive = world::paintingMotive(actor.paintingMotive);
+            if (invisible || !motive || actor.paintingDirection < 0 || actor.paintingDirection > 3) {
+                continue;
+            }
+            auto layer = blockAssets->paintingLayer(*motive);
+            if (!layer) {
+                continue;
+            }
+            const auto normal = world::PaintingNormals[actor.paintingDirection];
+            const std::array<float, 3> right { normal[2], 0.0f, -normal[0] };
+            const float width = motive->width / 16.0f;
+            const float height = motive->height / 16.0f;
+            auto point = [&](float u, float v, float depth) {
+                return std::array<float, 3> {
+                    float((dx + right[0] * u + normal[0] * depth) * 256.0),
+                    float((dy + v) * 256.0),
+                    float((dz + right[2] * u + normal[2] * depth) * 256.0),
+                };
+            };
+            const float u0 = motive->separate ? 0.0f : motive->x / 256.0f;
+            const float v0 = motive->separate ? 0.0f : motive->y / 256.0f;
+            const float u1 = motive->separate ? 1.0f : (motive->x + motive->width) / 256.0f;
+            const float v1 = motive->separate ? 1.0f : (motive->y + motive->height) / 256.0f;
+            size_t first = out.size();
+            appendEntityQuad({ point(-width / 2, height / 2, 1.0f / 32), point(width / 2, height / 2, 1.0f / 32),
+                                 point(width / 2, -height / 2, 1.0f / 32), point(-width / 2, -height / 2, 1.0f / 32) },
+                { std::array<float, 2> { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } },
+                *layer, world::shadeFaceTowards(normal) | EntityQuadFlag, out);
+            if (auto backing = blockAssets->paintingAtlasLayer()) {
+                constexpr float front = 1.0f / 32;
+                constexpr float back = -front;
+                constexpr float woodU = 192.0f / 256;
+                constexpr float woodV = 0.0f;
+                constexpr float woodEndU = 208.0f / 256;
+                constexpr float woodEndV = 16.0f / 256;
+                const std::array<std::array<float, 2>, 4> wood {{
+                    { woodU, woodV }, { woodEndU, woodV }, { woodEndU, woodEndV }, { woodU, woodEndV },
+                }};
+                auto face = [&](const std::array<std::array<float, 3>, 4>& corners, const std::array<float, 3>& outward, bool edge = false, bool vertical = false) {
+                    auto uvs = wood;
+                    if (edge) {
+                        if (vertical) {
+                            uvs[1][0] = uvs[2][0] = 193.0f / 256;
+                        } else {
+                            uvs[2][1] = uvs[3][1] = 1.0f / 256;
+                        }
+                    }
+                    appendEntityQuad(corners, uvs, *backing, world::shadeFaceTowards(outward) | EntityQuadFlag, out);
+                };
+                for (int row = 0; row < motive->height / 16; ++row) {
+                    for (int column = 0; column < motive->width / 16; ++column) {
+                        float left = -width / 2 + column, bottom = -height / 2 + row;
+                        face({ point(left + 1, bottom + 1, back), point(left, bottom + 1, back),
+                            point(left, bottom, back), point(left + 1, bottom, back) }, { -normal[0], 0, -normal[2] });
+                    }
+                }
+                for (int column = 0; column < motive->width / 16; ++column) {
+                    float left = -width / 2 + column;
+                    face({ point(left, height / 2, back), point(left + 1, height / 2, back),
+                        point(left + 1, height / 2, front), point(left, height / 2, front) }, { 0, 1, 0 }, true);
+                    face({ point(left, -height / 2, front), point(left + 1, -height / 2, front),
+                        point(left + 1, -height / 2, back), point(left, -height / 2, back) }, { 0, -1, 0 }, true);
+                }
+                for (int row = 0; row < motive->height / 16; ++row) {
+                    float bottom = -height / 2 + row;
+                    face({ point(-width / 2, bottom + 1, back), point(-width / 2, bottom + 1, front),
+                        point(-width / 2, bottom, front), point(-width / 2, bottom, back) }, { -right[0], 0, -right[2] }, true, true);
+                    face({ point(width / 2, bottom + 1, front), point(width / 2, bottom + 1, back),
+                        point(width / 2, bottom, back), point(width / 2, bottom, front) }, right, true, true);
+                }
+            }
+            lightQuads(out, first, light);
+            continue;
+        }
         if (actor.identifier == "minecraft:item") {
             if (!invisible) {
                 size_t first = out.size();
@@ -768,6 +834,19 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             input.metadataQueries["upside_down_height"] = height * 16.0;
         }
         input.onGround = actor.onGround;
+        if (!player && !world::projectileEntity(actor.identifier) && actor.interpolation.initialized) {
+            const auto& movement = actor.interpolation;
+            std::array<double, 3> delta;
+            for (size_t axis = 0; axis < 3; ++axis) delta[axis] = movement.current[axis] - movement.previous[axis];
+            input.tickPositionDelta = delta;
+            input.frameAlpha = actorPartialTick;
+            input.x = movement.current[0];
+            input.y = movement.current[1];
+            input.z = movement.current[2];
+            input.yaw = movement.currentTurn[0];
+            input.headYaw = movement.currentTurn[1];
+            input.pitch = movement.currentTurn[2];
+        }
         if (world::projectileEntity(actor.identifier)) {
             input.tickPositionDelta = actor.projectilePositionDelta;
             input.frameAlpha = actorPartialTick;
@@ -836,6 +915,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         float swimStep = static_cast<float>(std::clamp(now - lastActorTime, 0.0, 0.25) * 4.0);
         swimAmount = std::clamp(swimAmount + (swimmingFlag ? swimStep : -swimStep), 0.0f, 1.0f);
         input.swimAmount = swimAmount;
+        input.engineVariables.push_back({ "is_enchanted", (input.flags[0] & (uint64_t(1) << 52)) != 0 ? 1.0 : 0.0 });
         input.engineVariables.push_back({ "swim_amount", swimAmount });
         input.engineVariables.push_back({ "left_arm_swim_amount", swimAmount });
         input.engineVariables.push_back({ "right_arm_swim_amount", swimAmount });
@@ -879,6 +959,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             if (combined) pose.bones = world::poseBonesForGeometry(rig.bones, geometryRig->bones);
         }
         const auto& animationBones = combined ? pose.bones : rig.bones;
+        const auto spectatorParts = spectator ? spectatorHeadBones(animationBones) : std::vector<uint8_t> {};
         bool stale = geometryChanged || animator.matrices().size() != rig.bones.size() || pose.current.size() != rig.bones.size() || actorTickStart - pose.tick > 3.0 / TicksPerSecond;
         bool billboard = world::cameraFacingSprite(actor.identifier);
         if (stale || pose.tick != actorTickStart || billboard) {
@@ -1057,7 +1138,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         };
         const world::EntityRenderController* renderingController = nullptr;
         world::EntityMaterialChoice renderingMaterial;
-        std::array<float, 36> surfaceConstants {};
+        std::array<float, 44> surfaceConstants {};
         auto emitQuad = [&](const world::ModelQuad& quad, const world::BoneMatrix* matrix, uint32_t layer, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim, float offsetV) {
             auto place = [&](const std::array<float, 3>& point) {
                 float x = point[0];
@@ -1124,7 +1205,12 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             uint32_t shadeWord = world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag | (blend == world::EntityBlend::Additive ? AdditiveQuadFlag : 0u);
             if (!lit) shadeWord |= FoggedQuadFlag;
-            if (renderingMaterial.material == world::EntityMaterial::AlphaTest) shadeWord |= 1u << 14;
+            if (spectator) {
+                shadeWord = (shadeWord & ~AdditiveQuadFlag) | SpectatorHeadQuadFlag;
+                blend = world::EntityBlend::Blend;
+            } else if (renderingMaterial.material == world::EntityMaterial::AlphaTest) {
+                shadeWord |= 1u << 14;
+            }
             if (actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5) shadeWord |= 1u << 7;
             std::vector<world::ModelQuadGpu>& target = blend == world::EntityBlend::Opaque ? out : blended;
             size_t first = target.size();
@@ -1140,6 +1226,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                 uint32_t rgb = 0;
                 for (size_t channel = 0; channel < 3; ++channel) rgb |= uint32_t(std::clamp(surfaceConstants[8 + channel], 0.0f, 1.0f) * 255.0f) << (16 - channel * 8);
                 for (size_t placed = first; placed < target.size(); ++placed) target[placed].words[14] = 0x80000000u | rgb;
+            }
+            if (renderingMaterial.glint) {
+                uint32_t foil = std::bit_cast<uint32_t>(surfaceConstants[17]);
+                for (size_t placed = first; placed < target.size(); ++placed) world::applyItemGlint(target[placed], foil, now,
+                    visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(foil));
             }
             if (lit) {
                 lightQuads(target, first, light);
@@ -1192,6 +1283,13 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             }
             surfaceConstants[19] = std::bit_cast<float>(uint32_t(renderingMaterial.material));
             surfaceConstants[35] = surfaceConstants[15];
+            if (renderingMaterial.glint && textures[1] < 8192) {
+                auto parameters = world::itemGlintParameters(now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                parameters[3] = float(textures[1]);
+                auto texture = blockAssets->glintTextureParameters(textures[1]);
+                std::copy(parameters.begin(), parameters.end(), surfaceConstants.begin() + 36);
+                std::copy(texture.begin(), texture.end(), surfaceConstants.begin() + 40);
+            }
         };
         auto emitGpu = [&](size_t index, size_t bone, uint32_t layer, bool lit, bool oneSided, world::EntityBlend blend) {
             auto& cached = actorGeometry[&rig];
@@ -1321,6 +1419,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         auto emit = [&](size_t index, uint32_t layer, const std::vector<uint8_t>& hidden, world::EntityBlend blend, bool oneSided, bool lit, const std::array<uint32_t, 2>& uvAnim) {
             const world::ModelQuad& quad = rig.quads[index];
             size_t bone = index < rig.quadBones.size() ? rig.quadBones[index] : pose.current.size();
+            if (spectator && (bone >= spectatorParts.size() || !spectatorParts[bone])) {
+                return;
+            }
             if (bone < hidden.size() && hidden[bone]) {
                 return;
             }
@@ -1336,6 +1437,9 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             for (size_t index = 0; index < worn.quads.size(); ++index) {
                 size_t piece = index < worn.quadBones.size() ? worn.quadBones[index] : wearer.size();
                 int32_t bone = piece < wearer.size() ? wearer[piece] : -1;
+                if (spectator && (bone < 0 || size_t(bone) >= spectatorParts.size() || !spectatorParts[size_t(bone)])) {
+                    continue;
+                }
                 if (bone >= 0 && size_t(bone) < hidden.size() && hidden[size_t(bone)]) {
                     std::string name = lowercase(worn.bones[piece].name);
                     if (!showHead || (name != "head" && name != "hat")) {
@@ -1382,11 +1486,11 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                     emitWorn(*animation.rig, wornBones(*animation.rig, rig), hidden, blockAssets->skinLayerBase() + animation.texture.layer, offsetV, true);
                 }
                 const world::EntityRig* cape = blockAssets->capeRig();
-                if (cape && skinView->cape.present && actor.armor[1] != "minecraft:elytra") {
+                if (!spectator && cape && skinView->cape.present && actor.armor[1] != "minecraft:elytra") {
                     emitWorn(*cape, wornBones(*cape, rig), hidden, blockAssets->skinLayerBase() + skinView->cape.layer, 0.0f, false);
                 }
             }
-            const world::EntityModel* elytra = actor.armor[1] == "minecraft:elytra" ? blockAssets->attachableModel("minecraft:elytra") : nullptr;
+            const world::EntityModel* elytra = !spectator && actor.armor[1] == "minecraft:elytra" ? blockAssets->attachableModel("minecraft:elytra") : nullptr;
             int32_t body = -1;
             for (size_t bone = 0; elytra && bone < rig.bones.size(); ++bone) {
                 if (lowercase(rig.bones[bone].name) == "body") {
@@ -1414,11 +1518,14 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
                         emitQuad(wings.quads[index], &placed, layer, world::EntityBlend::Opaque, false, true, {}, 0.0f);
                         const HudItem& chest = actor.runtimeId == LocalActorId ? hudState.armor[1] : actor.armorItems[1];
                         if (chest.enchanted) for (size_t q = first; q < out.size(); ++q) {
-                            world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                            world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), now, visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->armorGlintLayer()));
                         }
                     }
                 }
             }
+        }
+        if (spectator) {
+            continue;
         }
         size_t firstWorn = out.size();
         auto toWorld = [&](const std::array<float, 3>& posed) {
@@ -1431,12 +1538,18 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             bool hurt = actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5;
             appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out, nullptr, actor.runtimeId == LocalActorId ? &hudState.armor : &actor.armorItems);
         }
-        if (actor.runtimeId == LocalActorId) {
+        const HudItem& mainHand = actor.runtimeId == LocalActorId
+            ? hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))] : actor.held;
+        if (!mainHand.empty()) {
             interpolatePose();
-            appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
-        } else if (!actor.held.empty()) {
-            interpolatePose();
-            appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
+            std::array<float, 3> rodTip { std::nanf(""), 0.0f, 0.0f };
+            HeldAttachable& attachable = actor.runtimeId == LocalActorId ? bodyAttachable : actorAttachables[actor.runtimeId];
+            appendThirdPersonItem(mainHand, input.itemUseTicks, attachable, rig, matrices, toWorld, out, false, &rodTip);
+            if (mainHand.identifier == "minecraft:fishing_rod" && std::isfinite(rodTip[0])) {
+                const int64_t owner = actor.runtimeId == LocalActorId && seenSessionSnapshot
+                    ? seenSessionSnapshot->localUniqueActorId : actor.uniqueId;
+                fishingRodTips[owner] = { origin[0] + rodTip[0] / 256.0, origin[1] + rodTip[1] / 256.0, origin[2] + rodTip[2] / 256.0 };
+            }
         }
         const HudItem& offhand = actor.runtimeId == LocalActorId ? hudState.offhand : actor.offhand;
         if (!offhand.empty()) {
@@ -1494,12 +1607,23 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     actorViews.resize(actualActors);
 }
 
+void Client::drawFishingLines(mod::WorldPainter& painter)
+{
+    for (const ActorView& actor : actorViews) {
+        if (actor.identifier != "minecraft:fishing_hook" || actor.fishingOwner == -1) continue;
+        const auto tip = fishingRodTips.find(actor.fishingOwner);
+        if (tip == fishingRodTips.end()) continue;
+        const auto segments = fishingLine(tip->second, { actor.x, actor.y + 0.15, actor.z });
+        if (!segments.empty()) painter.lines(segments, { 0, 0, 0, 255 }, 0.012f, false);
+    }
+}
+
 /**
  * The armor a humanoid wears, drawn with the vanilla armor models. Their bones
  * share the humanoid's names, so each armor bone follows the pose of the
  * wearer's bone of the same name, whatever geometry the skin brings.
  */
-void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, std::vector<world::ModelQuadGpu>& out, const std::vector<uint8_t>* shownBones, const std::array<HudItem, 4>* items)
+void Client::appendArmor(const std::array<std::string, 4>& armor, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, uint32_t shadeFlags, ModelQuadOutput out, const std::vector<uint8_t>* shownBones, const std::array<HudItem, 4>* items)
 {
     for (size_t slot = 0; slot < armor.size(); ++slot) {
         if (armor[slot].empty()) {
@@ -1557,7 +1681,7 @@ void Client::appendArmor(const std::array<std::string, 4>& armor, const world::E
             }
             if (items && (*items)[slot].enchanted) {
                 for (size_t q = first; q < out.size(); ++q) {
-                    world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
+                    world::applyItemGlint(out[q], blockAssets->armorGlintLayer(), secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(blockAssets->armorGlintLayer()));
                 }
             }
         }
@@ -1598,7 +1722,7 @@ double Client::actorItemUseTicks(const ActorView& actor, double now)
  * attachable without a binding hangs from that bone as a whole. Returns false
  * when the item has no attachable, so the caller draws it as usual.
  */
-bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
+bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, ModelQuadOutput out, bool leftHand)
 {
     const world::EntityModel* model = held.empty() || !blockAssets ? nullptr : blockAssets->attachableModel(held.identifier);
     if (!model || model->wearable || model->rigs.empty()) {
@@ -1629,8 +1753,27 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     input.worldTime = currentWorldTime(timeState);
     input.identifier = held.identifier;
     input.mainHandItem = held.identifier;
+    if (leftHand) input.offHandItem = held.identifier;
+    input.flags[0] = held.enchanted ? uint64_t(1) << 52 : 0;
+    if (firstPerson) {
+        if (seenSessionSnapshot) input.flags = seenSessionSnapshot->localActorFlags;
+        input.flags[0] = (input.flags[0] & ~(uint64_t(1) << 52)) | (held.enchanted ? uint64_t(1) << 52 : 0);
+        for (const auto& [name, value] : handAnimator.variableValues()) {
+            input.engineVariables.emplace_back(name, value);
+        }
+    }
+    input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
+    if (held.identifier == "minecraft:crossbow") {
+        const int chargedFrame = chargedCrossbowFrame(held.userData);
+        input.metadataQueries["get_animation_frame"] = chargedFrame != 0 ? chargedFrame : itemUseTicks > 0.0 ? 1 : 0;
+        input.metadataQueries["item_is_charged"] = chargedFrame != 0 ? 1.0 : 0.0;
+    }
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
+    if (firstPerson) {
+        input.contextVariables.emplace_back("player_offhand_arm_height", offhandEquip);
+        input.engineVariables.emplace_back("player_arm_height", handEquip);
+    }
     state.animator.update(model->scripts.get(), &blockAssets->animationLibrary(), state.bones, input);
     const std::vector<world::BoneMatrix>& matrices = state.animator.matrices();
     if (matrices.size() != state.bones.size()) {
@@ -1639,6 +1782,8 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     // The render controller picks the frame, like the bow's pull stages, by geometry and texture.
     const world::EntityRig* chosenRig = &model->rigs.front();
     uint32_t layer = model->layer;
+    uint32_t foilLayer = blockAssets->itemGlintLayer();
+    bool glint = held.enchanted;
     for (const world::EntityRenderController& controller : model->controllers) {
         if (!controller.condition.empty() && state.animator.evaluate(controller.condition) == 0.0) {
             continue;
@@ -1650,6 +1795,10 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
         if (uint32_t chosen = pickChoice(state.animator, controller.texture, controller.textureChoices); chosen != world::NoEntityChoice) {
             layer = chosen;
         }
+        auto material = controller.selectedMaterial(state.animator.evaluate(controller.materialSelector));
+        glint = material.glint;
+        uint32_t foil = pickChoice(state.animator, controller.extraTextures[0], controller.extraTextureChoices[0]);
+        if (foil != world::NoEntityChoice) foilLayer = foil;
         break;
     }
     const world::EntityRig& rig = *chosenRig;
@@ -1708,7 +1857,10 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
             corners[corner].position = place(point);
             corners[corner].uv = { quad.uvs[corner][0] / 4096.0f, quad.uvs[corner][1] / 4096.0f };
         }
+        size_t first = out.size();
         appendTiled(corners, layer, grid, world::posedShadeFace(quad.flags & world::QuadFaceMask, center, 1.0f, place) | EntityQuadFlag, out);
+        if (glint) for (size_t q = first; q < out.size(); ++q) world::applyItemGlint(out[q], foilLayer, input.now,
+            visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()), blockAssets->glintTextureParameters(foilLayer));
     }
     return true;
 }
@@ -1868,11 +2020,11 @@ ActorView Client::localActorView(float deltaSeconds)
         self.armor[slot] = hudState.armor[slot].empty() ? std::string() : hudState.armor[slot].identifier;
     }
 
-    double dx = playerView.current[0] - playerView.previous[0];
-    double dz = playerView.current[2] - playerView.previous[2];
+    double dx = playerView.velocity[0];
+    double dz = playerView.velocity[2];
     localBodyYaw = trailBody(localBodyYaw, self.headYaw, dx, dz, deltaSeconds * 20.0f);
     self.yaw = localBodyYaw;
-    self.velocity = { float(dx), float(playerView.current[1] - playerView.previous[1]), float(dz) };
+    self.velocity = playerView.velocity;
     if (!playerView.gliding) {
         localGlideSince = 0.0;
     } else if (localGlideSince == 0.0) {
@@ -1924,7 +2076,6 @@ std::optional<std::array<float, 2>> Client::glideRotation(const ActorView& actor
 
 void Client::interpolateActors(double now)
 {
-    constexpr double SnapDistance = 8.0;
     auto& present = actorPresent;
     present.clear();
     if (present.bucket_count() * present.max_load_factor() < actorViews.size()) present.reserve(actorViews.size());
@@ -1942,46 +2093,62 @@ void Client::interpolateActors(double now)
             }
             continue;
         }
-        std::array<double, 3> target { actor.x, actor.y, actor.z };
-        std::array<float, 3> turn { actor.yaw, actor.headYaw, actor.pitch };
         auto [entry, created] = motions.try_emplace(actor.runtimeId);
         ActorMotion& motion = entry->second;
-        double jump = std::sqrt((target[0] - motion.shown[0]) * (target[0] - motion.shown[0]) + (target[1] - motion.shown[1]) * (target[1] - motion.shown[1]) + (target[2] - motion.shown[2]) * (target[2] - motion.shown[2]));
-        if (created || actor.teleports != motion.teleports || jump > SnapDistance) {
-            motion.from = target;
-            motion.to = target;
-            motion.shown = target;
-            motion.turnFrom = turn;
-            motion.turnTo = turn;
-            motion.turnShown = turn;
-            motion.start = now;
-            motion.duration = 0.0;
-            motion.lastSample = now;
-            motion.moves = actor.moves;
-            motion.teleports = actor.teleports;
-            motion.launchTurns = actor.launchTurns;
-            motion.bodyYaw = actor.yaw;
-            motion.lastFrame = now;
-            motion.lastShown = target;
-        } else if (actor.moves != motion.moves) {
-            motion.retarget(target, turn, now);
-            motion.moves = actor.moves;
-        }
-        if (actor.launchTurns != motion.launchTurns) {
-            motion.launchTurns = actor.launchTurns;
-            motion.turnFrom = turn;
-            motion.turnShown = turn;
-            if (now - motion.start >= motion.duration) {
+        std::array<float, 3> turn;
+        if (actor.identifier == "minecraft:player") {
+            std::array<double, 3> target { actor.x, actor.y, actor.z };
+            turn = { actor.yaw, actor.headYaw, actor.pitch };
+            double jump = std::sqrt((target[0] - motion.shown[0]) * (target[0] - motion.shown[0]) + (target[1] - motion.shown[1]) * (target[1] - motion.shown[1]) + (target[2] - motion.shown[2]) * (target[2] - motion.shown[2]));
+            if (created || actor.teleports != motion.teleports || jump > 8.0) {
+                motion.from = target;
+                motion.to = target;
+                motion.shown = target;
+                motion.turnFrom = turn;
                 motion.turnTo = turn;
+                motion.turnShown = turn;
+                motion.start = now;
+                motion.duration = 0.0;
+                motion.lastSample = now;
+                motion.moves = actor.moves;
+                motion.teleports = actor.teleports;
+                motion.launchTurns = actor.launchTurns;
+                motion.bodyYaw = actor.yaw;
+                motion.lastFrame = now;
+                motion.lastShown = target;
+            } else if (actor.moves != motion.moves) {
+                motion.retarget(target, turn, now);
+                motion.moves = actor.moves;
+            }
+            if (actor.launchTurns != motion.launchTurns) {
+                motion.launchTurns = actor.launchTurns;
+                motion.turnFrom = turn;
+                motion.turnShown = turn;
+                if (now - motion.start >= motion.duration) {
+                    motion.turnTo = turn;
+                }
+            }
+            motion.advance(now);
+            turn = motion.turnShown;
+        } else {
+            bool reset = created || actor.teleports != motion.teleports;
+            motion.shown = actor.interpolation.initialized ? actor.interpolation.position(now)
+                : std::array<double, 3> { actor.x, actor.y, actor.z };
+            turn = actor.interpolation.initialized ? actor.interpolation.rotation(now)
+                : std::array<float, 3> { actor.yaw, actor.headYaw, actor.pitch };
+            if (reset) {
+                motion.teleports = actor.teleports;
+                motion.bodyYaw = turn[0];
+                motion.lastFrame = now;
+                motion.lastShown = motion.shown;
             }
         }
-        motion.advance(now);
         actor.x = motion.shown[0];
         actor.y = motion.shown[1];
         actor.z = motion.shown[2];
-        actor.yaw = motion.turnShown[0];
-        actor.headYaw = motion.turnShown[1];
-        actor.pitch = motion.turnShown[2];
+        actor.yaw = turn[0];
+        actor.headYaw = turn[1];
+        actor.pitch = turn[2];
         float ticks = static_cast<float>(std::min(now - motion.lastFrame, 0.25) * 20.0);
         if (actor.identifier == "minecraft:player") {
             if (ticks > 0.0f) {

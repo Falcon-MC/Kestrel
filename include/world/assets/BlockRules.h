@@ -186,6 +186,7 @@ bool classifyBlockEntity(const std::string& name, const Tag& states, BlockVisual
 
 std::string stateString(const Tag& states, const std::string& key);
 std::optional<int32_t> stateInt(const Tag& states, const std::string& key);
+uint32_t stairVariant(const Tag& states);
 Axis stateAxis(const Tag& states);
 std::optional<Face> stateFacing(const Tag& states);
 bool stateMatches(const Tag& states, const json::Value& expected);

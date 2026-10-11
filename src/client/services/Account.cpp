@@ -22,7 +22,7 @@ namespace kestrel {
 
 namespace {
 
-constexpr const char* GameVersion = "1.26.51";
+constexpr const char* GameVersion = "1.26.52";
 constexpr const char* XboxLiveRelyingParty = "http://xboxlive.com";
 constexpr const char* GameTitleId = "896928775";
 constexpr uint32_t IconWidth = 176;

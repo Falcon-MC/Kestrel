@@ -51,11 +51,13 @@ public:
                 if (std::string_view(field) == "defines") {
                     entry.emissive = false;
                     entry.multitexture = false;
+                    entry.glint = false;
                 }
                 for (const auto& define : defines->mArray) {
                     if (define->isString() && define->mString == "USE_EMISSIVE") {
                         entry.emissive = std::string_view(field) != "-defines";
                     }
+                    if (define->isString() && define->mString == "GLINT") entry.glint = std::string_view(field) != "-defines";
                     if (define->isString() && define->mString == "USE_MULTITEXTURE") {
                         entry.multitexture = std::string_view(field) != "-defines";
                     }
@@ -124,12 +126,18 @@ public:
         return feature(name, &Entry::multitexture);
     }
 
+    std::optional<bool> glint(const std::string& name) const
+    {
+        return feature(name, &Entry::glint);
+    }
+
 private:
     struct Entry {
         std::string parent;
         std::optional<bool> blending;
         std::optional<bool> emissive;
         std::optional<bool> multitexture;
+        std::optional<bool> glint;
         std::string source;
         std::string destination;
     };

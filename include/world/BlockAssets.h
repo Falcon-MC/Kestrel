@@ -6,6 +6,7 @@
 #include "world/BlockCollisions.h"
 #include "world/BlockRegistry.h"
 #include "world/EntityAnimation.h"
+#include "world/Painting.h"
 #include "world/ServerPack.h"
 
 #include <algorithm>
@@ -387,6 +388,7 @@ struct EntityMaterialChoice {
     EntityMaterial material = EntityMaterial::Default;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
+    bool glint = false;
 };
 
 struct EntityRenderController {
@@ -579,6 +581,12 @@ public:
     }
 
     uint32_t armorGlintLayer() const { return armorGlintTexture; }
+    uint32_t itemGlintLayer() const { return itemGlintTexture; }
+    std::array<float, 4> glintTextureParameters(uint32_t layer) const
+    {
+        auto grid = entityTileGrid(layer);
+        return { 0.5f, 0.5f, grid.tilesX * grid.coverX * EntityTextureSize, grid.tilesY * grid.coverY * EntityTextureSize };
+    }
 
     /**
      * How armor in the given slot looks, or no rig for items without an
@@ -615,6 +623,15 @@ public:
     }
 
     std::optional<uint32_t> crystalBeamLayer() const { return crystalBeamTexture; }
+    std::optional<uint32_t> paintingAtlasLayer() const { return paintingAtlasTexture; }
+    std::optional<uint32_t> paintingLayer(const PaintingMotive& motive) const
+    {
+        if (!motive.separate) {
+            return paintingAtlasTexture;
+        }
+        auto found = paintingTextures.find(motive.name);
+        return found == paintingTextures.end() ? std::nullopt : std::optional<uint32_t>(found->second);
+    }
     std::optional<uint32_t> beaconBeamLayer(bool shell) const { return shell ? beaconBeamShellTexture : beaconBeamTexture; }
 
     uint32_t entityTextureLayers() const
@@ -637,7 +654,7 @@ public:
         return found == entityTiles.end() ? EntityTileGrid {} : found->second;
     }
 
-    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt) const;
+    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt, uint32_t animationFrame = 0) const;
 
     /**
      * The look of the default state of the block an item places, when it is
@@ -756,9 +773,12 @@ private:
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::optional<uint32_t> crystalBeamTexture;
+    std::optional<uint32_t> paintingAtlasTexture;
+    std::map<std::string, uint32_t, std::less<>> paintingTextures;
     std::optional<uint32_t> beaconBeamTexture;
     std::optional<uint32_t> beaconBeamShellTexture;
     uint32_t armorGlintTexture = NoEntityChoice;
+    uint32_t itemGlintTexture = NoEntityChoice;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
