@@ -470,7 +470,13 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOu
         Vec3 world = add(add(scaled(axes[0], view[0] * handZoom), scaled(axes[1], view[1] * handZoom)), scaled(axes[2], view[2]));
         return add(eyePoint, scaled(world, 256.0f));
     };
-    appendHeldItem(held, place, out, true);
+    Vec3 rodTip { std::nanf(""), 0.0f, 0.0f };
+    appendHeldItem(held, place, out, true, &rodTip);
+    if (held.identifier == "minecraft:fishing_rod" && seenSessionSnapshot && std::isfinite(rodTip[0])) {
+        fishingRodTips[seenSessionSnapshot->localUniqueActorId] = {
+            origin[0] + rodTip[0] / 256.0, origin[1] + rodTip[1] / 256.0, origin[2] + rodTip[2] / 256.0,
+        };
+    }
 }
 
 bool Client::paperDollVisible()
@@ -622,7 +628,7 @@ void Client::appendPaperDoll(const ActorView& self, const std::array<int32_t, 3>
  * or tool). Those run in the flipped Java model space, which is the rig space
  * turned half a circle around z.
  */
-void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand)
+void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<Vec3(const Vec3&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand, Vec3* rodTip)
 {
     int32_t armBone = -1;
     for (size_t bone = 0; bone < rig.bones.size() && bone < matrices.size(); ++bone) {
@@ -652,7 +658,7 @@ void Client::appendThirdPersonItem(const HudItem& held, double itemUseTicks, Hel
             m[8] * pixels[0] + m[9] * pixels[1] + m[10] * pixels[2] + m[11],
         });
     };
-    appendHeldItem(held, place, out);
+    appendHeldItem(held, place, out, false, rodTip);
 }
 
 /**
@@ -714,6 +720,20 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
         }
         HeldItemMesh cached;
         cached.slot = slot;
+        if (held.identifier == "minecraft:fishing_rod") {
+            const auto icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor);
+            if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
+                for (uint32_t y = 0; y < ItemGrid && !cached.rodTip; ++y) {
+                    for (uint32_t x = ItemGrid; x-- > 0;) {
+                        if (icon[(size_t(y) * ItemGrid + x) * 4 + 3] >= 26) {
+                            cached.rodTip = Vec3 { ((x + 0.5f) / ItemGrid - 0.5f) * HeldItemSize,
+                                (0.5f - (y + 0.5f) / ItemGrid) * HeldItemSize, 0.0f };
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         if (!mapKey.empty() && buildMapMesh(held, heldItemLayer() + slot, cached.faces)) {
             cached.map = true;
         } else {
@@ -731,13 +751,16 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
  * the item, in blocks around its center, to 1/256 block around the draw
  * origin; it is told whether the item is a cube so it can pose it.
  */
-void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite)
+void Client::appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite, Vec3* rodTip)
 {
     HeldItemMesh* cached = heldMesh(held);
     if (!cached) {
         return;
     }
     HeldItemMesh& mesh = *cached;
+    if (rodTip && mesh.rodTip) {
+        *rodTip = place(*mesh.rodTip, false);
+    }
     for (const HeldItemFace& face : mesh.faces) {
         std::array<Vec3, 4> corners;
         for (size_t i = 0; i < 4; ++i) {

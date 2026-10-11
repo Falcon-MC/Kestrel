@@ -6,6 +6,7 @@
 #include "world/BlockCollisions.h"
 #include "world/BlockRegistry.h"
 #include "world/EntityAnimation.h"
+#include "world/Painting.h"
 #include "world/ServerPack.h"
 
 #include <algorithm>
@@ -622,6 +623,15 @@ public:
     }
 
     std::optional<uint32_t> crystalBeamLayer() const { return crystalBeamTexture; }
+    std::optional<uint32_t> paintingAtlasLayer() const { return paintingAtlasTexture; }
+    std::optional<uint32_t> paintingLayer(const PaintingMotive& motive) const
+    {
+        if (!motive.separate) {
+            return paintingAtlasTexture;
+        }
+        auto found = paintingTextures.find(motive.name);
+        return found == paintingTextures.end() ? std::nullopt : std::optional<uint32_t>(found->second);
+    }
     std::optional<uint32_t> beaconBeamLayer(bool shell) const { return shell ? beaconBeamShellTexture : beaconBeamTexture; }
 
     uint32_t entityTextureLayers() const
@@ -763,6 +773,8 @@ private:
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::optional<uint32_t> crystalBeamTexture;
+    std::optional<uint32_t> paintingAtlasTexture;
+    std::map<std::string, uint32_t, std::less<>> paintingTextures;
     std::optional<uint32_t> beaconBeamTexture;
     std::optional<uint32_t> beaconBeamShellTexture;
     uint32_t armorGlintTexture = NoEntityChoice;

@@ -59,6 +59,7 @@
 #include "Protocol/Packets/RequestChunkRadiusPacket.h"
 #include "Protocol/Packets/SetHealthPacket.h"
 #include "Protocol/Packets/ActorEventPacket.h"
+#include "Protocol/Packets/AddPaintingPacket.h"
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdatePlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
@@ -448,6 +449,9 @@ void Session::resetSnapshot(std::string name, std::string target)
     outgoingChat.clear();
     pendingForms.clear();
     outgoingForms.clear();
+    pendingSignEditor.reset();
+    activeSignEditor.reset();
+    outgoingSign.reset();
     publishSnapshotLocked();
 }
 
@@ -1031,6 +1035,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::AddItemActor:
     case MinecraftPacketIds::TakeItemActor:
     case MinecraftPacketIds::AddActor:
+    case MinecraftPacketIds::AddPainting:
     case MinecraftPacketIds::Animate:
     case MinecraftPacketIds::RemoveActor:
     case MinecraftPacketIds::MoveActorAbsolute:
@@ -1088,6 +1093,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::RemoveObjective:
     case MinecraftPacketIds::ModalFormRequest:
     case MinecraftPacketIds::ClientboundCloseForm:
+    case MinecraftPacketIds::OpenSign:
     case MinecraftPacketIds::PacketViolationWarning:
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
@@ -1134,6 +1140,7 @@ void Session::handleWorldPacket(std::string& payload)
     handleChatPacket(packet);
     handleScorePacket(packet);
     handleFormPacket(packet);
+    handleSignPacket(packet);
 
     if (auto violation = std::dynamic_pointer_cast<PacketViolationWarningPacket>(packet)) {
         handleViolation(*violation);
@@ -1358,6 +1365,28 @@ void Session::handleWorldPacket(std::string& payload)
         moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z,
             arrow ? added->mRotation.y : added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, !movingArrow, true);
         if (arrow) setActorMotion(runtime, added->mMotion.x, added->mMotion.y, added->mMotion.z);
+    } else if (auto painting = std::dynamic_pointer_cast<AddPaintingPacket>(packet)) {
+        if (!validActorPose({ painting->mPosition.x, painting->mPosition.y, painting->mPosition.z }, {})
+            || painting->mDirection < 0 || painting->mDirection > 3 || painting->mMotive.size() > 128) {
+            return;
+        }
+        ActorView actor;
+        actor.runtimeId = painting->mRuntimeActorId;
+        actor.uniqueId = painting->mUniqueActorId;
+        actor.identifier = "minecraft:painting";
+        actor.paintingMotive = painting->mMotive;
+        actor.paintingDirection = painting->mDirection;
+        if (const auto* motive = world::paintingMotive(actor.paintingMotive)) {
+            actor.width = motive->width / 16.0f;
+            actor.height = motive->height / 16.0f;
+            actor.hitboxes = std::make_shared<const std::vector<ActorHitbox>>(std::vector<ActorHitbox> {
+                { {}, world::paintingHalfExtents(*motive, actor.paintingDirection) },
+            });
+        }
+        actors[actor.runtimeId] = actor;
+        runtimeByUnique[actor.uniqueId] = actor.runtimeId;
+        moveActor(actor.runtimeId, painting->mPosition.x, painting->mPosition.y, painting->mPosition.z,
+            0.0f, 0.0f, 0.0f, true, false, true);
     } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
         if (!validActorPose({ dropped->mPosition.x, dropped->mPosition.y, dropped->mPosition.z }, {})) {
             return;
@@ -2238,11 +2267,13 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     spawnInitialized = false;
     ++movementRevision;
     ++hardMovementRevision;
-    {
-        std::lock_guard guard(frameOutgoingMutex);
-        frameOutgoing.clear();
-    }
     motion = PlayerMotion {};
+    {
+        std::lock_guard guard(motionInputMutex);
+        motionInput = {};
+        bufferedMotionInput.reset();
+        bufferedFrameInput.reset();
+    }
     motionHistory.clear();
     serverMotions.clear();
     motionStarted = false;
@@ -2486,7 +2517,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
         collectViewInput();
-        drainFrameMotion();
         world.applyDecoded();
         pollGlobalPacks();
         int waitMs = 5;
@@ -2503,7 +2533,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             const double batchDeadline = secondsNow() + 0.004;
             for (size_t count = 1; count < 256 && !cancelled && !transferTarget && secondsNow() < batchDeadline; ++count) {
                 if (world.decodeBacklogged() || !connection->receiveRaw(payload)) break;
-                drainFrameMotion();
                 handleWorldPacket(payload);
                 ++receivedSincePublication;
             }
@@ -2561,8 +2590,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         flushInventory();
         flushChat();
         flushForms();
-        if (frameDriven) drainFrameMotion();
-        else tickMotion();
+        flushSign();
+        tickMotion();
         publishMotionFeed();
         collectMeshes();
         scheduleMeshes();
