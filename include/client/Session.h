@@ -286,6 +286,8 @@ struct ActorView {
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
+    std::string paintingMotive;
+    int32_t paintingDirection = 0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
