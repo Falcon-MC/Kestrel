@@ -2238,11 +2238,13 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     spawnInitialized = false;
     ++movementRevision;
     ++hardMovementRevision;
-    {
-        std::lock_guard guard(frameOutgoingMutex);
-        frameOutgoing.clear();
-    }
     motion = PlayerMotion {};
+    {
+        std::lock_guard guard(motionInputMutex);
+        motionInput = {};
+        bufferedMotionInput.reset();
+        bufferedFrameInput.reset();
+    }
     motionHistory.clear();
     serverMotions.clear();
     motionStarted = false;
@@ -2486,7 +2488,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
         collectViewInput();
-        drainFrameMotion();
         world.applyDecoded();
         pollGlobalPacks();
         int waitMs = 5;
@@ -2503,7 +2504,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
             const double batchDeadline = secondsNow() + 0.004;
             for (size_t count = 1; count < 256 && !cancelled && !transferTarget && secondsNow() < batchDeadline; ++count) {
                 if (world.decodeBacklogged() || !connection->receiveRaw(payload)) break;
-                drainFrameMotion();
                 handleWorldPacket(payload);
                 ++receivedSincePublication;
             }
@@ -2561,8 +2561,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         flushInventory();
         flushChat();
         flushForms();
-        if (frameDriven) drainFrameMotion();
-        else tickMotion();
+        tickMotion();
         publishMotionFeed();
         collectMeshes();
         scheduleMeshes();

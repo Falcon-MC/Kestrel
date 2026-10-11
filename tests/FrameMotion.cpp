@@ -323,6 +323,31 @@ void pendingInputsOutlivePhysicsHistory()
     require(consumed == 40 && expected == 41, "Backlog regeneration must neither lose nor duplicate inputs");
 }
 
+void networkSeedAdvancesWithoutFrames()
+{
+    for (int frameStride : { 1, 2, 5, 10 }) {
+        PlayerMotion network = flying();
+        FrameMotion visual;
+        visual.reset(network, 0, 0.0);
+        MotionInput input;
+        input.forward = 1.0f;
+        MotionVector previous = network.position();
+        for (uint64_t tick = 1; tick <= 100; ++tick) {
+            network.step(input, Empty);
+            if (tick % frameStride != 0) continue;
+            visual.acknowledge(tick);
+            visual.rebase(network, tick);
+            visual.advance(double(tick) * FrameMotion::TickSeconds, [&](uint64_t) { return input; },
+                Empty, Ready, [](const auto&, const auto&) {});
+            const MotionVector displayed = visual.interpolate();
+            require(std::isfinite(displayed.z) && displayed.z >= previous.z,
+                "Network-driven seeds remain drawable after skipped render frames");
+            require(visual.tick() >= tick, "Visual prediction cannot hold back the network tick");
+            previous = displayed;
+        }
+    }
+}
+
 }
 
 int main()
@@ -340,5 +365,6 @@ int main()
     rebasedShortActions();
     replayUsesCurrentLocks();
     pendingInputsOutlivePhysicsHistory();
+    networkSeedAdvancesWithoutFrames();
     return 0;
 }

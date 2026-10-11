@@ -404,7 +404,6 @@ int Client::run()
         session.inputLatency.mark(inputTrace, InputLatency::Camera);
         hotbarSelection.tick();
         handleHotbarInput();
-        session.submitFrameMotion();
         discord.update();
         updateGlobalResources();
         {
