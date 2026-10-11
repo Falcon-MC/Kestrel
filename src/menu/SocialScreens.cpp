@@ -54,11 +54,6 @@ std::string lowered(std::string text)
     return text;
 }
 
-bool joinable(const SocialPerson& person)
-{
-    return !person.sessionHandle.empty() && !person.versionMismatch && !person.unreachable;
-}
-
 }
 
 void Menu::requestSocial(SocialAction action, std::string target)

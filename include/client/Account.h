@@ -25,8 +25,12 @@ struct Realm {
     int64_t id = 0;
     std::string name;
     std::string owner;
+    std::string ownerXuid;
+    std::string description;
     bool open = false;
     bool expired = false;
+    int onlinePlayers = 0;
+    int maxPlayers = 0;
 };
 
 /**
@@ -73,6 +77,7 @@ struct AccountSnapshot {
     std::vector<Realm> realms;
     bool realmsLoading = false;
     std::string realmsError;
+    bool realmsRateLimited = false;
     std::vector<uint8_t> avatar;
     uint64_t avatarRevision = 0;
     PlayerProfile profile;
