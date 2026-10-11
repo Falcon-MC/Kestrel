@@ -466,7 +466,9 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
         broken = BreakHit { hit->cell, hit->face, hit->value, hit->point };
     }
     bool blocked = gameType == CreativeMode && world::preventsCreativeBreaking(conditions.heldItem);
-    BreakStep step = breaking.step(held, broken, speed, gameType == CreativeMode, blocked);
+    const auto& startGame = connection->getStartGame();
+    bool serverAuthoritative = startGame && startGame->mServerAuthoritativeBlockBreaking;
+    BreakStep step = breaking.step(held, broken, speed, gameType == CreativeMode, blocked, serverAuthoritative);
     if (step.swung) {
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.lastSwing = now;

@@ -275,6 +275,7 @@ struct ActorView {
     ActorHitboxList hitboxes;
     std::array<int32_t, 3> aimAssistIndices {-1, -1, -1};
     int64_t uniqueId = 0;
+    int64_t fishingOwner = -1;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     double diedAt = 0.0;
@@ -287,6 +288,8 @@ struct ActorView {
     uint64_t runtimeId = 0;
     std::string identifier;
     std::string name;
+    std::string paintingMotive;
+    int32_t paintingDirection = 0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
@@ -962,7 +965,6 @@ public:
     void setMotionInput(const MotionInput& input, uint64_t trace = 0);
     void enableFrameMotion() { frameDriven = true; }
     PlayerView advanceFrameMotion(const MotionInput& input, uint64_t trace, bool captured);
-    void submitFrameMotion();
     InputLatency inputLatency;
 
     /**
@@ -1122,9 +1124,8 @@ private:
     std::string blockNameAt(int32_t x, int32_t y, int32_t z);
     void playMotionSounds(const MotionTick& tick, const MotionVector& before);
     void tickMotion();
-    void runMotionTick(double now, const FrameMotion::Tick* prepared = nullptr, const PlayerMotion* after = nullptr, uint64_t trace = 0);
+    void runMotionTick(double now);
     void publishMotionFeed();
-    void drainFrameMotion();
     void replayCorrection(uint64_t tick, const MotionVector& position, const MotionVector* velocity, bool onGround);
     void replayFrom(size_t index);
     void applyMotionBoosts(MotionInput& input, uint64_t tick) const;
@@ -1479,23 +1480,16 @@ private:
     bool enderChestOpen = false;
     std::mutex motionInputMutex;
     MotionInputBuffer bufferedMotionInput;
+    MotionInputBuffer bufferedFrameInput;
     FrameMotion frameMotion;
     uint64_t frameJoin = 0;
     uint64_t frameRevision = 0;
     uint64_t frameHardRevision = 0;
+    uint64_t frameSeedTick = 0;
     double nextMotionFeed = 0.0;
     std::atomic<bool> frameDriven { false };
     uint64_t movementRevision = 1;
     uint64_t hardMovementRevision = 1;
-    struct PreparedMotion {
-        FrameMotion::Tick tick;
-        PlayerMotion after;
-        uint64_t revision = 0;
-        uint64_t trace = 0;
-    };
-    std::mutex frameOutgoingMutex;
-    std::deque<PreparedMotion> frameOutgoing;
-    std::deque<PreparedMotion> frameStaged;
     MotionInput motionInput;
     MotionInput lastMotionInput;
     uint64_t motionInputTrace = 0;

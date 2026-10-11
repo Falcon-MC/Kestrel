@@ -143,6 +143,8 @@ private:
     ActorView localActorView(float deltaSeconds);
     std::optional<std::array<float, 2>> glideRotation(const ActorView& actor, double now, float alpha) const;
     void appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOutput out);
+    void drawFishingLines(mod::WorldPainter& painter);
+    std::unordered_map<int64_t, mod::Vec3> fishingRodTips;
     uint32_t heldItemLayer() const;
 
     /**
@@ -202,13 +204,13 @@ private:
     float swingProgress();
     float swingProgressSince(double start, double now) const;
     void startSwing(double now);
-    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite = false);
+    void appendHeldItem(const HudItem& held, const std::function<std::array<float, 3>(const std::array<float, 3>&, bool)>& place, ModelQuadOutput out, bool mirroredSprite = false, std::array<float, 3>* rodTip = nullptr);
     struct HeldAttachable {
         std::string identifier;
         world::EntityAnimator animator;
         std::vector<world::EntityBone> bones;
     };
-    void appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand = false);
+    void appendThirdPersonItem(const HudItem& held, double itemUseTicks, HeldAttachable& attachable, const world::EntityRig& rig, const std::vector<world::BoneMatrix>& matrices, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, std::vector<world::ModelQuadGpu>& out, bool leftHand = false, std::array<float, 3>* rodTip = nullptr);
     bool appendAttachable(const HudItem& held, double itemUseTicks, const world::EntityRig& holder, const std::vector<world::BoneMatrix>& holderMatrices, bool firstPerson, HeldAttachable& state, const std::function<std::array<float, 3>(const std::array<float, 3>&)>& toWorld, ModelQuadOutput out, bool leftHand = false);
     double localItemUseTicks() const;
     double actorItemUseTicks(const ActorView& actor, double now);
@@ -530,6 +532,7 @@ private:
     };
     struct HeldItemMesh {
         std::vector<HeldItemFace> faces;
+        std::optional<std::array<float, 3>> rodTip;
         bool block = false;
         bool map = false;
         uint32_t slot = 0;

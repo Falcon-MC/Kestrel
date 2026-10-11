@@ -111,6 +111,58 @@ void sprintHunger()
     require(!motion.step(input, EmptyWorld).sprinting, "Creative hunger exemption preserves item-use restriction");
 }
 
+void heldJumpOverObstacle()
+{
+    for (int obstacle = 1; obstacle <= 12; ++obstacle) {
+        kestrel::PlayerMotion motion;
+        motion.reset({ 0.5f, 1.0f, 0.5f });
+        motion.setGameType(0);
+        motion.setHunger(20.0f);
+        const kestrel::PlayerMotion::CellLookup world = [obstacle](int32_t, int32_t y, int32_t z) {
+            return kestrel::MotionCell { y < 1 || (y == 1 && z == obstacle)
+                ? kestrel::world::BlockCollisions::shared().fullBlock() : nullptr, nullptr };
+        };
+        kestrel::MotionInput input;
+        input.forward = 1.0f;
+        input.sprint = true;
+        input.jump = true;
+        int previousJump = -10;
+        int jumps = 0;
+        for (int tick = 0; tick < 100; ++tick) {
+            const auto result = motion.step(input, world);
+            if (result.startedJump) {
+                require(tick - previousJump >= 10, "Held jump preserves cooldown when landing on an obstacle");
+                previousJump = tick;
+                ++jumps;
+            }
+        }
+        require(jumps > 2, "Held jump continues after passing an obstacle");
+    }
+}
+
+void heldJumpIntoCorner()
+{
+    const kestrel::PlayerMotion::CellLookup world = [](int32_t x, int32_t y, int32_t z) {
+        return kestrel::MotionCell { y < 120 || x >= 10 || z >= 745
+            ? kestrel::world::BlockCollisions::shared().fullBlock() : nullptr, nullptr };
+    };
+    for (float yaw : { 280.0f, 315.0f, 350.0f }) {
+        kestrel::PlayerMotion motion;
+        motion.reset({ 9.7001f, 120.0f, 744.7001f });
+        motion.setGameType(0);
+        motion.setHunger(20.0f);
+        kestrel::MotionInput input;
+        input.yaw = yaw;
+        input.forward = 1.0f;
+        input.sprint = input.jump = true;
+        for (int tick = 0; tick < 100; ++tick) {
+            auto result = motion.step(input, world);
+            require(result.position.x <= 9.7002f && result.position.z <= 744.7002f,
+                "Diagonal held jumps cannot cross either face of a solid corner");
+        }
+    }
+}
+
 }
 
 int main()
@@ -118,4 +170,6 @@ int main()
     flightSpeeds();
     idleFlight();
     sprintHunger();
+    heldJumpOverObstacle();
+    heldJumpIntoCorner();
 }
