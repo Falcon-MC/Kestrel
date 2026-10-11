@@ -539,14 +539,8 @@ void Account::fetchRealms()
         realm.id = description.mId;
         realm.name = description.mName;
         realm.owner = description.mOwner;
-        realm.ownerXuid = description.mOwnerUuid;
-        realm.description = description.mMotd;
         realm.open = description.mState == "OPEN";
         realm.expired = description.mExpired;
-        realm.onlinePlayers = static_cast<int>(std::count_if(description.mPlayers.begin(), description.mPlayers.end(), [](const RealmPlayer& player) {
-            return player.mOnline;
-        }));
-        realm.maxPlayers = description.mMaxPlayers;
         realms.push_back(std::move(realm));
     }
 
@@ -558,7 +552,6 @@ void Account::fetchRealms()
         current.realms = std::move(realms);
     }
     current.realmsError = loaded ? std::string() : "Realms: " + error;
-    current.realmsRateLimited = !loaded && service.getLastError().mKind == ServiceErrorKind::RateLimited;
     current.realmsLoading = false;
 }
 
