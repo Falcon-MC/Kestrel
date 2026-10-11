@@ -8,8 +8,10 @@
 #include "world/EntityMaterialBlend.h"
 #include "world/Geometry.h"
 #include "world/ItemGlint.h"
+#include "world/ClockDial.h"
 #include "Core/Json/Json.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -31,6 +33,23 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    require(kestrel::world::clockFrame(6000.0) == 0, "clock noon frame");
+    require(kestrel::world::clockFrame(18000.0) == 32, "clock midnight frame");
+    require(kestrel::world::clockFrame(30000.0) == 0, "clock day wrap");
+    require(kestrel::world::clockFrame(-6000.0) == 32, "clock negative time wrap");
+    require(kestrel::world::clockFrame(std::numeric_limits<double>::infinity()) == 0, "clock finite time");
+    std::vector<uint8_t> clockPixels(16 * 16 * 4, 0);
+    size_t sunPixel = (4 * 16 + 7) * 4;
+    clockPixels[sunPixel] = clockPixels[sunPixel + 1] = clockPixels[sunPixel + 3] = 255;
+    clockPixels[0] = 178;
+    clockPixels[1] = 100;
+    clockPixels[2] = 17;
+    clockPixels[3] = 255;
+    auto nightClock = kestrel::world::clockDial(clockPixels, 16, 32);
+    require(kestrel::world::clockDial(clockPixels, 16, 0) == clockPixels, "clock keeps native noon texture");
+    require(nightClock[sunPixel] == nightClock[sunPixel + 2] && nightClock[sunPixel] > 200, "clock moon replaces sun at midnight");
+    require(std::equal(clockPixels.begin(), clockPixels.begin() + 4, nightClock.begin()), "clock preserves rim");
+    require(nightClock[7] == 0, "clock preserves transparency");
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);

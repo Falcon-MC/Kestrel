@@ -9,6 +9,7 @@
 #include "world/BlockAssets.h"
 #include "world/ItemInfo.h"
 #include "world/ItemGlint.h"
+#include "world/ClockDial.h"
 
 #include <algorithm>
 #include <cctype>
@@ -696,6 +697,7 @@ Client::HeldItemMesh* Client::heldMesh(const HudItem& held)
     }
     std::string mapKey = mapMeshKey(held);
     std::string meshKey = held.identifier + "#" + std::to_string(held.aux) + "#" + held.icon + mapKey;
+    if (held.identifier == "minecraft:clock") meshKey += "#frame" + std::to_string(world::clockFrame(currentWorldTime(timeState)));
     if (held.customColor) meshKey += "#color" + std::to_string(*held.customColor);
     auto found = heldMeshes.find(meshKey);
     if (found == heldMeshes.end()) {
@@ -821,7 +823,8 @@ std::vector<Client::HeldItemFace> Client::buildItemMesh(const HudItem& held, uin
             return mesh;
         }
 
-        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor);
+        uint32_t animationFrame = held.identifier == "minecraft:clock" ? world::clockFrame(currentWorldTime(timeState)) : 0;
+        std::vector<uint8_t> icon = blockAssets->itemIcon(held.identifier, held.aux, held.icon, held.customColor, animationFrame);
         std::vector<uint8_t> pixels(size_t(world::EntityTextureSize) * world::EntityTextureSize * 4, 0);
         if (icon.size() == size_t(ItemGrid) * ItemGrid * 4) {
             for (uint32_t y = 0; y < world::EntityTextureSize; ++y) {

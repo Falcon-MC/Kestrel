@@ -1,5 +1,6 @@
 #include "world/BlockAssets.h"
 #include "world/BlockModels.h"
+#include "world/ClockDial.h"
 
 #include "world/assets/BlockRules.h"
 #include "world/assets/TextureTools.h"
@@ -441,7 +442,7 @@ static int32_t potionVariant(const std::string& shortName, int32_t aux)
  * block items an isometric cube of the block's default state. Empty when the
  * item has neither.
  */
-std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor) const
+std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor, uint32_t animationFrame) const
 {
     static const std::pair<const char*, const char*> Renames[] = {
         { "totem_of_undying", "totem" },
@@ -630,8 +631,12 @@ std::vector<uint8_t> BlockAssets::itemIcon(const std::string& identifier, int32_
         }
         int32_t frame = potionVariant(shortName, aux);
         size_t variant = frame >= 0 && size_t(frame) < found->second.size() ? size_t(frame) : 0;
+        if (identifier == "minecraft:clock" && found->second.size() > 1) {
+            variant = size_t(animationFrame % ClockFrames) * found->second.size() / ClockFrames;
+        }
         if (!found->second[variant].empty()) {
-            return found->second[variant];
+            return identifier == "minecraft:clock" && found->second.size() == 1
+                ? clockDial(found->second[variant], ItemIconSize, animationFrame) : found->second[variant];
         }
         if (!found->second.front().empty()) {
             return found->second.front();
