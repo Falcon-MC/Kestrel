@@ -102,7 +102,7 @@ float Client::serverFovDegrees(float settingDegrees, float deltaSeconds)
 }
 
 struct Client::FrameState {
-#if !defined(KESTREL_IOS)
+#if !defined(KESTREL_MOBILE)
     DiscordPresence discord;
 #endif
     float bakedScale = 0.0f;
@@ -215,7 +215,7 @@ bool Client::frame(bool paced)
             }
         }
         driveGamepad();
-#if defined(KESTREL_IOS)
+#if defined(KESTREL_MOBILE)
         bool touchSpyglass = localItemUseTicks() > 0 && hudState.inventory[size_t(std::clamp(hudState.selectedSlot, 0, 8))].identifier == "minecraft:spyglass";
         float touchLookScale = touchSpyglass ? std::max(0.05f, 1.0f - menu.option("spyglass_touch_dampening", 50) / 100.0f) : 1.0f;
         touchControls.update(window->input(), menu.keyBindings(), menu, guiScale(), window->width(), window->height(), menu.capturesMouse() && worldShown, secondsNow(), touchLookScale);
@@ -280,7 +280,7 @@ bool Client::frame(bool paced)
                     }
                     input.jump = keys.isHeld(bindings.up());
                     input.sprint = keys.isHeld(Key::Control);
-#if defined(KESTREL_IOS)
+#if defined(KESTREL_MOBILE)
                     input.autoJump = !keys.touches.empty() && menu.option("touch_autojump", 1);
 #endif
                     if (keys.touchForward != 0 || keys.touchSideways != 0) {
@@ -437,7 +437,7 @@ bool Client::frame(bool paced)
         session.inputLatency.mark(inputTrace, InputLatency::Camera);
         hotbarSelection.tick();
         handleHotbarInput();
-#if !defined(KESTREL_IOS)
+#if !defined(KESTREL_MOBILE)
         frames->discord.update();
 #endif
         updateGlobalResources();
@@ -531,7 +531,7 @@ bool Client::frame(bool paced)
             }
             menu.frame(context, window->width() / scale, window->height() / scale);
             if (menu.capturesMouse() && !menu.hudHidden()) drawAimAssist(context, scale);
-#if defined(KESTREL_IOS)
+#if defined(KESTREL_MOBILE)
             if (menu.capturesMouse() && worldShown && !menu.hudHidden()) {
                 ui::Rect safe = window->safeArea();
                 touchControls.draw(context, assets, menu, { safe.x / scale, safe.y / scale, safe.w / scale, safe.h / scale });

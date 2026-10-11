@@ -164,3 +164,49 @@ jobs:
           name: kestrel-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
+
+  android:
+    name: Build android-arm64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Install Android packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6" "platforms;android-35" > /dev/null
+
+      # A runner has no installed game, so the APK draws text with the free fonts from data/fallback_fonts.txt
+      # and leaves the game's HTML menu icons out.
+      - name: Build the APK
+        env:
+          KESTREL_ANDROID_NO_GAME_FILES: "1"
+        run: ./build-android.sh
+
+      - name: Package
+        if: inputs.package
+        shell: bash
+        env:
+          NAME: Kestrel-${{ inputs.version }}-android-arm64
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/$NAME.apk"
+          cd dist
+          sha256sum "$NAME.apk" > "$NAME.apk.sha256"
+          ls -lh
+
+      - name: Upload the package
+        if: inputs.package
+        uses: actions/upload-artifact@v7
+        with:
+          name: kestrel-android-arm64
+          path: dist/*
+          if-no-files-found: error

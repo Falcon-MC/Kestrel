@@ -296,7 +296,7 @@ void Client::updateGameTips()
     if (!next) {
         return;
     }
-#if defined(KESTREL_IOS)
+#if defined(KESTREL_MOBILE)
     if (size_t at = next->key.find(".mouse"); at != std::string::npos) next->key.replace(at, 6, ".touch");
     if (size_t at = next->animation.find("-mouse"); at != std::string::npos) next->animation.replace(at, 6, "-touch");
 #endif

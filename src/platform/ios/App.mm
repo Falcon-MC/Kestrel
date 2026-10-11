@@ -1,6 +1,6 @@
 #include "client/Client.h"
 #include "client/LaunchOptions.h"
-#include "Resources.h"
+#include "../mobile/Resources.h"
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CADisplayLink.h>
@@ -8,6 +8,8 @@
 
 #include <cstdlib>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <memory>
 
 @interface KestrelViewController : UIViewController
@@ -30,8 +32,9 @@
 {
     NSString* resources = NSBundle.mainBundle.resourcePath;
     NSString* certificates = [resources stringByAppendingPathComponent:@"cert.pem"];
-    auto vanilla = kestrel::platform::iosResources() / "resource_packs/vanilla";
+    auto vanilla = kestrel::platform::mobileResources() / "resource_packs/vanilla";
     setenv("KESTREL_VANILLA_PACK", vanilla.c_str(), 1);
+    setenv("KESTREL_FONTS", [resources stringByAppendingPathComponent:@"fonts"].fileSystemRepresentation, 1);
     setenv("SSL_CERT_FILE", certificates.fileSystemRepresentation, 1);
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.rootViewController = [KestrelViewController new];
@@ -46,10 +49,9 @@
 
 - (void)prepareResources
 {
-    if (kestrel::platform::iosResourcesReady()) {
+    if (kestrel::platform::mobileResourcesReady()) {
         try {
-            std::filesystem::copy_file(std::filesystem::path(NSBundle.mainBundle.resourcePath.fileSystemRepresentation) / "resource_packs/vanilla/ui/kestrel_touch_controls.json",
-                kestrel::platform::iosResources() / "resource_packs/vanilla/ui/kestrel_touch_controls.json", std::filesystem::copy_options::overwrite_existing);
+            kestrel::platform::refreshTouchControls(NSBundle.mainBundle.resourcePath.fileSystemRepresentation);
             [self startClient];
         } catch (const std::exception& error) {
             [self showFailure:[NSString stringWithUTF8String:error.what()]];
@@ -63,23 +65,46 @@
     status.textAlignment = NSTextAlignmentCenter;
     status.numberOfLines = 0;
     [self.window.rootViewController.view addSubview:status];
-    NSURL* url = [NSURL URLWithString:@"https://github.com/Mojang/bedrock-samples/releases/download/v1.26.50.4/bedrock-samples-v1.26.50.4-full.zip"];
+    CGRect bounds = self.window.rootViewController.view.bounds;
+    UIProgressView* bar = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    bar.frame = CGRectMake(bounds.size.width * 0.2, bounds.size.height / 2 + 30, bounds.size.width * 0.6, 4);
+    bar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+    bar.progressTintColor = UIColor.whiteColor;
+    bar.trackTintColor = [UIColor colorWithWhite:1 alpha:0.25];
+    [self.window.rootViewController.view addSubview:bar];
+    NSURL* url = [NSURL URLWithString:@(kestrel::platform::MobileResourceUrl)];
     NSURLSessionDownloadTask* task = [NSURLSession.sharedSession downloadTaskWithURL:url completionHandler:^(NSURL* location, NSURLResponse* response, NSError* failure) {
         NSString* message = failure.localizedDescription;
         if (!failure && [(NSHTTPURLResponse*)response statusCode] != 200) message = @"Mojang's resource download failed. Restart Kestrel to try again.";
         if (!message) {
-            dispatch_async(dispatch_get_main_queue(), ^{ status.text = @"Installing Minecraft resources…"; });
+            dispatch_async(dispatch_get_main_queue(), ^{
+                status.text = @"Installing Minecraft resources…";
+                bar.progress = 1;
+            });
             try {
-                kestrel::platform::installIosResources(location.fileSystemRepresentation, NSBundle.mainBundle.resourcePath.fileSystemRepresentation);
+                std::ifstream file(location.fileSystemRepresentation, std::ios::binary);
+                if (!file) throw std::runtime_error("Cannot read downloaded Minecraft resources");
+                std::string archive { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
+                kestrel::platform::installMobileResources(std::move(archive), NSBundle.mainBundle.resourcePath.fileSystemRepresentation);
             } catch (const std::exception& error) {
                 message = [NSString stringWithUTF8String:error.what()];
             }
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             [status removeFromSuperview];
+            [bar removeFromSuperview];
             if (message) [self showFailure:message];
             else [self startClient];
         });
+    }];
+    __weak NSURLSessionDownloadTask* watched = task;
+    [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer* timer) {
+        NSURLSessionDownloadTask* current = watched;
+        if (!current || !bar.superview || current.state != NSURLSessionTaskStateRunning) {
+            [timer invalidate];
+            return;
+        }
+        [bar setProgress:float(current.progress.fractionCompleted) animated:YES];
     }];
     [task resume];
 }
