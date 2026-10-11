@@ -20,7 +20,7 @@ struct HandEquip {
     {
         if (a.empty() || b.empty()) return a.empty() && b.empty();
         return a.identifier == b.identifier && a.count == b.count && a.aux == b.aux
-            && a.blockRuntimeId == b.blockRuntimeId && a.userData == b.userData
+            && a.blockRuntimeId == b.blockRuntimeId && sameNbt(a.userData, b.userData)
             && a.canPlace == b.canPlace && a.canBreak == b.canBreak;
     }
 
@@ -55,6 +55,33 @@ struct HandEquip {
     {
         float alpha = static_cast<float>(std::clamp((now - tickTime) / TickSeconds, 0.0, 1.0));
         return oldHeight + (height - oldHeight) * alpha;
+    }
+
+private:
+    static bool sameNbt(const Tag& a, const Tag& b)
+    {
+        if (a.getType() != b.getType()) return false;
+        if (a.getType() == Tag::Type::Compound) {
+            // Inventory resyncs may serialize the same named fields in a different order.
+            if (a.size() != b.size()) return false;
+            const auto& keys = a.getKeys();
+            const auto& values = a.getValues();
+            for (size_t i = 0; i < keys.size(); ++i) {
+                const Tag* other = b.get(keys[i]);
+                if (!other || !sameNbt(values[i], *other)) return false;
+            }
+            return true;
+        }
+        if (a.getType() == Tag::Type::List) {
+            if (a.getListType() != b.getListType() || a.size() != b.size()) return false;
+            const auto& left = a.getList();
+            const auto& right = b.getList();
+            for (size_t i = 0; i < left.size(); ++i) {
+                if (!sameNbt(left[i], right[i])) return false;
+            }
+            return true;
+        }
+        return a == b;
     }
 };
 
