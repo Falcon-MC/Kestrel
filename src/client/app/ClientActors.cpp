@@ -3,6 +3,7 @@
 #include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
+#include "client/FishingLine.h"
 #include "client/SpectatorRendering.h"
 #include "client/motion/MotionMath.h"
 #include "world/CrystalBeam.h"
@@ -599,6 +600,7 @@ void Client::appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector
  */
 void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
 {
+    fishingRodTips.clear();
     actorDraws.clear();
     ++heldItemFrame;
     if (!blockAssets) {
@@ -1536,12 +1538,18 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
             bool hurt = actor.lastHurt > 0.0 && now - actor.lastHurt < 0.5;
             appendArmor(actor.armor, rig, matrices, toWorld, hurt ? 1u << 7 : 0u, out, nullptr, actor.runtimeId == LocalActorId ? &hudState.armor : &actor.armorItems);
         }
-        if (actor.runtimeId == LocalActorId) {
+        const HudItem& mainHand = actor.runtimeId == LocalActorId
+            ? hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))] : actor.held;
+        if (!mainHand.empty()) {
             interpolatePose();
-            appendThirdPersonItem(hudState.inventory[static_cast<size_t>(std::clamp(hudState.selectedSlot, 0, 8))], input.itemUseTicks, bodyAttachable, rig, matrices, toWorld, out);
-        } else if (!actor.held.empty()) {
-            interpolatePose();
-            appendThirdPersonItem(actor.held, input.itemUseTicks, actorAttachables[actor.runtimeId], rig, matrices, toWorld, out);
+            std::array<float, 3> rodTip { std::nanf(""), 0.0f, 0.0f };
+            HeldAttachable& attachable = actor.runtimeId == LocalActorId ? bodyAttachable : actorAttachables[actor.runtimeId];
+            appendThirdPersonItem(mainHand, input.itemUseTicks, attachable, rig, matrices, toWorld, out, false, &rodTip);
+            if (mainHand.identifier == "minecraft:fishing_rod" && std::isfinite(rodTip[0])) {
+                const int64_t owner = actor.runtimeId == LocalActorId && seenSessionSnapshot
+                    ? seenSessionSnapshot->localUniqueActorId : actor.uniqueId;
+                fishingRodTips[owner] = { origin[0] + rodTip[0] / 256.0, origin[1] + rodTip[1] / 256.0, origin[2] + rodTip[2] / 256.0 };
+            }
         }
         const HudItem& offhand = actor.runtimeId == LocalActorId ? hudState.offhand : actor.offhand;
         if (!offhand.empty()) {
@@ -1597,6 +1605,17 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
     }
     lastActorTime = now;
     actorViews.resize(actualActors);
+}
+
+void Client::drawFishingLines(mod::WorldPainter& painter)
+{
+    for (const ActorView& actor : actorViews) {
+        if (actor.identifier != "minecraft:fishing_hook" || actor.fishingOwner == -1) continue;
+        const auto tip = fishingRodTips.find(actor.fishingOwner);
+        if (tip == fishingRodTips.end()) continue;
+        const auto segments = fishingLine(tip->second, { actor.x, actor.y + 0.15, actor.z });
+        if (!segments.empty()) painter.lines(segments, { 0, 0, 0, 255 }, 0.012f, false);
+    }
 }
 
 /**

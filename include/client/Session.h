@@ -274,6 +274,7 @@ struct ActorView {
     ActorHitboxList hitboxes;
     std::array<int32_t, 3> aimAssistIndices {-1, -1, -1};
     int64_t uniqueId = 0;
+    int64_t fishingOwner = -1;
     double lastHurt = 0.0;
     double lastSwing = 0.0;
     double diedAt = 0.0;
