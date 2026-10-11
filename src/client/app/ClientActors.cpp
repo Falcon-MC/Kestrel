@@ -1,4 +1,5 @@
 #include "client/ActorExtent.h"
+#include "client/CrossbowItem.h"
 #include "client/BodyRotation.h"
 #include "client/Client.h"
 #include "client/AttachableFrame.h"
@@ -1669,6 +1670,11 @@ bool Client::appendAttachable(const HudItem& held, double itemUseTicks, const wo
     }
     input.engineVariables.emplace_back("is_enchanted", held.enchanted ? 1.0 : 0.0);
     input.itemUseTicks = itemUseTicks;
+    if (held.identifier == "minecraft:crossbow") {
+        const int chargedFrame = chargedCrossbowFrame(held.userData);
+        input.metadataQueries["get_animation_frame"] = chargedFrame != 0 ? chargedFrame : itemUseTicks > 0.0 ? 1 : 0;
+        input.metadataQueries["item_is_charged"] = chargedFrame != 0 ? 1.0 : 0.0;
+    }
     input.contextVariables = { { "is_first_person", firstPerson ? 1.0 : 0.0 }, { "item_slot", world::molang::internString(leftHand ? "off_hand" : "main_hand") } };
     if (firstPerson) {
         input.contextVariables.emplace_back("player_offhand_arm_height", offhandEquip);
