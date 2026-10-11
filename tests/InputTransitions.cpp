@@ -126,4 +126,26 @@ int main()
     if (!keys.popKeyTransition(transition) || transition.key != kestrel::Key::Control) return 28;
     if (!keys.popKeyTransition(transition) || transition.key != kestrel::Key::Shift) return 29;
     if (keys.popKeyTransition(transition)) return 30;
+
+    kestrel::MotionInputBuffer networkInput;
+    kestrel::MotionInputBuffer visualInput;
+    input = {};
+    input.jump = true;
+    input.startFlying = true;
+    networkInput.push(input);
+    visualInput.push(input);
+    input.jump = false;
+    input.startFlying = false;
+    networkInput.push(input);
+    visualInput.push(input);
+    auto networkPress = networkInput.consume();
+    if (!networkPress.jump || !networkPress.startFlying || networkInput.consume().jump) return 31;
+    auto visualPress = visualInput.consume();
+    if (!visualPress.jump || !visualPress.startFlying || visualInput.consume().jump) return 32;
+    if (networkInput.consume().startFlying || visualInput.consume().startFlying) return 33;
+    input.jump = true;
+    networkInput.push(input);
+    visualInput.push(input);
+    visualInput.reset();
+    if (!networkInput.consume().jump) return 34;
 }

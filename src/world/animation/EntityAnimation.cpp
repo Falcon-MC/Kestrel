@@ -1276,6 +1276,11 @@ double EntityAnimator::query(const std::string& name, std::span<const double> ar
         return current.itemUseTicks > 0.0 ? itemMaxUseTicks(current.mainHandItem) - std::floor(current.itemUseTicks) : 0.0;
     }
     if (name == "get_animation_frame") {
+        if (current.mainHandItem == "minecraft:crossbow") {
+            if (auto frame = current.metadataQueries.find(name); frame != current.metadataQueries.end()) {
+                return std::isfinite(frame->second) ? std::clamp(frame->second, 0.0, 5.0) : 0.0;
+            }
+        }
         return itemUseAnimationFrame(current.mainHandItem, current.itemUseTicks);
     }
     if (name == "modified_distance_moved") {

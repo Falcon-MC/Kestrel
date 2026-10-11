@@ -5,6 +5,7 @@
 #include "client/Updates.h"
 #include "menu/ChatCommands.h"
 #include "menu/FormScreen.h"
+#include "menu/SignScreen.h"
 #include "menu/Hud.h"
 #include "menu/InventoryScreen.h"
 #include "menu/ServerStore.h"
@@ -534,6 +535,7 @@ public:
 
     InventoryScreen& inventoryPanel() { return inventory; }
     FormScreen& formPanel() { return forms; }
+    SignScreen& signPanel() { return signs; }
 
     /**
      * Shows a server form, or answers that the player is busy when another
@@ -1083,6 +1085,7 @@ public:
 private:
     InventoryScreen inventory;
     FormScreen forms;
+    SignScreen signs;
     ToastQueue toasts;
     bool inventoryInputHandled = false;
     bool inputPrepared = false;

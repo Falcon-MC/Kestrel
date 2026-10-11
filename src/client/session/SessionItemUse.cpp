@@ -1,4 +1,5 @@
 #include "client/session/SessionData.h"
+#include "client/CrossbowItem.h"
 
 #include "Protocol/Packets/InventoryTransactionPacket.h"
 #include "Protocol/Packets/PlayerAuthInputPacket.h"
@@ -28,6 +29,9 @@ bool Session::startItemUse(int32_t slot, const ItemStack& item)
         return false;
     }
     const std::string& identifier = item.mDefinition->getIdentifier();
+    if (identifier == "minecraft:crossbow" && chargedCrossbowFrame(item.mTag) != 0) {
+        return false;
+    }
     if (world::itemMaxUseTicks(identifier) <= 0) {
         return false;
     }

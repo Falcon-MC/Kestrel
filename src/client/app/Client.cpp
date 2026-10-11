@@ -1,4 +1,7 @@
 #include "client/Client.h"
+#include "client/FirstPersonOverlay.h"
+#include "client/SpectatorRendering.h"
+#include "client/BlindnessFog.h"
 #include "menu/GuiScale.h"
 #include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
@@ -405,7 +408,6 @@ int Client::run()
         session.inputLatency.mark(inputTrace, InputLatency::Camera);
         hotbarSelection.tick();
         handleHotbarInput();
-        session.submitFrameMotion();
         discord.update();
         updateGlobalResources();
         {
@@ -491,6 +493,11 @@ int Client::run()
         }
         {
             Profiler::Section section(profiler, "menu ui");
+            if (worldShown && playerView.active && menu.worldVisible() && !menu.hudHidden()
+                && pumpkinMaskVisible(hudState.armor[0].identifier, perspective == PerspectiveFirst,
+                    !cameraDetached && serverCamera.playerEffects(), localSpectatorRendering(true, hudState.gameType))) {
+                context.sprite({ 0.0f, 0.0f, window->width() / scale, window->height() / scale }, "textures/misc/pumpkinblur");
+            }
             menu.frame(context, window->width() / scale, window->height() / scale);
             if (menu.capturesMouse() && !menu.hudHidden()) drawAimAssist(context, scale);
             if (menu.worldVisible() && !menu.hudHidden()) {
@@ -500,6 +507,7 @@ int Client::run()
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
             }
+            if (auto answer = menu.signPanel().takeAnswer()) session.answerSign(std::move(*answer));
             context.recordWidgets(agentServer != nullptr);
             mods->drawUi(context, window->width() / scale, window->height() / scale);
             if (padCursorShown && (!menu.capturesMouse() || mods->uiOpen())) {
@@ -618,6 +626,16 @@ int Client::run()
             world::BiomeColors biomeColors = blockAssets ? blockAssets->biomeTints().colors(environmentSample.second) : world::BiomeColors {};
             float fogScale = biomeColors.waterFogRelative ? renderDistance : 1.0f;
             bool fireResistance = false;
+            bool blindness = false;
+            if (serverCamera.playerEffects()) {
+                const double now = secondsNow();
+                for (const HudEffect& effect : hudState.effects) {
+                    if (effect.id == 15 && (effect.expires < 0.0 || effect.expires > now)) {
+                        blindness = true;
+                        break;
+                    }
+                }
+            }
             if (timeState.cameraMedium == 2 && serverCamera.playerEffects()) {
                 constexpr int32_t FireResistanceEffect = 12;
                 double now = secondsNow();
@@ -661,7 +679,8 @@ int Client::run()
                         if (timeState.cameraMedium != 0 || timeState.dimension == 1) sky.zenith = sky.horizon = sky.fogColor;
                     }
                 }
-                if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
+                if (blindness) sky = blindedBy(sky);
+                if (!blindness && blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
             }
@@ -762,10 +781,11 @@ int Client::run()
             renderer->drawWorld(view);
             std::shared_ptr<const SessionSnapshot> shapesSnapshot = seenSessionSnapshot;
             std::function<void(modding::WorldCanvas&)> serverShapes;
-            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty()) {
+            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty() || !fishingRodTips.empty()) {
                 serverShapes = [this, shapesSnapshot](modding::WorldCanvas& painter) {
                     if (shapesSnapshot) drawDebugShapes(painter, *shapesSnapshot, secondsNow());
                     drawSignTexts(painter);
+                    drawFishingLines(painter);
                 };
             }
             mods->drawWorld(view.viewProjection, environment.camera, serverShapes);
@@ -838,6 +858,7 @@ void Client::collectFeaturedImages()
 
 void Client::syncForms()
 {
+    if (auto request = session.takeSignEditor()) menu.signPanel().open(std::move(*request));
     for (FormRequest& request : session.takeForms()) {
         if (agentServer) {
             agent::JsonWriter writer;
