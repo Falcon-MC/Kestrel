@@ -26,6 +26,19 @@ inline constexpr Color Muted1 { 0xb1, 0xb2, 0xb5, 255 };
 inline constexpr Color Disabled { 0x58, 0x58, 0x5a, 255 };
 inline constexpr Color Caret { 0x6c, 0xc3, 0x49, 255 };
 
+// Colour roles of the menu theme, named the way the game's components ask for them.
+inline constexpr Color Neutral60 { 0x58, 0x58, 0x5a, 255 };
+inline constexpr Color Neutral80 { 0x31, 0x32, 0x33, 255 };
+inline constexpr Color Neutral80Hovered { 0x48, 0x49, 0x4a, 255 };
+inline constexpr Color Neutral90 { 0x24, 0x24, 0x25, 255 };
+inline constexpr Color Neutral100 { 0x1e, 0x1e, 0x1f, 255 };
+inline constexpr Color NeutralAlpha60 { 0, 0, 0, 153 };
+inline constexpr Color Informative { 0x2e, 0x6b, 0xe5, 255 };
+inline constexpr Color InformativeTint { 0x8c, 0xb3, 0xff, 255 };
+inline constexpr Color NoticeTint { 0xff, 0xe8, 0x66, 255 };
+inline constexpr Color DestructiveTint { 0xff, 0x80, 0x80, 255 };
+inline constexpr Color SuccessTint { 0xa0, 0xe0, 0x81, 255 };
+
 // Surfaces sampled from the HTML menus, they aren't in the theme sheet.
 inline constexpr Color Panel { 0x48, 0x49, 0x4a, 255 };
 inline constexpr Color PanelDark { 0x31, 0x32, 0x33, 255 };

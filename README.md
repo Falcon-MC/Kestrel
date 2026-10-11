@@ -114,6 +114,7 @@ without Terminal. `build/Kestrel` remains a command-line symlink for scripts and
 
 ```
 Kestrel --connect play.example.net:19132   join a server straight away, skipping the start screen
+Kestrel --world "My World"                 play a world on the built in server, creating it if needed
 Kestrel --hidden --agent                   no visible window, frames drawn offscreen
 Kestrel --headless --connect <address>     no window and no rendering, chat printed to stdout
 ```

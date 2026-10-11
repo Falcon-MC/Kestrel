@@ -153,11 +153,27 @@ file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/FallbackFonts.h" CO
 
 find_package(ZLIB REQUIRED)
 
+option(KESTREL_SINGLEPLAYER "Embed the Falcon server to play worlds without a server" ON)
+if(KESTREL_SINGLEPLAYER)
+    # Declared after the Falcon-MC libraries above, so the server reuses Kestrel's copies instead of fetching its own.
+    set(FALCON_BUILD_SERVER_EXECUTABLE OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        falcon
+        GIT_REPOSITORY https://github.com/Falcon-MC/Falcon.git
+        GIT_TAG dev
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(falcon)
+endif()
+
 file(GLOB_RECURSE KESTREL_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.mm
 )
 list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/(platform/(win32|macos|linux)|render/(d3d12|metal|vulkan))/")
+if(NOT KESTREL_SINGLEPLAYER)
+    list(FILTER KESTREL_SOURCES EXCLUDE REGEX "/src/client/singleplayer/")
+endif()
 
 if(WIN32)
     file(GLOB_RECURSE KESTREL_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -261,6 +277,10 @@ if(NOT WIN32 AND NOT APPLE)
     target_include_directories(Kestrel BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endif()
 target_link_libraries(Kestrel PRIVATE FalconNetwork FalconBlockStateUpdater ZLIB::ZLIB)
+if(KESTREL_SINGLEPLAYER)
+    target_link_libraries(Kestrel PRIVATE FalconCore)
+    target_compile_definitions(Kestrel PRIVATE KESTREL_SINGLEPLAYER)
+endif()
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
     add_executable(KestrelUpdatesTest tests/Updates.cpp src/client/services/UpdatePackage.cpp)

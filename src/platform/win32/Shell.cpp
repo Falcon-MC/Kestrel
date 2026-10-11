@@ -113,4 +113,53 @@ std::string pickResourcePackFile()
     return chosen;
 }
 
+std::string pickWorldFile()
+{
+    wchar_t path[32768] {};
+    OPENFILENAMEW dialog {};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = GetActiveWindow();
+    dialog.lpstrFilter = L"Minecraft worlds\0*.mcworld;*.zip\0All files\0*.*\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = 32768;
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) {
+        return {};
+    }
+    int length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1) {
+        return {};
+    }
+    std::string chosen(size_t(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, chosen.data(), length, nullptr, nullptr);
+    chosen.pop_back();
+    return chosen;
+}
+
+std::string pickWorldSaveFile(const std::string& suggestedName)
+{
+    wchar_t path[32768] {};
+    std::wstring suggested = widen(suggestedName);
+    std::copy_n(suggested.begin(), std::min<size_t>(suggested.size(), 32767), path);
+    OPENFILENAMEW dialog {};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = GetActiveWindow();
+    dialog.lpstrFilter = L"Minecraft worlds\0*.mcworld\0";
+    dialog.lpstrDefExt = L"mcworld";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = 32768;
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&dialog)) {
+        return {};
+    }
+    int length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1) {
+        return {};
+    }
+    std::string chosen(size_t(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, chosen.data(), length, nullptr, nullptr);
+    chosen.pop_back();
+    return chosen;
+}
+
 }

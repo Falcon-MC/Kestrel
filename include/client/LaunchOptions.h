@@ -12,6 +12,7 @@ namespace kestrel {
  * opens the start screen like before.
  *
  *   --connect <address>     join a server (or realm:<id>) straight away
+ *   --world <name>          play a world on the built in server, creating it if needed
  *   --name <name>           the offline player name when not signed in
  *   --agent                 open the agent control port on a free port
  *   --agent-port <port>     open it on this port
@@ -24,6 +25,7 @@ namespace kestrel {
  */
 struct LaunchOptions {
     std::optional<std::string> connect;
+    std::optional<std::string> world;
     std::string name;
     bool agent = false;
     uint16_t agentPort = 0;

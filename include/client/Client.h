@@ -58,6 +58,8 @@ namespace kestrel {
 
 class Window;
 class Renderer;
+class LocalServer;
+class WorldStore;
 
 /**
  * Server text the HUD fades out: when it arrived and how long it holds before
@@ -602,6 +604,26 @@ private:
     std::string processor = platform::processorName();
     LaunchOptions launch;
     std::optional<menu::ConnectRequest> pendingConnect;
+#ifdef KESTREL_SINGLEPLAYER
+    std::unique_ptr<LocalServer> localServer;
+    std::unique_ptr<WorldStore> worldStore;
+    std::set<std::string> worldIconSprites;
+    bool localSessionStarted = false;
+    bool savingLocalWorld = false;
+    // A world being imported, exported or duplicated off the main thread; it hands back what to tell the player.
+    std::future<std::function<void()>> worldTask;
+    double nextWorldIconCapture = 0.0;
+    int worldIconCaptureFrames = 0;
+    ui::Bitmap worldIconFrame;
+
+    void startLocalWorlds();
+    void refreshLocalWorlds();
+    void updateLocalWorlds(const SessionSnapshot& snapshot);
+    void handleWorldRequest(const menu::WorldRequest& request);
+    void playLocalWorld(const std::string& id);
+    void captureWorldIcon(const SessionSnapshot& snapshot);
+    void finishWorldIconCapture();
+#endif
     agent::EventLog agentEvents;
     std::unique_ptr<agent::AgentServer> agentServer;
     std::unique_ptr<agent::SessionControl> agentSession;

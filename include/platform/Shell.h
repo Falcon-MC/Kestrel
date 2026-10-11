@@ -14,5 +14,12 @@ std::string pasteText();
  */
 std::string pickPngFile();
 std::string pickResourcePackFile();
+std::string pickWorldFile();
+
+/**
+ * Asks where to save an exported world, offering the given file name; empty
+ * when they cancel or the platform has no dialog.
+ */
+std::string pickWorldSaveFile(const std::string& suggestedName);
 
 }

@@ -53,4 +53,29 @@ std::string pickResourcePackFile()
     return std::string([panel.URLs.firstObject.path UTF8String]);
 }
 
+std::string pickWorldFile()
+{
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.allowedFileTypes = @[ @"mcworld", @"zip" ];
+    panel.allowsMultipleSelection = NO;
+    if ([panel runModal] != NSModalResponseOK || panel.URLs.count == 0) {
+        return {};
+    }
+    return std::string([panel.URLs.firstObject.path UTF8String]);
+}
+
+std::string pickWorldSaveFile(const std::string& suggestedName)
+{
+    NSSavePanel* panel = [NSSavePanel savePanel];
+    panel.allowedFileTypes = @[ @"mcworld" ];
+    NSString* name = [NSString stringWithUTF8String:suggestedName.c_str()];
+    if (name) {
+        panel.nameFieldStringValue = name;
+    }
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) {
+        return {};
+    }
+    return std::string([panel.URL.path UTF8String]);
+}
+
 }
