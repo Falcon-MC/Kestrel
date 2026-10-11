@@ -320,6 +320,8 @@ void Client::appendFirstPerson(const std::array<int32_t, 3>& origin, ModelQuadOu
         { "left_arm_swim_amount", localSwimAmount },
         { "right_arm_swim_amount", localSwimAmount },
         { "attack_time", attackTime },
+        // Samples uses this driver instead of the legacy player script's rotation factor.
+        { "first_person_item_rotation_factor", std::sin((1.0f - attackTime) * Pi) },
         { "player_arm_height", handEquip },
         { "is_holding_right", heldName.empty() ? 0.0 : 1.0 },
         { "is_holding_left", offhand.empty() ? 0.0 : 1.0 },
