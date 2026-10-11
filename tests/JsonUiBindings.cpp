@@ -43,6 +43,30 @@ struct BindingHarness {
 
 int main()
 {
+    for (const char* collection : { "furnace_ingredient_items", "furnace_fuel_items", "furnace_output_items" }) {
+        jsonui::Node button;
+        button.detailsCollection = collection;
+        UiEvent target = jsonui::collectionTarget(button);
+        require(target.collection == collection && target.index == 0, "Standalone furnace cells must address their collection's first row");
+        jsonui::Node overlay;
+        overlay.parent = &button;
+        target = jsonui::collectionTarget(overlay);
+        require(target.collection == collection && target.index == 0, "A child hit must retain its standalone cell's address");
+    }
+    jsonui::Node outer;
+    outer.collection = "groups";
+    outer.index = 2;
+    jsonui::Node cell;
+    cell.parent = &outer;
+    cell.collection = "inventory_items";
+    cell.index = 7;
+    jsonui::Node button;
+    button.parent = &cell;
+    button.detailsCollection = "inventory_items";
+    UiEvent target = jsonui::collectionTarget(button);
+    require(target.collection == "inventory_items" && target.index == 7 && target.outerIndex == 2, "Generated grid cells must preserve their index and nested collection address");
+    jsonui::Node unrelated;
+    require(jsonui::collectionTarget(unrelated).index == -1, "Unbound controls must not become inventory cells");
     require(labelFontScale("small") == 0.5f && labelFontScale("normal") == 1.0f && labelFontScale("large") == 2.0f && labelFontScale("extra_large") == 4.0f, "Label font sizes must use the vanilla scale steps");
     require(labelFontScale("unknown") == 1.0f, "Unknown font sizes must retain the normal scale");
     UiRow variables {{ "$scale", UiValue::of(0.4) }, { "$divisor", UiValue::of(8.0) }, { "$alias", UiValue::of("#scale") }};

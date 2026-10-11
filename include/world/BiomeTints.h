@@ -50,6 +50,7 @@ enum class FogMedium : uint8_t { Air, Weather, Water, Lava, LavaResistance, Powd
  * Resolved sRGB colors (0xRRGGBB) of one biome for every tint domain.
  */
 struct BiomeColors {
+    bool precipitation = false;
     std::optional<BiomeFog> airFog;
     std::optional<BiomeFog> lavaFog;
     std::optional<BiomeFog> lavaResistanceFog;

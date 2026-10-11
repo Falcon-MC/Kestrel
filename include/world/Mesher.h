@@ -5,6 +5,7 @@
 #include "world/BlockAssets.h"
 #include "world/ChunkStore.h"
 #include "world/SubChunk.h"
+#include "world/ChunkVisibility.h"
 
 #include <array>
 #include <cstdint>
@@ -28,8 +29,8 @@ inline constexpr uint32_t QuadTintOverlay = 1u << 30;
 
 /**
  * Per-corner lighting of one quad: light holds for each corner a byte of block
- * light (low nibble) and sky light (high nibble), ao holds two bits of
- * ambient occlusion per corner.
+ * light (low nibble) and sky light (high nibble), ao holds four bits per corner
+ * (zero to four shade samples) and bit 16 marks an emitting surface.
  */
 struct QuadLight {
     uint32_t light = 0;
@@ -68,13 +69,25 @@ static_assert(sizeof(PackedQuad) == 20);
  * 1/256 block, four words of 16-bit UVs in 1/4096 texture, the material word,
  * the face shade index with the tint, then the corner light and occlusion and,
  * for entity quads, the texture offset and scale as two pairs of half floats
- * (both zero when the texture is not animated).
+ * (both zero when the texture is not animated). Foil parameters, texture size
+ * and the untiled UV transform follow without changing those base words.
  */
 struct ModelQuadGpu {
     std::array<uint32_t, 16> words {};
+    std::array<float, 4> glint {};
+    std::array<float, 4> glintTexture { 0.5f, 0.5f, 128.0f, 128.0f };
+    std::array<float, 4> glintUvTransform { 0.0f, 0.0f, 1.0f, 1.0f };
 };
 
-static_assert(sizeof(ModelQuadGpu) == 64);
+static_assert(sizeof(ModelQuadGpu) == 112);
+
+// Camera-close geometry keeps its transformed positions instead of snapping to the terrain grid.
+struct HandQuadGpu {
+    ModelQuadGpu model;
+    std::array<float, 12> positions {};
+};
+
+static_assert(sizeof(HandQuadGpu) == 160);
 
 /**
  * Light holds the solved light of every cell, block light in the low nibble
@@ -87,6 +100,7 @@ struct ChunkMesh {
     std::vector<PackedQuad> translucentCubes;
     std::vector<ModelQuadGpu> translucentModels;
     std::vector<uint8_t> light;
+    std::shared_ptr<const ChunkVisibility> visibility;
 
     bool empty() const
     {
@@ -107,7 +121,7 @@ struct ChunkMesh {
  * decide where the sky reaches its top.
  */
 struct ChunkLighting {
-    std::vector<uint8_t> filter, emission, occluder, block, sky, skySeeds;
+    std::vector<uint8_t> filter, emission, occluder, shade, block, sky, skySeeds;
 };
 
 struct MeshInput {
@@ -117,11 +131,16 @@ struct MeshInput {
     std::array<std::shared_ptr<const SubChunk>, 6> neighbours;
     std::array<std::shared_ptr<const PalettedStorage>, 9> biomes;
     std::array<std::shared_ptr<const SubChunk>, 27> around;
+    std::array<bool, 27> unknownAround {};
+    std::array<bool, 9> unknownAbove {};
+    // Ascending sub-chunks starting two above the center; null retains a known
+    // empty interval so filtered sky light attenuates across the correct height.
     std::array<std::vector<std::shared_ptr<const SubChunk>>, 9> above;
     std::shared_ptr<const BlockEntityMap> blockEntities;
     std::array<int32_t, 3> origin {};
     bool skyLight = true;
     std::shared_ptr<const ChunkLighting> lighting;
+    std::shared_ptr<const std::vector<uint8_t>> opaqueMaterials;
 };
 
 /**

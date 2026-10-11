@@ -56,6 +56,7 @@ struct MotionCell {
  * look, in degrees, with the worn gear that changes how the player moves.
  */
 struct MotionInput {
+    uint64_t trace = 0;
     float sideways = 0.0f;
     float forward = 0.0f;
     bool jump = false;
@@ -216,6 +217,16 @@ public:
         return isSneaking;
     }
 
+    bool sprinting() const
+    {
+        return isSprinting;
+    }
+
+    bool flying() const
+    {
+        return isFlying;
+    }
+
     float speed() const
     {
         return movementSpeed;
@@ -236,6 +247,8 @@ public:
      * thread while this one keeps moving.
      */
     PlayerMotion detached() const;
+
+    void copyState(const PlayerMotion& other);
 
 private:
     struct Fluid {

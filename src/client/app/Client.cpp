@@ -1,15 +1,21 @@
 #include "client/Client.h"
+#include "client/FirstPersonOverlay.h"
+#include "client/SpectatorRendering.h"
+#include "client/BlindnessFog.h"
 #include "menu/GuiScale.h"
 #include "client/DebugShapes.h"
 #include "client/HandVisibility.h"
+#include "client/SpectatorRendering.h"
 #include "client/DebugLog.h"
 #include "client/DiscordPresence.h"
+#include "modding/Painters.h"
 #ifdef KESTREL_SINGLEPLAYER
 #include "client/LocalServer.h"
 #include "client/WorldStore.h"
 #endif
 
 #include "platform/Paths.h"
+#include "platform/System.h"
 #include "platform/Window.h"
 #include "render/Renderer.h"
 #include "ui/Localization.h"
@@ -29,7 +35,6 @@
 #include <fstream>
 #include <set>
 #include <stdexcept>
-#include <thread>
 #include <unordered_set>
 
 namespace kestrel {
@@ -119,6 +124,7 @@ Client::Client(LaunchOptions options)
         throw std::runtime_error("Kestrel draws its menus with the installed game's fonts and textures, install Minecraft Bedrock or set KESTREL_VANILLA_PACK");
     }
     timer.mark("fonts");
+    session.enableFrameMotion();
     launch = std::move(options);
     if (launch.connect) {
         pendingConnect = menu::ConnectRequest { *launch.connect, *launch.connect };
@@ -178,11 +184,22 @@ int Client::run()
     DiscordPresence discord;
     float bakedScale = 0.0f;
     bool firstFrameLogged = false;
+    MotionInput routedMotion;
     constexpr ui::Color canvas = ui::theme::Black;
     auto lastFrame = std::chrono::steady_clock::now();
 
     while (true) {
         profiler.beginFrame();
+        int limit = menu.maxFps();
+        // Nobody watches a hidden window, and an agent reads it a few times a second at most.
+        if (!window->visible()) {
+            limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
+        }
+        if (limit != menu::UnlimitedFps) {
+            // Sample input after the wait so capped frames use fresh mouse motion.
+            Profiler::Section section(profiler, "fps cap wait");
+            platform::waitUntil(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
+        }
         {
             Profiler::Section section(profiler, "window events");
             mods->restoreInput(window->input());
@@ -190,13 +207,18 @@ int Client::run()
                 break;
             }
         }
-        discord.update();
         driveGamepad();
+        double inputReceived = InputLatency::now();
         if (agentServer) {
             Profiler::Section section(profiler, "agent");
             serveAgent();
         }
         mods->handleInput(window->input(), menu.capturesMouse(), guiScale());
+        const InputState& receivedInput = window->input();
+        double nativeReceipt = receivedInput.receiptTime;
+        if (receivedInput.gamepad.receiptTime > 0.0) nativeReceipt = nativeReceipt > 0.0
+            ? std::min(nativeReceipt, receivedInput.gamepad.receiptTime) : receivedInput.gamepad.receiptTime;
+        uint64_t inputTrace = session.inputLatency.begin(inputReceived, nativeReceipt);
         if (window->consumeFocusLost() && !agentServer) {
             menu.pauseIfPlaying();
         }
@@ -205,55 +227,27 @@ int Client::run()
             renderer->resize(window->width(), window->height());
         }
 
-        int limit = menu.maxFps();
-        // Nobody watches a hidden window, and an agent reads it a few times a second at most.
-        if (!window->visible()) {
-            limit = limit == menu::UnlimitedFps ? HiddenMaxFps : std::min(limit, HiddenMaxFps);
-        }
-        if (limit != menu::UnlimitedFps) {
-            Profiler::Section section(profiler, "fps cap wait");
-            std::this_thread::sleep_until(lastFrame + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / limit)));
-        }
         auto now = std::chrono::steady_clock::now();
-        updateGlobalResources();
         float environmentDeltaSeconds = std::clamp(std::chrono::duration<float>(now - lastFrame).count(), 0.0f, 1.0f);
         float deltaSeconds = std::min(environmentDeltaSeconds, 0.1f);
+        double beginFrameMilliseconds = 0.0;
         lastFrame = now;
         countFrame(now);
 
-        {
-            Profiler::Section section(profiler, "account");
-            syncAccount();
-            syncSocial();
-            syncDressingRoom();
-        }
         {
             Profiler::Section section(profiler, "session sync");
             session.setRenderDistance(menu.renderDistance());
             syncSession();
             syncChat();
             syncForms();
-            for (menu::ModAction& action : menu.takeModActions()) {
-                mods->request(std::move(action));
-            }
-            mods->update(deltaSeconds);
-            mods->captureUiInput(window->input(), guiScale());
-            visuals = mods->visuals();
-            if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
-                session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
-            }
-            menu.setModKeyBinds(mods->listedKeyBinds());
-            menu.setMods(mods->listedMods());
-        }
-        {
-            Profiler::Section section(profiler, "mesh upload");
-            applyMeshUpdates();
+
         }
 
         {
             Profiler::Section section(profiler, "camera");
             menu.setInventory(hudState.container, hudState.gameType == 1);
-            menu.prepareInventoryInput(window->input());
+            mods->captureUiInput(window->input(), guiScale());
+            menu.prepareInput(window->input());
             bool captured = menu.capturesMouse() && !mods->wantsCursor();
             window->setMouseCaptured(captured);
             float baseFov = serverFovDegrees(static_cast<float>(menu.fov()), deltaSeconds);
@@ -265,23 +259,6 @@ int Client::run()
                 camera.look(keys, captured);
                 MotionInput input;
                 bool sneakHeld = keys.isHeld(bindings.down());
-                if (captured && sneakHeld && !sneakWasHeld) {
-                    sneakFromPad = padKeys[static_cast<size_t>(PadButton::B)] != Key::None;
-                    if (menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0) {
-                        sneakToggled = !sneakToggled;
-                    } else {
-                        sneakToggled = false;
-                    }
-                }
-                sneakWasHeld = sneakHeld;
-                if (captured) {
-                    bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
-                    sneakActive = toggleMode ? sneakToggled : sneakHeld;
-                } else if (!sneakFromPad) {
-                    sneakToggled = false;
-                    sneakActive = false;
-                }
-                input.sneak = sneakActive;
                 if (captured) {
                     input.forward = float(keys.isHeld(bindings.forward())) - float(keys.isHeld(bindings.back()));
                     input.sideways = float(keys.isHeld(bindings.left())) - float(keys.isHeld(bindings.right()));
@@ -298,10 +275,45 @@ int Client::run()
                 }
                 input.yaw = camera.minecraftYaw();
                 input.pitch = camera.minecraftPitch();
+                InputState::KeyTransition transition;
+                MotionInput intermediate = input;
+                intermediate.jump = routedMotion.jump;
+                intermediate.sprint = routedMotion.sprint;
+                intermediate.sneak = routedMotion.sneak;
+                while (window->input().popKeyTransition(transition)) {
+                    if (!captured) continue;
+                    bool relevant = true;
+                    if (transition.key == bindings.up()) intermediate.jump = transition.down;
+                    else if (transition.key == Key::Control) intermediate.sprint = transition.down;
+                    else if (transition.key == bindings.down()) {
+                        if (transition.down) {
+                            sneakFromPad = keys.gamepad.wasPressed(PadButton::B);
+                            bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                            sneakToggled = toggleMode ? !sneakToggled : false;
+                        }
+                        bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                        intermediate.sneak = toggleMode ? sneakToggled : transition.down;
+                    } else relevant = false;
+                    if (relevant) {
+                        MotionInput adjusted = intermediate;
+                        mods->adjustMovement(adjusted);
+                        session.setMotionInput(adjusted, inputTrace);
+                    }
+                }
+                if (captured) {
+                    bool toggleMode = menu.option(sneakFromPad ? "controller_toggle_crouch" : "keyboard_mouse_toggle_crouch", 0) != 0;
+                    sneakActive = toggleMode ? sneakToggled : sneakHeld;
+                } else if (!sneakFromPad) {
+                    sneakToggled = false;
+                    sneakActive = false;
+                }
+                input.sneak = captured && sneakActive;
+                routedMotion = input;
                 mods->adjustMovement(input);
                 localLookYaw = input.yaw;
                 localLookPitch = input.pitch;
-                session.setMotionInput(input);
+                session.setMotionInput(input, inputTrace);
+                playerView = session.advanceFrameMotion(input, inputTrace, captured);
                 constexpr int32_t SpeedEffect = 1;
                 constexpr int32_t SlownessEffect = 2;
                 int32_t speedLevels = 0;
@@ -338,14 +350,14 @@ int Client::run()
                 }
                 fovTarget = std::clamp(fovTarget, 0.05f, 2.0f);
                 camera.easeFov(fovTarget, deltaSeconds);
-                // The session thread runs a tick a few ms late now and then, so keep gliding a little past it
-                // instead of stopping dead until the tick lands.
                 double blend = std::clamp((secondsNow() - playerView.tickTime) / 0.05, 0.0, 1.2);
                 double eye = playerView.eyeHeight();
                 eyePosition = { playerView.previous[0] + (playerView.current[0] - playerView.previous[0]) * blend,
                     playerView.previous[1] + (playerView.current[1] - playerView.previous[1]) * blend + eye,
                     playerView.previous[2] + (playerView.current[2] - playerView.previous[2]) * blend };
+                firstPersonMotion.advance(eyePosition, playerView.onGround, hudState.health > 0, environmentDeltaSeconds);
                 perspective = std::clamp(menu.option("third_person", PerspectiveFirst), PerspectiveFirst, PerspectiveFront);
+                session.setCameraPerspective(perspective);
                 if (captured && !serverCamera.controlsPerspective() && keys.pressedKey == bindings.perspective()) {
                     perspective = (perspective + 1) % 3;
                     menu.setExtraOption("third_person", perspective);
@@ -357,6 +369,8 @@ int Client::run()
                 camera.setFacingSubject(perspective == PerspectiveFront);
                 camera.setPosition(eyePosition[0] + boom[0] * boomFraction, eyePosition[1] + boom[1] * boomFraction, eyePosition[2] + boom[2] * boomFraction);
             } else {
+                window->input().clearKeyTransitions();
+                routedMotion = {};
                 perspective = PerspectiveFirst;
                 camera.setFacingSubject(false);
                 camera.easeFov(1.0f, deltaSeconds);
@@ -375,7 +389,6 @@ int Client::run()
         std::optional<ActorView> renderSelf;
         interpolateActors(secondsNow());
         if (worldShown) {
-            if (playerView.active) renderSelf = localActorView(deltaSeconds);
             ServerCameraContext cameraContext;
             cameraContext.player = { eyePosition, playerCameraYaw, playerCameraPitch };
             cameraContext.player.center = { eyePosition[0], eyePosition[1] - playerView.eyeHeight() + 0.9, eyePosition[2] };
@@ -392,15 +405,55 @@ int Client::run()
                 session.setServerCameraBoom(origin, delta);
                 return serverBoomFraction;
             };
-            serverCamera.update(camera, cameraContext, session.takeCameraEvents(), deltaSeconds);
+            auto cameraEvents = session.takeCameraEvents();
+            aimAssist.apply(cameraEvents);
+            serverCamera.update(camera, cameraContext, cameraEvents, deltaSeconds);
             if (!serverCamera.orbital()) session.setServerCameraBoom({}, {});
             if (!serverCamera.playerEffects()) camera.setHurtProgress(0.0f);
             cameraDetached = serverCamera.detached();
             perspective = serverCamera.renderPerspective(playerPerspective);
+            updateAimAssist();
+        }
+        session.inputLatency.mark(inputTrace, InputLatency::Camera);
+        hotbarSelection.tick();
+        handleHotbarInput();
+        discord.update();
+        updateGlobalResources();
+        {
+            Profiler::Section section(profiler, "account");
+            syncAccount();
+            syncSocial();
+            syncDressingRoom();
         }
         {
+            Profiler::Section section(profiler, "session resources");
+            prepareSessionRender();
+            for (menu::ModAction& action : menu.takeModActions()) {
+                mods->request(std::move(action));
+            }
+            mods->update(deltaSeconds);
+            visuals = mods->visuals();
+            if (std::optional<modding::BlockFilter> hidden = mods->takeHiddenBlocks()) {
+                session.setHiddenBlocks(std::move(hidden->names), hidden->visibleOnly);
+            }
+            menu.setModKeyBinds(mods->listedKeyBinds());
+            menu.setMods(mods->listedMods());
+        }
+        {
+            Profiler::Section section(profiler, "mesh upload");
+            applyMeshUpdates();
+        }
+
+        {
             Profiler::Section section(profiler, "hud");
-            handleHotbarInput();
+            if (worldShown && playerView.active) {
+                double handTime = secondsNow();
+                int slot = std::clamp(hudState.selectedSlot, 0, 8);
+                handTransition.update(hudState.inventory[size_t(slot)], slot, handTime);
+                handEquip = handTransition.sample(handTime);
+                offhandTransition.update(hudState.offhand, 0, handTime);
+                offhandEquip = offhandTransition.sample(handTime);
+            }
             updateEmotes(secondsNow());
             updateGameTips();
             menu.setHud(buildHudView());
@@ -423,6 +476,11 @@ int Client::run()
             }
         }
 
+        if (worldShown && playerView.active) {
+            firstPersonMotion.look(secondsNow(), camera.minecraftPitch(), camera.minecraftYaw());
+            renderSelf = localActorView(deltaSeconds);
+        }
+
         float scale = guiScale();
         bool rebaked = scale != bakedScale;
         if (rebaked) {
@@ -440,10 +498,21 @@ int Client::run()
         skin.beginFrame();
         drawList.reset(scale, font.whiteU(), font.whiteV());
         ui::Context context(drawList, font, skin, window->input(), widgets, scale);
+        context.setGlint(secondsNow(), visuals.glintStrength.value_or(menu.glintStrength()), visuals.glintSpeed.value_or(menu.glintSpeed()));
         context.recordWidgets(agentServer != nullptr && !mods->uiOpen());
+        if (seenSessionSnapshot && playerView.active && worldShown && menu.worldVisible() && !menu.hudHidden() && serverCamera.playerEffects()
+            && fireOverlayVisible(seenSessionSnapshot->localActorFlags[0], perspective == PerspectiveFirst, !cameraDetached, localSpectatorRendering(true, hudState.gameType))) {
+            fireOverlay.draw(drawList, skin, blockAssets, float(window->width()), float(window->height()), secondsNow());
+        }
         {
             Profiler::Section section(profiler, "menu ui");
+            if (worldShown && playerView.active && menu.worldVisible() && !menu.hudHidden()
+                && pumpkinMaskVisible(hudState.armor[0].identifier, perspective == PerspectiveFirst,
+                    !cameraDetached && serverCamera.playerEffects(), localSpectatorRendering(true, hudState.gameType))) {
+                context.sprite({ 0.0f, 0.0f, window->width() / scale, window->height() / scale }, "textures/misc/pumpkinblur");
+            }
             menu.frame(context, window->width() / scale, window->height() / scale);
+            if (menu.capturesMouse() && !menu.hudHidden()) drawAimAssist(context, scale);
             if (menu.worldVisible() && !menu.hudHidden()) {
                 mods->drawHud(context, window->width() / scale, window->height() / scale, !menu.capturesMouse());
             }
@@ -451,6 +520,7 @@ int Client::run()
             for (menu::FormAnswer& answer : menu.formPanel().takeAnswers()) {
                 session.answerForm(answer.id, std::move(answer.data), answer.busy);
             }
+            if (auto answer = menu.signPanel().takeAnswer()) session.answerSign(std::move(*answer));
             context.recordWidgets(agentServer != nullptr);
             mods->drawUi(context, window->width() / scale, window->height() / scale);
             if (padCursorShown && (!menu.capturesMouse() || mods->uiOpen())) {
@@ -460,6 +530,8 @@ int Client::run()
             if (agentServer) agentWidgets = context.widgets();
             context.endFrame();
         }
+
+        if (skin.dirty()) uploadAtlas(false);
 
         if (!firstFrameLogged) {
             firstFrameLogged = true;
@@ -567,6 +639,16 @@ int Client::run()
             world::BiomeColors biomeColors = blockAssets ? blockAssets->biomeTints().colors(environmentSample.second) : world::BiomeColors {};
             float fogScale = biomeColors.waterFogRelative ? renderDistance : 1.0f;
             bool fireResistance = false;
+            bool blindness = false;
+            if (serverCamera.playerEffects()) {
+                const double now = secondsNow();
+                for (const HudEffect& effect : hudState.effects) {
+                    if (effect.id == 15 && (effect.expires < 0.0 || effect.expires > now)) {
+                        blindness = true;
+                        break;
+                    }
+                }
+            }
             if (timeState.cameraMedium == 2 && serverCamera.playerEffects()) {
                 constexpr int32_t FireResistanceEffect = 12;
                 double now = secondsNow();
@@ -610,14 +692,17 @@ int Client::run()
                         if (timeState.cameraMedium != 0 || timeState.dimension == 1) sky.zenith = sky.horizon = sky.fogColor;
                     }
                 }
-                if (blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
+                if (blindness) sky = blindedBy(sky);
+                if (!blindness && blockAssets && timeState.cameraMedium == 0 && timeState.dimension != 1) {
                     background = buildSkyBackground(sky, blockAssets->sunLayer(), blockAssets->moonLayer(sky.moonPhase));
                 }
             }
 
             {
                 Profiler::Section section(profiler, "begin frame");
+                double beginning = InputLatency::now();
                 renderer->beginFrame(sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
+                beginFrameMilliseconds = (InputLatency::now() - beginning) * 1000.0;
             }
             WorldView view;
             float aspect = static_cast<float>(window->width()) / static_cast<float>(std::max<uint32_t>(window->height(), 1));
@@ -635,9 +720,9 @@ int Client::run()
             view.cameraMedium = timeState.cameraMedium;
             view.fogEnd = sky.fogEnd;
             view.daylight = sky.daylight;
-            float brightnessLift = menu::brightnessLift(menu.brightness());
-            view.nightVision = 1.0f - (1.0f - (serverCamera.playerEffects() ? nightVisionStrength() : 0.0f)) * (1.0f - brightnessLift);
-            view.nightVision = std::max(view.nightVision, visuals.brightness.value_or(0.0f));
+            updateWorldLighting(environmentDeltaSeconds);
+            view.lightmap = worldLighting;
+            view.nightVision = worldLighting.nightVision;
             if (visuals.hitColor) {
                 const mod::Color& hit = *visuals.hitColor;
                 // 0 means the game's own red, so a fully clear color still counts as set
@@ -648,6 +733,7 @@ int Client::run()
             view.backgroundCount = static_cast<uint32_t>(background.size());
             std::array<int32_t, 3> entityOrigin { int32_t(std::floor(camera.x())), int32_t(std::floor(camera.y())), int32_t(std::floor(camera.z())) };
             std::vector<world::ModelQuadGpu> entityQuads;
+            std::vector<world::HandQuadGpu> preciseHandQuads;
             {
                 Profiler::Section section(profiler, "entities");
                 const auto& self = renderSelf;
@@ -661,14 +747,19 @@ int Client::run()
                 std::vector<world::ModelQuadGpu> overlayQuads;
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
                 blockParticles.update(secondsNow());
-                blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
+                blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads, [this](double x, double y, double z) { return lightAt(x, y, z); });
                 appendParticles(deltaSeconds, entityOrigin, entityQuads, blendedQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
+                appendEnchantingBooks(entityOrigin, deltaSeconds, entityQuads);
+                appendConduits(entityOrigin, entityQuads);
+                appendBanners(entityOrigin, entityQuads, blendedQuads);
                 if (!menu.hudHidden()) {
                     if (handVisible(menu.hudHidden(), menu.option("hide_hand", 0) != 0)) {
-                        appendFirstPerson(entityOrigin, handQuads);
+                        appendFirstPerson(entityOrigin, preciseHandQuads);
                     }
-                    lightQuads(handQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
+                    const uint32_t handLight = self ? lightCorners(self->x, self->y, self->z,
+                        actorExtent(self->height, playerView.bbHeight, self->scale)) : lightCorners(camera.x(), camera.y(), camera.z(), 0);
+                    lightQuads(preciseHandQuads, 0, handLight);
                     if (self) {
                         appendPaperDoll(*self, entityOrigin, handQuads);
                     }
@@ -685,6 +776,8 @@ int Client::run()
             view.actorDraws = actorDraws.data();
             view.actorDrawCount = static_cast<uint32_t>(actorDraws.size());
             view.entityQuads = entityQuads.data();
+            view.preciseHandQuads = preciseHandQuads.data();
+            view.preciseHandQuadCount = static_cast<uint32_t>(preciseHandQuads.size());
             view.entityOrigin = { float(entityOrigin[0] - camera.x()), float(entityOrigin[1] - camera.y()), float(entityOrigin[2] - camera.z()) };
             Profiler::Section section(profiler, "draw world");
             mod::Environment environment;
@@ -702,10 +795,12 @@ int Client::run()
             mods->setEnvironment(environment);
             renderer->drawWorld(view);
             std::shared_ptr<const SessionSnapshot> shapesSnapshot = seenSessionSnapshot;
-            std::function<void(mod::WorldPainter&)> serverShapes;
-            if (shapesSnapshot && !shapesSnapshot->debugShapes.empty()) {
-                serverShapes = [shapesSnapshot](mod::WorldPainter& painter) {
-                    drawDebugShapes(painter, *shapesSnapshot, secondsNow());
+            std::function<void(modding::WorldCanvas&)> serverShapes;
+            if ((shapesSnapshot && !shapesSnapshot->debugShapes.empty()) || !signTextViews.empty() || !fishingRodTips.empty()) {
+                serverShapes = [this, shapesSnapshot](modding::WorldCanvas& painter) {
+                    if (shapesSnapshot) drawDebugShapes(painter, *shapesSnapshot, secondsNow());
+                    drawSignTexts(painter);
+                    drawFishingLines(painter);
                 };
             }
             mods->drawWorld(view.viewProjection, environment.camera, serverShapes);
@@ -736,10 +831,26 @@ int Client::run()
             }
             renderer->drawUi(drawList);
             mods->drawScreen(CustomLayer::AboveUi);
+            if (menu.debugVisible() && menu.worldVisible()) {
+                drawList.reset(scale, font.whiteU(), font.whiteV());
+                drawList.clearClip();
+                drawList.clearLayer();
+                ui::Context debugContext(drawList, font, skin, window->input(), widgets, scale);
+                debugContext.recordWidgets(false);
+                menu.drawDebugOverlay(debugContext, window->width() / scale, window->height() / scale);
+                debugContext.endFrame();
+                renderer->drawUi(drawList);
+            }
         }
         {
             Profiler::Section section(profiler, "present gpu");
             renderer->endFrame();
+            double frameEnd = InputLatency::now();
+            double submission = renderer->frameSubmissionTimeSeconds();
+            session.inputLatency.markAt(inputTrace, InputLatency::Submission, submission);
+            session.inputLatency.markAt(inputTrace, InputLatency::FrameEnd, frameEnd);
+            session.inputLatency.waitedForGpu(renderer->frameFenceWaitMilliseconds(), beginFrameMilliseconds,
+                submission > 0.0 ? std::max(0.0, frameEnd - submission) * 1000.0 : 0.0);
         }
         camera.setPosition(playerCameraPosition[0], playerCameraPosition[1], playerCameraPosition[2]);
         camera.setRotation(playerCameraYaw, playerCameraPitch);
@@ -781,6 +892,7 @@ void Client::collectFeaturedImages()
 
 void Client::syncForms()
 {
+    if (auto request = session.takeSignEditor()) menu.signPanel().open(std::move(*request));
     for (FormRequest& request : session.takeForms()) {
         if (agentServer) {
             agent::JsonWriter writer;
@@ -1134,6 +1246,10 @@ void Client::uploadAtlas(bool fontChanged)
 void Client::applyMeshUpdate(const MeshUpdate& update)
 {
     const world::SubChunkKey& key = update.key;
+    if (update.visibilityOnly) {
+        renderer->setChunkVisibility(key.x, key.y, key.z, nullptr);
+        return;
+    }
     uint64_t id = subChunkId(key);
     if (update.mesh) {
         ChunkMeshUpload upload;
@@ -1157,6 +1273,7 @@ void Client::applyMeshUpdate(const MeshUpdate& update)
         opaqueChunks.erase(id);
         litChunks.erase(id);
     }
+    renderer->setChunkVisibility(key.x, key.y, key.z, update.visibility);
 }
 
 void Client::applyMeshUpdates()
@@ -1183,31 +1300,34 @@ void Client::applyMeshUpdates()
 
 /**
  * Block and sky light of the cell holding the point, as the mesher solved it.
- * Sub-chunks without a mesh never had their light solved; those are mostly
- * open air, so they count as open sky.
+ * Unknown cells remain dark; only cells outside the Overworld's height are open sky.
  */
 uint8_t Client::lightAt(double x, double y, double z) const
 {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || std::abs(x) > 30000000.0 || std::abs(y) > 30000000.0 || std::abs(z) > 30000000.0) return 0;
     int32_t blockX = static_cast<int32_t>(std::floor(x));
     int32_t blockY = static_cast<int32_t>(std::floor(y));
     int32_t blockZ = static_cast<int32_t>(std::floor(z));
     world::SubChunkKey key { timeState.dimension, blockX >> 4, blockY >> 4, blockZ >> 4 };
     auto found = litChunks.find(subChunkId(key));
     if (found == litChunks.end() || found->second->light.empty()) {
-        return OpenSkyLight;
+        world::DimensionRange range;
+        if (timeState.dimension == 0 && world::vanillaDimensionRange(timeState.dimension, range)
+            && (key.y < range.baseSubChunkY || key.y >= range.baseSubChunkY + range.subChunkCount)) return OpenSkyLight;
+        return 0;
     }
     return found->second->light[world::linearIndex(uint32_t(blockX & 15), uint32_t(blockY & 15), uint32_t(blockZ & 15))];
 }
 
 /**
  * The light an entity standing at the point takes: the cell at the feet and
- * the one above, whichever is brighter per channel, so a mob half sunk in a
+ * the top of its bounds, whichever is brighter per channel, so a mob half sunk in a
  * slab or snow layer does not go black. Packed for all four quad corners.
  */
-uint32_t Client::lightCorners(double x, double y, double z) const
+uint32_t Client::lightCorners(double x, double y, double z, double height) const
 {
     uint8_t feet = lightAt(x, y, z);
-    uint8_t head = lightAt(x, y + 1.0, z);
+    uint8_t head = lightAt(x, y + height + 0.01, z);
     uint32_t level = uint32_t(std::max(feet & 15, head & 15)) | (uint32_t(std::max(feet >> 4, head >> 4)) << 4);
     return level * 0x01010101u;
 }
@@ -1218,7 +1338,7 @@ uint32_t Client::lightCorners(double x, double y, double z) const
  * by their light and keep their tint in the upper bits, so only entity quads
  * get the shaded flag.
  */
-void Client::lightQuads(std::vector<world::ModelQuadGpu>& quads, size_t first, uint32_t corners) const
+void Client::lightQuads(ModelQuadOutput quads, size_t first, uint32_t corners) const
 {
     for (size_t index = first; index < quads.size(); ++index) {
         world::ModelQuadGpu& quad = quads[index];
@@ -1306,36 +1426,44 @@ bool Client::terrainReady(const SessionSnapshot& snapshot)
     return terrainReleased;
 }
 
-void Client::syncSession()
+void Client::prepareSessionRender()
 {
-    auto published = session.sharedSnapshot();
-    const SessionSnapshot& snapshot = *published;
-    if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
-        serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
-        submergedSeconds = 0.0f;
-        localSwimAmount = 0.0f;
-        serverFov = {};
-        serverFovSerial = 0;
-        serverBoomFraction = 0.0;
-        cameraSessionJoin = snapshot.joinCount;
-        cameraDimension = snapshot.dimension;
+    const SessionSnapshot& snapshot = *seenSessionSnapshot;
+    bool changed = renderedSessionSnapshot != seenSessionSnapshot;
+    renderedSessionSnapshot = seenSessionSnapshot;
+    if (resetChunkMeshes) {
+        resetChunkMeshes = false;
+        renderer->clearChunkMeshes();
+        opaqueChunks.clear();
+        litChunks.clear();
     }
-    cameraLocalUnique = snapshot.localUniqueActorId;
-#ifdef KESTREL_SINGLEPLAYER
-    updateLocalWorlds(snapshot);
-#endif
-    bool changed = published != seenSessionSnapshot;
-    seenSessionSnapshot = std::move(published);
-    if (agentSession) {
-        agentSession->observe(snapshot);
+    if (snapshot.state != SessionState::Joined) {
+        swimAmounts.clear();
+        blockParticles.clear();
+        clearParticles();
     }
-    mods->observe(snapshot);
-    playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
-    if (menu.debugVisible()) {
-        menu.setDebugView(buildDebugView(snapshot));
+    if (changed) {
+        sidebarView = snapshot.sidebar;
+        crackViews = snapshot.cracks;
+        chestLidViews = snapshot.chestLids;
+        frameItemViews = snapshot.frameItems;
+        shelfItemViews = snapshot.shelfItems;
+        enchantingBookViews = snapshot.enchantingBooks;
+        beaconBeamViews = snapshot.beaconBeams;
+        conduitViews = snapshot.conduits;
+        bannerViews = snapshot.banners;
+        signTextViews = snapshot.signTexts;
+        spawnerViews = snapshot.spawners;
+        vaultItemViews = snapshot.vaultItems;
+        potViews = snapshot.pots;
+        pistonViews = snapshot.pistons;
+        movingBlockViews = snapshot.movingBlocks;
     }
     updateAudio(snapshot);
-    static const std::vector<std::shared_ptr<const world::PackFiles>> noPacks;
+    for (const ParticleBurst& burst : session.takeParticleBursts()) {
+        blockParticles.spawn(burst);
+    }
+    takeSessionParticles(snapshot);
     applyServerPacks(snapshot.state == SessionState::Joined ? snapshot.packs : globalResources.packs());
     const std::vector<uint8_t>* wantedTitle = snapshot.titleImage.get();
     if (wantedTitle != shownTitle.get()) {
@@ -1345,23 +1473,6 @@ void Client::syncSession()
         } else {
             skin.clearDynamic("dynamic/title");
         }
-    }
-    if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
-        seenJoin = snapshot.joinCount;
-        seenTeleport = snapshot.teleportCount;
-        menu.clearChat();
-        popupMessage = {};
-        tipMessage = {};
-        actionbarMessage = {};
-        titleView = {};
-        titleUiUpdates.clear();
-        gameTip = {};
-        renderer->clearChunkMeshes();
-        opaqueChunks.clear();
-        litChunks.clear();
-        terrainReleased = false;
-        readinessFrame.reset();
-        camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
     if (snapshot.state == SessionState::Joined && snapshot.assets && snapshot.assets != blockAssets) {
         renderer->clearChunkMeshes();
@@ -1391,11 +1502,15 @@ void Client::syncSession()
         droppedMeshes.clear();
         droppedIconKeys = {};
         nextDroppedIcon = 0;
-        lastHeldIdentity.clear();
-        handItem = {};
-        handUpdatedAt = 0.0;
+        handTransition = {};
+        offhandTransition = {};
+        handAttachable = {};
+        handOffhandAttachable = {};
+        hotbarSelection = {};
         handEquip = 0.0f;
-        handRestAnimator = world::EntityAnimator();
+        offhandEquip = 0.0f;
+        firstPersonMotion = {};
+        handMotionTeleports = snapshot.player.teleports;
         paperDollAnimator = world::EntityAnimator();
         handAnimator = world::EntityAnimator();
         for (const auto& [layer, pixels] : skinPixels) {
@@ -1418,27 +1533,109 @@ void Client::syncSession()
             session.acknowledgeResourceReload(snapshot.resourceReloadSerial, snapshot.assets.get());
         }
     }
+    bool skinsChanged = false;
+    for (SkinUpload& skin : session.takeSkinUploads()) {
+        releaseSkinLayers(skin.slot);
+        SkinView view;
+        view.base = placeSkinTexture(skin.slot, skin.image, world::MaxSkinSide / world::EntityTextureSize);
+        view.cape = placeSkinTexture(skin.slot, skin.cape, 1);
+        for (SkinAnimationUpload& animation : skin.animations) {
+            SkinAnimationView placed;
+            placed.texture = placeSkinTexture(skin.slot, animation.image, world::MaxEntityTiles);
+            placed.rig = std::move(animation.rig);
+            placed.kind = animation.kind;
+            placed.frames = std::max<uint32_t>(animation.frames, 1);
+            placed.blinking = animation.blinking;
+            if (placed.texture.present && placed.rig) {
+                view.animations.push_back(std::move(placed));
+            }
+        }
+        skinViews[skin.slot] = std::move(view);
+        if (skin.slot == localSkinSlot && !skin.image.empty()) {
+            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ skin.image.width, skin.image.height, skin.image.pixels }, 64));
+        }
+        if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
+        skinRigs[skin.slot] = std::move(skin.rig);
+        skinsChanged = true;
+    }
+    if (skinsChanged) {
+        actorPoses.clear();
+        partMatches.clear();
+        armorBoneMatches.clear();
+    }
+}
+
+void Client::syncSession()
+{
+    auto published = session.sharedSnapshot();
+    const SessionSnapshot& snapshot = *published;
+    if (snapshot.state != SessionState::Joined || cameraSessionJoin != snapshot.joinCount || cameraDimension != snapshot.dimension) {
+        serverCamera.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimAssist.reset(snapshot.state == SessionState::Joined && cameraSessionJoin == snapshot.joinCount);
+        aimTarget.reset();
+        session.setAimAssistTarget({});
+        aimBlockNames.clear();
+        submergedSeconds = 0.0f;
+        localSwimAmount = 0.0f;
+        serverFov = {};
+        serverFovSerial = 0;
+        serverBoomFraction = 0.0;
+        cameraSessionJoin = snapshot.joinCount;
+        cameraDimension = snapshot.dimension;
+    }
+    cameraLocalUnique = snapshot.localUniqueActorId;
+#ifdef KESTREL_SINGLEPLAYER
+    updateLocalWorlds(snapshot);
+#endif
+    bool changed = published != seenSessionSnapshot;
+    seenSessionSnapshot = std::move(published);
+    if (agentSession) {
+        agentSession->observe(snapshot);
+    }
+    mods->observe(snapshot);
+    playerView = snapshot.state == SessionState::Joined ? snapshot.player : PlayerView {};
+    if (menu.debugVisible()) {
+        menu.setDebugView(buildDebugView(snapshot));
+    }
+    if (snapshot.state == SessionState::Joined && snapshot.joinCount != seenJoin) {
+        seenJoin = snapshot.joinCount;
+        firstPersonMotion = {};
+        handMotionTeleports = snapshot.player.teleports;
+        seenTeleport = snapshot.teleportCount;
+        menu.clearChat();
+        popupMessage = {};
+        tipMessage = {};
+        actionbarMessage = {};
+        titleView = {};
+        titleUiUpdates.clear();
+        gameTip = {};
+        resetChunkMeshes = true;
+        terrainReleased = false;
+        readinessFrame.reset();
+        camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
+    }
     if (snapshot.state == SessionState::Joined && snapshot.teleportCount != seenTeleport) {
         seenTeleport = snapshot.teleportCount;
         camera.placeAt(snapshot.spawnX, snapshot.spawnY, snapshot.spawnZ, snapshot.spawnYaw, snapshot.spawnPitch);
     }
-    if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) {
-        renderer->clearChunkMeshes();
-        opaqueChunks.clear();
-        litChunks.clear();
-    }
+    if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) resetChunkMeshes = true;
     if (snapshot.state != SessionState::Joined) {
+        lightingWeather = {};
+        darknessStrength = visionStrength = 0.0f;
+        lightningAt = -1.0;
+        lightningActors.clear();
         submergedSeconds = 0.0f;
         localSwimAmount = 0.0f;
-        swimAmounts.clear();
-        blockParticles.clear();
-        clearParticles();
         menu.inventoryPanel().reset();
         menu.formPanel().reset();
         terrainReleased = false;
         readinessFrame.reset();
     }
     worldShown = snapshot.state == SessionState::Joined;
+    if (playerView.teleports != handMotionTeleports) {
+        firstPersonMotion = {};
+        handMotionTeleports = playerView.teleports;
+    }
     timeState.worldTime = snapshot.worldTime;
     timeState.worldTimeStamp = snapshot.worldTimeStamp;
     timeState.worldClockPaused = snapshot.worldClockPaused;
@@ -1478,48 +1675,10 @@ void Client::syncSession()
     }
     if (changed) {
         hudState = snapshot.hud;
-        sidebarView = snapshot.sidebar;
         selectionView = snapshot.selection;
-        crackViews = snapshot.cracks;
-        chestLidViews = snapshot.chestLids;
-        frameItemViews = snapshot.frameItems;
     }
     ridingView = snapshot.state == SessionState::Joined ? snapshot.riding : std::string();
     targetBlockName = snapshot.targetBlock ? snapshot.targetBlock->name : std::string();
-    for (const ParticleBurst& burst : session.takeParticleBursts()) {
-        blockParticles.spawn(burst);
-    }
-    takeSessionParticles(snapshot);
-    bool skinsChanged = false;
-    for (SkinUpload& skin : session.takeSkinUploads()) {
-        releaseSkinLayers(skin.slot);
-        SkinView view;
-        view.base = placeSkinTexture(skin.slot, skin.image, world::MaxSkinSide / world::EntityTextureSize);
-        view.cape = placeSkinTexture(skin.slot, skin.cape, 1);
-        for (SkinAnimationUpload& animation : skin.animations) {
-            SkinAnimationView placed;
-            placed.texture = placeSkinTexture(skin.slot, animation.image, world::MaxEntityTiles);
-            placed.rig = std::move(animation.rig);
-            placed.kind = animation.kind;
-            placed.frames = std::max<uint32_t>(animation.frames, 1);
-            placed.blinking = animation.blinking;
-            if (placed.texture.present && placed.rig) {
-                view.animations.push_back(std::move(placed));
-            }
-        }
-        skinViews[skin.slot] = std::move(view);
-        if (skin.slot == localSkinSlot && !skin.image.empty()) {
-            this->skin.setDynamic("dynamic/inventory_skin", ui::shrinkBitmap({ skin.image.width, skin.image.height, skin.image.pixels }, 64));
-        }
-        if (auto previousRig = skinRigs.find(skin.slot); previousRig != skinRigs.end()) actorGeometry.erase(previousRig->second.get());
-        skinRigs[skin.slot] = std::move(skin.rig);
-        skinsChanged = true;
-    }
-    if (skinsChanged) {
-        actorPoses.clear();
-        partMatches.clear();
-        armorBoneMatches.clear();
-    }
     timeState.daylightCycle = snapshot.daylightCycle;
     timeState.chunkRadius = snapshot.chunkRadius;
     // a mod's time and weather only change what this client shows

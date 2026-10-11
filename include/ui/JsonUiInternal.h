@@ -158,6 +158,7 @@ struct Node {
     uint64_t serial = 0;
     bool generated = false;
     std::string collection;
+    std::string detailsCollection;
     int index = -1;
     size_t gridItemCount = 0;
 
@@ -219,6 +220,8 @@ struct Node {
     int wheelSlice = -1;
     std::unordered_map<const Node*, bool> states;
 };
+
+UiEvent collectionTarget(const Node& node);
 
 }
 

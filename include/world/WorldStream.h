@@ -79,6 +79,7 @@ public:
      * blocks are unknown rather than air.
      */
     bool subChunkPending(const SubChunkKey& key) const;
+    std::vector<SubChunkKey> pendingKeys() const;
 
     /**
      * Whether some sub-chunk of the column was asked for and has not arrived.

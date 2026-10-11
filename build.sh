@@ -28,5 +28,9 @@ if ! cmake --build build >> "$LOG" 2>&1; then
 fi
 
 echo
-echo "Build succeeded: build/Kestrel"
+if [ "$(uname -s)" = Darwin ]; then
+    echo "Build succeeded: build/Kestrel.app (open with Finder or: open build/Kestrel.app)"
+else
+    echo "Build succeeded: build/Kestrel"
+fi
 echo "Full build log saved to $LOG"

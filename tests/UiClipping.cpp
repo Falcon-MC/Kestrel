@@ -1,4 +1,5 @@
 #include "ui/DrawList.h"
+#include "world/Glint.h"
 
 #include <cmath>
 #include <cstdio>
@@ -55,4 +56,14 @@ int main()
     draw.clearClip();
     draw.freeQuad(points, uvs, 0xffffffffu);
     require(draw.vertices().size() == 4 && draw.indices().size() == 6, "Unclipped model faces must retain the original quad path");
+    draw.reset(1, 0, 0);
+    draw.setClip({ 5, 5, 10, 10 });
+    draw.freeQuad(rotated, uvs, 0xffffffffu);
+    auto foil = kestrel::world::itemGlintParameters(1.0, 50.0f, 100.0f);
+    draw.applyGlint(0, { 0, 0, 1, 1 }, { 0.5f, 0.5f, 0.75f, 0.75f }, foil);
+    for (const UiVertex& vertex : draw.vertices()) {
+        auto expected = kestrel::world::itemGlintUv(vertex.u, vertex.v, foil);
+        require(vertex.glintUv == expected && vertex.glintStrength == 0.5f,
+            "Clipped UI faces must preserve foil UV interpolation and strength");
+    }
 }

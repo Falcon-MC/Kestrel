@@ -62,6 +62,24 @@ falcon_bedrock_data_embed_binary(FILE block_definitions.nbt NAMESPACE KestrelBlo
         SYMBOL kBlockDefinitionsNbt OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockDefinitionsNbt.h")
 falcon_bedrock_data_embed_binary(FILE block_light.json NAMESPACE KestrelBlockLightData
         SYMBOL kBlockLightJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/BlockLightJson.h")
+falcon_bedrock_data_embed_binary(FILE item_tags.json NAMESPACE KestrelItemTagData
+        SYMBOL kItemTagsJson OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/ItemTagsJson.h")
+
+falcon_bedrock_data_file(entity_definitions.json kestrelEntityDefinitionsPath)
+file(READ "${kestrelEntityDefinitionsPath}" kestrelEntityDefinitions)
+string(JSON kestrelEntityCount LENGTH "${kestrelEntityDefinitions}")
+math(EXPR kestrelLastEntity "${kestrelEntityCount} - 1")
+set(kestrelEntityDimensions "")
+foreach(index RANGE ${kestrelLastEntity})
+    string(JSON name MEMBER "${kestrelEntityDefinitions}" ${index})
+    string(JSON width ERROR_VARIABLE widthError GET "${kestrelEntityDefinitions}" "${name}" components "minecraft:collision_box" width)
+    string(JSON height ERROR_VARIABLE heightError GET "${kestrelEntityDefinitions}" "${name}" components "minecraft:collision_box" height)
+    if(NOT widthError AND NOT heightError AND width GREATER 0 AND height GREATER 0)
+        string(APPEND kestrelEntityDimensions "    { \"${name}\", float(${width}), float(${height}) },\n")
+    endif()
+endforeach()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/EntityDisplayDimensionsData.h"
+    "#pragma once\n#include <string_view>\nnamespace kestrel::world {\nstruct EntityDisplaySize { std::string_view name; float width; float height; };\ninline constexpr EntityDisplaySize EntityDisplaySizes[] = {\n${kestrelEntityDimensions}};\n}\n")
 
 function(kestrel_embed_file file namespace symbol output)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
@@ -128,6 +146,11 @@ inline constexpr Schema kSchemas[] = {
 }
 " @ONLY)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/fallback_fonts.txt" KESTREL_FALLBACK_FONTS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/fallback_fonts.txt")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/FallbackFonts.h" CONTENT
+    "#pragma once\ninline constexpr const char* KestrelFallbackFonts = R\"fonts(@KESTREL_FALLBACK_FONTS@)fonts\";\n" @ONLY)
+
 find_package(ZLIB REQUIRED)
 
 option(KESTREL_SINGLEPLAYER "Embed the Falcon server to play worlds without a server" ON)
@@ -193,6 +216,22 @@ else()
 endif()
 
 add_executable(Kestrel ${KESTREL_SOURCES} ${KESTREL_PLATFORM_SOURCES})
+if(APPLE)
+    set(kestrelBundleIcon "${CMAKE_CURRENT_BINARY_DIR}/generated/Kestrel.icns")
+    add_custom_command(OUTPUT "${kestrelBundleIcon}"
+        COMMAND ${CMAKE_COMMAND} "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/icon.png"
+            "-DOUTPUT=${kestrelBundleIcon}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/MacBundleIcon.cmake"
+        DEPENDS data/icon.png tools/MacBundleIcon.cmake VERBATIM)
+    target_sources(Kestrel PRIVATE "${kestrelBundleIcon}")
+    set_source_files_properties("${kestrelBundleIcon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(Kestrel PROPERTIES MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Info.plist.in")
+    # Preserve the command-line path used by scripts and kestrel-mcp.
+    add_custom_command(TARGET Kestrel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${CMAKE_CURRENT_BINARY_DIR}/Kestrel"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink "$<TARGET_FILE:Kestrel>" "${CMAKE_CURRENT_BINARY_DIR}/Kestrel"
+        VERBATIM)
+endif()
 
 target_include_directories(Kestrel PRIVATE include ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if(NOT WIN32 AND NOT APPLE)
@@ -215,10 +254,16 @@ if(NOT WIN32 AND NOT APPLE)
     endfunction()
     kestrel_vulkan_shader(UiVertex ui.vert)
     kestrel_vulkan_shader(UiFragment ui.frag)
+    kestrel_vulkan_shader(UiSolidVertex ui_solid.vert)
+    kestrel_vulkan_shader(UiSolidFragment ui_solid.frag)
     kestrel_vulkan_shader(WorldVertex world.vert)
+    kestrel_vulkan_shader(WorldBlendVertex world.vert -DTRANSLUCENT)
     kestrel_vulkan_shader(WorldFragment world.frag)
+    kestrel_vulkan_shader(SolidFragment world.frag -DSOLID)
     kestrel_vulkan_shader(BlendFragment world.frag -DBLEND)
     kestrel_vulkan_shader(ModelVertex model.vert)
+    kestrel_vulkan_shader(ModelBlendVertex model.vert -DTRANSLUCENT)
+    kestrel_vulkan_shader(HandVertex model.vert -DHAND)
     kestrel_vulkan_shader(ActorVertex actor.vert)
     kestrel_vulkan_shader(SkyVertex sky.vert)
     kestrel_vulkan_shader(SkyFragment sky.frag)
@@ -238,6 +283,11 @@ if(KESTREL_SINGLEPLAYER)
 endif()
 option(KESTREL_BUILD_TESTS "Build Kestrel regression tests" OFF)
 if(KESTREL_BUILD_TESTS)
+    add_executable(KestrelUpdatesTest tests/Updates.cpp src/client/services/UpdatePackage.cpp)
+    target_include_directories(KestrelUpdatesTest PRIVATE include)
+    target_link_libraries(KestrelUpdatesTest PRIVATE ZLIB::ZLIB)
+    add_test(NAME updates COMMAND KestrelUpdatesTest)
+
     add_executable(KestrelLocalEffectsTest tests/LocalEffects.cpp src/modding/LocalEffects.cpp)
     target_include_directories(KestrelLocalEffectsTest PRIVATE include)
     add_test(NAME local-effects COMMAND KestrelLocalEffectsTest)
@@ -260,13 +310,26 @@ if(KESTREL_BUILD_TESTS)
     add_test(NAME mod-textures COMMAND KestrelModTexturesTest)
 
     add_executable(KestrelModTextureAtlasTest
-        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
+        tests/ModTextureAtlas.cpp src/ui/Skin.cpp src/ui/FallbackArt.cpp src/ui/GameAssets.cpp src/ui/Image.cpp
         src/world/packs/PackSource.cpp src/world/packs/ServerPack.cpp
         src/util/JsonText.cpp src/util/Text.cpp src/client/diagnostics/DebugLog.cpp src/platform/Paths.cpp)
     target_include_directories(KestrelModTextureAtlasTest PRIVATE include ${stb_SOURCE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelModTextureAtlasTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME mod-texture-atlas COMMAND KestrelModTextureAtlasTest)
     set_tests_properties(mod-texture-atlas PROPERTIES ENVIRONMENT "KESTREL_VANILLA_PACK=${CMAKE_CURRENT_BINARY_DIR}/missing-mod-textures-assets")
+    add_executable(KestrelFallbackArtTest tests/FallbackArt.cpp src/ui/FallbackArt.cpp)
+    target_include_directories(KestrelFallbackArtTest PRIVATE include)
+    target_link_libraries(KestrelFallbackArtTest PRIVATE ZLIB::ZLIB)
+    add_test(NAME fallback-art COMMAND KestrelFallbackArtTest)
+    add_executable(KestrelDownloadedAssetsTest tests/DownloadedAssets.cpp src/world/packs/DownloadedAssets.cpp
+        src/world/packs/ServerPack.cpp src/util/JsonText.cpp src/util/Text.cpp)
+    target_include_directories(KestrelDownloadedAssetsTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelDownloadedAssetsTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME downloaded-assets COMMAND KestrelDownloadedAssetsTest)
+    add_executable(KestrelServerPacksTest tests/ServerPacks.cpp src/world/packs/ServerPack.cpp src/util/JsonText.cpp src/util/Text.cpp)
+    target_include_directories(KestrelServerPacksTest PRIVATE include)
+    target_link_libraries(KestrelServerPacksTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME server-packs COMMAND KestrelServerPacksTest)
     add_executable(KestrelJsonUiBindingsTest tests/JsonUiBindings.cpp src/ui/JsonUi.cpp src/ui/JsonUiExpression.cpp src/ui/JsonUiReader.cpp)
     target_include_directories(KestrelJsonUiBindingsTest PRIVATE include)
     target_link_libraries(KestrelJsonUiBindingsTest PRIVATE FalconProtocol)
@@ -274,6 +337,19 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelUiClippingTest tests/UiClipping.cpp src/ui/DrawList.cpp)
     target_include_directories(KestrelUiClippingTest PRIVATE include)
     add_test(NAME ui-clipping COMMAND KestrelUiClippingTest)
+    add_executable(KestrelOpaqueTerrainTest tests/OpaqueTerrain.cpp)
+    target_include_directories(KestrelOpaqueTerrainTest PRIVATE include)
+    add_test(NAME opaque-terrain COMMAND KestrelOpaqueTerrainTest)
+    add_executable(KestrelChunkVisibilityTest tests/ChunkVisibility.cpp)
+    target_include_directories(KestrelChunkVisibilityTest PRIVATE include)
+    add_test(NAME chunk-visibility COMMAND KestrelChunkVisibilityTest)
+    file(GLOB_RECURSE KESTREL_WORKER_TEST_SOURCES CONFIGURE_DEPENDS src/world/*.cpp)
+    add_executable(KestrelMeshSchedulerTest tests/MeshScheduler.cpp ${KESTREL_WORKER_TEST_SOURCES}
+        src/ui/Image.cpp src/ui/Localization.cpp src/util/Text.cpp src/util/JsonText.cpp)
+    target_include_directories(KestrelMeshSchedulerTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated" "${stb_SOURCE_DIR}")
+    target_link_libraries(KestrelMeshSchedulerTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME mesh-workers COMMAND KestrelMeshSchedulerTest)
+    set_tests_properties(mesh-workers PROPERTIES TIMEOUT 45)
     enable_testing()
     add_executable(KestrelAttachableFrameTest tests/AttachableFrame.cpp)
     target_include_directories(KestrelAttachableFrameTest PRIVATE include)
@@ -281,6 +357,13 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelHandVisibilityTest tests/HandVisibility.cpp)
     target_include_directories(KestrelHandVisibilityTest PRIVATE include)
     add_test(NAME hand-visibility COMMAND KestrelHandVisibilityTest)
+    add_executable(KestrelFirstPersonMotionTest tests/FirstPersonMotion.cpp)
+    target_include_directories(KestrelFirstPersonMotionTest PRIVATE include)
+    add_test(NAME first-person-motion COMMAND KestrelFirstPersonMotionTest)
+    add_executable(KestrelHotbarSelectionTest tests/HotbarSelection.cpp)
+    target_include_directories(KestrelHotbarSelectionTest PRIVATE include)
+    target_link_libraries(KestrelHotbarSelectionTest PRIVATE FalconNetwork)
+    add_test(NAME hotbar-selection COMMAND KestrelHotbarSelectionTest)
     add_executable(KestrelSettingsSliderTest tests/SettingsSlider.cpp)
     target_include_directories(KestrelSettingsSliderTest PRIVATE include)
     add_test(NAME settings-slider COMMAND KestrelSettingsSliderTest)
@@ -306,6 +389,41 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelBorderBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(KestrelBorderBlockTest PRIVATE FalconProtocol)
     add_test(NAME border-block COMMAND KestrelBorderBlockTest)
+    add_executable(KestrelHoneyBlockTest
+        tests/HoneyBlock.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelHoneyBlockTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelHoneyBlockTest PRIVATE FalconProtocol)
+    add_test(NAME honey-block COMMAND KestrelHoneyBlockTest)
+    add_executable(KestrelBlockShapesTest
+        tests/BlockShapes.cpp
+        src/world/assets/BlockClassification.cpp
+        src/world/assets/BlockStates.cpp
+        src/world/assets/TextureKeys.cpp
+        src/world/assets/BlockShapes.cpp
+        src/world/mesh/BlockModels.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBlockShapesTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBlockShapesTest PRIVATE FalconProtocol)
+    add_test(NAME block-shapes COMMAND KestrelBlockShapesTest)
+    add_executable(KestrelBlockEntityDisplaysTest
+        tests/BlockEntityDisplays.cpp
+        src/world/mesh/BlockEntityModels.cpp
+        src/world/mesh/BlockModels.cpp)
+    target_include_directories(KestrelBlockEntityDisplaysTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(KestrelBlockEntityDisplaysTest PRIVATE FalconProtocol)
+    add_test(NAME block-entity-displays COMMAND KestrelBlockEntityDisplaysTest)
+    add_executable(KestrelDoorStatesTest
+        tests/DoorStates.cpp
+        src/world/mesh/BlockModels.cpp)
+    target_include_directories(KestrelDoorStatesTest PRIVATE include)
+    target_link_libraries(KestrelDoorStatesTest PRIVATE FalconProtocol)
+    add_test(NAME door-states COMMAND KestrelDoorStatesTest)
     add_executable(KestrelLocalizedTextTest
         tests/LocalizedText.cpp
         src/client/app/ChatText.cpp
@@ -363,6 +481,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelHotbarDropTest PRIVATE include)
     target_link_libraries(KestrelHotbarDropTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME hotbar-drop COMMAND KestrelHotbarDropTest)
+    add_executable(KestrelBulkCraftingTest
+        tests/BulkCrafting.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelBulkCraftingTest PRIVATE include)
+    target_link_libraries(KestrelBulkCraftingTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME bulk-crafting COMMAND KestrelBulkCraftingTest)
     add_executable(KestrelInventoryTransactionTest
         tests/InventoryTransaction.cpp
         src/client/inventory/Inventory.cpp
@@ -380,6 +515,23 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelInventoryTransactionTest PRIVATE include)
     target_link_libraries(KestrelInventoryTransactionTest PRIVATE FalconNetwork ZLIB::ZLIB)
     add_test(NAME inventory-transaction COMMAND KestrelInventoryTransactionTest)
+    add_executable(KestrelFurnaceRecipesTest
+        tests/FurnaceRecipes.cpp
+        src/client/inventory/Inventory.cpp
+        src/client/inventory/InventoryStack.cpp
+        src/client/inventory/InventoryAnvil.cpp
+        src/client/inventory/InventoryStations.cpp
+        src/client/inventory/InventoryTrades.cpp
+        src/client/inventory/ContainerLayout.cpp
+        src/world/blocks/ItemInfo.cpp
+        src/ui/Localization.cpp
+        src/world/packs/PackSource.cpp
+        src/world/packs/ServerPack.cpp
+        src/util/JsonText.cpp
+        src/util/Text.cpp)
+    target_include_directories(KestrelFurnaceRecipesTest PRIVATE include)
+    target_link_libraries(KestrelFurnaceRecipesTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME furnace-recipes COMMAND KestrelFurnaceRecipesTest)
     add_executable(KestrelHealthFeedbackTest tests/HealthFeedback.cpp)
     target_include_directories(KestrelHealthFeedbackTest PRIVATE include)
     add_test(NAME health-feedback COMMAND KestrelHealthFeedbackTest)
@@ -392,6 +544,14 @@ if(KESTREL_BUILD_TESTS)
     add_executable(KestrelActorExtentTest tests/ActorExtent.cpp)
     target_include_directories(KestrelActorExtentTest PRIVATE include)
     add_test(NAME actor-extent COMMAND KestrelActorExtentTest)
+    add_executable(KestrelActorHitboxesTest tests/ActorHitboxes.cpp)
+    target_include_directories(KestrelActorHitboxesTest PRIVATE include)
+    target_link_libraries(KestrelActorHitboxesTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME actor-hitboxes COMMAND KestrelActorHitboxesTest)
+    add_executable(KestrelAimAssistTest tests/AimAssist.cpp src/client/view/AimAssist.cpp)
+    target_include_directories(KestrelAimAssistTest PRIVATE include)
+    target_link_libraries(KestrelAimAssistTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    add_test(NAME aim-assist COMMAND KestrelAimAssistTest)
     add_executable(KestrelActorRidersTest tests/ActorRiders.cpp)
     target_include_directories(KestrelActorRidersTest PRIVATE include)
     add_test(NAME actor-riders COMMAND KestrelActorRidersTest)
@@ -405,6 +565,20 @@ if(KESTREL_BUILD_TESTS)
         src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelPlayerMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME player-motion COMMAND KestrelPlayerMotionTest)
+    add_executable(KestrelInputTransitionsTest tests/InputTransitions.cpp)
+    target_include_directories(KestrelInputTransitionsTest PRIVATE include)
+    add_test(NAME input-transitions COMMAND KestrelInputTransitionsTest)
+    add_executable(KestrelFrameMotionTest
+        tests/FrameMotion.cpp
+        src/client/motion/FrameMotion.cpp
+        src/client/motion/PlayerMotion.cpp
+        src/client/motion/MotionMath.cpp
+        src/client/motion/MotionWorld.cpp
+        src/client/motion/MotionCollision.cpp
+        src/client/motion/MotionLiquid.cpp
+        src/world/blocks/BlockCollisions.cpp)
+    target_include_directories(KestrelFrameMotionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    add_test(NAME frame-motion COMMAND KestrelFrameMotionTest)
     add_executable(KestrelModCollisionTest tests/ModCollision.cpp src/world/blocks/BlockCollisions.cpp)
     target_include_directories(KestrelModCollisionTest PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_test(NAME mod-collision COMMAND KestrelModCollisionTest)
@@ -441,6 +615,13 @@ if(KESTREL_BUILD_TESTS)
     target_include_directories(KestrelWorldClockTest PRIVATE include)
     target_link_libraries(KestrelWorldClockTest PRIVATE FalconProtocol)
     add_test(NAME world-clock COMMAND KestrelWorldClockTest)
+    add_executable(KestrelLightmapTest tests/Lightmap.cpp)
+    target_include_directories(KestrelLightmapTest PRIVATE include)
+    add_test(NAME lightmap COMMAND KestrelLightmapTest)
+    add_executable(KestrelBlockParticlesTest tests/BlockParticles.cpp src/client/view/BlockParticles.cpp)
+    target_include_directories(KestrelBlockParticlesTest PRIVATE include)
+    target_link_libraries(KestrelBlockParticlesTest PRIVATE FalconProtocol)
+    add_test(NAME block-particles COMMAND KestrelBlockParticlesTest)
     add_executable(KestrelFogFrameTest tests/FogFrame.cpp src/client/view/Sky.cpp)
     target_include_directories(KestrelFogFrameTest PRIVATE include)
     add_test(NAME fog-frame COMMAND KestrelFogFrameTest)
@@ -456,12 +637,15 @@ if(KESTREL_BUILD_TESTS)
         src/util/JsonText.cpp
         src/util/Text.cpp)
     target_include_directories(KestrelEntityRenderingTest PRIVATE include)
-    target_link_libraries(KestrelEntityRenderingTest PRIVATE FalconNetwork ZLIB::ZLIB)
+    target_link_libraries(KestrelEntityRenderingTest PRIVATE FalconNetwork FalconProtocol ZLIB::ZLIB)
     add_test(NAME entity-rendering COMMAND KestrelEntityRenderingTest)
     add_executable(KestrelCrystalAnchorTest tests/CrystalAnchor.cpp)
     target_include_directories(KestrelCrystalAnchorTest PRIVATE include)
     target_link_libraries(KestrelCrystalAnchorTest PRIVATE FalconProtocol)
     add_test(NAME crystal-anchor COMMAND KestrelCrystalAnchorTest)
+    add_executable(KestrelPaintingTest tests/Painting.cpp)
+    target_include_directories(KestrelPaintingTest PRIVATE include)
+    add_test(NAME painting COMMAND KestrelPaintingTest)
     if(WIN32)
         add_executable(KestrelD3D12ShadersTest tests/D3D12Shaders.cpp)
         target_include_directories(KestrelD3D12ShadersTest PRIVATE include)

@@ -1,10 +1,21 @@
 #include "platform/System.h"
 
 #include <fstream>
+#include <thread>
 
 #include <unistd.h>
 
 namespace kestrel::platform {
+
+int bedrockDeviceOS()
+{
+    return 15;
+}
+
+void waitUntil(std::chrono::steady_clock::time_point deadline)
+{
+    std::this_thread::sleep_until(deadline);
+}
 
 MemoryUsage memoryUsage()
 {

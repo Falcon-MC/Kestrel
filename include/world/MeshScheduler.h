@@ -5,6 +5,7 @@
 #include "world/MeshPriority.h"
 
 #include <condition_variable>
+#include <chrono>
 #include <deque>
 #include <cstdint>
 #include <array>
@@ -37,7 +38,7 @@ struct MeshDeferred {
 
 class MeshScheduler {
 public:
-    MeshScheduler();
+    explicit MeshScheduler(unsigned int workerCount = 0);
     ~MeshScheduler();
 
     MeshScheduler(const MeshScheduler&) = delete;
@@ -83,18 +84,26 @@ private:
         uint64_t used = 0;
     };
 
-    void work();
-    bool hasReadyJob() const;
+    struct PreparedJob {
+        Job job;
+        std::shared_ptr<MeshMemoryCredit> credit;
+        std::chrono::steady_clock::time_point started;
+    };
+
+    void work(bool foreground);
+    bool hasReadyJob(bool foreground) const;
 
     std::vector<std::thread> workers;
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::map<SubChunkKey, Job> queued;
+    std::map<SubChunkKey, PreparedJob> prepared;
     std::set<SubChunkKey> active;
     std::map<SubChunkKey, uint64_t> newest;
     std::map<SubChunkKey, std::shared_ptr<std::atomic_bool>> cancellations;
     std::shared_ptr<MeshBudgetState> memory;
     std::shared_ptr<const BlockAssets> boundAssets;
+    std::shared_ptr<const std::vector<uint8_t>> opaqueMaterials;
     size_t maxTemplateQuads = 0;
     std::map<SubChunkKey, LightCacheEntry> lightCache;
     MeshViewPriority view;
@@ -106,6 +115,7 @@ private:
     double meshMilliseconds = 0.0;
     uint64_t meshCount = 0;
     bool stopping = false;
+    bool separateLighting = false;
 };
 
 }

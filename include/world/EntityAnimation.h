@@ -142,6 +142,8 @@ struct EntityBone {
  */
 using BoneMatrix = std::array<float, 12>;
 
+std::vector<EntityBone> poseBonesForGeometry(const std::vector<EntityBone>& combined, const std::vector<EntityBone>& selected);
+
 /**
  * Movement and look of one entity for a frame.
  */
@@ -167,10 +169,12 @@ struct AnimationInput {
     float onFireTime = 0.0f;
     uint64_t horseFlags = 0;
     std::unordered_map<std::string, double> metadataQueries;
+    std::unordered_map<std::string, double> properties;
     bool onGround = true;
     float swimAmount = 0.0f;
     std::optional<bool> inWater;
     std::optional<std::array<double, 3>> tickPositionDelta;
+    std::optional<double> walkDistance;
     std::array<float, 3> nativeVelocity {};
     std::optional<float> frameAlpha;
     float shakeTime = 0.0f;
@@ -184,8 +188,9 @@ struct AnimationInput {
     std::string name;
     std::string mainHandItem;
     std::string offHandItem;
-    std::array<std::string, 4> armorItems;
-    std::array<std::optional<uint32_t>, 4> armorColors;
+    std::array<std::string, 5> armorItems;
+    std::array<std::optional<uint32_t>, 5> armorColors;
+    std::array<int32_t, 5> armorDamage {};
     // Ticks the main hand item has been held in use, like a bow being drawn, 0 when it is not.
     double itemUseTicks = 0.0;
     std::vector<std::pair<std::string, double>> engineVariables;
@@ -207,6 +212,7 @@ bool targetRotationIsAbsolute(const std::string& identifier);
  * animation, placed in the camera basis rather than by its body yaw.
  */
 bool cameraFacingSprite(const std::string& identifier);
+float entityModelYaw(const std::string& identifier, float bodyYaw);
 bool projectileEntity(const std::string& identifier);
 
 /**
@@ -237,6 +243,11 @@ public:
      */
     double evaluate(const molang::Script& script);
     double evaluateWithThis(const molang::Script& script, double base);
+
+    const std::unordered_map<std::string, double>& variableValues() const
+    {
+        return variables;
+    }
 
     /**
      * The rotation, in degrees, the clip gives each of its bones at that

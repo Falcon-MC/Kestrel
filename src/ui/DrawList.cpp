@@ -1,4 +1,5 @@
 #include "ui/DrawList.h"
+#include "world/Glint.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +15,20 @@ void DrawList::reset(float scale, float u, float v)
     whiteV = v;
 }
 
+void DrawList::applyGlint(size_t first, const std::array<float, 4>& base, const std::array<float, 4>& region,
+    const std::array<float, 4>& parameters, float scaleU, float scaleV)
+{
+    if (base[2] <= base[0] || base[3] <= base[1]) return;
+    for (size_t index = first; index < vertexData.size(); ++index) {
+        auto& vertex = vertexData[index];
+        float u = (vertex.u - base[0]) / (base[2] - base[0]);
+        float v = (vertex.v - base[1]) / (base[3] - base[1]);
+        vertex.glintUv = world::itemGlintUv(u, v, parameters, scaleU, scaleV);
+        vertex.glintRegion = region;
+        vertex.glintStrength = parameters[2];
+    }
+}
+
 void DrawList::fill(const Rect& logical, Color color)
 {
     float x0 = std::round(logical.x * pixelScale);
@@ -23,7 +38,10 @@ void DrawList::fill(const Rect& logical, Color color)
     if (x1 <= x0 || y1 <= y0) {
         return;
     }
+    size_t first = vertexData.size();
     quad(x0, y0, x1, y1, whiteU, whiteV, whiteU, whiteV, color.packed());
+    // Solid fills do not need an atlas lookup for every covered pixel.
+    for (size_t index = first; index < vertexData.size(); ++index) vertexData[index].radius = -2.0f;
 }
 
 uint32_t DrawList::layered(uint32_t color) const

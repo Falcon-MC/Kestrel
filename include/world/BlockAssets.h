@@ -1,9 +1,12 @@
 #pragma once
 
 #include "world/BiomeTints.h"
+#include "world/BannerDisplay.h"
+#include "world/DecoratedPot.h"
 #include "world/BlockCollisions.h"
 #include "world/BlockRegistry.h"
 #include "world/EntityAnimation.h"
+#include "world/Painting.h"
 #include "world/ServerPack.h"
 
 #include <algorithm>
@@ -54,6 +57,11 @@ enum ModelTemplateFlag : uint32_t {
     TemplateWall = 1 << 4,
     TemplateGateAxisX = 1 << 5,
     TemplateGateAxisZ = 1 << 6,
+    TemplateDoor = 1 << 7,
+    TemplateChorus = 1 << 8,
+    TemplateChorusFlower = 1 << 9,
+    TemplateChorusSupport = 1 << 10,
+    TemplateRedstoneWire = 1 << 11,
 };
 
 enum ModelQuadFlag : uint32_t {
@@ -136,6 +144,12 @@ enum BlockEntityKind : uint8_t {
     EntityWallSkull,
     EntityCopperChest,
     EntityShulkerBox,
+    EntityCopperGolemStatue,
+    EntityConduit,
+    EntityStrawBed,
+    EntityDecoratedPot,
+    EntityPiston,
+    EntityFlowerPot,
 };
 
 inline constexpr size_t ChestKinds = 7;
@@ -152,6 +166,8 @@ inline constexpr const char* ChestLidMovingKey = "KestrelLidMoving";
 struct ChestLid {
     uint32_t modelTemplate = NoModelTemplate;
     uint32_t rotation = 0;
+    bool shulker = false;
+    uint32_t facing = 1;
 };
 
 /**
@@ -171,7 +187,22 @@ struct BlockEntityTemplates {
     std::array<std::array<uint32_t, 4>, SkullKinds> wallSkull {};
     std::array<std::array<uint32_t, FineRotations>, DyeColors> standingBanner {};
     std::array<std::array<uint32_t, 4>, DyeColors> wallBanner {};
-    std::array<uint32_t, DyeColors + 1> shulkerBox {};
+    std::array<uint32_t, FineRotations> standingBannerBody {};
+    std::array<uint32_t, 4> wallBannerBody {};
+    std::array<std::array<uint32_t, DyeColors>, 2> bannerCloth {};
+    std::array<std::array<uint32_t, BannerPatternNames.size() + 1>, 2> bannerPattern {};
+    std::array<std::array<uint32_t, 6>, DyeColors + 1> shulkerBox {};
+    std::array<std::array<uint32_t, 6>, DyeColors + 1> shulkerBody {};
+    std::array<uint32_t, DyeColors + 1> shulkerLid {};
+    std::array<std::array<std::array<uint32_t, 4>, 4>, 4> copperGolemStatue {};
+    uint32_t conduit = NoModelTemplate;
+    std::array<std::array<uint32_t, 4>, 2> strawBed {};
+    std::array<uint32_t, 7> enchantingBook {};
+    std::array<uint32_t, 5> activeConduit {};
+    uint32_t potBody = NoModelTemplate;
+    uint32_t potBlank = NoModelTemplate;
+    std::unordered_map<uint32_t, uint32_t> pottedPlants;
+    std::array<std::array<uint32_t, 4>, PotPatterns.size() + 1> potSides {};
 };
 
 struct BlockVisual {
@@ -185,6 +216,9 @@ struct BlockVisual {
     uint8_t lightEmission = 0;
     uint8_t lightFilter = 0;
     bool powderSnow = false;
+    bool flatLighting = false;
+    uint8_t doorState = 0;
+    uint8_t redstoneConnections = 0;
 
     bool emitsCubeGeometry() const
     {
@@ -348,7 +382,14 @@ enum class EntityBlend : uint8_t {
 };
 
 enum class EntityMaterial : uint8_t {
-    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest,
+    Default, Dragon, DissolveDepth, DissolveColor, ColorMask, Multitexture, AlphaTest, DyedArmor, Horse,
+};
+
+struct EntityMaterialChoice {
+    EntityMaterial material = EntityMaterial::Default;
+    EntityBlend blend = EntityBlend::Opaque;
+    bool oneSided = false;
+    bool glint = false;
 };
 
 struct EntityRenderController {
@@ -364,12 +405,24 @@ struct EntityRenderController {
     std::array<molang::Script, 4> hurtColor;
     std::array<molang::Script, 4> fireColor;
     EntityMaterial material = EntityMaterial::Default;
+    molang::Script materialSelector;
+    std::vector<EntityMaterialChoice> materialChoices;
     std::vector<EntityPartRule> parts;
     EntityBlend blend = EntityBlend::Opaque;
     bool oneSided = false;
     bool ignoreLighting = false;
     std::array<molang::Script, 4> uvAnim;
     bool uvAnimated = false;
+
+    EntityMaterialChoice selectedMaterial(double selection) const
+    {
+        if (materialChoices.empty()) {
+            return { material, blend, oneSided };
+        }
+        size_t index = !std::isfinite(selection) || selection <= 0.0 ? 0
+            : selection >= double(materialChoices.size() - 1) ? materialChoices.size() - 1 : static_cast<size_t>(selection);
+        return materialChoices[index];
+    }
 };
 
 /**
@@ -394,6 +447,7 @@ struct EntityModel {
     std::vector<EntityRenderController> controllers;
     std::shared_ptr<const EntityScripts> scripts;
     uint32_t layer = 0;
+    bool wearable = false;
     EntityRig combined;
     std::vector<CombinedQuadSource> combinedSources;
 };
@@ -404,9 +458,11 @@ public:
     static std::shared_ptr<const BlockAssets> create(const std::vector<std::shared_ptr<const PackFiles>>& packs, const std::vector<CustomBlock>& customBlocks, std::string& error);
 
     const BlockVisual& visual(uint32_t networkValue, bool hashed, const SequentialMap* sequential = nullptr) const;
+    std::optional<CollisionBox> doorBox(uint32_t value, uint32_t other, bool hashed, const SequentialMap* sequential) const;
     std::shared_ptr<const SequentialMap> sequentialMap() const;
     std::string describe(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
     std::string blockName(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
+    const std::vector<std::string>& blockTags(uint32_t networkValue, bool hashed, const SequentialMap* sequential) const;
 
     /**
      * Every block name, vanilla and custom, once each, sorted and with its
@@ -467,6 +523,33 @@ public:
         return quads;
     }
 
+    const std::array<uint32_t, 7>& enchantingBookTemplates() const
+    {
+        return entityTemplates.enchantingBook;
+    }
+
+    const std::array<uint32_t, 5>& activeConduitTemplates() const
+    {
+        return entityTemplates.activeConduit;
+    }
+
+    uint32_t bannerClothTemplate(bool wall, uint8_t color) const
+    {
+        return entityTemplates.bannerCloth[wall ? 1 : 0][color & 15];
+    }
+
+    uint32_t bannerPatternTemplate(bool wall, size_t pattern) const
+    {
+        return pattern <= BannerPatternNames.size() ? entityTemplates.bannerPattern[wall ? 1 : 0][pattern] : NoModelTemplate;
+    }
+
+    uint32_t potBodyTemplate() const { return entityTemplates.potBody; }
+
+    uint32_t potSideTemplate(size_t pattern, size_t side) const
+    {
+        return pattern <= PotPatterns.size() && side < 4 ? entityTemplates.potSides[pattern][side] : NoModelTemplate;
+    }
+
     const BiomeTints& biomeTints() const
     {
         return biomes;
@@ -496,6 +579,14 @@ public:
     {
         auto found = attachableModels.find(identifier);
         return found == attachableModels.end() ? nullptr : &found->second;
+    }
+
+    uint32_t armorGlintLayer() const { return armorGlintTexture; }
+    uint32_t itemGlintLayer() const { return itemGlintTexture; }
+    std::array<float, 4> glintTextureParameters(uint32_t layer) const
+    {
+        auto grid = entityTileGrid(layer);
+        return { 0.5f, 0.5f, grid.tilesX * grid.coverX * EntityTextureSize, grid.tilesY * grid.coverY * EntityTextureSize };
     }
 
     /**
@@ -533,6 +624,16 @@ public:
     }
 
     std::optional<uint32_t> crystalBeamLayer() const { return crystalBeamTexture; }
+    std::optional<uint32_t> paintingAtlasLayer() const { return paintingAtlasTexture; }
+    std::optional<uint32_t> paintingLayer(const PaintingMotive& motive) const
+    {
+        if (!motive.separate) {
+            return paintingAtlasTexture;
+        }
+        auto found = paintingTextures.find(motive.name);
+        return found == paintingTextures.end() ? std::nullopt : std::optional<uint32_t>(found->second);
+    }
+    std::optional<uint32_t> beaconBeamLayer(bool shell) const { return shell ? beaconBeamShellTexture : beaconBeamTexture; }
 
     uint32_t entityTextureLayers() const
     {
@@ -554,7 +655,7 @@ public:
         return found == entityTiles.end() ? EntityTileGrid {} : found->second;
     }
 
-    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint) const;
+    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt, uint32_t animationFrame = 0) const;
 
     /**
      * The look of the default state of the block an item places, when it is
@@ -654,6 +755,7 @@ private:
 
     BlockRegistry registry;
     std::vector<CustomBlock> customs;
+    std::unordered_map<std::string, std::vector<std::string>> customTags;
     std::vector<CustomState> customStates;
     // Collision boxes of the custom states, which their collision states point into.
     std::vector<CollisionBox> customBoxes;
@@ -672,6 +774,12 @@ private:
     AnimationLibrary animations;
     std::vector<uint8_t> entityPixels;
     std::optional<uint32_t> crystalBeamTexture;
+    std::optional<uint32_t> paintingAtlasTexture;
+    std::map<std::string, uint32_t, std::less<>> paintingTextures;
+    std::optional<uint32_t> beaconBeamTexture;
+    std::optional<uint32_t> beaconBeamShellTexture;
+    uint32_t armorGlintTexture = NoEntityChoice;
+    uint32_t itemGlintTexture = NoEntityChoice;
     std::unordered_map<uint32_t, EntityTileGrid> entityTiles;
     TextureArray textureArray;
     BiomeTints biomes;
@@ -680,6 +788,7 @@ private:
     std::unordered_map<std::string, uint32_t> blockByName;
     std::unordered_map<std::string, BlockVisual> carriedVisuals;
     std::unordered_map<std::string, std::vector<uint8_t>> itemFiles;
+    std::unordered_map<std::string, std::vector<uint8_t>> dyeItemFiles;
     std::unordered_map<std::string, std::string> itemIconNames;
     uint32_t sun = 0;
     std::array<uint32_t, 8> moonPhases {};

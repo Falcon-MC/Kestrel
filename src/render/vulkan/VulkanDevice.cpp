@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -46,6 +47,8 @@ SpirV spirv(const uint32_t (&code)[Size])
 SpirV shaderCode(ShaderLibrary library, std::string_view entry)
 {
     if (library == ShaderLibrary::Ui) {
+        if (entry == "vs_ui_solid") return spirv(shaders::UiSolidVertex);
+        if (entry == "ps_ui_solid") return spirv(shaders::UiSolidFragment);
         if (entry == "vs_main") {
             return spirv(shaders::UiVertex);
         }
@@ -63,11 +66,20 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         if (entry == "vs_world") {
             return spirv(shaders::WorldVertex);
         }
+        if (entry == "vs_world_blend") {
+            return spirv(shaders::WorldBlendVertex);
+        }
         if (entry == "vs_actor") {
             return spirv(shaders::ActorVertex);
         }
         if (entry == "vs_model") {
             return spirv(shaders::ModelVertex);
+        }
+        if (entry == "vs_model_blend") {
+            return spirv(shaders::ModelBlendVertex);
+        }
+        if (entry == "vs_hand") {
+            return spirv(shaders::HandVertex);
         }
         if (entry == "vs_overlay") {
             return spirv(shaders::OverlayVertex);
@@ -77,6 +89,9 @@ SpirV shaderCode(ShaderLibrary library, std::string_view entry)
         }
         if (entry == "ps_world") {
             return spirv(shaders::WorldFragment);
+        }
+        if (entry == "ps_solid") {
+            return spirv(shaders::SolidFragment);
         }
         if (entry == "ps_blend") {
             return spirv(shaders::BlendFragment);
@@ -106,6 +121,8 @@ VkFormat vertexFormat(VertexFormat format)
         return VK_FORMAT_R32_SFLOAT;
     case VertexFormat::Float2:
         return VK_FORMAT_R32G32_SFLOAT;
+    case VertexFormat::Float4:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
     case VertexFormat::Float3:
         return VK_FORMAT_R32G32B32_SFLOAT;
     case VertexFormat::UByte4Norm:
@@ -568,7 +585,7 @@ public:
 
         VkPipelineRasterizationStateCreateInfo rasterizer { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.cullMode = desc.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.lineWidth = 1.0f;
 
@@ -634,6 +651,8 @@ public:
 
     uint64_t beginFrame(float r, float g, float b) override
     {
+        frameFenceWait = 0.0;
+        frameSubmissionTime = 0.0;
         collectTransfers();
         active = false;
         if (requestedWidth == 0 || requestedHeight == 0) {
@@ -643,7 +662,9 @@ public:
             recreateSwapchain();
         }
 
+        const auto waitStarted = std::chrono::steady_clock::now();
         vkWaitForFences(device, 1, &inFlight[frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        frameFenceWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStarted).count();
         if (slotSubmissions[frame] > completed) {
             completed = slotSubmissions[frame];
         }
@@ -693,6 +714,16 @@ public:
         return submissions + 1;
     }
 
+    double frameFenceWaitMilliseconds() const override
+    {
+        return frameFenceWait;
+    }
+
+    double frameSubmissionTimeSeconds() const override
+    {
+        return frameSubmissionTime;
+    }
+
     bool recording() const override
     {
         return active;
@@ -724,7 +755,7 @@ public:
 
     void setActorConstants(const void* values, uint32_t count) override
     {
-        if (!active || !bound || !bound->actorConstants || !values || count != 60) return;
+        if (!active || !bound || !bound->actorConstants || !values || count != 68) return;
         size_t pageBytes = actorStride * 4096;
         size_t page = actorCursor / pageBytes;
         size_t offset = actorCursor % pageBytes;
@@ -741,7 +772,7 @@ public:
             allocation.descriptorSetCount = 1;
             allocation.pSetLayouts = &actorLayout;
             check(vkAllocateDescriptorSets(device, &allocation, &created.set), "vkAllocateDescriptorSets: actor constants");
-            VkDescriptorBufferInfo info { buffer, 0, 60 * sizeof(uint32_t) };
+            VkDescriptorBufferInfo info { buffer, 0, 68 * sizeof(uint32_t) };
             VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             write.dstSet = created.set;
             write.dstBinding = 0;
@@ -803,10 +834,10 @@ public:
         }
     }
 
-    void drawIndexed(uint32_t indexCount) override
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstInstance, uint32_t firstIndex) override
     {
         if (active) {
-            vkCmdDrawIndexed(command, indexCount, 1, 0, 0, 0);
+            vkCmdDrawIndexed(command, indexCount, instanceCount, firstIndex, 0, firstInstance);
         }
     }
 
@@ -832,6 +863,7 @@ public:
             submit.pSignalSemaphores = &renderFinished[imageIndex];
         }
         check(vkQueueSubmit(queue, 1, &submit, inFlight[frame]), "vkQueueSubmit");
+        frameSubmissionTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         slotSubmissions[frame] = ++submissions;
         if (offscreen) {
             if (capturing) {
@@ -1051,6 +1083,8 @@ public:
     }
 
 private:
+    double frameFenceWait = 0.0;
+    double frameSubmissionTime = 0.0;
     struct RetiredBuffer {
         std::unique_ptr<Buffer> buffer;
         uint64_t frame = 0;
@@ -1142,7 +1176,7 @@ private:
         if (actorLayout) return actorLayout;
         VkPhysicalDeviceProperties properties {};
         vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-        actorStride = std::max<size_t>(256, properties.limits.minUniformBufferOffsetAlignment);
+        actorStride = std::max<size_t>(512, properties.limits.minUniformBufferOffsetAlignment);
         VkDescriptorSetLayoutBinding binding {};
         binding.binding = 0;
         binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;

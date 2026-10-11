@@ -1,5 +1,9 @@
 #include "client/session/SessionData.h"
 #include "client/CrystalMetadata.h"
+#include "client/FishingLine.h"
+#include "client/ActorAimAssist.h"
+#include "client/ActorPose.h"
+#include "client/ProjectileMotion.h"
 
 #include "Protocol/Types/SerializedSkin.h"
 #include "client/DebugLog.h"
@@ -233,7 +237,10 @@ float metadataScale(const EntityDataMap& metadata, float fallback)
 void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
 {
     for (const EntityDataEntry& entry : metadata.mEntries) {
+        applyActorHitboxes(entry, actor.hitboxes);
+        applyActorAimAssist(entry, actor.aimAssistIndices);
         applyCrystalBeamTarget(entry, actor.crystalBeamTarget);
+        if (actor.identifier == "minecraft:fishing_hook") applyFishingOwner(entry, actor.fishingOwner);
         switch (entry.mId) {
         case 0:
             if ((actor.flags[0] ^ static_cast<uint64_t>(entry.mLongValue)) & 1u) actor.fireChangedAt = secondsNow();
@@ -329,11 +336,14 @@ std::vector<SkinUpload> Session::takeSkinUploads()
 
 /**
  * Spawn packets give feet positions; player movement packets give eye positions.
- * Every move counts as a new sample for
- * the renderer to glide toward, and a teleport tells it to jump instead.
+ * Keep the last network position separate from the tick interpolation so
+ * omitted delta-packet coordinates come from the last packet, not the pose.
  */
 void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float yaw, float headYaw, float pitch, bool teleport, bool onGround, bool feetPosition)
 {
+    if (!validActorPose({ x, y, z }, { yaw, headYaw, pitch })) {
+        return;
+    }
     auto actor = actors.find(runtimeId);
     if (actor == actors.end()) {
         return;
@@ -360,11 +370,34 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
     }
     actor->second.x = x;
     actor->second.y = y - (!feetPosition && actor->second.identifier == "minecraft:player" ? session::PlayerEyeHeight : 0.0);
-    if (actor->second.identifier == "minecraft:falling_block") actor->second.y -= 0.49;
+    if (actor->second.identifier == "minecraft:falling_block" || actor->second.identifier == "minecraft:tnt") actor->second.y -= 0.49;
     actor->second.z = z;
     actor->second.yaw = yaw;
     actor->second.headYaw = headYaw;
     actor->second.pitch = pitch;
+    if (actor->second.identifier != "minecraft:player" && !world::projectileEntity(actor->second.identifier)) {
+        auto position = std::array<double, 3> { actor->second.x, actor->second.y, actor->second.z };
+        auto turn = std::array<float, 3> { yaw, headYaw, pitch };
+        if (teleport || !actor->second.interpolation.initialized) {
+            actorMoveQueues.erase(runtimeId);
+            actor->second.interpolation.retarget(position, turn, true);
+        } else {
+            actorMoveQueues[runtimeId].push(position, turn);
+        }
+    }
+}
+
+void Session::tickActors(double tickTime)
+{
+    for (auto& [id, actor] : actors) {
+        if (actor.identifier == "minecraft:player" || world::projectileEntity(actor.identifier)) continue;
+        if (auto queue = actorMoveQueues.find(id); queue != actorMoveQueues.end()) {
+            ActorMoveTarget sample;
+            if (queue->second.pop(sample)) actor.interpolation.retarget(sample.position, sample.turn, false);
+        }
+        actor.interpolation.tick(tickTime);
+    }
+    std::erase_if(actorMoveQueues, [&](const auto& entry) { return !actors.contains(entry.first); });
 }
 
 /**
@@ -374,6 +407,7 @@ void Session::moveActor(uint64_t runtimeId, double x, double y, double z, float 
  */
 void Session::setActorMotion(uint64_t runtimeId, float x, float y, float z)
 {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;
     auto actor = actors.find(runtimeId);
     if (actor == actors.end()) {
         return;
@@ -407,13 +441,15 @@ void Session::tickProjectiles(double tickTime)
         view.projectileTickTime = tickTime;
         if (view.projectileShakeTicks) --view.projectileShakeTicks;
         view.projectilePositionDelta = {};
-        if (!view.projectileTicksRemaining) continue;
-        const double divisor = view.projectileTicksRemaining--;
-        std::array<double, 3> position;
-        std::array<float, 3> turn;
+        const uint8_t correctionTicks = view.projectileTicksRemaining;
+        const auto position = projectileStep(view.projectilePrevious, view.projectileTarget, view.velocity,
+            correctionTicks, view.identifier == "minecraft:arrow" && !view.onGround);
+        auto turn = view.projectilePreviousTurn;
+        if (correctionTicks) --view.projectileTicksRemaining;
         for (size_t axis = 0; axis < 3; ++axis) {
-            position[axis] = view.projectilePrevious[axis] + (view.projectileTarget[axis] - view.projectilePrevious[axis]) / divisor;
-            turn[axis] = view.projectilePreviousTurn[axis] + std::remainder(view.projectileTargetTurn[axis] - view.projectilePreviousTurn[axis], 360.0f) / float(divisor);
+            if (correctionTicks) {
+                turn[axis] += std::remainder(view.projectileTargetTurn[axis] - view.projectilePreviousTurn[axis], 360.0f) / correctionTicks;
+            }
         }
         view.x = position[0]; view.y = position[1]; view.z = position[2];
         for (size_t axis = 0; axis < 3; ++axis) view.projectilePositionDelta[axis] = position[axis] - view.projectilePrevious[axis];

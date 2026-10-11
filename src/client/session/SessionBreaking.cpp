@@ -1,8 +1,11 @@
 #include "client/session/SessionData.h"
+#include "Network/BedrockConnection.h"
 
 #include "Protocol/Packets/LevelEventPacket.h"
 #include "Protocol/Packets/PlayerAuthInputPacket.h"
+#include "Protocol/Packets/StartGamePacket.h"
 #include "world/BlockBreaking.h"
+#include "world/DoorState.h"
 
 #include <algorithm>
 #include <cmath>
@@ -138,6 +141,11 @@ std::vector<world::CollisionBox> Session::shapeBoxes(uint32_t value, int32_t x, 
  */
 world::CollisionBox Session::selectionBox(uint32_t value, int32_t x, int32_t y, int32_t z)
 {
+    const world::BlockVisual& visual = assets->visual(value, ids.hashed, ids.sequential.get());
+    if (assets->templateFlags(visual) & world::TemplateDoor) {
+        uint32_t other = blockAt(x, y + ((visual.doorState & world::DoorUpper) ? -1 : 1), z);
+        if (auto box = assets->doorBox(value, other, ids.hashed, ids.sequential.get())) return *box;
+    }
     return session::selectionBounds(*assets, ids, value, shapeBoxes(value, x, y, z));
 }
 
@@ -281,8 +289,8 @@ void Session::emitBurst(ParticleBurst::Kind kind, const std::array<int32_t, 3>& 
 
 /**
  * Finishes breaking the block being mined the way the game predicts it: the
- * server hears a predicted destroy with the break transaction beside it,
- * and the client clears the block at once, keeping any water it held. The
+ * completion follows the authority advertised by StartGame, and the
+ * client clears the block at once, keeping any water it held. The
  * particles and break sound wait for the server to agree, so a break it
  * cancels only puts the block back.
  */
@@ -291,30 +299,35 @@ void Session::destroyPredicted(PlayerAuthInputPacket& packet, int32_t face, cons
     const std::array<int32_t, 3>& cell = breaking.cell;
     uint32_t value = breaking.value;
     PlayerBlockActionData predict;
-    predict.mAction = PlayerActionType::BlockPredictDestroy;
-    predict.mBlockPosition = Vector3i(cell[0], cell[1], cell[2]);
-    predict.mFace = face;
-    packet.mPlayerActions.push_back(predict);
-
-    int32_t slot = 0;
-    {
-        std::lock_guard<std::mutex> guard(mutex);
-        slot = std::clamp(current.hud.selectedSlot, 0, 8);
-    }
     std::string name = assets->blockName(value, ids.hashed, ids.sequential.get());
-    ItemUseTransaction& transaction = packet.mItemUseTransaction;
-    transaction.mActionType = BreakBlockAction;
-    transaction.mBlockPosition = predict.mBlockPosition;
-    transaction.mBlockFace = face;
-    transaction.mClickPosition = Vector3f(float(point[0] - cell[0]), float(point[1] - cell[1]), float(point[2] - cell[2]));
-    transaction.mHotbarSlot = slot;
-    transaction.mItemInHand = inventoryModel.slots[size_t(slot)];
-    transaction.mPlayerPosition = packet.mPosition;
-    transaction.mBlockDefinition = std::make_shared<BlockDefinition>(name, static_cast<int>(value), Tag {});
-    transaction.mTriggerType = ItemUseTriggerType::PlayerInput;
-    transaction.mClientInteractPrediction = ItemUsePredictedResult::Success;
-    packet.mHasItemUseTransaction = true;
-    packet.mInputData.push_back(static_cast<int32_t>(PlayerAuthInputData::PerformItemInteraction));
+    const auto& startGame = connection->getStartGame();
+    if (startGame && startGame->mServerAuthoritativeBlockBreaking) {
+        predict.mAction = PlayerActionType::BlockPredictDestroy;
+        predict.mBlockPosition = Vector3i(cell[0], cell[1], cell[2]);
+        predict.mFace = face;
+        packet.mPlayerActions.push_back(predict);
+    } else {
+        predict.mAction = PlayerActionType::StopBreak;
+        packet.mPlayerActions.push_back(predict);
+        int32_t slot = 0;
+        {
+            std::lock_guard<std::mutex> guard(mutex);
+            slot = std::clamp(current.hud.selectedSlot, 0, 8);
+        }
+        ItemUseTransaction& transaction = packet.mItemUseTransaction;
+        transaction.mActionType = BreakBlockAction;
+        transaction.mBlockPosition = Vector3i(cell[0], cell[1], cell[2]);
+        transaction.mBlockFace = face;
+        transaction.mClickPosition = Vector3f(float(point[0] - cell[0]), float(point[1] - cell[1]), float(point[2] - cell[2]));
+        transaction.mHotbarSlot = slot;
+        transaction.mItemInHand = inventoryModel.slots[size_t(slot)];
+        transaction.mPlayerPosition = packet.mPosition;
+        transaction.mBlockDefinition = std::make_shared<BlockDefinition>(name, static_cast<int>(value), Tag {});
+        transaction.mTriggerType = ItemUseTriggerType::PlayerInput;
+        transaction.mClientInteractPrediction = ItemUsePredictedResult::Success;
+        packet.mHasItemUseTransaction = true;
+        packet.mInputData.push_back(static_cast<int32_t>(PlayerAuthInputData::PerformItemInteraction));
+    }
 
     uint32_t extra = blockAt(cell[0], cell[1], cell[2], 1);
     bool keepsLiquid = extra != world::ImplicitAir && !(assets->visual(extra, ids.hashed, ids.sequential.get()).flags & world::FlagAir);
@@ -453,7 +466,9 @@ void Session::tickBreaking(PlayerAuthInputPacket& packet, const MotionTick& tick
         broken = BreakHit { hit->cell, hit->face, hit->value, hit->point };
     }
     bool blocked = gameType == CreativeMode && world::preventsCreativeBreaking(conditions.heldItem);
-    BreakStep step = breaking.step(held, broken, speed, gameType == CreativeMode, blocked);
+    const auto& startGame = connection->getStartGame();
+    bool serverAuthoritative = startGame && startGame->mServerAuthoritativeBlockBreaking;
+    BreakStep step = breaking.step(held, broken, speed, gameType == CreativeMode, blocked, serverAuthoritative);
     if (step.swung) {
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.lastSwing = now;

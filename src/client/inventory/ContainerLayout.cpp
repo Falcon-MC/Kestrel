@@ -129,7 +129,7 @@ ContainerLayout containerLayout(const InventoryState& state)
     case ContainerType::Smoker: {
         std::string name = state.type == ContainerType::Furnace ? "furnace" : state.type == ContainerType::Smoker ? "smoker" : "blast_furnace";
         result.screen = name + "." + name + "_screen";
-        result.title = "container." + name;
+        result.title = state.type == ContainerType::Furnace ? "container.furnace" : "tile." + name + ".name";
         run("furnace_ingredient_items", Container, 1);
         run("furnace_fuel_items", Container + 1, 1);
         run("furnace_output_items", Container + 2, 1);

@@ -113,20 +113,16 @@ SkyFrame atmosphereAt(double worldTicks, float renderDistance, float rainLevel, 
     if (!std::isfinite(worldTicks)) {
         worldTicks = 0.0;
     }
-    double dayTicks = std::fmod(worldTicks, DayTicks);
-    if (dayTicks < 0.0) {
-        dayTicks += DayTicks;
-    }
-    float dayFraction = static_cast<float>(dayTicks / DayTicks);
-    float angle = dayFraction * Tau;
-    Vec3 sun { std::cos(angle), std::sin(angle), 0.0f };
+    float angle = celestialAngle(worldTicks) * Tau;
+    Vec3 sun { -std::sin(angle), std::cos(angle), 0.0f };
     for (float& component : sun) {
         if (std::abs(component) < 1e-6f) {
             component = 0.0f;
         }
     }
 
-    float daylight = std::clamp(sun[1] * 0.8f + 0.2f, 0.0f, 1.0f);
+    float daylight = 1.0f / 12.0f + (11.0f / 12.0f) * std::clamp(sun[1] * 2.0f + 0.5f, 0.0f, 1.0f)
+        * (1.0f - rain * 0.3125f) * (1.0f - thunder * 0.3125f);
     float sunrise = std::pow(1.0f - std::abs(sun[1]), 3.0f) * (0.25f + daylight * 0.75f);
     float storm = std::clamp(rain * 0.55f + thunder * 0.3f, 0.0f, 0.8f);
     Vec3 clearZenith = mix3({ 0.004f, 0.008f, 0.03f }, { 0.18f, 0.48f, 0.88f }, daylight);

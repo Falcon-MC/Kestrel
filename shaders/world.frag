@@ -14,6 +14,7 @@ layout(set = 0, binding = 2) uniform sampler2DArray entities;
 layout(set = 0, binding = 3) uniform sampler2DArray entitiesHigh;
 layout(set = 0, binding = 4) uniform sampler2DArray entities2;
 layout(set = 0, binding = 5) uniform sampler2DArray entities3;
+layout(set = 0, binding = 6) uniform sampler2DArray lightmap;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -29,6 +30,9 @@ layout(location = 10) flat in vec4 inActorGrid0;
 layout(location = 11) flat in vec4 inActorGrid1;
 layout(location = 12) flat in vec4 inActorGrid2;
 layout(location = 13) flat in float inActorDissolve;
+layout(location = 14) flat in vec4 inGlint;
+layout(location = 15) flat in vec4 inGlintTexture;
+layout(location = 16) in vec2 inGlintUv;
 
 layout(location = 0) out vec4 outColor;
 
@@ -132,13 +136,20 @@ vec3 fogWorld(vec3 color, bool additive)
     return mix(color, fogColor, amount);
 }
 
+vec3 worldLight()
+{
+    vec2 coordinate = clamp(inLight.xy * (inEntity != 0u ? 1.0 : 16.0 / 15.0) - 0.5, 0.0, 15.0);
+    ivec2 low = ivec2(floor(coordinate));
+    ivec2 high = min(low + ivec2(1, 1), ivec2(15, 15));
+    vec2 fraction = coordinate - vec2(low);
+    vec3 lower = mix(texelFetch(lightmap, ivec3(low, 0), 0).rgb, texelFetch(lightmap, ivec3(ivec2(high.x, low.y), 0), 0).rgb, fraction.x);
+    vec3 upper = mix(texelFetch(lightmap, ivec3(ivec2(low.x, high.y), 0), 0).rgb, texelFetch(lightmap, ivec3(high, 0), 0).rgb, fraction.x);
+    return mix(lower, upper, fraction.y) * clamp(inLight.z, 0.0, 1.0);
+}
+
 vec3 shadeWorld(vec3 rgb)
 {
-    float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
-    float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
-    channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
-    float light = mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0);
-    return fogWorld(rgb * inShade * pow(light, 1.0 / 2.2), false);
+    return fogWorld(rgb * inShade * worldLight(), false);
 }
 
 vec4 applyTint(vec4 texel, uint tint)
@@ -147,6 +158,10 @@ vec4 applyTint(vec4 texel, uint tint)
         return texel;
     }
     vec3 color = vec3(float((tint >> 16) & 0xffu), float((tint >> 8) & 0xffu), float(tint & 0xffu)) / 255.0;
+    if ((tint & 0x20000000u) != 0u) {
+        // Leather alpha is both a dye mask and cutout coverage.
+        return vec4(mix(texel.rgb, texel.rgb * color, texel.a), texel.a > 0.0 ? 1.0 : 0.0);
+    }
     if ((tint & 0x40000000u) != 0u) {
         // Overlay alpha selects the tinted region, not surface coverage.
         return vec4(mix(texel.rgb, texel.rgb * color, texel.a), 1.0);
@@ -161,6 +176,42 @@ vec4 actorTexture(uint layer, vec4 grid, vec2 uv)
     return sampleEntity(fract(coordinate), layer + tile.y * uint(grid.x) + tile.x);
 }
 
+vec3 glintTexel(uint layer, vec2 pixel, vec2 size)
+{
+    pixel = fract(pixel / size) * size;
+    vec2 tile = floor(pixel / 128.0);
+    uint at = layer + uint(tile.y) * uint(ceil(size.x / 128.0)) + uint(tile.x);
+    vec2 cell = pixel - tile * 128.0;
+    return sampleEntity((cell + vec2(0.5)) / 128.0, at).rgb;
+}
+
+vec3 sampleGlint(uint layer, vec2 uv, vec2 size)
+{
+    vec2 pixel = fract(uv) * size - 0.5;
+    vec2 cell = floor(pixel), weight = fract(pixel);
+    return mix(mix(glintTexel(layer, cell, size), glintTexel(layer, cell + vec2(1, 0), size), weight.x),
+        mix(glintTexel(layer, cell + vec2(0, 1), size), glintTexel(layer, cell + vec2(1, 1), size), weight.x), weight.y);
+}
+
+vec4 applyGlint(vec4 texel, vec3 illumination)
+{
+    if (inGlint.z <= 0.0 || texel.a <= 0.0) return texel;
+    uint layer = uint(inGlint.w);
+    if (layer >= 8192u) return texel;
+    vec2 centered = inGlintUv - 0.5;
+    vec3 foil = vec3(0, 0, 0);
+    for (uint pass = 0u; pass < 2u; ++pass) {
+        float angle = (pass == 0u ? -20.0 : 80.0) * 0.017453292519943295;
+        float c = cos(angle), sn = sin(angle);
+        vec2 rotated = vec2(c * centered.x + sn * centered.y, -sn * centered.x + c * centered.y);
+        vec2 uv = (rotated + 0.5) * inGlintTexture.xy + vec2(inGlint[pass], 0);
+        foil += sampleGlint(layer, uv, inGlintTexture.zw);
+    }
+    foil *= vec3(0.38, 0.19, 0.608) * illumination;
+    texel.rgb += foil * foil * inGlint.z;
+    return texel;
+}
+
 vec4 actorSurface(vec2 uv)
 {
     vec4 texel = actorTexture(inActorTextures.x, inActorGrid0, uv);
@@ -169,8 +220,27 @@ vec4 actorSurface(vec2 uv)
     if ((mode == 3u || mode == 6u) && texel.a < 0.5) discard;
     if (mode == 1u && all(equal(texel, vec4(0)))) discard;
     if (mode == 0u && texel.a < 0.1 && (inEntity & 128u) == 0u) discard;
+    if ((mode == 7u && texel.a == 0.0) || (mode == 8u && texel.a < 0.1)) discard;
+    if (mode == 7u) {
+        texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
+        if (inActorTextures.y != 0xffffffffu) {
+            vec4 cracks = actorTexture(inActorTextures.y, inActorGrid1, uv);
+            texel.rgb = mix(texel.rgb, cracks.rgb, cracks.a);
+        }
+    }
+    if (mode == 8u) {
+        if (inActorTextures.y != 0xffffffffu) {
+            vec4 markings = actorTexture(inActorTextures.y, inActorGrid1, uv);
+            texel.rgb = mix(texel.rgb, markings.rgb, markings.a);
+        }
+        if (inActorTextures.z != 0xffffffffu) {
+            vec4 armor = actorTexture(inActorTextures.z, inActorGrid2, uv);
+            vec3 dyed = mix(armor.rgb, armor.rgb * inActorColor.rgb, armor.a);
+            texel.rgb = mix(texel.rgb, dyed, armor.a > 0.0 ? 1.0 : 0.0);
+        }
+    }
     if (mode == 4u) texel.rgb = mix(texel.rgb, texel.rgb * inActorColor.rgb, texel.a);
-    else if (mode != 5u) texel.rgb *= inActorColor.rgb;
+    else if (mode != 5u && mode != 7u && mode != 8u) texel.rgb *= inActorColor.rgb;
     texel.a *= inActorColor.a;
     if (mode == 5u && inActorTextures.y != 0xffffffffu && inActorTextures.z != 0xffffffffu) {
         vec4 second = actorTexture(inActorTextures.y, inActorGrid1, uv);
@@ -178,16 +248,21 @@ vec4 actorSurface(vec2 uv)
         texel.rgb = mix(mix(texel.rgb, second.rgb, second.a), third.rgb, third.a);
     }
     if (mode != 3u) texel.rgb = mix(texel.rgb, inActorOverlay.rgb, inActorOverlay.a);
-    vec3 unlit = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
-    vec3 lit = (inEntity & 8u) != 0u ? shadeWorld(texel.rgb) : unlit;
-    texel.rgb = mode == 1u ? mix(unlit, lit, texel.a) : lit;
+    vec3 illumination = (inEntity & 8u) != 0u ? worldLight() : vec3(1.0);
+    vec3 lit = texel.rgb * inShade * illumination;
+    texel.rgb = (inEntity & 8u) == 0u ? texel.rgb : mode == 1u ? mix(texel.rgb, lit, texel.a) : lit;
+    texel = applyGlint(texel, illumination);
+    texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
     if (mode != 0u) texel.a = 1.0;
     return texel;
 }
 
 void main()
 {
-#ifdef OVERLAY
+#ifdef SOLID
+    vec4 texel = applyTint(sampleMaterial(inMaterial, inUv), inTint);
+    outColor = vec4(shadeWorld(texel.rgb), 1.0);
+#elif defined(OVERLAY)
     // Outline edges darken what is under them like 40% black, cracks multiply it twice over.
     if (inEntity != 0u) {
         outColor = vec4(0.3, 0.3, 0.3, 1.0);
@@ -213,16 +288,38 @@ void main()
 #endif
         return;
     }
+    if (inEntity == 0u && inGlint.z > 0.0) {
+        vec4 texel = applyTint(sampleMaterial(inMaterial, inUv), inTint);
+#ifdef BLEND
+        if (texel.a < 0.004) discard;
+#else
+        if (texel.a < 0.5) discard;
+#endif
+        vec3 illumination = worldLight();
+        texel.rgb *= inShade * illumination;
+        texel = applyGlint(texel, illumination);
+        texel.rgb = fogWorld(texel.rgb, false);
+#ifdef BLEND
+        outColor = vec4(texel.rgb * texel.a, texel.a);
+#else
+        outColor = vec4(texel.rgb, 1.0);
+#endif
+        return;
+    }
     vec4 texel = inEntity != 0u ? applyTint(sampleEntity((inEntity & 16u) != 0u ? fract(inUv) : inUv, inMaterial & 0x1fffu), inTint) : applyTint(sampleMaterial(inMaterial, inUv), inTint);
     if ((inEntity & 512u) != 0u && texel.a < 0.5) discard;
+    if ((inEntity & 1024u) != 0u) texel.a *= 0.3;
     if ((inEntity & 256u) != 0u) texel.rgb *= inLight.z;
-    if ((inEntity & 8u) != 0u) texel.rgb = shadeWorld(texel.rgb);
-    else if ((inEntity & 32u) != 0u) texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
+
     if ((inEntity & 4u) != 0u) {
         uint hit = floatBitsToUint(draw.sun.w);
         vec4 flash = hit == 0u ? vec4(1.0, 0.0, 0.0, 0.5) : unpackUnorm4x8(hit);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
     }
+    vec3 illumination = (inEntity & 8u) != 0u ? worldLight() : vec3(1.0);
+    if ((inEntity & 8u) != 0u) texel.rgb *= inShade * illumination;
+    if (inEntity != 0u) texel = applyGlint(texel, illumination);
+    if ((inEntity & (8u | 32u)) != 0u) texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);
 #ifdef BLEND
     if (texel.a < 0.004) {
         discard;

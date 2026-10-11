@@ -1,12 +1,15 @@
 #include "ui/GameAssets.h"
 
 #include "ui/Image.h"
+#include "util/JsonText.h"
+#include "util/Text.h"
 #include "world/PackSource.h"
 
 #include "Core/Json/Json.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 
@@ -34,7 +37,7 @@ bool isHash(std::string_view text)
 
 void readSlice(const std::string& text, NineSlice& slice, float* baseWidth = nullptr, float* baseHeight = nullptr)
 {
-    std::unique_ptr<json::Value> root = json::parse(text);
+    std::unique_ptr<json::Value> root = util::parseJsonObject(text);
     const json::Value* size = root ? root->get("nineslice_size") : nullptr;
     if (!size) {
         return;
@@ -65,7 +68,7 @@ void readSlice(const std::string& text, NineSlice& slice, float* baseWidth = nul
 void readFrames(const std::string& text, std::vector<SpriteFrame>& frames)
 {
     frames.clear();
-    std::unique_ptr<json::Value> root = json::parse(text);
+    std::unique_ptr<json::Value> root = util::parseJsonObject(text);
     const json::Value* list = root ? root->get("frames") : nullptr;
     if (!list || !list->isArray()) {
         return;
@@ -137,6 +140,9 @@ bool GameAssets::readTexture(const std::string& path, Bitmap& out, NineSlice* sl
             if (frames) {
                 readFrames(text, *frames);
             }
+        } else if (util::lowercase(path) == "textures/ui/white") {
+            // Bedrock Samples omits White.json; this fill must stretch rather than keep a square aspect ratio.
+            slice->declared = true;
         }
         if (texels) {
             // nineslice_size counts base_size pixels, so a 2x texture has twice as many texels per slice.
@@ -197,6 +203,15 @@ std::vector<unsigned char> GameAssets::readHbuiFont(std::string_view name)
 {
     fs::path file = findHashed(hbui / "fonts", name);
     return file.empty() ? std::vector<unsigned char> {} : readFile(file);
+}
+
+std::vector<unsigned char> GameAssets::readFallbackFont(std::string_view name)
+{
+    const char* directory = std::getenv("KESTREL_FONTS");
+    if (!directory || !*directory) {
+        return {};
+    }
+    return readFile(fs::path(directory) / name);
 }
 
 std::string GameAssets::readHbuiText(std::string_view name)

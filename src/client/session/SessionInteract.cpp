@@ -1,4 +1,5 @@
 #include "client/ActorExtent.h"
+#include "client/ActorTarget.h"
 #include "client/session/SessionData.h"
 #include "client/RespawnAnchor.h"
 #include "client/RayBox.h"
@@ -72,7 +73,11 @@ constexpr std::array<std::array<int32_t, 3>, 6> FaceOffsets { { { 0, -1, 0 }, { 
 
 void Session::requestInteraction(bool use)
 {
-    (use ? useRequested : attackRequested) = true;
+    if (use) useRequested = true;
+    else {
+        uint32_t count = attackRequested.load();
+        while (count < 64 && !attackRequested.compare_exchange_weak(count, count + 1)) {}
+    }
 }
 
 /**
@@ -203,9 +208,7 @@ const ActorView* Session::traceActor(const std::array<double, 3>& origin, const 
         if (runtimeId == localRuntimeId || !pickable(actor)) {
             continue;
         }
-        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5 + ActorPickMargin;
-        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
-        std::optional<double> entry = actorRayDistance(origin, direction, { actor.x - half, actor.y - ActorPickMargin, actor.z - half }, { actor.x + half, actor.y + height + ActorPickMargin, actor.z + half }, reach, ActorPickMargin);
+        std::optional<double> entry = actorTargetDistance(actor, origin, direction, reach, ActorPickMargin);
         if (entry && *entry < distance) {
             distance = *entry;
             target = &actor;
@@ -755,7 +758,7 @@ bool Session::usableBlock(std::string_view name)
         "minecraft:crafting_table", "minecraft:furnace", "minecraft:lit_furnace", "minecraft:blast_furnace", "minecraft:lit_blast_furnace",
         "minecraft:smoker", "minecraft:lit_smoker", "minecraft:barrel", "minecraft:lever", "minecraft:anvil", "minecraft:enchanting_table",
         "minecraft:brewing_stand", "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser", "minecraft:crafter", "minecraft:loom",
-        "minecraft:stonecutter_block", "minecraft:grindstone", "minecraft:cartography_table", "minecraft:smithing_table", "minecraft:beacon",
+        "minecraft:stonecutter_block", "minecraft:grindstone", "minecraft:cartography_table", "minecraft:smithing_table", "minecraft:beacon", "minecraft:lectern",
         "minecraft:noteblock", "minecraft:unpowered_repeater", "minecraft:powered_repeater", "minecraft:unpowered_comparator",
         "minecraft:powered_comparator", "minecraft:daylight_detector", "minecraft:daylight_detector_inverted", "minecraft:bell", "minecraft:bed",
     };
@@ -865,16 +868,18 @@ void Session::runModActions()
             continue;
         }
         const ActorView& actor = found->second;
-        double half = actorExtent(actor.width, DefaultActorWidth, actor.scale) * 0.5;
-        double height = actorExtent(actor.height, DefaultActorHeight, actor.scale);
-        std::array<double, 3> low { actor.x - half, actor.y, actor.z - half };
-        std::array<double, 3> high { actor.x + half, actor.y + height, actor.z + half };
         std::array<double, 3> point {};
-        double reach = 0.0;
-        for (size_t axis = 0; axis < 3; ++axis) {
-            point[axis] = std::clamp(tickEye[axis], low[axis], high[axis]);
-            reach += (point[axis] - tickEye[axis]) * (point[axis] - tickEye[axis]);
-        }
+        double reach = std::numeric_limits<double>::infinity();
+        visitActorTargetBoxes(actor, { actor.x, actor.y, actor.z }, [&](const ActorTargetBox& box) {
+            std::array<double, 3> candidate;
+            double squared = 0.0;
+            for (size_t axis = 0; axis < 3; ++axis) {
+                candidate[axis] = std::clamp(tickEye[axis], box.low[axis], box.high[axis]);
+                squared += (candidate[axis] - tickEye[axis]) * (candidate[axis] - tickEye[axis]);
+            }
+            if (squared < reach) { reach = squared; point = candidate; }
+            return true;
+        });
         if (reach > entityReach * entityReach) {
             continue;
         }

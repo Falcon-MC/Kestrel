@@ -11,6 +11,7 @@
 #include <list>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace kestrel::world {
 namespace {
@@ -177,7 +178,7 @@ std::shared_ptr<const PackFiles> loadServerPack(const std::filesystem::path& pat
     if (!file || !file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()))) { error = "cannot read resource pack archive"; return nullptr; }
     return loadServerPackData(std::move(bytes), key, error);
 }
-std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std::string& key, std::string& error)
+std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std::string& key, std::string& error, const std::string& root)
 {
     auto reject = [&](const char* message) -> std::shared_ptr<const PackFiles> { error = message; return nullptr; };
     if (bytes.size() < 22 || bytes.size() > MaxArchive) return reject("invalid resource pack archive size");
@@ -194,7 +195,9 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
     const auto count = readLe16(bytes, end + 10);
     if (directoryEnd != end || readLe16(bytes, end + 8) != count) return reject("invalid ZIP directory bounds");
     std::unordered_map<std::string, PackFiles::Storage::Entry> physical;
-    std::string prefix;
+    std::unordered_set<std::string> directories;
+    std::string prefix = root;
+    if (!root.empty() && (canonical(root) != root || !root.ends_with('/'))) return reject("invalid pack root");
     size_t best = std::string::npos;
     for (uint32_t i = 0; i < count; ++i) {
         if (cursor > directoryEnd || directoryEnd - cursor < 46 || readLe32(bytes, cursor) != 0x02014b50u) return reject("corrupt ZIP directory");
@@ -207,7 +210,7 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
         if (recordSize > directoryEnd - cursor) return reject("truncated ZIP directory");
         auto name = canonical(bytes.substr(cursor + 46, nameSize));
         cursor += recordSize;
-        if (name.empty() || name.back() == '/') continue;
+        if (name.empty()) continue;
         if (size > MaxFile || storage->expanded > MaxExpanded - size) return reject("resource pack expansion exceeds limit");
         storage->expanded += size;
         if (local > bytes.size() || bytes.size() - local < 30 || readLe32(bytes, local) != 0x04034b50u) return reject("invalid ZIP local entry");
@@ -216,8 +219,13 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
         if (offset > bytes.size() || readLe16(bytes, local + 8) != method || readLe16(bytes, local + 6) != flags
             || canonical(bytes.substr(local + 30, localNameSize)) != name) return reject("ZIP local and directory entries disagree");
         if (offset > directoryStart || compressed > directoryStart - offset || (flags & 1) || (method != 0 && method != 8) || (method == 0 && size != compressed)) return reject("invalid or unsupported ZIP entry");
+        if (name.back() == '/') {
+            if (size != 0) return reject("nonempty ZIP directory entry");
+            directories.emplace(std::move(name));
+            continue;
+        }
         const auto folded = util::lowercase(name);
-        if (folded.ends_with("manifest.json") || folded.ends_with("pack_manifest.json")) {
+        if (root.empty() && (folded.ends_with("manifest.json") || folded.ends_with("pack_manifest.json"))) {
             const auto slash = name.find_last_of('/');
             const auto root = slash == std::string::npos ? std::string() : name.substr(0, slash + 1);
             const auto filename = slash == std::string::npos ? folded : folded.substr(slash + 1);
@@ -234,6 +242,10 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
         storage->entries.emplace(relative, std::move(entry));
     }
     auto pack = std::make_shared<PackFiles>(storage);
+    std::unordered_set<std::string> foldedDirectories;
+    for (const auto& name : directories) if (name.starts_with(prefix)) {
+        foldedDirectories.emplace(util::lowercase(name.substr(prefix.size())));
+    }
     auto manifest = pack->find("manifest.json");
     if (!manifest) manifest = pack->find("pack_manifest.json");
     const auto document = manifest ? json::parse(*manifest) : nullptr;
@@ -249,8 +261,14 @@ std::shared_ptr<const PackFiles> loadServerPackData(std::string bytes, const std
         const auto* path = item->get("path");
         const auto* entryKey = item->get("key");
         if (!path || !entryKey || !path->isString() || !entryKey->isString() || entryKey->string().empty()) continue;
-        auto fold = storage->folded.find(util::lowercase(canonical(path->string())));
-        if (fold == storage->folded.end() || entryKey->string().size() != 32) return reject("invalid encrypted pack entry");
+        const auto name = util::lowercase(canonical(path->string()));
+        auto fold = storage->folded.find(name);
+        if (entryKey->string().size() != 32) return reject("invalid encrypted pack entry key length");
+        if (foldedDirectories.contains(name)) continue;
+        if (fold == storage->folded.end()) {
+            error = "encrypted pack entry missing from archive: " + path->string().substr(0, 160);
+            return nullptr;
+        }
         storage->entries.at(fold->second).key = entryKey->string();
     }
     storage->cache.clear();

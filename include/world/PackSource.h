@@ -61,7 +61,7 @@ public:
     bool readBaseArchived(const std::string& archive, const std::string& name, std::string& out);
 
     /**
-     * The archived file from every layer that has it, highest priority first.
+     * The loose or archived file from every layer that has it, highest priority first.
      */
     std::vector<std::string> readArchivedLayers(const std::string& archive, const std::string& name);
 
@@ -85,6 +85,7 @@ private:
     };
 
     const Archive* archive(size_t layer, const std::string& name);
+    bool readLoose(size_t layer, const std::string& relative, std::string& out);
     const LooseFiles& looseFiles(size_t layer);
     const std::vector<size_t>& layersWith(const std::string& folder);
 

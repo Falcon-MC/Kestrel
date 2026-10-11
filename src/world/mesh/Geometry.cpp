@@ -31,6 +31,33 @@ bool sameIgnoringCase(const std::string& a, const std::string& b)
     });
 }
 
+/** Rest poses omitted by Samples, verified against the installed Bedrock 1.26 models. */
+std::optional<Vec3f> vanillaBindRotation(const std::string& model, const std::string& bone)
+{
+    const bool feline = model == "geometry.cat" || model == "geometry.ocelot.v1.8";
+    if ((feline || model == "geometry.fox" || model == "geometry.llama.v1.8" || model == "geometry.polarbear")
+        && sameIgnoringCase(bone, "body")) return Vec3f { 90, 0, 0 };
+    if (feline && (sameIgnoringCase(bone, "tail1") || sameIgnoringCase(bone, "tail2"))) return Vec3f { 90, 0, 0 };
+    if (model == "geometry.fox" && sameIgnoringCase(bone, "tail")) return Vec3f { 80, 0, 0 };
+    if (model == "geometry.parrot") {
+        if (sameIgnoringCase(bone, "body")) return Vec3f { 28.287f, 0, 0 };
+        if (sameIgnoringCase(bone, "feather")) return Vec3f { -12.685f, 0, 0 };
+    }
+    if (model == "geometry.rabbit.v1.8") {
+        if (sameIgnoringCase(bone, "body") || sameIgnoringCase(bone, "haunchLeft")
+            || sameIgnoringCase(bone, "haunchRight") || sameIgnoringCase(bone, "tail")) return Vec3f { -20, 0, 0 };
+        if (sameIgnoringCase(bone, "frontLegLeft") || sameIgnoringCase(bone, "frontLegRight")) return Vec3f { -10, 0, 0 };
+        if (sameIgnoringCase(bone, "earRight")) return Vec3f { 0, -15, 0 };
+        if (sameIgnoringCase(bone, "earLeft")) return Vec3f { 0, 15, 0 };
+    }
+    if (model == "geometry.snowgolem.v1.8") {
+        if (sameIgnoringCase(bone, "arm1")) return Vec3f { 0, 0, 57.3f };
+        if (sameIgnoringCase(bone, "arm2")) return Vec3f { 0, 180, -57.3f };
+    }
+    if (model == "geometry.villager_v2" && sameIgnoringCase(bone, "brim")) return Vec3f { -90, 0, 0 };
+    return std::nullopt;
+}
+
 Vec3f readVec3(const json::Value* value, Vec3f fallback = {})
 {
     if (!value || !value->isArray() || value->mArray.size() < 3) {
@@ -460,13 +487,20 @@ void GeometryLibrary::parse(const std::string& text, bool retainNativeBindPose)
     auto retainBindPose = [&](const std::string& identifier, Geometry& geometry) {
         if (!retainNativeBindPose) return;
         auto previous = byIdentifier.find(identifier);
-        if (previous == byIdentifier.end()) return;
         for (auto& bone : geometry.bones) {
             if (bone.bindRotationSet) continue;
-            auto old = std::find_if(previous->second.bones.begin(), previous->second.bones.end(), [&](const auto& entry) { return entry.name == bone.name; });
-            if (old != previous->second.bones.end() && old->bindRotationSet) {
-                bone.bindRotation = old->bindRotation;
-                bone.bindRotationSet = true;
+            if (previous != byIdentifier.end()) {
+                auto old = std::find_if(previous->second.bones.begin(), previous->second.bones.end(), [&](const auto& entry) { return sameIgnoringCase(entry.name, bone.name); });
+                if (old != previous->second.bones.end() && old->bindRotationSet) {
+                    bone.bindRotation = old->bindRotation;
+                    bone.bindRotationSet = true;
+                }
+            }
+            if (!bone.bindRotationSet) {
+                if (auto rotation = vanillaBindRotation(identifier, bone.name)) {
+                    bone.bindRotation = *rotation;
+                    bone.bindRotationSet = true;
+                }
             }
         }
     };
@@ -530,7 +564,7 @@ void GeometryLibrary::parse(const std::string& text, bool retainNativeBindPose)
  */
 void GeometryLibrary::resolveInheritance()
 {
-    std::function<void(const std::string&, int)> resolve = [&](const std::string& name, int depth) {
+    std::function<void(std::string, int)> resolve = [&](std::string name, int depth) {
         auto parent = parents.find(name);
         if (parent == parents.end() || depth > 16) {
             return;

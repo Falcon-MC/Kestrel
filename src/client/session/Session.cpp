@@ -1,5 +1,7 @@
 #include "client/session/SessionData.h"
+#include "platform/System.h"
 #include "client/ActorEquipment.h"
+#include "client/ActorPose.h"
 
 #include "Core/Json/Json.h"
 #include "Core/NBT/NbtIo.h"
@@ -25,6 +27,12 @@
 #include "Protocol/Packets/CameraInstructionPacket.h"
 #include "Protocol/Packets/CameraPresetsPacket.h"
 #include "Protocol/Packets/CameraShakePacket.h"
+#include "Protocol/Packets/CameraAimAssistPacket.h"
+#include "Protocol/Packets/CameraAimAssistPresetsPacket.h"
+#include "Protocol/Packets/CameraAimAssistActorPriorityPacket.h"
+#include "client/AimAssistRay.h"
+#include "client/ActorAimAssist.h"
+#include "Protocol/Packets/ClientCameraAimAssistPacket.h"
 #include "Protocol/Packets/ChangeDimensionPacket.h"
 #include "Protocol/Packets/PlayerActionPacket.h"
 #include "Protocol/Packets/AddItemActorPacket.h"
@@ -51,10 +59,12 @@
 #include "Protocol/Packets/RequestChunkRadiusPacket.h"
 #include "Protocol/Packets/SetHealthPacket.h"
 #include "Protocol/Packets/ActorEventPacket.h"
+#include "Protocol/Packets/AddPaintingPacket.h"
 #include "Protocol/Packets/SetPlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdatePlayerGameTypePacket.h"
 #include "Protocol/Packets/UpdateAttributesPacket.h"
 #include "Protocol/Packets/SetActorDataPacket.h"
+#include "Protocol/Packets/SyncActorPropertyPacket.h"
 #include "Protocol/Packets/SetActorLinkPacket.h"
 #include "Protocol/Packets/ServerboundLoadingScreenPacket.h"
 #include "Protocol/Packets/SetLocalPlayerAsInitializedPacket.h"
@@ -129,7 +139,7 @@ const BlockStateUpgrader& blockStateUpgrader()
 }
 
 constexpr int ProtocolVersion = 2193;
-constexpr const char* GameVersion = "1.26.51";
+constexpr const char* GameVersion = "1.26.52";
 constexpr const char* RealmPrefix = "realm_id/";
 constexpr const char* ExperiencePrefix = "experience_id/";
 constexpr const char* SessionHandlePrefix = "session_handle/";
@@ -420,6 +430,13 @@ void Session::resetSnapshot(std::string name, std::string target)
     std::lock_guard<std::mutex> guard(mutex);
     current = SessionSnapshot {};
     worldClock = {};
+    frameScanTicks = 0;
+    activeConduitCells.clear();
+    activeBannerCells.clear();
+    activePotCells.clear();
+    potAnimations.clear();
+    pistonAnimations.clear();
+    activePistonCells.clear();
     current.state = resolvesOnline(target) ? SessionState::Resolving : SessionState::Connecting;
     current.name = std::move(name);
     current.target = std::move(target);
@@ -432,6 +449,9 @@ void Session::resetSnapshot(std::string name, std::string target)
     outgoingChat.clear();
     pendingForms.clear();
     outgoingForms.clear();
+    pendingSignEditor.reset();
+    activeSignEditor.reset();
+    outgoingSign.reset();
     publishSnapshotLocked();
 }
 
@@ -590,6 +610,12 @@ void Session::setLookRay(const std::array<double, 3>& origin, const std::array<f
     requestedLookDirection = direction;
 }
 
+void Session::setAimAssistTarget(const std::optional<std::array<double, 3>>& point)
+{
+    std::lock_guard<std::mutex> guard(viewInputMutex);
+    requestedAimPoint = point;
+}
+
 void Session::configurePaletteResolver()
 {
     world.setBlockPaletteResolver([blockAssets = assets, mapping = ids,
@@ -667,14 +693,27 @@ void Session::setCameraBoom(const std::array<double, 3>& origin, const std::arra
 
 void Session::collectViewInput()
 {
-    std::lock_guard<std::mutex> guard(viewInputMutex);
-    lookOrigin = requestedLookOrigin;
-    renderedCamera = requestedRenderedCamera;
-    lookDirection = requestedLookDirection;
-    boomOrigin = requestedBoomOrigin;
-    boomDelta = requestedBoomDelta;
-    serverBoomOrigin = requestedServerBoomOrigin;
-    serverBoomDelta = requestedServerBoomDelta;
+    {
+        std::lock_guard<std::mutex> guard(viewInputMutex);
+        lookOrigin = requestedLookOrigin;
+        renderedCamera = requestedRenderedCamera;
+        lookDirection = requestedLookDirection;
+        aimPoint = requestedAimPoint;
+        aimAssistDirection(lookOrigin, aimPoint, lookDirection);
+        boomOrigin = requestedBoomOrigin;
+        boomDelta = requestedBoomDelta;
+        serverBoomOrigin = requestedServerBoomOrigin;
+        serverBoomDelta = requestedServerBoomDelta;
+    }
+    int perspective = std::clamp(requestedCameraPerspective.load(), 0, 2);
+    if (!cameraNetworkActive && perspective != acknowledgedCameraPerspective) {
+        ClientCameraAimAssistPacket activate;
+        activate.mPresetId = perspective == 0 ? "minecraft:first_person"
+            : perspective == 1 ? "minecraft:third_person" : "minecraft:third_person_front";
+        activate.mAllowAimAssist = true;
+        transmit(activate);
+        acknowledgedCameraPerspective = perspective;
+    }
 }
 
 void Session::setRenderedCamera(const std::array<double, 3>& origin)
@@ -976,6 +1015,9 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::CameraInstruction:
     case MinecraftPacketIds::CameraPresets:
     case MinecraftPacketIds::CameraShake:
+    case MinecraftPacketIds::CameraAimAssist:
+    case MinecraftPacketIds::CameraAimAssistPresets:
+    case MinecraftPacketIds::CameraAimAssistActorPriority:
     case MinecraftPacketIds::PlayStatus:
     case MinecraftPacketIds::BlockActorData:
     case MinecraftPacketIds::LevelChunk:
@@ -993,11 +1035,13 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::AddItemActor:
     case MinecraftPacketIds::TakeItemActor:
     case MinecraftPacketIds::AddActor:
+    case MinecraftPacketIds::AddPainting:
     case MinecraftPacketIds::Animate:
     case MinecraftPacketIds::RemoveActor:
     case MinecraftPacketIds::MoveActorAbsolute:
     case MinecraftPacketIds::MoveActorDelta:
     case MinecraftPacketIds::SetActorData:
+    case MinecraftPacketIds::SyncActorProperty:
     case MinecraftPacketIds::SetActorLink:
     case MinecraftPacketIds::ContainerOpen:
     case MinecraftPacketIds::ContainerClose:
@@ -1049,6 +1093,7 @@ void Session::handleWorldPacket(std::string& payload)
     case MinecraftPacketIds::RemoveObjective:
     case MinecraftPacketIds::ModalFormRequest:
     case MinecraftPacketIds::ClientboundCloseForm:
+    case MinecraftPacketIds::OpenSign:
     case MinecraftPacketIds::PacketViolationWarning:
     case MinecraftPacketIds::Transfer:
     case MinecraftPacketIds::SetHud:
@@ -1082,6 +1127,7 @@ void Session::handleWorldPacket(std::string& payload)
         gameType = mode->mGameType;
     }
     if (gameType) {
+        ++movementRevision;
         motion.setGameType(static_cast<int32_t>(*gameType));
         std::lock_guard<std::mutex> guard(mutex);
         current.hud.gameType = static_cast<int32_t>(*gameType);
@@ -1094,6 +1140,7 @@ void Session::handleWorldPacket(std::string& payload)
     handleChatPacket(packet);
     handleScorePacket(packet);
     handleFormPacket(packet);
+    handleSignPacket(packet);
 
     if (auto violation = std::dynamic_pointer_cast<PacketViolationWarningPacket>(packet)) {
         handleViolation(*violation);
@@ -1143,6 +1190,7 @@ void Session::handleWorldPacket(std::string& payload)
     if (auto equipment = std::dynamic_pointer_cast<MobArmorEquipmentPacket>(packet)) {
         if (auto actor = actors.find(static_cast<uint64_t>(equipment->mRuntimeActorId)); actor != actors.end()) {
             actor->second.armorItems = { hudItemOf(equipment->mHelmet), hudItemOf(equipment->mChestplate), hudItemOf(equipment->mLeggings), hudItemOf(equipment->mBoots) };
+            actor->second.bodyArmor = hudItemOf(equipment->mBody);
             actor->second.armor = {
                 actor->second.armorItems[0].identifier,
                 actor->second.armorItems[1].identifier,
@@ -1248,6 +1296,10 @@ void Session::handleWorldPacket(std::string& payload)
             moveActor(static_cast<uint64_t>(move->mRuntimeActorId), move->mPosition.x, move->mPosition.y, move->mPosition.z, move->mRotation.y, move->mRotation.z, move->mRotation.x, teleport, move->mOnGround);
         }
     } else if (auto player = std::dynamic_pointer_cast<AddPlayerPacket>(packet)) {
+        if (!validActorPose({ player->mPosition.x, player->mPosition.y, player->mPosition.z },
+                { player->mRotation.y, player->mRotation.z, player->mRotation.x })) {
+            return;
+        }
         uint64_t runtime = static_cast<uint64_t>(player->mRuntimeActorId);
         if (runtime != localRuntimeId) {
             ActorView actor;
@@ -1267,12 +1319,26 @@ void Session::handleWorldPacket(std::string& payload)
             actor.held = hudItemOf(player->mHand);
             actor.scale = metadataScale(player->mMetadata, 1.0f);
             applyActorMetadata(player->mMetadata, actor);
+            if (auto schema = actorPropertySchemas.find(actor.identifier); schema != actorPropertySchemas.end()) {
+                schema->second.apply(player->mProperties, actor.animationProperties);
+            }
             actors[runtime] = actor;
             runtimeByUnique[player->mRuntimeActorId] = runtime;
             refreshActorRiders(player->mRuntimeActorId);
             moveActor(runtime, player->mPosition.x, player->mPosition.y, player->mPosition.z, player->mRotation.y, player->mRotation.z, player->mRotation.x, true, true, true);
         }
+    } else if (auto schemaPacket = std::dynamic_pointer_cast<SyncActorPropertyPacket>(packet)) {
+        if (auto schema = ActorPropertySchema::read(schemaPacket->mData)) {
+            if (actorPropertySchemas.contains(schema->identifier) || actorPropertySchemas.size() < 512) {
+                std::string identifier = schema->identifier;
+                actorPropertySchemas[identifier] = std::move(*schema);
+            }
+        }
     } else if (auto added = std::dynamic_pointer_cast<AddActorPacket>(packet)) {
+        if (!validActorPose({ added->mPosition.x, added->mPosition.y, added->mPosition.z },
+                { added->mRotation.y, added->mHeadRotation, added->mRotation.x }) || !std::isfinite(added->mBodyRotation)) {
+            return;
+        }
         uint64_t runtime = static_cast<uint64_t>(added->mRuntimeActorId);
         ActorView actor;
         actor.runtimeId = runtime;
@@ -1280,6 +1346,9 @@ void Session::handleWorldPacket(std::string& payload)
         actor.identifier = added->mIdentifier;
         actor.scale = metadataScale(added->mMetadata, 1.0f);
         applyActorMetadata(added->mMetadata, actor);
+        if (auto schema = actorPropertySchemas.find(actor.identifier); schema != actorPropertySchemas.end()) {
+            schema->second.apply(added->mProperties, actor.animationProperties);
+        }
         for (const auto& attribute : added->mAttributes) {
             if (attribute.mName == "minecraft:health" && std::isfinite(attribute.mValue)) {
                 actor.health = attribute.mValue;
@@ -1291,8 +1360,37 @@ void Session::handleWorldPacket(std::string& payload)
         runtimeByUnique[added->mUniqueActorId] = runtime;
         for (const auto& link : added->mActorLinks) updateActorLink(link.mFrom, link.mTo, link.mType == EntityLinkType::Remove);
         refreshActorRiders(added->mUniqueActorId);
-        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z, added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, true, true);
+        const bool arrow = actor.identifier == "minecraft:arrow";
+        const bool movingArrow = arrow && (added->mMotion.x != 0.0f || added->mMotion.y != 0.0f || added->mMotion.z != 0.0f);
+        moveActor(runtime, added->mPosition.x, added->mPosition.y, added->mPosition.z,
+            arrow ? added->mRotation.y : added->mBodyRotation, added->mHeadRotation, added->mRotation.x, true, !movingArrow, true);
+        if (arrow) setActorMotion(runtime, added->mMotion.x, added->mMotion.y, added->mMotion.z);
+    } else if (auto painting = std::dynamic_pointer_cast<AddPaintingPacket>(packet)) {
+        if (!validActorPose({ painting->mPosition.x, painting->mPosition.y, painting->mPosition.z }, {})
+            || painting->mDirection < 0 || painting->mDirection > 3 || painting->mMotive.size() > 128) {
+            return;
+        }
+        ActorView actor;
+        actor.runtimeId = painting->mRuntimeActorId;
+        actor.uniqueId = painting->mUniqueActorId;
+        actor.identifier = "minecraft:painting";
+        actor.paintingMotive = painting->mMotive;
+        actor.paintingDirection = painting->mDirection;
+        if (const auto* motive = world::paintingMotive(actor.paintingMotive)) {
+            actor.width = motive->width / 16.0f;
+            actor.height = motive->height / 16.0f;
+            actor.hitboxes = std::make_shared<const std::vector<ActorHitbox>>(std::vector<ActorHitbox> {
+                { {}, world::paintingHalfExtents(*motive, actor.paintingDirection) },
+            });
+        }
+        actors[actor.runtimeId] = actor;
+        runtimeByUnique[actor.uniqueId] = actor.runtimeId;
+        moveActor(actor.runtimeId, painting->mPosition.x, painting->mPosition.y, painting->mPosition.z,
+            0.0f, 0.0f, 0.0f, true, false, true);
     } else if (auto dropped = std::dynamic_pointer_cast<AddItemActorPacket>(packet)) {
+        if (!validActorPose({ dropped->mPosition.x, dropped->mPosition.y, dropped->mPosition.z }, {})) {
+            return;
+        }
         uint64_t runtime = dropped->mRuntimeActorId;
         ActorView actor;
         actor.runtimeId = runtime;
@@ -1317,6 +1415,7 @@ void Session::handleWorldPacket(std::string& payload)
     } else if (auto data = std::dynamic_pointer_cast<SetActorDataPacket>(packet)) {
         if (static_cast<uint64_t>(data->mRuntimeActorId) == localRuntimeId) {
             for (const EntityDataEntry& entry : data->mMetadata.mEntries) {
+                applyActorAimAssist(entry, current.localAimAssistIndices);
                 if (entry.mFormat != EntityDataFormat::Long) continue;
                 if (entry.mId == 0) current.localActorFlags[0] = static_cast<uint64_t>(entry.mLongValue);
                 if (entry.mId == 92) current.localActorFlags[1] = static_cast<uint64_t>(entry.mLongValue);
@@ -1326,6 +1425,9 @@ void Session::handleWorldPacket(std::string& payload)
         if (auto actor = actors.find(static_cast<uint64_t>(data->mRuntimeActorId)); actor != actors.end()) {
             actor->second.scale = metadataScale(data->mMetadata, actor->second.scale);
             applyActorMetadata(data->mMetadata, actor->second);
+            if (auto schema = actorPropertySchemas.find(actor->second.identifier); schema != actorPropertySchemas.end()) {
+                schema->second.apply(data->mProperties, actor->second.animationProperties);
+            }
         }
     } else if (auto link = std::dynamic_pointer_cast<SetActorLinkPacket>(packet)) {
         const EntityLinkData& data = link->mActorLink;
@@ -1360,11 +1462,15 @@ void Session::handleWorldPacket(std::string& payload)
     } else if (auto delta = std::dynamic_pointer_cast<MoveActorDeltaPacket>(packet)) {
         auto actor = actors.find(delta->mRuntimeActorId);
         if (actor != actors.end()) {
+            const auto& view = actor->second;
+            const bool projectile = world::projectileEntity(view.identifier);
+            const auto position = projectile ? view.projectileTarget : std::array<double, 3> { view.x, view.y, view.z };
+            const auto turn = projectile ? view.projectileTargetTurn : std::array<float, 3> { view.yaw, view.headYaw, view.pitch };
             double eye = actor->second.identifier == "minecraft:player" ? PlayerEyeHeight : 0.0;
-            if (actor->second.identifier == "minecraft:falling_block") eye = 0.49;
-            moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : actor->second.x, delta->mHasY ? delta->mY : actor->second.y + eye,
-                delta->mHasZ ? delta->mZ : actor->second.z, delta->mHasYaw ? delta->mYaw : actor->second.yaw, delta->mHasHeadYaw ? delta->mHeadYaw : actor->second.headYaw,
-                delta->mHasPitch ? delta->mPitch : actor->second.pitch, false, delta->mOnGround);
+            if (actor->second.identifier == "minecraft:falling_block" || actor->second.identifier == "minecraft:tnt") eye = 0.49;
+            moveActor(delta->mRuntimeActorId, delta->mHasX ? delta->mX : position[0], delta->mHasY ? delta->mY : position[1] + eye,
+                delta->mHasZ ? delta->mZ : position[2], delta->mHasYaw ? delta->mYaw : turn[0], delta->mHasHeadYaw ? delta->mHeadYaw : turn[1],
+                delta->mHasPitch ? delta->mPitch : turn[2], false, delta->mOnGround);
         }
     } else if (auto changed = std::dynamic_pointer_cast<PlayerSkinPacket>(packet)) {
         std::string uuid = changed->mUuid.toString();
@@ -1434,8 +1540,34 @@ void Session::handleWorldPacket(std::string& payload)
             }
         }
     } else if (auto actor = std::dynamic_pointer_cast<BlockActorDataPacket>(packet)) {
-        world.handle(actor, payloadSize);
         std::array<int32_t, 3> cell { actor->mBlockPosition.x, actor->mBlockPosition.y, actor->mBlockPosition.z };
+        const std::string id = actor->mData.getString("id", "");
+        if (id == "PistonArm") {
+            const Tag* state = actor->mData.get("State");
+            const int type = state && state->getType() == Tag::Type::Byte ? state->asByte() : -1;
+            const float progress = world::pistonProgress(actor->mData);
+            const double now = secondsNow();
+            if (pistonAnimations.contains(cell) || pistonAnimations.size() < 256) {
+                auto& animation = pistonAnimations[cell];
+                if (type == 1 || type == 3) animation = { progress, type == 1 ? 1.0f : 0.0f, now };
+                else if (now - animation.start >= 0.1) animation = { progress, progress, now };
+            }
+            if (activePistonCells.contains({ current.dimension, cell[0], cell[1], cell[2] })) actor->mData.putByte(world::PistonMovingKey, 1);
+            frameScanTicks = 10;
+        } else if (id == "MovingBlock") {
+            frameScanTicks = 10;
+        }
+        world.handle(actor, payloadSize);
+        if (actor->mData.getString("id", "") == "DecoratedPot") {
+            const Tag* animation = actor->mData.get("animation");
+            const int type = animation && animation->getType() == Tag::Type::Byte ? animation->asByte() : 0;
+            if ((type == 1 || type == 2) && (potAnimations.contains(cell) || potAnimations.size() < 256)) {
+                potAnimations[cell] = { type, secondsNow() };
+            } else if (!type) {
+                potAnimations.erase(cell);
+            }
+            frameScanTicks = 10;
+        }
         if (chestLidStates.contains(cell)) {
             markChestLid(cell, true);
         }
@@ -1506,11 +1638,17 @@ void Session::handleWorldPacket(std::string& payload)
         }
         world.changeDimension(dimension->mDimension, floorChunk(dimension->mPosition.x), floorChunk(dimension->mPosition.z));
         motionDimension = dimension->mDimension;
+        frameScanTicks = 10;
+        potAnimations.clear();
+        pistonAnimations.clear();
+        ++movementRevision;
         motion.teleport({ dimension->mPosition.x, dimension->mPosition.y - EyeHeight, dimension->mPosition.z });
+        ++hardMovementRevision;
         motionHistory.clear();
         serverMotions.clear();
         motionStarted = false;
         actors.clear();
+        actorMoveQueues.clear();
         runtimeByUnique.clear();
         actorRiders.clear();
         std::vector<std::string> worn;
@@ -1525,7 +1663,11 @@ void Session::handleWorldPacket(std::string& payload)
         }
         std::lock_guard<std::mutex> guard(mutex);
         pendingParticles.clear();
-        std::erase_if(pendingCameraEvents, [](const auto& event) { return dynamic_cast<const CameraPresetsPacket*>(event.get()) == nullptr; });
+        std::erase_if(pendingCameraEvents, [](const auto& event) {
+            return !dynamic_cast<const CameraPresetsPacket*>(event.get())
+                && !dynamic_cast<const CameraAimAssistPresetsPacket*>(event.get())
+                && !dynamic_cast<const CameraAimAssistActorPriorityPacket*>(event.get());
+        });
         current.cameraFov = {};
         current.dimension = dimension->mDimension;
         current.changingDimension = true;
@@ -1535,6 +1677,24 @@ void Session::handleWorldPacket(std::string& payload)
             dimensionAckReceived = true;
         }
     } else if (auto camera = std::dynamic_pointer_cast<CameraInstructionPacket>(packet)) {
+        if (camera->mHasClear && camera->mClear) {
+            cameraNetworkActive = false;
+            acknowledgedCameraPerspective = -1;
+            ClientCameraAimAssistPacket activate;
+            activate.mAction = AimAssistAction::Clear;
+            activate.mAllowAimAssist = true;
+            transmit(activate);
+        } else if (camera->mHasSetInstruction && cameraNetworkPresets) {
+            const auto* definitions = dynamic_cast<const CameraPresetsPacket*>(cameraNetworkPresets.get());
+            int32_t id = camera->mSetInstruction.mPresetRuntimeId;
+            if (definitions && id >= 0 && size_t(id) < definitions->mPresets.size()) {
+                cameraNetworkActive = true;
+                ClientCameraAimAssistPacket activate;
+                activate.mPresetId = definitions->mPresets[size_t(id)].mIdentifier;
+                activate.mAllowAimAssist = true;
+                transmit(activate);
+            }
+        }
         {
             std::lock_guard<std::mutex> guard(mutex);
             pendingCameraEvents.push_back(camera);
@@ -1548,9 +1708,12 @@ void Session::handleWorldPacket(std::string& payload)
             current.cameraFov.easeType = static_cast<int>(fov.mEaseType);
             current.cameraFov.clear = fov.mClear;
         }
-    } else if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet) || std::dynamic_pointer_cast<CameraShakePacket>(packet)) {
+    } else if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet) || std::dynamic_pointer_cast<CameraShakePacket>(packet)
+        || std::dynamic_pointer_cast<CameraAimAssistPacket>(packet) || std::dynamic_pointer_cast<CameraAimAssistPresetsPacket>(packet)
+        || std::dynamic_pointer_cast<CameraAimAssistActorPriorityPacket>(packet)) {
+        if (std::dynamic_pointer_cast<CameraPresetsPacket>(packet)) cameraNetworkPresets = packet;
         std::lock_guard<std::mutex> guard(mutex);
-        pendingCameraEvents.push_back(packet);
+        if (pendingCameraEvents.size() < 512) pendingCameraEvents.push_back(packet);
     }
 }
 
@@ -1613,6 +1776,15 @@ void Session::scheduleMeshes()
     }
     std::vector<world::SubChunkKey> dirty = world.store().takeDirty();
     std::set<world::SubChunkKey> urgent = world.store().takeUrgent();
+    {
+        std::lock_guard guard(mutex);
+        for (const auto& key : dirty) {
+            if (!meshedGenerations.contains(key) || !invalidatedVisibility.insert(key).second) continue;
+            MeshUpdate update { key };
+            update.visibilityOnly = true;
+            pendingUpdates.push_front(std::move(update));
+        }
+    }
     // Sub-chunks waiting on a neighbour column only come back when a column arrived or now and then, not on every pass.
     const double now = secondsNow();
     size_t columns = world.store().columnCount();
@@ -1693,10 +1865,11 @@ void Session::scheduleMeshes()
             if (existing != meshes.end()) {
                 meshQuads -= existing->second->quadCount();
                 meshes.erase(existing);
-                std::lock_guard<std::mutex> guard(mutex);
-                std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == key; });
-                pendingUpdates.push_back({ key, nullptr });
             }
+            invalidatedVisibility.erase(key);
+            std::lock_guard<std::mutex> guard(mutex);
+            std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == key; });
+            pendingUpdates.push_back({ key, nullptr });
             continue;
         }
         world::DimensionRange range;
@@ -1713,11 +1886,16 @@ void Session::scheduleMeshes()
                 input.biomes[size_t((dz + 1) * 3 + (dx + 1))] = world.store().biomes({ key.dimension, key.x + dx, key.y, key.z + dz });
                 for (int32_t dy = -1; dy <= 1; ++dy) {
                     input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + (dz + 1))] = world.store().subChunk({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+                    const bool inHeight = key.y + dy >= range.baseSubChunkY && key.y + dy < range.baseSubChunkY + range.subChunkCount;
+                    input.unknownAround[size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)] = inHeight
+                        && (!world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })
+                            || world.subChunkPending({ key.dimension, key.x + dx, key.y + dy, key.z + dz }));
                 }
                 for (int32_t y = key.y + 2; y < range.baseSubChunkY + range.subChunkCount; ++y) {
-                    if (std::shared_ptr<const world::SubChunk> above = world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz })) {
-                        input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(std::move(above));
-                    }
+                    input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)] |= !world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })
+                        || world.subChunkPending({ key.dimension, key.x + dx, y, key.z + dz });
+                    input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(
+                        world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz }));
                 }
             }
         }
@@ -1754,6 +1932,7 @@ void Session::collectMeshes()
             continue;
         }
         meshedGenerations.insert_or_assign(result.key, result.generation);
+        invalidatedVisibility.erase(result.key);
         auto existing = meshes.find(result.key);
         bool hadMesh = existing != meshes.end();
         if (hadMesh) {
@@ -1777,19 +1956,20 @@ void Session::collectMeshes()
         }
 
         std::shared_ptr<const world::ChunkMesh> mesh;
-        if (!result.mesh.empty()) {
+        auto visibility = result.mesh.visibility;
+        if (!result.mesh.empty() || !result.mesh.light.empty()) {
             meshQuads += result.mesh.quadCount();
             mesh = std::make_shared<const world::ChunkMesh>(std::move(result.mesh));
             meshes.emplace(result.key, mesh);
         }
-        if (mesh || hadMesh) {
+        if (mesh || hadMesh || visibility) {
             std::lock_guard<std::mutex> guard(mutex);
             bool refresh = result.refresh;
             for (const auto& update : pendingUpdates) {
-                if (update.key == result.key) refresh &= update.refresh;
+                if (update.key == result.key && !update.visibilityOnly) refresh &= update.refresh;
             }
             std::erase_if(pendingUpdates, [&](const MeshUpdate& update) { return update.key == result.key; });
-            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit), result.urgent, refresh });
+            pendingUpdates.push_back({ result.key, std::move(mesh), std::move(result.credit), result.urgent, refresh, std::move(visibility) });
         }
     }
 }
@@ -1887,6 +2067,10 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     settings.mGameVersion = GameVersion;
     settings.mAuthentication = authentication;
     settings.mIdentity.mDisplayName = offlineName;
+    settings.mClientData.mSkinColor = "#0";
+    settings.mClientData.mDeviceOS = platform::bedrockDeviceOS();
+    settings.mClientData.mDefaultInputMode = 1;
+    settings.mClientData.mCurrentInputMode = 1;
     applyDefaultSkin(settings.mClientData);
     settings.mChunkRadius = requestedRadius.load();
     settings.mTimeoutMs = TimeoutMs;
@@ -2074,6 +2258,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     inventoryBefore.reset();
     inventoryChangedSlots.clear();
     pendingInventoryRequest = 0;
+    pendingInventoryRequests.clear();
     inventoryRequestId = -1;
     inventoryClosing = false;
     {
@@ -2085,7 +2270,15 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     requestedSlot = -1;
     spawnInitialized = false;
+    ++movementRevision;
+    ++hardMovementRevision;
     motion = PlayerMotion {};
+    {
+        std::lock_guard guard(motionInputMutex);
+        motionInput = {};
+        bufferedMotionInput.reset();
+        bufferedFrameInput.reset();
+    }
     motionHistory.clear();
     serverMotions.clear();
     motionStarted = false;
@@ -2093,7 +2286,6 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     missedSwing = false;
     clientTick = 0;
     nextMotionTick = 0.0;
-    lastMotionFrame = 0.0;
     glideBoost = {};
     dolphinBoost = {};
     lastMotionInput = MotionInput {};
@@ -2114,8 +2306,13 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         pendingUpdates.clear();
         current.serverBoomFraction = 0.0;
         pendingCameraEvents.clear();
+        cameraNetworkPresets.reset();
+        cameraNetworkActive = false;
+        acknowledgedCameraPerspective = -1;
         pendingSkins.clear();
         actors.clear();
+        actorMoveQueues.clear();
+        actorPropertySchemas.clear();
         runtimeByUnique.clear();
         debugShapes.clear();
         current.debugShapes.clear();
@@ -2297,6 +2494,7 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     }
     mesher->clear();
     meshGenerations.clear();
+    invalidatedVisibility.clear();
     meshedGenerations.clear();
     meshes.clear();
     meshQuads = 0;
@@ -2323,8 +2521,8 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
     double nextPublication = 0.0;
     uint64_t receivedSincePublication = 0;
     while (!cancelled && !transferTarget) {
-        world.applyDecoded();
         collectViewInput();
+        world.applyDecoded();
         pollGlobalPacks();
         int waitMs = 5;
         if (spawnInitialized && nextMotionTick > 0.0) {
@@ -2390,16 +2588,16 @@ std::optional<std::string> Session::join(const std::string& target, MinecraftAut
         if (respawnRequested.exchange(false)) {
             sendRespawnRequest();
         }
-        if (attackRequested.exchange(false)) {
-            interact(false);
-        }
+        for (uint32_t attacks = attackRequested.exchange(0); attacks > 0; --attacks) interact(false);
         if (int pick = pickRequested.exchange(0); pick != 0) {
             pickBlock(pick == 2);
         }
         flushInventory();
         flushChat();
         flushForms();
+        flushSign();
         tickMotion();
+        publishMotionFeed();
         collectMeshes();
         scheduleMeshes();
         finishDimensionChange();
