@@ -1,5 +1,6 @@
 #include "client/session/SessionData.h"
 #include "client/CrystalMetadata.h"
+#include "client/FishingLine.h"
 #include "client/ActorAimAssist.h"
 #include "client/ActorPose.h"
 #include "client/ProjectileMotion.h"
@@ -239,6 +240,7 @@ void applyActorMetadata(const EntityDataMap& metadata, ActorView& actor)
         applyActorHitboxes(entry, actor.hitboxes);
         applyActorAimAssist(entry, actor.aimAssistIndices);
         applyCrystalBeamTarget(entry, actor.crystalBeamTarget);
+        if (actor.identifier == "minecraft:fishing_hook") applyFishingOwner(entry, actor.fishingOwner);
         switch (entry.mId) {
         case 0:
             if ((actor.flags[0] ^ static_cast<uint64_t>(entry.mLongValue)) & 1u) actor.fireChangedAt = secondsNow();

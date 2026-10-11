@@ -1,7 +1,9 @@
 #include "client/ActorEquipment.h"
+#include "client/CrossbowItem.h"
 #include "client/ActorProperties.h"
 #include "client/FirstPersonAnimation.h"
 #include "client/FirstPersonOverlay.h"
+#include "client/FishingLine.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
 #include "render/Renderer.h"
@@ -9,6 +11,7 @@
 #include "world/EntityMaterialBlend.h"
 #include "world/Geometry.h"
 #include "world/ItemGlint.h"
+#include "world/ItemInfo.h"
 #include "Core/Json/Json.h"
 
 #include <cmath>
@@ -38,6 +41,70 @@ int main()
     static_assert(!kestrel::pumpkinMaskVisible("minecraft:carved_pumpkin", true, true, true));
     static_assert(!kestrel::pumpkinMaskVisible("minecraft:diamond_helmet", true, true, false));
     static_assert(!kestrel::pumpkinMaskVisible("", true, true, false));
+    int64_t fishingOwner = -1;
+    EntityDataEntry fishingMetadata;
+    fishingMetadata.mId = 5;
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -123456;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Fishing owners use signed unique IDs, not runtime IDs");
+    fishingMetadata.mFormat = EntityDataFormat::Int;
+    fishingMetadata.mLongValue = 42;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -123456, "Ignore incorrectly typed owner metadata");
+    fishingMetadata.mFormat = EntityDataFormat::Long;
+    fishingMetadata.mLongValue = -1;
+    kestrel::applyFishingOwner(fishingMetadata, fishingOwner);
+    require(fishingOwner == -1, "Owner removal clears the fishing line");
+    const auto line = kestrel::fishingLine({ 0, 2, 0 }, { 4, 0, 0 });
+    require(line.size() == 24 && line.front().first.x == 0 && line.front().first.y == 2
+            && line.back().second.x == 4 && line.back().second.y == 0, "Fishing line reaches both endpoints");
+    require(line[11].second.y < 1.0, "Fishing line sags between its endpoints");
+    for (size_t i = 1; i < line.size(); ++i) {
+        require(line[i - 1].second.x == line[i].first.x && line[i - 1].second.y == line[i].first.y,
+            "Fishing line segments stay connected");
+    }
+    require(kestrel::fishingLine({ 0, 0, 0 }, { 0, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { 65, 0, 0 }).empty()
+            && kestrel::fishingLine({ 0, 0, 0 }, { std::numeric_limits<double>::quiet_NaN(), 0, 0 }).empty(),
+        "Invalid or excessive fishing lines produce no geometry");
+    Tag crossbowData = Tag::ofCompound(), chargedItem = Tag::ofCompound();
+    chargedItem.putByte("Count", 1);
+    chargedItem.putString("Name", "minecraft:arrow");
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 4, "A loaded arrow must select the crossbow arrow frame");
+    chargedItem.putString("Name", "minecraft:fireworks");
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 5, "A loaded firework must select the rocket frame");
+    chargedItem.putByte("Count", 0);
+    crossbowData.put("chargedItem", chargedItem);
+    require(kestrel::chargedCrossbowFrame(crossbowData) == 0
+            && kestrel::chargedCrossbowFrame(Tag::ofCompound()) == 0
+            && kestrel::chargedCrossbowFrame(Tag::ofInt(1)) == 0,
+        "Empty or malformed charged-item data must not show a loaded projectile");
+    require(kestrel::world::itemMaxUseTicks("minecraft:crossbow") == 72000,
+        "Crossbows must enter the same held-use lifecycle as other charged weapons");
+    require(kestrel::world::itemMaxUseTicks("minecraft:bow") == 72000
+            && kestrel::world::itemMaxUseTicks("minecraft:trident") == 72000
+            && kestrel::world::itemMaxUseTicks("minecraft:spyglass") == 1200
+            && kestrel::world::itemMaxUseTicks("minecraft:stone") == 0,
+        "Adding crossbow charge must preserve other item use durations");
+    kestrel::world::EntityAnimator crossbowAnimator;
+    kestrel::world::AnimationInput crossbowInput;
+    crossbowInput.mainHandItem = "minecraft:crossbow";
+    crossbowInput.metadataQueries["get_animation_frame"] = 4;
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 4,
+        "The render-controller frame query must expose a loaded crossbow");
+    crossbowInput.metadataQueries["get_animation_frame"] = std::numeric_limits<double>::quiet_NaN();
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 0, "Invalid item frames must stay bounded");
+    crossbowInput.metadataQueries.clear();
+    crossbowInput.mainHandItem = "minecraft:bow";
+    crossbowInput.itemUseTicks = 18;
+    crossbowAnimator.update(nullptr, nullptr, {}, crossbowInput);
+    require(expression(crossbowAnimator, "q.get_animation_frame") == 3,
+        "Per-stack crossbow frames must not change bow pulling frames");
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);
