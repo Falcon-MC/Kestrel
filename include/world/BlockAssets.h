@@ -654,7 +654,7 @@ public:
         return found == entityTiles.end() ? EntityTileGrid {} : found->second;
     }
 
-    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt) const;
+    std::vector<uint8_t> itemIcon(const std::string& identifier, int32_t aux, const std::string& iconHint, std::optional<uint32_t> customColor = std::nullopt, uint32_t animationFrame = 0) const;
 
     /**
      * The look of the default state of the block an item places, when it is

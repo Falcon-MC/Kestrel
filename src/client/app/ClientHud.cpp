@@ -4,6 +4,7 @@
 #include "platform/Window.h"
 #include "ui/Localization.h"
 #include "world/ItemInfo.h"
+#include "world/ClockDial.h"
 
 #include <algorithm>
 #include <chrono>
@@ -36,11 +37,13 @@ menu::HudSlot Client::inventoryIcon(const HudItem& item)
     slot.filled = true;
     slot.count = item.count;
     std::string name = "item/" + item.identifier + "#" + std::to_string(item.aux) + "#" + item.icon;
+    uint32_t animationFrame = item.identifier == "minecraft:clock" ? world::clockFrame(currentWorldTime(timeState)) : 0;
+    if (item.identifier == "minecraft:clock") name += "#frame" + std::to_string(animationFrame);
     if (item.customColor) name += "#color" + std::to_string(*item.customColor);
     if (item.enchanted) name += "#enchanted";
     auto known = itemIcons.find(name);
     if (known == itemIcons.end()) {
-        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon, item.customColor);
+        auto pixels = blockAssets->itemIcon(item.identifier, item.aux, item.icon, item.customColor, animationFrame);
         bool rendered = pixels.size() == size_t(world::ItemIconSize) * world::ItemIconSize * 4;
         if (rendered) skin.setDynamic(name, { world::ItemIconSize, world::ItemIconSize, std::move(pixels) });
         known = itemIcons.insert_or_assign(name, rendered).first;
