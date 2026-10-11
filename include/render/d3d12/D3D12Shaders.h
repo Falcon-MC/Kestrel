@@ -105,6 +105,7 @@ Texture2DArray entities : register(t2);
 Texture2DArray entitiesHigh : register(t3);
 Texture2DArray entities2 : register(t4);
 Texture2DArray entities3 : register(t5);
+Texture2DArray lightmap : register(t6);
 SamplerState blockSampler : register(s0);
 
 struct WorldIn
@@ -136,17 +137,12 @@ struct WorldOut
     float2 glintUv : TEXCOORD16;
 };
 
-static const float lightCurve[16] = {
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0 };
 
 float3 cornerLight(uint light, uint ao, uint corner)
 {
     uint levels = (light >> (corner * 8)) & 0xff;
-    float occlusion = 1.0 - float((ao >> (corner * 2)) & 3) * 0.12;
-    return float3(lightCurve[levels & 0xf], lightCurve[levels >> 4], occlusion);
+    float occlusion = 1.0 - float((ao >> (corner * 4)) & 7) * 0.2;
+    return float3(float(levels & 0xf), float(levels >> 4), occlusion);
 }
 
 float3 quadCorner(uint face, uint corner, float3 o, float w, float h)
@@ -207,11 +203,12 @@ WorldOut vs_world(WorldIn input)
     output.position = mul(viewProjection, float4(position, 1.0));
     output.uv = greedyUv(face, corner, width, height, (input.quad.y >> 12) & 1);
     output.material = input.quad.y;
-    output.shade = faceShade[face];
+    output.shade = (input.ao & 0x10000u) != 0u ? (face < 2u ? 0.9 : face == 2u ? 0.875 : face == 3u ? 1.0 : 0.95) : faceShade[face];
     output.relative = position;
     output.tint = input.quad.z;
     output.light = cornerLight(input.quad.w, input.ao, corner);
     output.entity = 0;
+
     return output;
 }
 
@@ -259,12 +256,30 @@ WorldOut placeModel(ModelIn input, float positionScale)
     output.glintTexture = input.glintTexture;
     output.material = words[10];
     static const float faceShade[7] = { 0.9, 0.6, 0.6, 0.5, 1.0, 0.8, 0.8 };
-    output.shade = faceShade[min(words[11] & 0xf, 6u)];
+    uint shadeFace = min(words[11] & 0xf, 6u);
+    output.shade = (input.d.y & 0x80010000u) == 0x10000u && (words[11] & 0x10u) == 0u ? (shadeFace == 0u ? 0.9 : shadeFace < 3u ? 0.9 : shadeFace == 3u ? 0.875 : shadeFace == 4u ? 1.0 : 0.95) : faceShade[shadeFace];
     output.relative = position;
     uint rgb = words[11] >> 8;
     output.tint = rgb != 0 ? (0x80000000 | rgb) : 0;
     output.light = cornerLight(input.d.x, (input.d.y & 0x80000000u) != 0 ? 0u : input.d.y, corner);
     output.entity = (words[11] & 0x20) != 0 ? (words[11] >> 5) & 1839 : 0;
+    if ((words[11] & 0x20000u) != 0u) {
+        float3 points[3];
+        const uint normalCorners[3] = { 0u, 1u, 3u };
+        for (uint normalVertex = 0u; normalVertex < 3u; ++normalVertex) {
+            for (uint axis = 0u; axis < 3u; ++axis) {
+                uint component = normalCorners[normalVertex] * 3u + axis;
+                uint packed = words[component / 2u];
+                points[normalVertex][axis] = float((component & 1u) != 0u ? (int(packed) >> 16) : (int(packed << 16) >> 16));
+            }
+        }
+        float3 normal = cross(points[2] - points[0], points[1] - points[0]);
+        float lengthSquared = dot(normal, normal);
+        if (lengthSquared > 0.0) {
+            normal *= rsqrt(lengthSquared);
+            output.shade = (1.0 + normal.y) * 0.275 - normal.x * normal.x * 0.1 + normal.z * normal.z * 0.1 + 0.45;
+        }
+    }
     if ((output.entity & 256u) != 0u) output.light.z = float((input.d.x >> (corner * 8u)) & 255u) / 255.0;
     if (output.entity != 0) {
         output.tint = input.d.w == 0 && ((input.d.z | output.material) & 0x80000000u) != 0 ? input.d.z : 0;
@@ -381,6 +396,15 @@ WorldOut vs_hand(HandIn input)
     float3 position = origin.xyz + float3(positions[component], positions[component + 1], positions[component + 2]);
     output.position = mul(viewProjection, float4(position, 1.0));
     output.relative = position;
+    if ((input.c.w & 0x20000u) != 0u) {
+        float3 normal = cross(float3(positions[9], positions[10], positions[11]) - float3(positions[0], positions[1], positions[2]),
+            float3(positions[3], positions[4], positions[5]) - float3(positions[0], positions[1], positions[2]));
+        float lengthSquared = dot(normal, normal);
+        if (lengthSquared > 0.0) {
+            normal *= rsqrt(lengthSquared);
+            output.shade = (1.0 + normal.y) * 0.275 - normal.x * normal.x * 0.1 + normal.z * normal.z * 0.1 + 0.45;
+        }
+    }
     return output;
 }
 
@@ -426,13 +450,15 @@ float3 fogWorld(float3 color, float3 relative, bool additive)
     return lerp(color, fogColor, amount);
 }
 
-float worldLight(float3 cornerLevels)
+float3 worldLight(float3 cornerLevels, bool actor = false)
 {
-    float daylight = max(saturate(params.y), 0.2);
-    float channel = max(saturate(cornerLevels.x), saturate(cornerLevels.y) * daylight);
-    channel = lerp(channel, 1.0, saturate(params.z));
-    float light = lerp(0.04, 1.0, channel) * saturate(cornerLevels.z);
-    return pow(light, 1.0 / 2.2);
+    float2 coordinate = clamp(cornerLevels.xy * (actor ? 1.0 : 16.0 / 15.0) - 0.5, 0.0, 15.0);
+    int2 low = int2(floor(coordinate));
+    int2 high = min(low + int2(1, 1), int2(15, 15));
+    float2 fraction = coordinate - float2(low);
+    float3 lower = lerp(lightmap.Load(int4(low, 0, 0)).rgb, lightmap.Load(int4(int2(high.x, low.y), 0, 0)).rgb, fraction.x);
+    float3 upper = lerp(lightmap.Load(int4(int2(low.x, high.y), 0, 0)).rgb, lightmap.Load(int4(high, 0, 0)).rgb, fraction.x);
+    return lerp(lower, upper, fraction.y) * clamp(cornerLevels.z, 0.0, 1.0);
 }
 
 float3 shadeWorld(float3 rgb, float shade, float3 relative, float3 cornerLevels)
@@ -533,7 +559,7 @@ float3 sampleGlint(uint layer, float2 uv, float2 size)
         lerp(glintTexel(layer, cell + float2(0, 1), size), glintTexel(layer, cell + float2(1, 1), size), weight.x), weight.y);
 }
 
-float4 applyGlint(float4 texel, WorldOut input, float illumination)
+float4 applyGlint(float4 texel, WorldOut input, float3 illumination)
 {
     if (input.glint.z <= 0.0 || texel.a <= 0.0) return texel;
     uint layer = uint(input.glint.w);
@@ -588,7 +614,7 @@ float4 actorSurface(WorldOut input, float2 uv)
         texel.rgb = lerp(lerp(texel.rgb, second.rgb, second.a), third.rgb, third.a);
     }
     if (mode != 3u) texel.rgb = lerp(texel.rgb, input.actorOverlay.rgb, input.actorOverlay.a);
-    float illumination = (input.entity & 8u) != 0u ? worldLight(input.light) : 1.0;
+    float3 illumination = (input.entity & 8u) != 0u ? worldLight(input.light, true) : float3(1.0, 1.0, 1.0);
     float3 lit = texel.rgb * input.shade * illumination;
     texel.rgb = (input.entity & 8u) == 0u ? texel.rgb : mode == 1u ? lerp(texel.rgb, lit, texel.a) : lit;
     texel = applyGlint(texel, input, illumination);
@@ -623,7 +649,7 @@ float4 surfaceTexel(WorldOut input)
             float4 flash = hit == 0 ? float4(1.0, 0.0, 0.0, 0.5) : float4(hit & 255, (hit >> 8) & 255, (hit >> 16) & 255, hit >> 24) / 255.0;
             texel.rgb = lerp(texel.rgb, flash.rgb, flash.a);
         }
-        float illumination = (input.entity & 8u) != 0u ? worldLight(input.light) : 1.0;
+        float3 illumination = (input.entity & 8u) != 0u ? worldLight(input.light, true) : float3(1.0, 1.0, 1.0);
         if ((input.entity & 8u) != 0u) texel.rgb *= input.shade * illumination;
         texel = applyGlint(texel, input, illumination);
         if ((input.entity & (8u | 32u)) != 0u) texel.rgb = fogWorld(texel.rgb, input.relative, (input.entity & 2u) != 0u);
@@ -631,7 +657,7 @@ float4 surfaceTexel(WorldOut input)
     }
     float4 texel = applyTint(sampleMaterial(input.material, input.uv), input.tint);
     if (input.glint.z > 0.0) {
-        float illumination = worldLight(input.light);
+        float3 illumination = worldLight(input.light);
         texel.rgb *= input.shade * illumination;
         texel = applyGlint(texel, input, illumination);
         texel.rgb = fogWorld(texel.rgb, input.relative, false);

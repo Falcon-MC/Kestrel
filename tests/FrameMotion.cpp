@@ -348,6 +348,23 @@ void networkSeedAdvancesWithoutFrames()
     }
 }
 
+void networkSeedPreservesSprintFov()
+{
+    PlayerMotion seed = flying();
+    MotionInput input;
+    input.forward = 1;
+    input.sprint = true;
+    const auto tick = seed.step(input, Empty);
+    require(tick.sprinting && tick.flying, "Precondition: the network seed is flying and sprinting");
+    FrameMotion visual;
+    visual.reset(seed, 1, 0);
+    require(visual.lastResult().sprinting && visual.lastResult().flying,
+        "Initializing camera motion must preserve sprint and flight FOV modifiers");
+    visual.rebase(seed, 2);
+    require(visual.lastResult().sprinting && visual.lastResult().flying,
+        "A network seed ahead of rendering must not reset sprint and flight FOV modifiers");
+}
+
 }
 
 int main()
@@ -366,5 +383,6 @@ int main()
     replayUsesCurrentLocks();
     pendingInputsOutlivePhysicsHistory();
     networkSeedAdvancesWithoutFrames();
+    networkSeedPreservesSprintFov();
     return 0;
 }

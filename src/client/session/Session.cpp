@@ -1886,8 +1886,14 @@ void Session::scheduleMeshes()
                 input.biomes[size_t((dz + 1) * 3 + (dx + 1))] = world.store().biomes({ key.dimension, key.x + dx, key.y, key.z + dz });
                 for (int32_t dy = -1; dy <= 1; ++dy) {
                     input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + (dz + 1))] = world.store().subChunk({ key.dimension, key.x + dx, key.y + dy, key.z + dz });
+                    const bool inHeight = key.y + dy >= range.baseSubChunkY && key.y + dy < range.baseSubChunkY + range.subChunkCount;
+                    input.unknownAround[size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)] = inHeight
+                        && (!world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })
+                            || world.subChunkPending({ key.dimension, key.x + dx, key.y + dy, key.z + dz }));
                 }
                 for (int32_t y = key.y + 2; y < range.baseSubChunkY + range.subChunkCount; ++y) {
+                    input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)] |= !world.store().isLoaded({ key.dimension, key.x + dx, key.z + dz })
+                        || world.subChunkPending({ key.dimension, key.x + dx, y, key.z + dz });
                     if (std::shared_ptr<const world::SubChunk> above = world.store().subChunk({ key.dimension, key.x + dx, y, key.z + dz })) {
                         input.above[size_t((dx + 1) * 3 + (dz + 1))].push_back(std::move(above));
                     }
@@ -1952,7 +1958,7 @@ void Session::collectMeshes()
 
         std::shared_ptr<const world::ChunkMesh> mesh;
         auto visibility = result.mesh.visibility;
-        if (!result.mesh.empty()) {
+        if (!result.mesh.empty() || !result.mesh.light.empty()) {
             meshQuads += result.mesh.quadCount();
             mesh = std::make_shared<const world::ChunkMesh>(std::move(result.mesh));
             meshes.emplace(result.key, mesh);

@@ -14,6 +14,7 @@ layout(set = 0, binding = 2) uniform sampler2DArray entities;
 layout(set = 0, binding = 3) uniform sampler2DArray entitiesHigh;
 layout(set = 0, binding = 4) uniform sampler2DArray entities2;
 layout(set = 0, binding = 5) uniform sampler2DArray entities3;
+layout(set = 0, binding = 6) uniform sampler2DArray lightmap;
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) flat in uint inMaterial;
@@ -135,12 +136,15 @@ vec3 fogWorld(vec3 color, bool additive)
     return mix(color, fogColor, amount);
 }
 
-float worldLight()
+vec3 worldLight()
 {
-    float daylight = max(clamp(draw.params.y, 0.0, 1.0), 0.2);
-    float channel = max(clamp(inLight.x, 0.0, 1.0), clamp(inLight.y, 0.0, 1.0) * daylight);
-    channel = mix(channel, 1.0, clamp(draw.params.z, 0.0, 1.0));
-    return pow(mix(0.04, 1.0, channel) * clamp(inLight.z, 0.0, 1.0), 1.0 / 2.2);
+    vec2 coordinate = clamp(inLight.xy * (inEntity != 0u ? 1.0 : 16.0 / 15.0) - 0.5, 0.0, 15.0);
+    ivec2 low = ivec2(floor(coordinate));
+    ivec2 high = min(low + ivec2(1, 1), ivec2(15, 15));
+    vec2 fraction = coordinate - vec2(low);
+    vec3 lower = mix(texelFetch(lightmap, ivec3(low, 0), 0).rgb, texelFetch(lightmap, ivec3(ivec2(high.x, low.y), 0), 0).rgb, fraction.x);
+    vec3 upper = mix(texelFetch(lightmap, ivec3(ivec2(low.x, high.y), 0), 0).rgb, texelFetch(lightmap, ivec3(high, 0), 0).rgb, fraction.x);
+    return mix(lower, upper, fraction.y) * clamp(inLight.z, 0.0, 1.0);
 }
 
 vec3 shadeWorld(vec3 rgb)
@@ -189,7 +193,7 @@ vec3 sampleGlint(uint layer, vec2 uv, vec2 size)
         mix(glintTexel(layer, cell + vec2(0, 1), size), glintTexel(layer, cell + vec2(1, 1), size), weight.x), weight.y);
 }
 
-vec4 applyGlint(vec4 texel, float illumination)
+vec4 applyGlint(vec4 texel, vec3 illumination)
 {
     if (inGlint.z <= 0.0 || texel.a <= 0.0) return texel;
     uint layer = uint(inGlint.w);
@@ -244,7 +248,7 @@ vec4 actorSurface(vec2 uv)
         texel.rgb = mix(mix(texel.rgb, second.rgb, second.a), third.rgb, third.a);
     }
     if (mode != 3u) texel.rgb = mix(texel.rgb, inActorOverlay.rgb, inActorOverlay.a);
-    float illumination = (inEntity & 8u) != 0u ? worldLight() : 1.0;
+    vec3 illumination = (inEntity & 8u) != 0u ? worldLight() : vec3(1.0);
     vec3 lit = texel.rgb * inShade * illumination;
     texel.rgb = (inEntity & 8u) == 0u ? texel.rgb : mode == 1u ? mix(texel.rgb, lit, texel.a) : lit;
     texel = applyGlint(texel, illumination);
@@ -291,7 +295,7 @@ void main()
 #else
         if (texel.a < 0.5) discard;
 #endif
-        float illumination = worldLight();
+        vec3 illumination = worldLight();
         texel.rgb *= inShade * illumination;
         texel = applyGlint(texel, illumination);
         texel.rgb = fogWorld(texel.rgb, false);
@@ -312,7 +316,7 @@ void main()
         vec4 flash = hit == 0u ? vec4(1.0, 0.0, 0.0, 0.5) : unpackUnorm4x8(hit);
         texel.rgb = mix(texel.rgb, flash.rgb, flash.a);
     }
-    float illumination = (inEntity & 8u) != 0u ? worldLight() : 1.0;
+    vec3 illumination = (inEntity & 8u) != 0u ? worldLight() : vec3(1.0);
     if ((inEntity & 8u) != 0u) texel.rgb *= inShade * illumination;
     if (inEntity != 0u) texel = applyGlint(texel, illumination);
     if ((inEntity & (8u | 32u)) != 0u) texel.rgb = fogWorld(texel.rgb, (inEntity & 2u) != 0u);

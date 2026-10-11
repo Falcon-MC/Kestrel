@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <random>
 #include <vector>
@@ -27,7 +28,7 @@ public:
      * Appends one camera facing quad per particle, placed in 1/256 block
      * around origin.
      */
-    void append(const std::array<int32_t, 3>& origin, const std::array<double, 3>& camera, std::vector<world::ModelQuadGpu>& out) const;
+    void append(const std::array<int32_t, 3>& origin, const std::array<double, 3>& camera, std::vector<world::ModelQuadGpu>& out, const std::function<uint8_t(double, double, double)>& lightAt = {}) const;
 
 private:
     struct Particle {

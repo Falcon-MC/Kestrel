@@ -131,13 +131,14 @@ private:
     bool loadPackTexture(const std::string& texture);
     ui::UiData sidebarData() const;
     float nightVisionStrength() const;
+    void updateWorldLighting(float deltaSeconds);
     void updateAudio(const SessionSnapshot& snapshot);
     void playSoundRequest(const SoundRequest& request);
     void updateMusic(const SessionSnapshot& snapshot);
     void applyMeshUpdates();
     size_t visibleTerrain() const;
     uint8_t lightAt(double x, double y, double z) const;
-    uint32_t lightCorners(double x, double y, double z) const;
+    uint32_t lightCorners(double x, double y, double z, double height = 1.0) const;
     void lightQuads(ModelQuadOutput quads, size_t first, uint32_t corners) const;
     void buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended);
     void interpolateActors(double now);
@@ -343,6 +344,12 @@ private:
     bool worldShown = false;
     std::shared_ptr<const world::BlockAssets> blockAssets;
     SessionSnapshot timeState;
+    LightmapInputs worldLighting;
+    LightingWeather lightingWeather;
+    float darknessStrength = 0.0f;
+    float visionStrength = 0.0f;
+    double lightningAt = -1.0;
+    std::unordered_set<uint64_t> lightningActors;
     world::GlobalResources globalResources;
     uint64_t globalResourcesRevision = 0;
     std::vector<std::shared_ptr<const world::PackFiles>> selectedGlobalPacks;

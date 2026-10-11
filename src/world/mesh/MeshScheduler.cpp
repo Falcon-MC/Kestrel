@@ -288,7 +288,8 @@ void MeshScheduler::work(bool foreground)
                         && cached->second.ids.hidden == job.ids.hidden
                         && sources.skyLight == job.input.skyLight
                         && sources.center == job.input.center
-                        && sources.around == job.input.around && sources.above == job.input.above;
+                        && sources.around == job.input.around && sources.above == job.input.above
+                        && sources.unknownAround == job.input.unknownAround && sources.unknownAbove == job.input.unknownAbove;
                 }
             }
         }
@@ -347,6 +348,8 @@ void MeshScheduler::work(bool foreground)
                 sources.center = job.input.center;
                 sources.around = job.input.around;
                 sources.above = job.input.above;
+                sources.unknownAround = job.input.unknownAround;
+                sources.unknownAbove = job.input.unknownAbove;
                 sources.skyLight = job.input.skyLight;
                 lightCache.insert_or_assign(job.key, LightCacheEntry { std::move(sources), job.assets, job.ids, job.input.lighting, ++cacheClock });
                 meshMilliseconds += elapsed;

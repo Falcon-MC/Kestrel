@@ -24,17 +24,13 @@ layout(std140, set = 1, binding = 0) uniform Actor {
     vec4 glintTexture;
 } actor;
 
-const float lightCurve[16] = float[16](
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0);
+
 
 vec3 cornerLight(uint light, uint ao, uint corner)
 {
     uint levels = (light >> (corner * 8u)) & 0xffu;
-    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
-    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+    float occlusion = 1.0 - float((ao >> (corner * 4u)) & 7u) * 0.2;
+    return vec3(float(levels & 0xfu), float(levels >> 4u), occlusion);
 }
 
 vec3 pose(vec3 point) {

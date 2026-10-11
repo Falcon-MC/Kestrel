@@ -361,6 +361,7 @@ public:
         filter.assign(volume, 0);
         emission.assign(volume, 0);
         occluder.assign(volume, 0);
+        shade.assign(volume, 0);
         loadBlocks(assets, ids, input);
         if (input.isCancelled()) return {};
         std::vector<uint8_t> seeds(volume, 0);
@@ -403,6 +404,7 @@ public:
         result->filter = std::move(filter);
         result->emission = std::move(emission);
         result->occluder = std::move(occluder);
+        result->shade = std::move(shade);
         result->block = std::move(block);
         result->sky = std::move(sky);
         result->skySeeds = std::move(seeds);
@@ -427,14 +429,8 @@ public:
         return inside(x, y, z) && (retained ? retained->occluder : occluder)[index(x, y, z)] != 0;
     }
 
-    /**
-     * Corner lighting of a quad on the given face of block (x, y, z), with
-     * corner positions in 1/256 block: each corner of the whole face averages
-     * the four cells in front of it and counts the full blocks beside and
-     * diagonal to it, and a quad corner blends those by where it sits, so a
-     * half face like a slab side lines up with the full faces next to it.
-     */
-    QuadLight bake(int32_t x, int32_t y, int32_t z, Face face, const std::array<std::array<int32_t, 3>, 4>& positions) const
+    /** Each vertex takes independent channel maxima and four native shade samples. */
+    QuadLight bake(int32_t x, int32_t y, int32_t z, Face face, const std::array<std::array<int32_t, 3>, 4>& positions, bool liquid = false) const
     {
         std::array<int32_t, 3> normal {};
         size_t tangentA = 0;
@@ -474,63 +470,36 @@ public:
         size_t axis = normal[0] != 0 ? 0 : normal[1] != 0 ? 1 : 2;
         int32_t plane = normal[axis] < 0 ? 0 : 256;
         bool flush = std::all_of(positions.begin(), positions.end(), [&](const std::array<int32_t, 3>& position) {
-            return position[axis] == plane;
+            return normal[axis] < 0 ? position[axis] <= plane : position[axis] >= plane;
         });
         std::array<int32_t, 3> self { x, y, z };
         std::array<int32_t, 3> outward { x + normal[0], y + normal[1], z + normal[2] };
-        // Faces sunk into their block, like the step of a stair, take their
-        // light from the block's own layer rather than the one beyond.
         const std::array<int32_t, 3>& base = flush ? outward : self;
-        const std::array<int32_t, 3>& center = flush || !occludes(outward[0], outward[1], outward[2]) ? outward : self;
-        uint32_t centerLevel = levelAt(center);
-
-        // Light sums and occlusion at the four corners of the whole face,
-        // indexed by which side of each tangent they sit on.
-        std::array<std::array<uint32_t, 3>, 4> full {};
-        for (size_t index = 0; index < 4; ++index) {
-            int32_t signA = (index & 1) ? 1 : -1;
-            int32_t signB = (index & 2) ? 1 : -1;
-            std::array<int32_t, 3> sideA = base;
-            sideA[tangentA] += signA;
-            std::array<int32_t, 3> sideB = base;
-            sideB[tangentB] += signB;
-            std::array<int32_t, 3> diagonal = sideA;
-            diagonal[tangentB] += signB;
-            bool occludedA = occludes(sideA[0], sideA[1], sideA[2]);
-            bool occludedB = occludes(sideB[0], sideB[1], sideB[2]);
-            bool occludedDiagonal = occludes(diagonal[0], diagonal[1], diagonal[2]);
-            uint32_t ao = occludedA && occludedB ? 3u : uint32_t(occludedA) + uint32_t(occludedB) + uint32_t(occludedDiagonal);
-            uint32_t blockSum = 0;
-            uint32_t skySum = 0;
-            for (const std::array<int32_t, 3>& sample : { center, sideA, sideB, occludedA && occludedB ? sideA : diagonal }) {
-                // A dark sample is usually a solid block; the game counts it as
-                // the center instead, so walls only darken through occlusion.
-                uint32_t level = sample == center ? centerLevel : levelAt(sample);
-                if (level == 0) {
-                    level = centerLevel;
-                }
-                blockSum += level & 15u;
-                skySum += level >> 4;
-            }
-            full[index] = { blockSum, skySum, ao };
-        }
-
+        const std::array<int32_t, 3>& center = flush && (liquid || occludes(x, y, z)) ? outward : self;
+        auto darkened = [&](const std::array<int32_t, 3>& cell) {
+            solve();
+            return inside(cell[0], cell[1], cell[2]) && (retained ? retained->shade : shade)[index(cell[0], cell[1], cell[2])] != 0;
+        };
         QuadLight result;
         for (size_t corner = 0; corner < 4; ++corner) {
-            float u = std::clamp(float(positions[corner][tangentA]) / 256.0f, 0.0f, 1.0f);
-            float v = std::clamp(float(positions[corner][tangentB]) / 256.0f, 0.0f, 1.0f);
-            std::array<float, 4> weights { (1.0f - u) * (1.0f - v), u * (1.0f - v), (1.0f - u) * v, u * v };
-            std::array<float, 3> mixed {};
-            for (size_t index = 0; index < 4; ++index) {
-                for (size_t channel = 0; channel < 3; ++channel) {
-                    mixed[channel] += float(full[index][channel]) * weights[index];
-                }
+            const int32_t signA = positions[corner][tangentA] < 128 ? -1 : 1;
+            const int32_t signB = positions[corner][tangentB] < 128 ? -1 : 1;
+            auto sideA = base;
+            auto sideB = base;
+            sideA[tangentA] += signA;
+            sideB[tangentB] += signB;
+            auto diagonal = sideA;
+            diagonal[tangentB] += signB;
+            if (occludes(sideA[0], sideA[1], sideA[2]) && occludes(sideB[0], sideB[1], sideB[2])) diagonal = sideA;
+            uint32_t blockLevel = 0, skyLevel = 0;
+            for (const auto& sample : { center, sideA, sideB, diagonal }) {
+                uint32_t light = levelAt(sample);
+                blockLevel = std::max(blockLevel, light & 15u);
+                skyLevel = std::max(skyLevel, light >> 4);
             }
-            uint32_t blockLevel = uint32_t(mixed[0] / 4.0f + 0.001f);
-            uint32_t skyLevel = uint32_t(mixed[1] / 4.0f + 0.001f);
-            uint32_t ao = uint32_t(mixed[2] + 0.5f);
+            const uint32_t occlusion = uint32_t(darkened(outward)) + uint32_t(darkened(sideA)) + uint32_t(darkened(sideB)) + uint32_t(darkened(diagonal));
             result.light |= (blockLevel | (skyLevel << 4)) << (corner * 8);
-            result.ao |= ao << (corner * 2);
+            result.ao |= occlusion << (corner * 4);
         }
         return result;
     }
@@ -561,6 +530,7 @@ private:
         filter.assign(volume, 0);
         emission.assign(volume, 0);
         occluder.assign(volume, 0);
+        shade.assign(volume, 0);
         block.assign(volume, 0);
         sky.assign(volume, 0);
         loadBlocks(assets, ids, input);
@@ -594,6 +564,12 @@ private:
                 for (int32_t dz = -1; dz <= 1; ++dz) {
                     const SubChunk* subChunk = (dx == 0 && dy == 0 && dz == 0) ? input.center.get() : input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + (dz + 1))].get();
                     if (!subChunk) {
+                        if (input.unknownAround[size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)]) {
+                            for (int32_t x = 0; x < int32_t(Side); ++x)
+                                for (int32_t y = 0; y < int32_t(Side); ++y)
+                                    for (int32_t z = 0; z < int32_t(Side); ++z)
+                                        filter[index(dx * int32_t(Side) + x, dy * int32_t(Side) + y, dz * int32_t(Side) + z)] = 15;
+                        }
                         continue;
                     }
                     for (const PalettedStorage& storage : subChunk->storages()) {
@@ -612,9 +588,8 @@ private:
                                     size_t cell = index(dx * int32_t(Side) + int32_t(x), dy * int32_t(Side) + int32_t(y), dz * int32_t(Side) + int32_t(z));
                                     filter[cell] = std::max(filter[cell], visual->lightFilter);
                                     emission[cell] = std::max(emission[cell], visual->lightEmission);
-                                    if (first && (visual->flags & FlagOccludesFullFace)) {
-                                        occluder[cell] = 1;
-                                    }
+                                    if (visual->flags & FlagOccludesFullFace) occluder[cell] = 1;
+                                    if (first && ((visual->flags & (FlagOccludesFullFace | FlagLeafModel)) || visual->lightEmission)) shade[cell] = 1;
                                 }
                             }
                         }
@@ -751,6 +726,11 @@ private:
         std::vector<uint8_t> blocked(size_t(Extent) * Extent, 0);
         for (int32_t dx = -1; dx <= 1; ++dx) {
             for (int32_t dz = -1; dz <= 1; ++dz) {
+                if (input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)]) {
+                    for (int32_t x = 0; x < int32_t(Side); ++x)
+                        for (int32_t z = 0; z < int32_t(Side); ++z)
+                            blocked[size_t(dx * int32_t(Side) + x + Offset) * Extent + size_t(dz * int32_t(Side) + z + Offset)] = 1;
+                }
                 for (const std::shared_ptr<const SubChunk>& subChunk : input.above[size_t((dx + 1) * 3 + (dz + 1))]) {
                     if (!subChunk) {
                         continue;
@@ -820,6 +800,7 @@ private:
     mutable std::vector<uint8_t> filter;
     mutable std::vector<uint8_t> emission;
     mutable std::vector<uint8_t> occluder;
+    mutable std::vector<uint8_t> shade;
     mutable std::vector<uint8_t> block;
     mutable std::vector<uint8_t> sky;
 };
@@ -850,7 +831,17 @@ void greedySlice(const PaletteFacts& facts, TintSampler& tints, const LightField
     auto lightOf = [&](uint32_t x, uint32_t y, uint32_t z) {
         auto [found, inserted] = baked.try_emplace(linearIndex(x, y, z));
         if (inserted) {
-            found->second = field.bake(int32_t(x), int32_t(y), int32_t(z), face, corners);
+            const BlockVisual& visual = facts.at(x, y, z);
+            if (visual.flatLighting) {
+                std::array<int32_t, 3> cell { int32_t(x), int32_t(y), int32_t(z) };
+                cell[uint32_t(face) / 2] += (uint32_t(face) & 1) ? 1 : -1;
+                uint8_t sample = field.flat(cell[0], cell[1], cell[2]).light & 255;
+                sample = (sample & 0xf0) | std::max<uint8_t>(sample & 15, visual.lightEmission);
+                found->second.light = uint32_t(sample) * 0x01010101u;
+            } else {
+                found->second = field.bake(int32_t(x), int32_t(y), int32_t(z), face, corners);
+            }
+            if (visual.lightEmission) found->second.ao |= 1u << 16;
         }
         return found->second;
     };
@@ -1172,7 +1163,7 @@ Face rotateFace(Face face, uint32_t rotation)
     return face;
 }
 
-void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, uint32_t rotation, uint32_t tint, const LightField& field, std::vector<ModelQuadGpu>& out)
+void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, uint32_t rotation, uint32_t tint, const LightField& field, std::vector<ModelQuadGpu>& out, bool emitting = false)
 {
     ModelQuadGpu gpu;
     std::array<int16_t, 12> positions {};
@@ -1204,7 +1195,7 @@ void emitModelQuad(const ModelQuad& quad, uint32_t x, uint32_t y, uint32_t z, ui
     gpu.words[11] = shade | (rgb << 8);
     QuadLight lighting = face ? field.bake(int32_t(x), int32_t(y), int32_t(z), rotateFace(*face, rotation), local) : field.flat(int32_t(x), int32_t(y), int32_t(z));
     gpu.words[12] = lighting.light;
-    gpu.words[13] = lighting.ao;
+    gpu.words[13] = lighting.ao | (emitting ? 1u << 16 : 0u);
     out.push_back(gpu);
 }
 
@@ -1226,7 +1217,7 @@ void meshBlockEntity(const BlockAssets& assets, const BlockVisual& visual, const
     const ModelTemplate& modelTemplate = templates[selected];
     for (uint32_t q = 0; q < modelTemplate.quadCount; ++q) {
         const ModelQuad& quad = assets.modelQuads()[modelTemplate.quadStart + q];
-        emitModelQuad(quad, x, y, z, 0, tints.tintWord(quad.material, x, y, z), field, out);
+        emitModelQuad(quad, x, y, z, 0, tints.tintWord(quad.material, x, y, z), field, out, visual.lightEmission != 0);
     }
 }
 
@@ -1268,7 +1259,7 @@ void meshModels(const BlockAssets& assets, const IdMapping& ids, const MeshInput
                                 continue;
                             }
                         }
-                        emitModelQuad(quad, x, y, z, rotation, tints.tintWord(quad.material, x, y, z), field, (visual.flags & FlagTranslucent) ? translucent : opaque);
+                        emitModelQuad(quad, x, y, z, rotation, tints.tintWord(quad.material, x, y, z), field, (visual.flags & FlagTranslucent) ? translucent : opaque, visual.lightEmission != 0);
                     }
                 }
             }
@@ -1517,6 +1508,15 @@ private:
         quad.material = material;
         quad.flags = FaceIds[faceIndex] | QuadTwoSided;
         emitModelQuad(quad, uint32_t(x), uint32_t(y), uint32_t(z), 0, tints.tintWord(material, uint32_t(x), uint32_t(y), uint32_t(z)), field, out);
+        out.back().words[13] = 0;
+        if (face == Face::PositiveY) {
+            auto corners = cubeFaceCorners(face);
+            out.back().words[12] = field.bake(x, y, z, face, corners, true).light;
+        } else {
+            std::array<int32_t, 3> normal {};
+            normal[faceIndex / 2] = (faceIndex & 1) ? 1 : -1;
+            out.back().words[12] = field.flat(x + normal[0], y + normal[1], z + normal[2]).light;
+        }
         if (side && falling) {
             out.back().words[11] |= 1u << 4;
         }
@@ -1596,7 +1596,7 @@ std::shared_ptr<const ChunkLighting> updateChunkLighting(const BlockAssets& asse
 size_t meshOutputBound(const BlockAssets& assets, const IdMapping& ids, const MeshInput& input, size_t maxTemplateQuads)
 {
     PaletteFacts facts(assets, ids, input.center.get());
-    if (facts.isAir()) return sizeof(ChunkMesh);
+    if (facts.isAir()) return sizeof(ChunkMesh) + 4096;
     size_t modelCells = 0;
     for (uint32_t x = 0; x < Side; ++x)
         for (uint32_t y = 0; y < Side; ++y)
@@ -1636,6 +1636,12 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
     }
     mesh.visibility = ChunkVisibility::build(solid);
     if (facts.isAir()) {
+        LightField field(assets, ids, input);
+        mesh.light.resize(4096);
+        for (uint32_t x = 0; x < Side; ++x)
+            for (uint32_t y = 0; y < Side; ++y)
+                for (uint32_t z = 0; z < Side; ++z)
+                    mesh.light[linearIndex(x, y, z)] = field.flat(x, y, z).light & 255;
         return mesh;
     }
 
@@ -1669,7 +1675,7 @@ ChunkMesh meshSubChunk(const BlockAssets& assets, const IdMapping& ids, const Me
     if (cancelled()) return {};
     LiquidMesher(assets, ids, input, tints, field).mesh(mesh.models, mesh.translucentModels);
     if (cancelled()) return {};
-    if (!mesh.empty()) {
+    {
         mesh.light.resize(size_t(Side) * Side * Side);
         for (uint32_t x = 0; x < Side; ++x) {
             for (uint32_t y = 0; y < Side; ++y) {

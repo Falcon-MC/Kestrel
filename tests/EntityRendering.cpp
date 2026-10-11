@@ -537,6 +537,13 @@ int main()
     require(std::abs(legacyAnimator.matrices()[0][5] - std::cos(40.0 * 3.14159265359 / 180.0)) < 1e-6,
         "A legacy controller must play both clips once when its alias matches a clip alias");
     GeometryLibrary geometries;
+    geometries.parse(R"({"geometry.armor.child:geometry.armor.middle":{"bones":[{"name":"body","inflate":1}]},"geometry.armor.middle:geometry.armor.base":{"bones":[{"name":"head","reset":true}]},"geometry.armor.base":{"texturewidth":64,"textureheight":32,"bones":[{"name":"body","cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},{"name":"head","cubes":[{"origin":[0,2,0],"size":[2,2,2],"uv":[0,0]}]}]}})");
+    geometries.resolveInheritance();
+    const auto* inheritedArmor = geometries.find("geometry.armor.child");
+    require(inheritedArmor && inheritedArmor->bones.size() == 2
+            && inheritedArmor->bones[0].cubes.size() == 1 && inheritedArmor->bones[0].inflate == 1
+            && inheritedArmor->bones[1].cubes.empty() && inheritedArmor->textureHeight == 32,
+        "Legacy armor inheritance must retain parent cubes, apply resets and inherit texture dimensions");
     geometries.parse(R"({"geometry.test":{"bones":[{"name":"body","bind_pose_rotation":[90,0,0]}]}})");
     geometries.parse(R"({"geometry.test":{"bones":[{"name":"body"}]}})", true);
     require(geometries.find("geometry.test")->bones[0].bindRotation[0] == 90.0f, "Version layers must retain an omitted native bind pose");

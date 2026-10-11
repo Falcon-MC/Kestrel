@@ -217,6 +217,16 @@ public:
         return isSneaking;
     }
 
+    bool sprinting() const
+    {
+        return isSprinting;
+    }
+
+    bool flying() const
+    {
+        return isFlying;
+    }
+
     float speed() const
     {
         return movementSpeed;

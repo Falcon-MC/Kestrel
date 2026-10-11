@@ -216,6 +216,7 @@ struct BlockVisual {
     uint8_t lightEmission = 0;
     uint8_t lightFilter = 0;
     bool powderSnow = false;
+    bool flatLighting = false;
     uint8_t doorState = 0;
     uint8_t redstoneConnections = 0;
 

@@ -707,9 +707,9 @@ int Client::run()
             view.cameraMedium = timeState.cameraMedium;
             view.fogEnd = sky.fogEnd;
             view.daylight = sky.daylight;
-            float brightnessLift = menu::brightnessLift(menu.brightness());
-            view.nightVision = 1.0f - (1.0f - (serverCamera.playerEffects() ? nightVisionStrength() : 0.0f)) * (1.0f - brightnessLift);
-            view.nightVision = std::max(view.nightVision, visuals.brightness.value_or(0.0f));
+            updateWorldLighting(environmentDeltaSeconds);
+            view.lightmap = worldLighting;
+            view.nightVision = worldLighting.nightVision;
             if (visuals.hitColor) {
                 const mod::Color& hit = *visuals.hitColor;
                 // 0 means the game's own red, so a fully clear color still counts as set
@@ -734,7 +734,7 @@ int Client::run()
                 std::vector<world::ModelQuadGpu> overlayQuads;
                 buildActorQuads(entityOrigin, entityQuads, blendedQuads);
                 blockParticles.update(secondsNow());
-                blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads);
+                blockParticles.append(entityOrigin, { camera.x(), camera.y(), camera.z() }, entityQuads, [this](double x, double y, double z) { return lightAt(x, y, z); });
                 appendParticles(deltaSeconds, entityOrigin, entityQuads, blendedQuads);
                 appendChestLids(entityOrigin, deltaSeconds, entityQuads);
                 appendEnchantingBooks(entityOrigin, deltaSeconds, entityQuads);
@@ -744,7 +744,9 @@ int Client::run()
                     if (handVisible(menu.hudHidden(), menu.option("hide_hand", 0) != 0)) {
                         appendFirstPerson(entityOrigin, preciseHandQuads);
                     }
-                    lightQuads(preciseHandQuads, 0, lightCorners(camera.x(), camera.y() - 1.0, camera.z()));
+                    const uint32_t handLight = self ? lightCorners(self->x, self->y, self->z,
+                        actorExtent(self->height, playerView.bbHeight, self->scale)) : lightCorners(camera.x(), camera.y(), camera.z(), 0);
+                    lightQuads(preciseHandQuads, 0, handLight);
                     if (self) {
                         appendPaperDoll(*self, entityOrigin, handQuads);
                     }
@@ -1259,31 +1261,34 @@ void Client::applyMeshUpdates()
 
 /**
  * Block and sky light of the cell holding the point, as the mesher solved it.
- * Sub-chunks without a mesh never had their light solved; those are mostly
- * open air, so they count as open sky.
+ * Unknown cells remain dark; only cells outside the Overworld's height are open sky.
  */
 uint8_t Client::lightAt(double x, double y, double z) const
 {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || std::abs(x) > 30000000.0 || std::abs(y) > 30000000.0 || std::abs(z) > 30000000.0) return 0;
     int32_t blockX = static_cast<int32_t>(std::floor(x));
     int32_t blockY = static_cast<int32_t>(std::floor(y));
     int32_t blockZ = static_cast<int32_t>(std::floor(z));
     world::SubChunkKey key { timeState.dimension, blockX >> 4, blockY >> 4, blockZ >> 4 };
     auto found = litChunks.find(subChunkId(key));
     if (found == litChunks.end() || found->second->light.empty()) {
-        return OpenSkyLight;
+        world::DimensionRange range;
+        if (timeState.dimension == 0 && world::vanillaDimensionRange(timeState.dimension, range)
+            && (key.y < range.baseSubChunkY || key.y >= range.baseSubChunkY + range.subChunkCount)) return OpenSkyLight;
+        return 0;
     }
     return found->second->light[world::linearIndex(uint32_t(blockX & 15), uint32_t(blockY & 15), uint32_t(blockZ & 15))];
 }
 
 /**
  * The light an entity standing at the point takes: the cell at the feet and
- * the one above, whichever is brighter per channel, so a mob half sunk in a
+ * the top of its bounds, whichever is brighter per channel, so a mob half sunk in a
  * slab or snow layer does not go black. Packed for all four quad corners.
  */
-uint32_t Client::lightCorners(double x, double y, double z) const
+uint32_t Client::lightCorners(double x, double y, double z, double height) const
 {
     uint8_t feet = lightAt(x, y, z);
-    uint8_t head = lightAt(x, y + 1.0, z);
+    uint8_t head = lightAt(x, y + height + 0.01, z);
     uint32_t level = uint32_t(std::max(feet & 15, head & 15)) | (uint32_t(std::max(feet >> 4, head >> 4)) << 4);
     return level * 0x01010101u;
 }
@@ -1575,6 +1580,10 @@ void Client::syncSession()
     }
     if (snapshot.state != SessionState::Joined && seenJoin != 0 && worldShown) resetChunkMeshes = true;
     if (snapshot.state != SessionState::Joined) {
+        lightingWeather = {};
+        darknessStrength = visionStrength = 0.0f;
+        lightningAt = -1.0;
+        lightningActors.clear();
         submergedSeconds = 0.0f;
         localSwimAmount = 0.0f;
         menu.inventoryPanel().reset();

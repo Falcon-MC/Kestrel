@@ -773,6 +773,7 @@ bool BlockAssets::build(const std::vector<std::shared_ptr<const PackFiles>>& pac
         std::string name = startsWith(record.name, "minecraft:") ? record.name.substr(10) : record.name;
         BlockVisual& visual = visuals[i];
         visual.powderSnow = name == "powder_snow";
+        visual.flatLighting = name == "portal";
         if (name == "redstone_wire" || name == "redstone_block" || name == "redstone_torch" || name == "unlit_redstone_torch"
             || name == "lever" || name == "daylight_detector" || name == "daylight_detector_inverted" || name == "target"
             || name == "detector_rail" || name == "tripwire_hook" || name == "trapped_chest" || name == "lectern"

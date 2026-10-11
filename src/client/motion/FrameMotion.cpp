@@ -20,6 +20,8 @@ void FrameMotion::reset(const PlayerMotion& seed, uint64_t tick, double now)
     latest.velocity = seed.currentVelocity();
     latest.onGround = seed.grounded();
     latest.sneaking = seed.sneaking();
+    latest.sprinting = seed.sprinting();
+    latest.flying = seed.flying();
     latest.swimming = seed.swimming();
 }
 
@@ -42,6 +44,8 @@ void FrameMotion::rebase(const PlayerMotion& seed, uint64_t tick)
     latest.velocity = seed.currentVelocity();
     latest.onGround = seed.grounded();
     latest.sneaking = seed.sneaking();
+    latest.sprinting = seed.sprinting();
+    latest.flying = seed.flying();
     latest.swimming = seed.swimming();
 }
 
@@ -98,6 +102,8 @@ size_t FrameMotion::advance(double now, const InputProvider& input, const Player
             motion.hold();
             tick.result.position = motion.position();
             tick.result.sneaking = motion.sneaking();
+            tick.result.sprinting = motion.sprinting();
+            tick.result.flying = motion.flying();
             tick.result.onGround = motion.grounded();
         } else {
             applyImpulse(motion, tick.number);

@@ -46,8 +46,53 @@ MeshInput input(bool diagnostic = false)
     return result;
 }
 
+void checkLighting()
+{
+    BlockAssets assets;
+    MeshInput region;
+    auto center = std::make_shared<SubChunk>();
+    center->apply({ { 8, 8, 8, 0, 0 } });
+    region.center = center;
+    auto light = std::make_shared<ChunkLighting>();
+    constexpr size_t volume = 48 * 48 * 48;
+    light->block.resize(volume); light->sky.resize(volume);
+    light->occluder.resize(volume); light->shade.resize(volume);
+    auto cell = [](int x, int y, int z) { return (size_t(x + 16) * 48 + size_t(y + 16)) * 48 + size_t(z + 16); };
+    light->occluder[cell(8, 8, 8)] = 1;
+    light->block[cell(8, 9, 8)] = 3;
+    light->sky[cell(8, 9, 8)] = 2;
+    light->block[cell(7, 9, 8)] = 14;
+    light->sky[cell(8, 9, 7)] = 15;
+    for (auto sample : { cell(8, 9, 8), cell(7, 9, 8), cell(8, 9, 7), cell(7, 9, 7) }) light->shade[sample] = 1;
+    light->occluder[cell(7, 9, 8)] = light->occluder[cell(8, 9, 7)] = 1;
+    region.lighting = light;
+    auto mesh = meshSubChunk(assets, {}, region);
+    bool seen = false;
+    for (const auto& quad : mesh.cubes) {
+        if (((quad.geometry >> 15) & 7) != uint32_t(Face::PositiveY)) continue;
+        seen = true;
+        check((quad.light & 255) == 0xfe, "corner light must retain the independent maximum of each channel");
+        check((quad.ao & 15) == 4, "AO must account for the outward face and three tangent samples");
+    }
+    check(seen, "synthetic block must expose its top face");
+    region.center = std::make_shared<SubChunk>();
+    region.lighting.reset();
+    region.unknownAbove.fill(true);
+    region.unknownAround.fill(true);
+    region.unknownAround[13] = false;
+    auto dark = meshSubChunk(assets, {}, region);
+    check(dark.empty() && dark.light.size() == 4096, "empty chunks must retain solved light for entity sampling");
+    check(dark.light[linearIndex(8, 8, 8)] == 0, "unknown chunks must not admit sky light");
+    region.unknownAround.fill(false); region.unknownAbove.fill(false);
+    auto sky = meshSubChunk(assets, {}, region);
+    check(sky.light[linearIndex(8, 8, 8)] == 0xf0, "known empty chunks must admit direct sky light");
+    region.skyLight = false;
+    check(meshSubChunk(assets, {}, region).light[linearIndex(8, 8, 8)] == 0, "dimensions without a sky must not invent sky light");
+}
+
 int main()
 {
+    checkLighting();
     auto assets = std::make_shared<const BlockAssets>();
     for (unsigned count : { 1u, 2u, 4u }) {
         MeshScheduler scheduler(count);

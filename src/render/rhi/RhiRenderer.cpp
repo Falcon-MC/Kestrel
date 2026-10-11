@@ -20,7 +20,8 @@ namespace kestrel::rhi {
 namespace {
 
 constexpr uint32_t StreamStride[4] = { CubeQuadBytes, ModelQuadBytes, CubeQuadBytes, ModelQuadBytes };
-constexpr uint32_t WorldTextureCount = BlockTexturePages + EntityTexturePages;
+constexpr uint32_t LightmapTextureSlot = BlockTexturePages + EntityTexturePages;
+constexpr uint32_t WorldTextureCount = LightmapTextureSlot + 1;
 constexpr uint32_t EntityMipLevels = 5;
 // Blocks the camera may drift before translucent terrain is sorted again.
 constexpr double TransparentResortDistance = 1.0;
@@ -233,6 +234,8 @@ public:
 
         uiTextures = device->createTextureSet(1, false, SamplerMode::PixelClamp);
         worldTextures = device->createTextureSet(WorldTextureCount, true, SamplerMode::TerrainWrap);
+        lightmapTexture = device->createTexture({ 16, 16, 1, 1, true });
+        worldTextures->bind(LightmapTextureSlot, lightmapTexture.get());
         // Index 5 selects corner 3 in the existing shaders while shared indices reuse the other corners.
         static constexpr uint32_t QuadIndices[6] = { 0, 1, 2, 0, 2, 5 };
         quadIndices = device->createPersistentBuffer(sizeof(QuadIndices));
@@ -488,6 +491,12 @@ public:
     {
         if (!blockTextures[0] || !device->recording()) {
             return;
+        }
+        LightmapPixels pixels = buildLightmap(view.lightmap);
+        if (!lightmapReady || pixels != lightmapPixels) {
+            device->uploadTextureAsync(*lightmapTexture, { { 0, 0, pixels.data() } });
+            lightmapPixels = pixels;
+            lightmapReady = true;
         }
         FrameBuffers& buffers = frames[device->frameSlot()];
         WorldConstants constants(view);
@@ -1058,6 +1067,9 @@ private:
     std::unique_ptr<Pipeline> skyPipeline;
     std::unique_ptr<TextureSet> uiTextures;
     std::unique_ptr<TextureSet> worldTextures;
+    std::unique_ptr<Texture> lightmapTexture;
+    LightmapPixels lightmapPixels {};
+    bool lightmapReady = false;
     std::unique_ptr<Buffer> quadIndices;
     std::unique_ptr<Texture> atlas;
     uint32_t atlasWidth = 0;

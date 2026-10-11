@@ -139,13 +139,6 @@ public:
                 switch (event.type) {
                 case NSEventTypeLeftMouseDown:
                     mouse(event);
-                    if (event.window == window && (event.modifierFlags & NSEventModifierFlagControl)) {
-                        state.rightMouseDown = true;
-                        state.recordMousePress(true);
-                        controlClickDown = true;
-                        break;
-                    }
-                    controlClickDown = false;
                     if (event.window == window && inDragRegion()) {
                         [window performWindowDragWithEvent:event];
                         continue;
@@ -155,12 +148,6 @@ public:
                     break;
                 case NSEventTypeLeftMouseUp:
                     mouse(event);
-                    if (controlClickDown) {
-                        state.rightMouseDown = false;
-                        state.rightMouseReleased = true;
-                        controlClickDown = false;
-                        break;
-                    }
                     state.mouseDown = false;
                     state.mouseReleased = true;
                     break;
@@ -416,7 +403,6 @@ private:
     WindowChrome chrome;
     Cursor cursor = Cursor::Arrow;
     bool captured = false;
-    bool controlClickDown = false;
     bool shown = true;
 };
 

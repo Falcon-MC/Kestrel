@@ -1,5 +1,7 @@
 #pragma once
 
+#include "render/Lightmap.h"
+
 #include "ui/Image.h"
 
 #include <algorithm>
@@ -113,6 +115,7 @@ inline void packEntityPositions(const std::array<std::array<float, 3>, 4>& corne
 }
 
 struct WorldView {
+    LightmapInputs lightmap;
     std::array<float, 16> viewProjection {};
     double cameraX = 0.0;
     double cameraY = 0.0;

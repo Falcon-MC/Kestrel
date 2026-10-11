@@ -534,7 +534,7 @@ void Client::appendEntityQuad(const std::array<std::array<float, 3>, 4>& corners
         placed[corner].position = corners[corner];
         placed[corner].uv = uvs[corner];
     }
-    appendTiled(placed, layer, tileGridOf(layer), shadeWord, out);
+    appendTiled(placed, layer, tileGridOf(layer), shadeWord | (1u << 17), out);
 }
 
 void Client::appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector<world::ModelQuadGpu>& out, std::vector<world::ModelQuadGpu>& blended)
@@ -589,8 +589,8 @@ void Client::appendBeaconBeams(const std::array<int32_t, 3>& origin, std::vector
  * on every axis, and only when its bounding box may be on screen. Animations
  * run once per game tick; each frame draws the bones blended between the
  * last two tick poses by the partial tick, then the model scaled and turned
- * to its body yaw. Each face takes the shade of the axis its posed normal is
- * closest to. Entity quads set bit 5 of the shade word so they sample the
+ * to its body yaw. Each face takes fancy directional light from its posed normal.
+ * Entity quads set bit 5 of the shade word so they sample the
  * entity textures, and bit 6 when their material adds light; the rest take
  * the light around the entity unless their render controller ignores
  * lighting. A render controller's uv_anim goes in words 14 and 15 as half
@@ -691,7 +691,7 @@ void Client::buildActorQuads(const std::array<int32_t, 3>& origin, std::vector<w
         // Collision bounds need not enclose custom skins or animated geometry.
         // Outside that box, reject individual posed faces rather than the actor.
         bool cullFaces = !frustum.containsBox(cullView, actor.x, actor.y + boxHeight * 0.5, actor.z, halfWidth, halfHeight, halfWidth);
-        uint32_t light = lightCorners(actor.x, actor.y + boxHeight * 0.66f, actor.z);
+        uint32_t light = lightCorners(actor.x, actor.y, actor.z, boxHeight);
         if (actor.identifier == "minecraft:painting") {
             const auto* motive = world::paintingMotive(actor.paintingMotive);
             if (invisible || !motive || actor.paintingDirection < 0 || actor.paintingDirection > 3) {

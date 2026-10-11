@@ -46,17 +46,12 @@ layout(location = 14) flat out vec4 outGlint;
 layout(location = 15) flat out vec4 outGlintTexture;
 layout(location = 16) out vec2 outGlintUv;
 
-const float lightCurve[16] = float[16](
-    0.0, 0.01754386, 0.037037037, 0.05882353,
-    0.083333336, 0.11111111, 0.14285715, 0.17948718,
-    0.22222222, 0.27272728, 0.33333334, 0.4074074,
-    0.5, 0.61904764, 0.7777778, 1.0);
 
 vec3 cornerLight(uint light, uint ao, uint corner)
 {
     uint levels = (light >> (corner * 8u)) & 0xffu;
-    float occlusion = 1.0 - float((ao >> (corner * 2u)) & 3u) * 0.12;
-    return vec3(lightCurve[levels & 0xfu], lightCurve[levels >> 4u], occlusion);
+    float occlusion = 1.0 - float((ao >> (corner * 4u)) & 7u) * 0.2;
+    return vec3(float(levels & 0xfu), float(levels >> 4u), occlusion);
 }
 
 void main()
@@ -105,12 +100,35 @@ void main()
     outGlint = inGlint;
     outGlintTexture = inGlintTexture;
     outMaterial = words[10];
-    outShade = faceShade[min(words[11] & 0xfu, 6u)];
+    uint shadeFace = min(words[11] & 0xfu, 6u);
+    outShade = (inD.y & 0x80010000u) == 0x10000u && (words[11] & 0x10u) == 0u ? (shadeFace == 0u ? 0.9 : shadeFace < 3u ? 0.9 : shadeFace == 3u ? 0.875 : shadeFace == 4u ? 1.0 : 0.95) : faceShade[shadeFace];
     outRelative = position;
     uint rgb = words[11] >> 8;
     outTint = rgb != 0u ? (0x80000000u | rgb) : 0u;
     outLight = cornerLight(inD.x, (inD.y & 0x80000000u) != 0u ? 0u : inD.y, corner);
     outEntity = (words[11] & 0x20u) != 0u ? (words[11] >> 5) & 1839u : 0u;
+    if ((words[11] & 0x20000u) != 0u) {
+        vec3 points[3];
+        const uint normalCorners[3] = uint[3](0u, 1u, 3u);
+        for (uint point = 0u; point < 3u; ++point) {
+            for (uint axis = 0u; axis < 3u; ++axis) {
+                uint component = normalCorners[point] * 3u + axis;
+                uint packed = words[component / 2u];
+                points[point][axis] = float((component & 1u) != 0u ? (int(packed) >> 16) : (int(packed << 16) >> 16));
+            }
+        }
+#ifdef HAND
+        points[0] = vec3(positions[0], positions[1], positions[2]);
+        points[1] = vec3(positions[3], positions[4], positions[5]);
+        points[2] = vec3(positions[9], positions[10], positions[11]);
+#endif
+        vec3 normal = cross(points[2] - points[0], points[1] - points[0]);
+        float lengthSquared = dot(normal, normal);
+        if (lengthSquared > 0.0) {
+            normal *= inversesqrt(lengthSquared);
+            outShade = (1.0 + normal.y) * 0.275 - normal.x * normal.x * 0.1 + normal.z * normal.z * 0.1 + 0.45;
+        }
+    }
     if ((outEntity & 256u) != 0u) outLight.z = float((inD.x >> (corner * 8u)) & 255u) / 255.0;
     if (outEntity != 0u) {
         outTint = inD.w == 0u && ((inD.z | outMaterial) & 0x80000000u) != 0u ? inD.z : 0u;

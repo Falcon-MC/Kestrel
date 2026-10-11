@@ -29,8 +29,8 @@ inline constexpr uint32_t QuadTintOverlay = 1u << 30;
 
 /**
  * Per-corner lighting of one quad: light holds for each corner a byte of block
- * light (low nibble) and sky light (high nibble), ao holds two bits of
- * ambient occlusion per corner.
+ * light (low nibble) and sky light (high nibble), ao holds four bits per corner
+ * (zero to four shade samples) and bit 16 marks an emitting surface.
  */
 struct QuadLight {
     uint32_t light = 0;
@@ -121,7 +121,7 @@ struct ChunkMesh {
  * decide where the sky reaches its top.
  */
 struct ChunkLighting {
-    std::vector<uint8_t> filter, emission, occluder, block, sky, skySeeds;
+    std::vector<uint8_t> filter, emission, occluder, shade, block, sky, skySeeds;
 };
 
 struct MeshInput {
@@ -131,6 +131,8 @@ struct MeshInput {
     std::array<std::shared_ptr<const SubChunk>, 6> neighbours;
     std::array<std::shared_ptr<const PalettedStorage>, 9> biomes;
     std::array<std::shared_ptr<const SubChunk>, 27> around;
+    std::array<bool, 27> unknownAround {};
+    std::array<bool, 9> unknownAbove {};
     std::array<std::vector<std::shared_ptr<const SubChunk>>, 9> above;
     std::shared_ptr<const BlockEntityMap> blockEntities;
     std::array<int32_t, 3> origin {};

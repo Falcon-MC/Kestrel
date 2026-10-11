@@ -530,7 +530,7 @@ void GeometryLibrary::parse(const std::string& text, bool retainNativeBindPose)
  */
 void GeometryLibrary::resolveInheritance()
 {
-    std::function<void(const std::string&, int)> resolve = [&](const std::string& name, int depth) {
+    std::function<void(std::string, int)> resolve = [&](std::string name, int depth) {
         auto parent = parents.find(name);
         if (parent == parents.end() || depth > 16) {
             return;

@@ -96,6 +96,9 @@ void Session::pollGlobalPacks()
         biomes.emplace(key, world.store().biomes(key));
         entities.emplace(key, world.store().blockEntities(key));
     }
+    auto pendingLight = std::make_shared<const std::set<world::SubChunkKey>>([&] { auto keys = world.pendingKeys(); return std::set<world::SubChunkKey>(keys.begin(), keys.end()); }());
+    const auto columns = world.store().columns();
+    auto loadedColumns = std::make_shared<const std::set<world::ChunkKey>>(columns.begin(), columns.end());
     auto mapping = ids;
     auto generation = resourceGeneration;
     auto dimension = motionDimension;
@@ -111,7 +114,7 @@ void Session::pollGlobalPacks()
     }
     resourceReloadJob = std::async(std::launch::async,
         [stack = std::move(stack), chunks = std::move(chunks), biomes = std::move(biomes), entities = std::move(entities),
-            mapping = std::move(mapping), custom = std::move(custom), wanted, generation, dimension, reloadCancelled]() mutable {
+            pendingLight, loadedColumns, mapping = std::move(mapping), custom = std::move(custom), wanted, generation, dimension, reloadCancelled]() mutable {
         ResourceReload result;
         result.revision = wanted;
         result.generation = generation;
@@ -150,9 +153,19 @@ void Session::pollGlobalPacks()
                 for (int32_t dx = -1; dx <= 1; ++dx) for (int32_t dz = -1; dz <= 1; ++dz) {
                     auto found = biomes.find({ dimension, key.x + dx, key.y, key.z + dz });
                     if (found != biomes.end()) input.biomes[size_t((dz + 1) * 3 + dx + 1)] = found->second;
-                    for (int32_t dy = -1; dy <= 1; ++dy) input.around[size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)] = sub({ dimension, key.x + dx, key.y + dy, key.z + dz });
-                    for (int32_t sy = key.y + 2; sy < range.baseSubChunkY + range.subChunkCount; ++sy)
+                    const world::ChunkKey column { dimension, key.x + dx, key.z + dz };
+                    const bool loaded = loadedColumns->contains(column);
+                    for (int32_t dy = -1; dy <= 1; ++dy) {
+                        const world::SubChunkKey neighbour { dimension, key.x + dx, key.y + dy, key.z + dz };
+                        const size_t slot = size_t((dx + 1) * 9 + (dy + 1) * 3 + dz + 1);
+                        input.around[slot] = sub(neighbour);
+                        input.unknownAround[slot] = neighbour.y >= range.baseSubChunkY && neighbour.y < range.baseSubChunkY + range.subChunkCount
+                            && (!loaded || pendingLight->contains(neighbour));
+                    }
+                    for (int32_t sy = key.y + 2; sy < range.baseSubChunkY + range.subChunkCount; ++sy) {
+                        input.unknownAbove[size_t((dx + 1) * 3 + dz + 1)] |= !loaded || pendingLight->contains({ dimension, key.x + dx, sy, key.z + dz });
                         if (auto above = sub({ dimension, key.x + dx, sy, key.z + dz })) input.above[size_t((dx + 1) * 3 + dz + 1)].push_back(std::move(above));
+                    }
                 }
                 auto mesh = world::meshSubChunk(*result.assets, mapping, input);
                 const auto& materials = result.assets->materials();
@@ -162,7 +175,7 @@ void Session::pollGlobalPacks()
                 totalBytes += (mesh.cubes.size() + mesh.translucentCubes.size()) * sizeof(world::PackedQuad)
                     + (mesh.models.size() + mesh.translucentModels.size()) * sizeof(world::ModelQuadGpu) + mesh.light.size();
                 if (totalBytes > 256ull * 1024 * 1024) throw std::runtime_error("Resource reload terrain exceeds memory budget");
-                if (!mesh.empty()) result.meshes.push_back({ key, std::make_shared<const world::ChunkMesh>(std::move(mesh)) });
+                if (!mesh.empty() || !mesh.light.empty()) result.meshes.push_back({ key, std::make_shared<const world::ChunkMesh>(std::move(mesh)) });
             }
         } catch (const std::exception& e) { result.assets.reset(); result.meshes.clear(); result.error = e.what(); }
         return result;

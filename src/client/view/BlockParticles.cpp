@@ -190,7 +190,7 @@ void BlockParticles::clear()
     lastUpdate = 0.0;
 }
 
-void BlockParticles::append(const std::array<int32_t, 3>& origin, const std::array<double, 3>& camera, std::vector<world::ModelQuadGpu>& out) const
+void BlockParticles::append(const std::array<int32_t, 3>& origin, const std::array<double, 3>& camera, std::vector<world::ModelQuadGpu>& out, const std::function<uint8_t(double, double, double)>& lightAt) const
 {
     for (const Particle& particle : particles) {
         std::array<double, 3> world;
@@ -241,7 +241,7 @@ void BlockParticles::append(const std::array<int32_t, 3>& origin, const std::arr
         }
         gpu.words[10] = particle.material;
         gpu.words[11] = UnshadedFace | (particle.tint << 8);
-        gpu.words[12] = FullSkyLight;
+        gpu.words[12] = lightAt ? uint32_t(lightAt(world[0], world[1], world[2])) * 0x01010101u : FullSkyLight;
         out.push_back(gpu);
     }
 }

@@ -7,6 +7,7 @@ namespace kestrel {
 
 void Client::drawSignTexts(modding::WorldCanvas& painter)
 {
+    const LightmapPixels lightmap = buildLightmap(worldLighting);
     for (const auto& sign : signTextViews) {
         const auto pose = signTextPose(sign.name, sign.rotation, sign.facing, sign.hanging);
         for (size_t side = 0; side < sign.sides.size(); ++side) {
@@ -29,11 +30,11 @@ void Client::drawSignTexts(modding::WorldCanvas& painter)
                 if (line < lines.size()) text += lines[line];
             }
             const uint8_t light = lightAt(center.x, center.y, center.z);
-            const float brightness = data.glow ? 1.0f : float(std::max(light & 15, light >> 4)) / 15.0f;
+            const auto brightness = data.glow ? std::array<float, 3> { 1, 1, 1 } : actorLightColor(lightmap, light);
             const mod::Color color {
-                uint8_t(float((data.color >> 16) & 255) * brightness),
-                uint8_t(float((data.color >> 8) & 255) * brightness),
-                uint8_t(float(data.color & 255) * brightness), 255,
+                uint8_t(float((data.color >> 16) & 255) * brightness[0]),
+                uint8_t(float((data.color >> 8) & 255) * brightness[1]),
+                uint8_t(float(data.color & 255) * brightness[2]), 255,
             };
             const std::array<float, 3> right { pose.right[0] * direction, 0, pose.right[2] * direction };
             painter.textOnPlane(center, text, color, right, { 0, 1, 0 }, pose.pixel, pose.width);
