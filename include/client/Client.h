@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/TouchControls.h"
 
 #include "agent/AgentServer.h"
 #include "agent/EventLog.h"
@@ -76,8 +77,12 @@ public:
     ~Client();
 
     int run();
+    bool frame(bool paced = true);
 
 private:
+    struct FrameState;
+    ui::TouchControls touchControls;
+    std::unique_ptr<FrameState> frames;
     /**
      * One frame of synthetic input for the agent: what to change in the
      * window's input, and the request to answer once it has been applied.

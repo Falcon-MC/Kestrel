@@ -20,10 +20,13 @@ void Client::updateGlobalResources()
             continue;
         }
         if (action.kind == Kind::Import) {
-            action.value = platform::pickResourcePackFile();
-            if (action.value.empty()) continue;
+            platform::showFilePicker(platform::FileKind::ResourcePack);
+            continue;
         }
         globalResources.request(std::move(action));
+    }
+    if (auto picked = platform::takePickedFile(platform::FileKind::ResourcePack)) {
+        globalResources.request({ Kind::Import, {}, std::move(*picked) });
     }
     if (globalResources.poll()) {
         for (const auto& name : globalPackIcons) skin.clearDynamic(name);

@@ -29,3 +29,4 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       tests: true
+      package: true

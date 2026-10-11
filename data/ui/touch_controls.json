@@ -1,0 +1,1060 @@
+{
+  "namespace": "kestrel_touch",
+  "hud": {
+    "type": "panel",
+    "size": [
+      "100%",
+      "100%"
+    ],
+    "controls": [
+      {
+        "controls": {
+          "type": "panel",
+          "size": [
+            "100%",
+            "100%"
+          ],
+          "bindings": [
+            {
+              "binding_name": "#controls",
+              "binding_name_override": "#visible"
+            }
+          ],
+          "controls": [
+            {
+              "movement": {
+                "type": "panel",
+                "anchor_from": "$move_anchor",
+                "anchor_to": "$move_anchor",
+                "offset": [
+                  "$move_x",
+                  -45
+                ],
+                "size": [
+                  "$stick_size",
+                  "$stick_size"
+                ],
+                "controls": [
+                  {
+                    "move": {
+                      "type": "custom",
+                      "renderer": "move",
+                      "anchor_from": "center",
+                      "anchor_to": "center",
+                      "size": [
+                        "$stick_size",
+                        "$stick_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#joystick",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "forward": {
+                      "type": "custom",
+                      "renderer": "forward",
+                      "anchor_from": "top_middle",
+                      "anchor_to": "top_middle",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#dpad",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "custom",
+                      "renderer": "back",
+                      "anchor_from": "bottom_middle",
+                      "anchor_to": "bottom_middle",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#dpad",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "left": {
+                      "type": "custom",
+                      "renderer": "left",
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#dpad",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "right": {
+                      "type": "custom",
+                      "renderer": "right",
+                      "anchor_from": "right_middle",
+                      "anchor_to": "right_middle",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#dpad",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "actions": {
+                "type": "panel",
+                "anchor_from": "$action_anchor",
+                "anchor_to": "$action_anchor",
+                "offset": [
+                  "$action_x",
+                  -45
+                ],
+                "size": [
+                  120,
+                  110
+                ],
+                "controls": [
+                  {
+                    "jump": {
+                      "type": "custom",
+                      "renderer": "jump",
+                      "anchor_from": "bottom_right",
+                      "anchor_to": "bottom_right",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        -2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "sneak": {
+                      "type": "custom",
+                      "renderer": "sneak",
+                      "anchor_from": "bottom_left",
+                      "anchor_to": "bottom_left",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "attack": {
+                      "type": "custom",
+                      "renderer": "attack",
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_left",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        2,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#actions",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "use": {
+                      "type": "custom",
+                      "renderer": "use",
+                      "anchor_from": "top_right",
+                      "anchor_to": "top_right",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        -2,
+                        0
+                      ],
+                      "bindings": [
+                        {
+                          "binding_name": "#actions",
+                          "binding_name_override": "#visible"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "sprint": {
+                      "type": "custom",
+                      "renderer": "sprint",
+                      "anchor_from": "center",
+                      "anchor_to": "center",
+                      "size": [
+                        "$button_size",
+                        "$button_size"
+                      ],
+                      "offset": [
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "inventory": {
+          "type": "custom",
+          "renderer": "inventory",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            "$button_size",
+            "$button_size"
+          ],
+          "offset": [
+            112,
+            -1
+          ]
+        }
+      },
+      {
+        "chat": {
+          "type": "custom",
+          "renderer": "chat",
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "size": [
+            "$top_size",
+            "$top_size"
+          ],
+          "offset": [
+            -38,
+            2
+          ]
+        }
+      },
+      {
+        "pause": {
+          "type": "custom",
+          "renderer": "pause",
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "size": [
+            "$top_size",
+            "$top_size"
+          ],
+          "offset": [
+            0,
+            2
+          ]
+        }
+      },
+      {
+        "perspective": {
+          "type": "custom",
+          "renderer": "perspective",
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "size": [
+            "$top_size",
+            "$top_size"
+          ],
+          "offset": [
+            38,
+            2
+          ],
+          "bindings": [
+            {
+              "binding_name": "#perspective",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      },
+      {
+        "pick": {
+          "type": "custom",
+          "renderer": "pick",
+          "anchor_from": "right_middle",
+          "anchor_to": "right_middle",
+          "size": [
+            "$top_size",
+            "$top_size"
+          ],
+          "offset": [
+            -8,
+            0
+          ],
+          "bindings": [
+            {
+              "binding_name": "#pick",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      },
+      {
+        "slot1": {
+          "type": "custom",
+          "renderer": "slot1",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            -80,
+            -1
+          ]
+        }
+      },
+      {
+        "slot2": {
+          "type": "custom",
+          "renderer": "slot2",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            -60,
+            -1
+          ]
+        }
+      },
+      {
+        "slot3": {
+          "type": "custom",
+          "renderer": "slot3",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            -40,
+            -1
+          ]
+        }
+      },
+      {
+        "slot4": {
+          "type": "custom",
+          "renderer": "slot4",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            -20,
+            -1
+          ]
+        }
+      },
+      {
+        "slot5": {
+          "type": "custom",
+          "renderer": "slot5",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            0,
+            -1
+          ]
+        }
+      },
+      {
+        "slot6": {
+          "type": "custom",
+          "renderer": "slot6",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            20,
+            -1
+          ]
+        }
+      },
+      {
+        "slot7": {
+          "type": "custom",
+          "renderer": "slot7",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            40,
+            -1
+          ]
+        }
+      },
+      {
+        "slot8": {
+          "type": "custom",
+          "renderer": "slot8",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            60,
+            -1
+          ]
+        }
+      },
+      {
+        "slot9": {
+          "type": "custom",
+          "renderer": "slot9",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "size": [
+            20,
+            20
+          ],
+          "offset": [
+            80,
+            -1
+          ]
+        }
+      }
+    ]
+  },
+  "mode_selection": {
+    "type": "panel",
+    "size": [
+      310,
+      230
+    ],
+    "anchor_from": "center",
+    "anchor_to": "center",
+    "controls": [
+      {
+        "background": {
+          "type": "image",
+          "texture": "textures/ui/White",
+          "color": [
+            0.08,
+            0.08,
+            0.08
+          ],
+          "size": [
+            "100%",
+            "100%"
+          ]
+        }
+      },
+      {
+        "title": {
+          "type": "label",
+          "text": "options.controlMode.selectControlMode",
+          "font_type": "default",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            10
+          ],
+          "size": [
+            "100%",
+            18
+          ]
+        }
+      },
+      {
+        "mode_0": {
+          "type": "button",
+          "size": [
+            280,
+            40
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            36
+          ],
+          "default_control": "normal",
+          "hover_control": "normal",
+          "pressed_control": "normal",
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.touch_mode_0",
+              "mapping_type": "pressed"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "panel",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/White",
+                      "color": [
+                        0.25,
+                        0.25,
+                        0.25
+                      ],
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  },
+                  {
+                    "label": {
+                      "type": "label",
+                      "text": "Joystick & Tap to Interact",
+                      "font_type": "default",
+                      "color": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "size": [
+                        "100% - 52px",
+                        "100%"
+                      ],
+                      "offset": [
+                        23,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "icon": {
+                      "type": "image",
+                      "texture": "textures/ui/thumbnail_touch",
+                      "size": [
+                        42,
+                        32
+                      ],
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "offset": [
+                        4,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "mode_1": {
+          "type": "button",
+          "size": [
+            280,
+            40
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            82
+          ],
+          "default_control": "normal",
+          "hover_control": "normal",
+          "pressed_control": "normal",
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.touch_mode_1",
+              "mapping_type": "pressed"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "panel",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/White",
+                      "color": [
+                        0.25,
+                        0.25,
+                        0.25
+                      ],
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  },
+                  {
+                    "label": {
+                      "type": "label",
+                      "text": "Joystick & Aim Crosshair",
+                      "font_type": "default",
+                      "color": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "size": [
+                        "100% - 52px",
+                        "100%"
+                      ],
+                      "offset": [
+                        23,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "icon": {
+                      "type": "image",
+                      "texture": "textures/ui/thumbnail_crosshair",
+                      "size": [
+                        42,
+                        32
+                      ],
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "offset": [
+                        4,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "mode_2": {
+          "type": "button",
+          "size": [
+            280,
+            40
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            128
+          ],
+          "default_control": "normal",
+          "hover_control": "normal",
+          "pressed_control": "normal",
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.touch_mode_2",
+              "mapping_type": "pressed"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "panel",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/White",
+                      "color": [
+                        0.25,
+                        0.25,
+                        0.25
+                      ],
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  },
+                  {
+                    "label": {
+                      "type": "label",
+                      "text": "D-Pad & Tap to Interact",
+                      "font_type": "default",
+                      "color": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "size": [
+                        "100% - 52px",
+                        "100%"
+                      ],
+                      "offset": [
+                        23,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "icon": {
+                      "type": "image",
+                      "texture": "textures/ui/thumbnail_classic",
+                      "size": [
+                        42,
+                        32
+                      ],
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "offset": [
+                        4,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "done": {
+          "type": "button",
+          "size": [
+            280,
+            40
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            181
+          ],
+          "default_control": "normal",
+          "hover_control": "normal",
+          "pressed_control": "normal",
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.touch_done",
+              "mapping_type": "pressed"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "panel",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/White",
+                      "color": [
+                        0.25,
+                        0.25,
+                        0.25
+                      ],
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  },
+                  {
+                    "label": {
+                      "type": "label",
+                      "text": "gui.cancel",
+                      "font_type": "default",
+                      "color": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "size": [
+                        "100% - 52px",
+                        "100%"
+                      ],
+                      "offset": [
+                        23,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "customize": {
+    "type": "panel",
+    "size": [
+      310,
+      230
+    ],
+    "anchor_from": "center",
+    "anchor_to": "center",
+    "controls": [
+      {
+        "background": {
+          "type": "image",
+          "texture": "textures/ui/White",
+          "color": [
+            0.08,
+            0.08,
+            0.08
+          ],
+          "size": [
+            "100%",
+            "100%"
+          ]
+        }
+      },
+      {
+        "title": {
+          "type": "label",
+          "text": "hudScreen.controlCustomization.customiseControls",
+          "font_type": "default",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            10
+          ],
+          "size": [
+            "100%",
+            18
+          ]
+        }
+      },
+      {
+        "touch_button_size@settings_common.option_slider": {
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            42
+          ],
+          "size": [
+            280,
+            54
+          ],
+          "$option_label": "#touch_button_size_slider_label",
+          "$slider_name": "touch_button_size",
+          "$slider_value_binding_name": "#touch_button_size",
+          "$slider_tts_text_value": "#touch_button_size_text_value",
+          "$option_enabled_binding_name": "#touch_button_size_enabled",
+          "$label_bindings": [
+            {
+              "binding_name": "$option_label"
+            }
+          ],
+          "$slider_steps_binding_name": "#touch_button_size_steps"
+        }
+      },
+      {
+        "touch_control_opacity@settings_common.option_slider": {
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            100
+          ],
+          "size": [
+            280,
+            54
+          ],
+          "$option_label": "#touch_control_opacity_slider_label",
+          "$slider_name": "touch_control_opacity",
+          "$slider_value_binding_name": "#touch_control_opacity",
+          "$slider_tts_text_value": "#touch_control_opacity_text_value",
+          "$option_enabled_binding_name": "#touch_control_opacity_enabled",
+          "$label_bindings": [
+            {
+              "binding_name": "$option_label"
+            }
+          ],
+          "$slider_steps_binding_name": "#touch_control_opacity_steps"
+        }
+      },
+      {
+        "done": {
+          "type": "button",
+          "size": [
+            280,
+            40
+          ],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [
+            0,
+            175
+          ],
+          "default_control": "normal",
+          "hover_control": "normal",
+          "pressed_control": "normal",
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.touch_done",
+              "mapping_type": "pressed"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "panel",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/White",
+                      "color": [
+                        0.25,
+                        0.25,
+                        0.25
+                      ],
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  },
+                  {
+                    "label": {
+                      "type": "label",
+                      "text": "gui.done",
+                      "font_type": "default",
+                      "color": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "size": [
+                        "100% - 52px",
+                        "100%"
+                      ],
+                      "offset": [
+                        23,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

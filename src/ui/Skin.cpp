@@ -3,6 +3,7 @@
 #include "ui/Image.h"
 #include "ui/FallbackArt.h"
 #include "client/DebugLog.h"
+#include "ui/FallbackIcons.h"
 #include "ui/Theme.h"
 
 #include "TitlePng.h"
@@ -221,6 +222,7 @@ Skin::Entry& Skin::load(std::string_view name)
         }
     }
     if (!loaded) loaded = drawFallbackArt(name, entry.bitmap);
+    if (!loaded && name.rfind("hbui/", 0) == 0) loaded = fallbackIcon(name.substr(5), entry.bitmap);
     entry.sprite.width = static_cast<float>(entry.bitmap.width);
     entry.sprite.height = static_cast<float>(entry.bitmap.height);
     if (loaded) {

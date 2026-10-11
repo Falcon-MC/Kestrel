@@ -110,6 +110,46 @@ image files are embedded in these fallbacks.
 On macOS, the build produces `build/Kestrel.app`. Open it in Finder or run `open build/Kestrel.app` to launch
 without Terminal. `build/Kestrel` remains a command-line symlink for scripts and MCP.
 
+### iOS IPA
+
+On macOS with Xcode and the iOS SDK installed, run `./build-ios.sh` to build
+`build/ios/Kestrel.ipa` for iOS 16.3 or later. This is an unsigned arm64 app;
+it can be imported into PlayCover without a developer signing identity.
+
+On first launch, iOS downloads the full resource pack from Mojang's
+`bedrock-samples` v1.26.50.4 release and caches it in the app's data directory.
+Later launches work without downloading it again. The app uses licensed free Monocraft/Noto Sans
+fonts and procedural menu artwork. No Minecraft fonts or HTML menu assets are bundled,
+and building does not require an installed game.
+Setup uses the same procedural first-launch screen and versioned resource cache as desktop,
+with download/install progress, touch-friendly retry and cancellation, and automatic opening of the menu.
+`KESTREL_IOS_CA_BUNDLE` selects the TLS certificate authority
+bundle and defaults to `/etc/ssl/cert.pem` on the build Mac. OpenSSL is fetched
+and built by CMake with the other dependencies.
+
+The iOS build uses UIKit, Metal, native audio, and hardware keyboards, mice,
+and gamepads. Touch supports menus, the software keyboard, simultaneous movement
+and looking, action buttons, and hotbar selection. The JSON UI Touch tab saves
+the control scheme, sensitivity, handedness, joystick visibility, sneak behavior,
+and control size/opacity. Gameplay controls use `data/ui/touch_controls.json`
+with Mojang's icons. Importing skins and resource packs uses the system's
+document picker. Installing on an iPhone or iPad requires signing the IPA
+through your chosen installation tool.
+
+### Android APK
+
+With the Android SDK, NDK, CMake 3.31.6 and Gradle installed, run
+`./build-android.sh` on Linux or macOS to build an arm64 APK for Android 8.0 or
+later with Vulkan 1.1. Like on iOS, the app downloads Mojang's
+`bedrock-samples` pack on first launch. No Minecraft assets are bundled. Setup uses
+the same first-launch screen, installation progress and retry/cancel controls as iOS and desktop.
+Menu text uses
+Monocraft and Noto Sans (OFL-1.1), which the script downloads and checks against
+`data/fallback_fonts.txt`. It fetches SDL,
+which provides the window, input and file picker, and packages
+`android/app/build/outputs/apk/release/app-release.apk` signed with the debug
+key.
+
 ## Command line and agents
 
 ```

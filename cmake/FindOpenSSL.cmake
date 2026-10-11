@@ -1,0 +1,20 @@
+set(OPENSSL_ROOT_DIR "${KESTREL_OPENSSL_ROOT}")
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT_DIR}/include")
+set(OPENSSL_SSL_LIBRARY "${OPENSSL_ROOT_DIR}/lib/libssl.a")
+set(OPENSSL_CRYPTO_LIBRARY "${OPENSSL_ROOT_DIR}/lib/libcrypto.a")
+set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
+set(OPENSSL_VERSION "3.5.8")
+set(OPENSSL_FOUND TRUE)
+set(OpenSSL_FOUND TRUE)
+foreach(component Crypto SSL)
+    if(NOT TARGET OpenSSL::${component})
+        string(TOUPPER "${component}" upper)
+        add_library(OpenSSL::${component} STATIC IMPORTED GLOBAL)
+        set_target_properties(OpenSSL::${component} PROPERTIES
+            IMPORTED_LOCATION "${OPENSSL_${upper}_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+        )
+        add_dependencies(OpenSSL::${component} KestrelOpenSSL)
+    endif()
+endforeach()
+set_target_properties(OpenSSL::SSL PROPERTIES INTERFACE_LINK_LIBRARIES OpenSSL::Crypto)

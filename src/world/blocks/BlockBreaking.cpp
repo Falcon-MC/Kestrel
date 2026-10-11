@@ -1,4 +1,5 @@
 #include "world/BlockBreaking.h"
+#include "util/Text.h"
 
 #include "BlockBreakingTable.h"
 
@@ -154,8 +155,7 @@ BlockHardnessTable::BlockHardnessTable()
             continue;
         }
         BlockHardness entry;
-        // float from_chars needs macOS 26 in Apple's libc++, strtof is fine since we never set a locale
-        entry.hardness = std::strtof(std::string(fields[1]).c_str(), nullptr);
+        entry.hardness = util::parseFloat(fields[1]);
         entry.tool = toolNamed(fields[2]);
         int level = 0;
         std::from_chars(fields[3].data(), fields[3].data() + fields[3].size(), level);
