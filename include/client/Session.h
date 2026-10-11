@@ -15,6 +15,7 @@
 #include "client/HealthFeedback.h"
 #include "client/Inventory.h"
 #include "client/BlockEntityText.h"
+#include "client/SignEditor.h"
 #include "client/PacketHook.h"
 #include "client/PacketJournal.h"
 #include "client/WorldClock.h"
@@ -937,6 +938,8 @@ public:
     std::vector<TitleRequest> takeTitles();
     std::vector<ToastRequest> takeToasts();
     std::vector<FormRequest> takeForms();
+    std::optional<SignEditorRequest> takeSignEditor();
+    void answerSign(SignEditorAnswer answer);
 
     /**
      * Queues a line typed into chat: commands (starting with a slash) go out
@@ -1103,6 +1106,9 @@ private:
     void flushChat();
     void handleFormPacket(const std::shared_ptr<Packet>& packet);
     void flushForms();
+    void flushSign();
+    void handleSignPacket(const std::shared_ptr<Packet>& packet);
+    std::optional<Tag> editableSignAt(const std::array<int32_t, 3>& cell);
     void queueSound(SoundRequest request);
     void queueParticle(world::ParticleSpawn spawn);
     void publishNearby();
@@ -1516,6 +1522,10 @@ private:
 
     std::vector<FormRequest> pendingForms;
     std::vector<FormAnswer> outgoingForms;
+    std::optional<SignEditorRequest> pendingSignEditor;
+    std::optional<SignEditorRequest> activeSignEditor;
+    std::optional<SignEditorAnswer> outgoingSign;
+    uint64_t signEditorSerial = 0;
     std::string localXuid;
     float walkedDistance = 0.0f;
     float nextStepDistance = 1.0f;

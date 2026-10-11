@@ -3,6 +3,7 @@
 #include "client/FirstPersonAnimation.h"
 #include "client/ModelQuadOutput.h"
 #include "client/SpectatorRendering.h"
+#include "client/SignEditor.h"
 #include "render/Renderer.h"
 #include "world/EntityAnimation.h"
 #include "world/EntityMaterialBlend.h"
@@ -31,6 +32,25 @@ double expression(kestrel::world::EntityAnimator& animator, const char* source)
 
 int main()
 {
+    Tag sign = Tag::ofCompound();
+    sign.putString("id", "Sign");
+    sign.putLong("LockedForEditingBy", 42);
+    Tag face = Tag::ofCompound();
+    face.putString("Text", "front");
+    face.putInt("SignTextColor", -1);
+    face.putBool("IgnoreLighting", true);
+    sign.put("FrontText", face);
+    face.putString("Text", "back");
+    sign.put("BackText", face);
+    auto edited = kestrel::editedSignData(sign, true, "one\ntwo\nthree\nfour");
+    require(edited && edited->get("FrontText")->getString("Text") == "one\ntwo\nthree\nfour", "Sign text updates the requested face");
+    require(edited->get("BackText")->getString("Text") == "back" && edited->get("FrontText")->getBool("IgnoreLighting") && edited->get("FrontText")->getInt("SignTextColor") == -1, "Sign editing preserves the opposite face, glow and dye");
+    require(edited->getLong("LockedForEditingBy") == -1, "Sign editing releases the lock");
+    require(!kestrel::editedSignData(sign, false, std::string(4097, 'a')), "Sign editing bounds outgoing text");
+    sign.putBool("IsWaxed", true);
+    require(!kestrel::editedSignData(sign, true, "invalid"), "Waxed signs cannot be edited");
+    require(kestrel::signEditorTexture("minecraft:dark_oak_wall_sign", false) == "textures/ui/sign_darkoak", "Dark oak uses the installed sign texture");
+    require(kestrel::signEditorTexture("minecraft:bamboo_hanging_sign", true) == "textures/ui/hanging_sign_bamboo", "Hanging signs use the installed texture");
     static_assert(sizeof(kestrel::world::ModelQuadGpu) == kestrel::ModelQuadBytes);
     static_assert(sizeof(kestrel::world::HandQuadGpu) == kestrel::HandQuadBytes);
     static_assert(offsetof(kestrel::world::HandQuadGpu, positions) == kestrel::ModelQuadBytes);
